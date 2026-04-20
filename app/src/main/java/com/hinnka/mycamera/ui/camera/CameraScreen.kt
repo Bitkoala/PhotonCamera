@@ -68,7 +68,6 @@ import com.hinnka.mycamera.camera.CameraState
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.components.*
 import com.hinnka.mycamera.utils.OrientationObserver
-import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import com.hinnka.mycamera.viewmodel.GalleryViewModel
 import com.hinnka.mycamera.video.CaptureMode
@@ -218,10 +217,7 @@ fun CameraScreen(
                     return
                 }
                 scope.launch {
-                    var bitmap = viewModel.applyLut(bitmap)
-                    if (OrientationObserver.isLandscape) {
-                        bitmap = BitmapUtils.rotate(bitmap, -OrientationObserver.rotationDegrees)
-                    }
+                    val bitmap = viewModel.applyLut(bitmap)
                     captureAnimationSnapshot = CaptureAnimationSnapshot(
                         bitmap = bitmap.asImageBitmap(),
                         sourceBounds = sourceBounds,
