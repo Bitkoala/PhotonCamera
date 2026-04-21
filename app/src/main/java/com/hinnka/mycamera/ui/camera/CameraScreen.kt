@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,9 +56,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -87,6 +90,7 @@ enum class ActivePanel {
     NONE,
     SETTINGS,
     FILTERS,
+    LUT_EDIT
 }
 
 private const val InitialPreviewTransitionDelayMillis = 500L
@@ -1100,13 +1104,7 @@ fun CameraScreen(
                     ),
                 contentAlignment = Alignment.BottomCenter
             ) {
-                LutControlPanel(
-                    availableLuts = viewModel.availableLutList,
-                    currentLutId = currentLutId,
-                    thumbnail = viewModel.previewThumbnail,
-                    onLutSelected = { viewModel.setLut(it) },
-                    onParamsPreviewChange = { previewRecipeParamsOverride = it },
-                    categoryOrder = categoryOrder,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
@@ -1117,10 +1115,76 @@ fun CameraScreen(
                             } else Modifier
                         )
                         .padding(horizontal = 8.dp)
-                )
+                        .padding(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val currentLut = viewModel.availableLutList.find { it.id == currentLutId }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = currentLut?.getName() ?: "",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f).basicMarquee()
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White.copy(alpha = 0.15f))
+                                .clickable {
+                                    activePanel = ActivePanel.LUT_EDIT
+                                }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = stringResource(R.string.color_recipe),
+                                tint = Color(0xFFFFD700), // Gold color to match VIP/Premium feel
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.color_recipe),
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    // LUT 选择器
+                    LutSelector(
+                        availableLuts = viewModel.availableLutList,
+                        currentLutId = currentLutId,
+                        thumbnail = viewModel.previewThumbnail,
+                        onLutSelected = { viewModel.setLut(it) },
+                        onEditClick = {
+                            activePanel = ActivePanel.LUT_EDIT
+                        },
+                        categoryOrder = categoryOrder
+                    )
+                }
             }
         }
 
+        if (activePanel == ActivePanel.LUT_EDIT) {
+            LutEditBottomSheet(
+                lutId = currentLutId,
+                onParamsPreviewChange = { previewRecipeParamsOverride = it },
+                onDismiss = {
+                    previewRecipeParamsOverride = null
+                    activePanel = ActivePanel.FILTERS
+                }
+            )
+        }
 
     }
 }
