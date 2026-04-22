@@ -1054,7 +1054,7 @@ object GalleryManager {
         photoQuality: Int = 95,
         exposureBias: Float? = null,
         droMode: RawProcessingPreferences.DROMode = RawProcessingPreferences.DROMode.OFF,
-        exportDngWithRawExport: Boolean = true
+        exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -1208,7 +1208,7 @@ object GalleryManager {
         photoQuality: Int = 95,
         exposureBias: Float? = null,
         droMode: RawProcessingPreferences.DROMode = RawProcessingPreferences.DROMode.OFF,
-        exportDngWithRawExport: Boolean = true
+        exportDngWithRawExport: Boolean = false
     ) {
         // 根据图像格式处理
         when (val format = image.format) {
@@ -1574,7 +1574,7 @@ object GalleryManager {
         superResolutionScale: Float = 1.0f,
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
-        exportDngWithRawExport: Boolean = true
+        exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -1804,7 +1804,7 @@ object GalleryManager {
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         droMode: RawProcessingPreferences.DROMode = RawProcessingPreferences.DROMode.OFF,
-        exportDngWithRawExport: Boolean = true
+        exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
         when (val format = images[0].format) {
             ImageFormat.YUV_420_888, ImageFormat.YCBCR_P010, ImageFormat.NV21 -> {

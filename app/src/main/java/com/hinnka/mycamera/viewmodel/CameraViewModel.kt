@@ -240,7 +240,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
     val exportDngWithRawExport: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.exportDngWithRawExport }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     var availableDcps: List<com.hinnka.mycamera.raw.DcpInfo> by mutableStateOf(emptyList())
         private set
     val phantomLutId: StateFlow<String?> = userPreferencesRepository.userPreferences
