@@ -529,6 +529,10 @@ class PhotoProcessor(
         useComputationalAperture: Boolean = false,
     ): Bitmap = withContext(Dispatchers.IO) {
         var result = input
+        val finalSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
+        val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
+        val finalChromaNoiseReduction =
+            metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
 
         val colorCorrection = resolveColorCorrection(
             metadata = metadata,
@@ -551,9 +555,9 @@ class PhotoProcessor(
             isHlgInput = shouldDecodeHlgInput(metadata),
             colorCorrection.baselineLayer,
             colorCorrection.creativeLayer,
-            sharpening,
-            noiseReduction,
-            chromaNoiseReduction
+            finalSharpening,
+            finalNoiseReduction,
+            finalChromaNoiseReduction
         )
 
         result = applyCrop(result, metadata)
