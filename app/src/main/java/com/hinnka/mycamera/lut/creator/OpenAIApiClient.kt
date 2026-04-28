@@ -3,6 +3,7 @@ package com.hinnka.mycamera.lut.creator
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
+import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -50,7 +51,7 @@ class OpenAIApiClient() {
     companion object {
         const val BUILT_IN_API_URL = "https://token-plan-cn.xiaomimimo.com/v1"
 //        const val OPENAI_API_URL = "https://api.openai.com/v1"
-        const val BUILT_IN_API_KEY = "tp-clodqe7tne37catuogvqv83fpfr3clbkun21meavj59ffwpl"
+        val BUILT_IN_API_KEY = BuildConfig.BUILT_IN_API_KEY
         const val BUILT_IN_IMAGE_MODEL = "mimo-v2.5"
         const val BUILT_IN_MODEL = "mimo-v2.5"
     }
