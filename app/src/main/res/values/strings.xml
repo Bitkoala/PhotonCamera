@@ -588,6 +588,9 @@
 
     <!-- About & Donation -->
     <string name="settings_section_about">About</string>
+    <string name="settings_community_group">Community Group</string>
+    <string name="settings_community_group_telegram_description">Telegram: https://t.me/photoncameraapp</string>
+    <string name="settings_community_group_qq_description">QQ Group: 569605452</string>
     <string name="settings_donation">Donation</string>
     <string name="settings_donation_description">Support the development of Photon Camera</string>
     <string name="settings_default_focal_length">Default Focal Length</string>

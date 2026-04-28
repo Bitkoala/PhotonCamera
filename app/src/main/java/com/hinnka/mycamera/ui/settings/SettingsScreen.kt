@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.ui.settings
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -92,6 +93,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.media3.common.DeviceInfo
+import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.data.VolumeKeyAction
@@ -114,6 +116,16 @@ import kotlin.math.roundToInt
 
 enum class SettingsTab {
     GENERAL, IMAGING, RAW, PHANTOM, ABOUT
+}
+
+private const val TELEGRAM_GROUP_URL = "https://t.me/photoncameraapp"
+private const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=SFezWP1Ub5Egb5yMc7dbc1W4BVKGzzs1Ld9RD%2BKYn%2FlXiuqD4XZCGse48v%2FNcvrq&busi_data=eyJncm91cENvZGUiOiI1Njk2MDU0NTIiLCJ0b2tlbiI6IjNTM0Z4MkN1NUpDQVU1OXJDZ0xFVlJOb0xHZHFCQ0xWc1pKQWpSVzNVT0FwaHFRcEFYR0lFTU9mNUxuNFl5TDEiLCJ1aW4iOiI0MTk3NzQ2OTYifQ%3D%3D&data=WwMa6V5hKvkhzfvOaOKz8MKqNOvSSjTxTRj6Dn-1bHP68fZuRJ66cyD5xOhydrUkF8yIA70R_yXqlFRwJGoaCQ&svctype=4&tempid=h5_group_info"
+
+private fun openExternalUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
 }
 
 /**
@@ -1186,6 +1198,16 @@ fun SettingsScreen(
                 }
 
                 SettingsTab.ABOUT -> {
+                    val isGoogleFlavor = BuildConfig.FLAVOR == "google"
+                    val communityGroupUrl = if (isGoogleFlavor) TELEGRAM_GROUP_URL else QQ_GROUP_URL
+                    val communityGroupDescription = stringResource(
+                        if (isGoogleFlavor) {
+                            R.string.settings_community_group_telegram_description
+                        } else {
+                            R.string.settings_community_group_qq_description
+                        }
+                    )
+
                     // Widget 设置
                     SettingsSection(title = stringResource(R.string.settings_widget_theme)) {
                         QualityLevelSetting(
@@ -1244,6 +1266,12 @@ fun SettingsScreen(
 
                     // 关于
                     SettingsSection(title = stringResource(R.string.settings_section_about)) {
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_community_group),
+                            description = communityGroupDescription,
+                            onClick = { openExternalUrl(context, communityGroupUrl) }
+                        )
+
                         NavigationSettingItem(
                             title = stringResource(R.string.settings_donation),
                             description = stringResource(R.string.settings_donation_description),

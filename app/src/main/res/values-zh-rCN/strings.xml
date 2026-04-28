@@ -578,6 +578,9 @@
 
     <!-- 关于与捐赠 -->
     <string name="settings_section_about">关于</string>
+    <string name="settings_community_group">交流群</string>
+    <string name="settings_community_group_telegram_description">Telegram 群：https://t.me/photoncameraapp</string>
+    <string name="settings_community_group_qq_description">QQ 群：569605452</string>
     <string name="settings_donation">捐赠</string>
     <string name="settings_donation_description">支持 Photon Camera 的持续开发</string>
     <string name="settings_background_description">更改应用背景图</string>
