@@ -38,6 +38,8 @@ import com.hinnka.mycamera.utils.StartupTrace
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -223,6 +225,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     // 照片刷新密钥，用于强制 UI 重新加载图片
     val photoRefreshKeys = SnapshotStateMap<String, Long>()
+    val rawPhotoStates = SnapshotStateMap<String, Boolean>()
 
     // 正在刷新的照片 ID 集合
     val refreshingPhotos = mutableStateListOf<String>()
@@ -244,6 +247,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             return value.allocationByteCount
         }
     }
+
+    private val gridThumbnailCache = object : LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 16).toInt()
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int {
+            return value.allocationByteCount
+        }
+    }
+    private val gridThumbnailSemaphore = Semaphore(4)
 
     private val aiEvaluationCache = mutableMapOf<String, AiPhotoEvaluation>()
 
@@ -540,6 +552,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 } ?: fresh
             }
             _photos.value = mergedList
+            updateRawPhotoStates(mergedList)
             photonOffset = mergedList.size
             hasMorePhotonPhotos = false
             _latestPhoto.value = _photos.value.firstOrNull()
@@ -556,6 +569,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (photoIds.isEmpty()) return
         _photos.update { current -> current.filterNot { it.id in photoIds } }
         selectedPhotos.removeAll { it.id in photoIds }
+        photoIds.forEach {
+            rawPhotoStates.remove(it)
+            invalidateGridThumbnailCache(it)
+        }
         _latestPhoto.value = _photos.value.firstOrNull()
         if (currentPhotoIndex >= _photos.value.size) {
             currentPhotoIndex = (_photos.value.size - 1).coerceAtLeast(0)
@@ -568,6 +585,37 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         selectedPhotos.removeAll { it.id in photoIds }
         if (currentPhotoIndex >= currentPhotos.value.size) {
             currentPhotoIndex = (currentPhotos.value.size - 1).coerceAtLeast(0)
+        }
+    }
+
+    private suspend fun updateRawPhotoStates(photos: List<MediaData>) {
+        val context = getApplication<Application>()
+        val states = withContext(Dispatchers.IO) {
+            photos.associate { photo ->
+                photo.id to (photo.isImage && GalleryManager.getDngFile(context, photo.id).exists())
+            }
+        }
+        rawPhotoStates.clear()
+        rawPhotoStates.putAll(states)
+    }
+
+    fun isRawInGallery(photoId: String): Boolean {
+        return rawPhotoStates[photoId] == true
+    }
+
+    suspend fun getGridThumbnailBitmap(photo: MediaData): Bitmap? {
+        val refreshKey = photoRefreshKeys[photo.id] ?: 0L
+        val cacheKey = "${photo.id}_${photo.thumbnailUri}_$refreshKey"
+        gridThumbnailCache.get(cacheKey)?.takeIf { !it.isRecycled }?.let { return it }
+
+        return gridThumbnailSemaphore.withPermit {
+            gridThumbnailCache.get(cacheKey)?.takeIf { !it.isRecycled }?.let { return@withPermit it }
+
+            withContext(Dispatchers.IO) {
+                loadThumbnail(photo)
+            }?.also { bitmap ->
+                gridThumbnailCache.put(cacheKey, bitmap)
+            }
         }
     }
 
@@ -1601,6 +1649,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val detailSnapshot = detailBitmapCache.snapshot()
         detailSnapshot.keys.filter { it.contains("detail_${photoId}_") }.forEach {
             detailBitmapCache.remove(it)
+        }
+        invalidateGridThumbnailCache(photoId)
+    }
+
+    private fun invalidateGridThumbnailCache(photoId: String) {
+        val snapshot = gridThumbnailCache.snapshot()
+        snapshot.keys.filter { it.startsWith("${photoId}_") }.forEach {
+            gridThumbnailCache.remove(it)
         }
     }
 

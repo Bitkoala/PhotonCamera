@@ -4,7 +4,6 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.widget.Toast
 import android.os.Build
-import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +15,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -63,8 +64,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.ui.camera.autoRotate
@@ -799,15 +798,14 @@ private fun PhotoGridItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    val videoThumbnail by produceState<Bitmap?>(initialValue = null, key1 = photo.id, key2 = photo.thumbnailUri) {
-        value = if (photo.isVideo && photo.thumbnailUri.scheme == "content") {
-            runCatching {
-                context.contentResolver.loadThumbnail(photo.thumbnailUri, Size(512, 512), null)
-            }.getOrNull()
-        } else {
-            null
-        }
+    val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
+    val thumbnail by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = photo.id,
+        key2 = photo.thumbnailUri,
+        key3 = refreshKey
+    ) {
+        value = viewModel.getGridThumbnailBitmap(photo)
     }
 
     val aspectRatio = remember(photo.width, photo.height, photo.metadata, OrientationObserver.isLandscape) {
@@ -849,27 +847,14 @@ private fun PhotoGridItem(
             .autoRotate(matchParentSize = true)
     ) {
         // 照片缩略图
-        val transformation = remember(photo, viewModel.selectedTab) {
-            viewModel.getPhotoTransformation(photo)
+        thumbnail?.takeIf { !it.isRecycled }?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = photo.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
         }
-        val imageRequest = remember(photo.thumbnailUri, transformation) {
-            ImageRequest.Builder(context)
-                .data(photo.thumbnailUri)
-                .crossfade(true)
-                .apply {
-                    if (transformation != null) {
-                        transformations(transformation)
-                    }
-                }
-                .build()
-        }
-
-        AsyncImage(
-            model = videoThumbnail ?: imageRequest,
-            contentDescription = photo.displayName,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
 
         // 选择指示器
         if (isSelectionMode) {
@@ -957,7 +942,7 @@ private fun PhotoGridItem(
                 .align(Alignment.BottomStart)
         ) {
             // RAW 标记
-            val isRaw = remember(photo.id) { photo.isImage && viewModel.isRaw(photo.id) }
+            val isRaw = photo.isImage && viewModel.isRawInGallery(photo.id)
             if (isRaw) {
                 Box(
                     modifier = Modifier
