@@ -40,7 +40,6 @@ import kotlinx.coroutines.flow.*
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -139,7 +138,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private var systemOffset = 0
     private var photonOffset = 0
-    private val pageSize = 50
     var hasMoreSystemPhotos by mutableStateOf(true)
         private set
     var hasMorePhotonPhotos by mutableStateOf(true)
@@ -434,10 +432,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun loadCurrentTabMore() {
-        when (selectedTab) {
-            GalleryTab.SYSTEM -> loadSystemPhotos(reset = false)
-            GalleryTab.PHOTON -> loadPhotos(reset = false)
-        }
+        // 当前相册列表使用全量加载，底部触发不再追加分页数据。
+        hasMoreSystemPhotos = false
+        hasMorePhotonPhotos = false
     }
 
     /**
@@ -473,32 +470,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     suspend fun loadSystemPhotos(reset: Boolean = false) {
         if (!hasGalleryPermission) return
-        if (!reset && (!hasMoreSystemPhotos || _isSystemLoadingMore.value)) return
-
-        val loadCount = if (reset) max(pageSize, _systemPhotos.value.size) else pageSize
-        val loadOffset = if (reset) 0 else systemOffset
+        if (!reset) return
 
         if (reset) {
             if (_systemPhotos.value.isEmpty()) {
                 _isLoading.value = true
             }
             systemOffset = 0
-            hasMoreSystemPhotos = true
-        } else {
-            _isSystemLoadingMore.value = true
+            hasMoreSystemPhotos = false
         }
 
         try {
-            val newPhotos = repository.getSystemPhotos(loadOffset, loadCount)
-            if (reset) {
-                _systemPhotos.value = newPhotos
-                systemOffset = newPhotos.size
-                hasMoreSystemPhotos = newPhotos.size >= loadCount
-            } else {
-                _systemPhotos.value = (_systemPhotos.value + newPhotos).distinctBy { it.id }
-                systemOffset += newPhotos.size
-                hasMoreSystemPhotos = newPhotos.size >= loadCount
-            }
+            val newPhotos = repository.getAllSystemPhotos()
+            _systemPhotos.value = newPhotos
+            systemOffset = newPhotos.size
+            hasMoreSystemPhotos = false
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to load system photos", e)
         } finally {
@@ -511,21 +497,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * 加载照片列表
      */
     suspend fun loadPhotos(reset: Boolean = true) {
-        if (!reset && (!hasMorePhotonPhotos || _isPhotonLoadingMore.value)) return
-
-        val loadCount = if (reset) max(pageSize, _photos.value.size) else pageSize
-        val loadOffset = if (reset) 0 else photonOffset
+        if (!reset) return
 
         if (reset) {
             if (_photos.value.isEmpty()) _isLoading.value = true
             photonOffset = 0
-            hasMorePhotonPhotos = true
-        } else {
-            _isPhotonLoadingMore.value = true
+            hasMorePhotonPhotos = false
         }
 
         try {
-            val newList = repository.getPhotosPage(offset = loadOffset, limit = loadCount)
+            val newList = repository.getPhotosSync()
             val currentMap = _photos.value.associateBy { it.id }
 
             // 保留运行时状态，但使用最新加载到的 metadata/sourceUri 等持久化信息
@@ -550,15 +531,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 } ?: fresh
             }
-            if (reset) {
-                _photos.value = mergedList
-                photonOffset = mergedList.size
-                hasMorePhotonPhotos = newList.size >= loadCount
-            } else {
-                _photos.value = (_photos.value + mergedList).distinctBy { it.id }
-                photonOffset += newList.size
-                hasMorePhotonPhotos = newList.size >= loadCount
-            }
+            _photos.value = mergedList
+            photonOffset = mergedList.size
+            hasMorePhotonPhotos = false
             _latestPhoto.value = _photos.value.firstOrNull()
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to load photos", e)

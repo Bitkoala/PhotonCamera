@@ -84,6 +84,14 @@ class GalleryRepository(private val context: Context) {
     }
 
     /**
+     * 查询全部系统相册照片
+     */
+    suspend fun getAllSystemPhotos(): List<MediaData> = withContext(Dispatchers.IO) {
+        (querySystemImages() + querySystemVideos())
+            .sortedByDescending { it.dateAdded }
+    }
+
+    /**
      * 查询私有存储中的照片
      */
     private suspend fun queryPhotos(offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaData> {
@@ -119,7 +127,7 @@ class GalleryRepository(private val context: Context) {
         return photos
     }
 
-    private fun querySystemImages(offset: Int, limit: Int): List<MediaData> {
+    private fun querySystemImages(offset: Int = 0, limit: Int? = null): List<MediaData> {
         val items = mutableListOf<MediaData>()
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
@@ -132,7 +140,7 @@ class GalleryRepository(private val context: Context) {
         )
         val queryArgs = android.os.Bundle().apply {
             putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
-            putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
+            limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
             putString(
                 android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
                 "${MediaStore.Images.Media.DATE_ADDED} DESC"
@@ -171,7 +179,7 @@ class GalleryRepository(private val context: Context) {
         return items
     }
 
-    private fun querySystemVideos(offset: Int, limit: Int): List<MediaData> {
+    private fun querySystemVideos(offset: Int = 0, limit: Int? = null): List<MediaData> {
         val items = mutableListOf<MediaData>()
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
@@ -185,7 +193,7 @@ class GalleryRepository(private val context: Context) {
         )
         val queryArgs = android.os.Bundle().apply {
             putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
-            putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
+            limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
             putString(
                 android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
                 "${MediaStore.Video.Media.DATE_ADDED} DESC"
