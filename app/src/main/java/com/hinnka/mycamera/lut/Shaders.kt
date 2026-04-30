@@ -1085,16 +1085,58 @@ object Shaders {
         const float PI = 3.14159265359;
         const float GOLDEN_ANGLE = 2.39996323;
         const int SAMPLES = 160;
+        const float LENS_GAMMA = 2.2;
+
+        float backgroundGap(float depth) {
+            return max(uFocusDepth - depth - 0.028, 0.0);
+        }
+
+        float computeCoc(float depth) {
+            // Align with BokehMe: Symmetric defocus for both foreground and background
+            float gap = max(abs(uFocusDepth - depth) - 0.028, 0.0);
+            float defocus = pow(gap, 1.45);
+            return clamp(defocus * uMaxBlurRadius * (1.0 / max(uAperture, 0.5)), 0.0, uMaxBlurRadius);
+        }
+
+        float apertureWeight(vec2 offsetPixels, float coc) {
+            vec2 p = offsetPixels / max(coc, 0.001);
+            float lenP = length(p);
+            if (lenP > 1.12) {
+                return 0.0;
+            }
+
+            // Six-blade aperture approximation. It keeps the bokeh from looking
+            // like a generic Gaussian/circular blur while retaining soft edges.
+            float blades = 6.0;
+            float sector = 2.0 * PI / blades;
+            float angle = atan(p.y, p.x) + PI / 6.0;
+            float polygonRadius = cos(sector * 0.5) / cos(mod(angle, sector) - sector * 0.5);
+            float inside = smoothstep(polygonRadius + 0.055, polygonRadius - 0.035, lenP);
+
+            float rim = smoothstep(0.58, 1.0, lenP);
+            return inside * (1.0 + rim * 0.22);
+        }
+
+        vec3 toLinear(vec3 color) {
+            return pow(clamp(color, 0.0, 1.0), vec3(LENS_GAMMA));
+        }
+
+        vec3 toDisplay(vec3 color) {
+            return pow(max(color, vec3(0.0)), vec3(1.0 / LENS_GAMMA));
+        }
 
         void main() {
             vec2 depthUV = clamp((uDepthMatrix * vec4(vTexCoord, 0.0, 1.0)).xy, 0.0, 1.0);
             vec4 centerColor = texture(uInputTexture, vTexCoord);
             float centerDepth = texture(uDepthTexture, depthUV).r;
 
-            float centerCoc = abs(centerDepth - uFocusDepth) * uMaxBlurRadius * (1.0 / uAperture);
-            centerCoc = clamp(centerCoc, 0.0, uMaxBlurRadius);
+            float centerBackgroundGap = backgroundGap(centerDepth);
 
-            // 1. 强力保护机制：对于清晰主体，保持 100% 锐度
+            float centerCoc = computeCoc(centerDepth);
+
+            // Match BokehMe's focus protection: keep only the narrow focus band
+            // sharp. Do not protect every foreground-side pixel by default, or
+            // background regions with imperfect depth will stop blurring.
             if (centerCoc < 0.2) {
                 fragColor = centerColor;
                 return;
@@ -1102,7 +1144,7 @@ object Shaders {
 
             // 2. 初始权重：赋予较高的权重以定性，防止背景渗色
             float centerWeight = 6.0 / (centerCoc * 0.4 + 1.0);
-            vec3 accColor = centerColor.rgb * centerWeight;
+            vec3 accColor = toLinear(centerColor.rgb) * centerWeight;
             float accWeight = centerWeight;
 
             float softBase = max(3.0, uMaxBlurRadius * 0.1);
@@ -1114,6 +1156,7 @@ object Shaders {
 
                 vec2 offset = vec2(cos(theta), sin(theta)) * r * uTexelSize;
                 vec2 sampleUV = clamp(vTexCoord + offset, 0.0, 1.0);
+                vec2 offsetPixels = offset / uTexelSize;
 
                 float lod = log2(r * 0.3 + 1.5);
                 vec3 sColor = textureLod(uInputTexture, sampleUV, lod).rgb;
@@ -1126,36 +1169,48 @@ object Shaders {
                 float colorDist = distance(centerColor.rgb, sColor);
                 float colorSimilarity = smoothstep(0.15, 0.01, colorDist);
 
-                float rawCoc = abs(sDepth - uFocusDepth) * uMaxBlurRadius * (1.0 / uAperture);
+                float rawCoc = computeCoc(sDepth);
                 // 关键：如果颜色相似度高，则强制将采样点的 CoC 压低，视为主体保护区
                 float sCoc = mix(rawCoc, min(rawCoc, centerCoc), colorSimilarity);
-                sCoc = clamp(sCoc, 0.0, uMaxBlurRadius);
 
-                // 4. 重构权重逻辑
+                // 4. 重构权重逻辑 (Strict Occlusion Weighting)
+                // If sCoc > r, the sample's blur circle covers the center, so fW > 0.
                 float fW = smoothstep(r - softBase, r + softBase * 0.5, sCoc);
+                // If centerCoc > r, the center's blur circle covers the sample, so bW > 0.
                 float bW = smoothstep(r - softBase, r + softBase * 0.5, centerCoc);
 
                 float depthDiff = sDepth - centerDepth;
-                float isNearer = smoothstep(-0.1, 0.1, depthDiff);
+                // Tight transition: if it's 0.02 to 0.06 nearer, it's definitively foreground.
+                float isNearer = smoothstep(0.015, 0.055, depthDiff);
 
-                // 引入相似度加成，让主体边缘的像素更倾向于互相保护而不是混入背景
-                float weight = mix(bW * (1.1 - isNearer), fW, isNearer);
+                // If sample is nearer, it can ONLY contribute if its OWN blur circle reaches us (fW).
+                // If it's same depth or further, it contributes based on OUR blur circle reaching it (bW).
+                float weight = mix(bW, fW, isNearer);
+
+                // Enhance separation: boost weight if colors match (likely same object)
                 weight *= (1.0 + colorSimilarity * 0.8);
+                weight *= apertureWeight(offsetPixels, max(sCoc, centerCoc));
+
+                // Strict sharp edge protection: if the sample is foreground AND sharp, 
+                // absolutely reject it to prevent ghosts.
+                float isSharpForeground = isNearer * (1.0 - smoothstep(0.5, 2.5, sCoc));
+                weight *= (1.0 - isSharpForeground);
 
                 if (weight > 0.0001) {
-                    float luma = dot(sColor, vec3(0.2126, 0.7152, 0.0722));
-                    float hdrBoost = 1.0 + pow(max(0.0, luma - 0.75), 2.0) * 4.0 * smoothstep(1.0, 5.0, sCoc);
+                    vec3 sLinear = toLinear(sColor);
+                    float luma = dot(sLinear, vec3(0.2126, 0.7152, 0.0722));
+                    float hdrBoost = 1.0 + pow(max(0.0, luma - 0.52), 2.0) * 3.2 * smoothstep(1.0, 5.0, sCoc);
 
                     float edge = smoothstep(0.7, 1.05, r / max(sCoc, 0.1));
-                    float ring = 1.0 + edge * 0.4 * smoothstep(1.5, 5.0, sCoc);
+                    float ring = 1.0 + edge * 0.28 * smoothstep(1.5, 5.0, sCoc);
 
                     float fw = weight * ring;
-                    accColor += sColor * hdrBoost * fw;
+                    accColor += sLinear * hdrBoost * fw;
                     accWeight += fw;
                 }
             }
 
-            vec3 finalColor = accWeight > 0.001 ? (accColor / accWeight) : centerColor.rgb;
+            vec3 finalColor = accWeight > 0.001 ? toDisplay(accColor / accWeight) : centerColor.rgb;
             finalColor = clamp(finalColor, 0.0, 1.0);
 
             fragColor = vec4(finalColor, centerColor.a);

@@ -38,10 +38,16 @@ class OglBokehProcessor {
             initGL()
 
             val inputTex = createTexture(originalImage, mipmap = true)
-            val lowResDepthTex = createTexture(lowResDepthMap)
+            val lowResDepthTex = createTexture(lowResDepthMap, filterNearest = false, mipmap = true)
+
+            var finalDepthTex = lowResDepthTex
+            val fbo = IntArray(1)
+            GLES30.glGenFramebuffers(1, fbo, 0)
+            
+            var lowResCoeffTex = IntArray(1)
+            var highResDepthTex = IntArray(1)
 
             // Step 1: FGF Coefficients (Run at low resolution)
-            val lowResCoeffTex = IntArray(1)
             GLES30.glGenTextures(1, lowResCoeffTex, 0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lowResCoeffTex[0])
             // Use RGB16F to store (a, b, mean_I)
@@ -49,8 +55,6 @@ class OglBokehProcessor {
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
 
-            val fbo = IntArray(1)
-            GLES30.glGenFramebuffers(1, fbo, 0)
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[0])
             GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, lowResCoeffTex[0], 0)
 
@@ -71,7 +75,6 @@ class OglBokehProcessor {
             drawQuad(fgfCoeffProgramId)
 
             // Step 2: FGF Apply (Generate High-Res Refined Depth)
-            val highResDepthTex = IntArray(1)
             GLES30.glGenTextures(1, highResDepthTex, 0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, highResDepthTex[0])
             GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_R8, originalImage.width, originalImage.height, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, null)
@@ -90,11 +93,13 @@ class OglBokehProcessor {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lowResCoeffTex[0])
             GLES30.glUniform1i(GLES30.glGetUniformLocation(fgfApplyProgramId, "uLowResCoeffs"), 1)
-            
+
             // Pass the texel size of the low-res coefficient texture for guidance-aware upsampling
             GLES30.glUniform2f(GLES30.glGetUniformLocation(fgfApplyProgramId, "uLowResTexelSize"), 1.0f / lowResDepthMap.width, 1.0f / lowResDepthMap.height)
 
             drawQuad(fgfApplyProgramId)
+
+            finalDepthTex = highResDepthTex[0]
 
             // Step 3: Apply Bokeh
             val outputTex = IntArray(1)
@@ -115,7 +120,7 @@ class OglBokehProcessor {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(bokehProgramId, "uInputTexture"), 0)
 
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, highResDepthTex[0])
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, finalDepthTex)
             GLES30.glUniform1i(GLES30.glGetUniformLocation(bokehProgramId, "uDepthTexture"), 1)
 
             GLES30.glUniform1f(GLES30.glGetUniformLocation(bokehProgramId, "uMaxBlurRadius"), originalImage.width.toFloat() / 24.0f)
@@ -155,11 +160,25 @@ class OglBokehProcessor {
     }
 
     private fun sampleDepth(depthMap: Bitmap, x: Float, y: Float): Float {
-        val px = (x * depthMap.width).toInt().coerceIn(0, depthMap.width - 1)
-        val py = (y * depthMap.height).toInt().coerceIn(0, depthMap.height - 1)
-        val color = depthMap.getPixel(px, py)
-        // Assume depth is in R channel
-        return (color shr 16 and 0xFF) / 255.0f
+        val px = (x * (depthMap.width - 1)).toInt().coerceIn(0, depthMap.width - 1)
+        val py = (y * (depthMap.height - 1)).toInt().coerceIn(0, depthMap.height - 1)
+        val radius = maxOf((minOf(depthMap.width, depthMap.height) * 0.045f).toInt(), 3)
+        val samples = ArrayList<Float>((radius * 2 + 1) * (radius * 2 + 1))
+
+        val xStart = maxOf(px - radius, 0)
+        val xEnd = minOf(px + radius, depthMap.width - 1)
+        val yStart = maxOf(py - radius, 0)
+        val yEnd = minOf(py + radius, depthMap.height - 1)
+        for (sampleY in yStart..yEnd) {
+            for (sampleX in xStart..xEnd) {
+                val color = depthMap.getPixel(sampleX, sampleY)
+                samples.add(((color shr 16) and 0xFF) / 255.0f)
+            }
+        }
+
+        if (samples.isEmpty()) return 0.5f
+        samples.sort()
+        return samples[samples.size / 2]
     }
 
     private fun createTexture(bitmap: Bitmap, filterNearest: Boolean = false, mipmap: Boolean = false): Int {

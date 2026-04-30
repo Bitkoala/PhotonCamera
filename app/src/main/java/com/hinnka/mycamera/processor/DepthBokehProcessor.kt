@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.hinnka.mycamera.gallery.GalleryManager
 import com.hinnka.mycamera.ml.DepthEstimator
+import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -14,10 +15,15 @@ import kotlinx.coroutines.sync.withLock
  * and realistic bokeh convolution.
  */
 class DepthBokehProcessor(context: Context) {
+    companion object {
+        private const val TAG = "DepthBokehProcessor"
+    }
+
     private val appContext = context.applicationContext
     private val processor = OglBokehProcessor()
     private val depthEstimator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        DepthEstimator(appContext)
+//        DepthEstimator(appContext, DepthEstimator.MODEL_DEPTH_ANYTHING)
+        DepthEstimator(appContext, DepthEstimator.MODEL_MIDAS)
     }
     private val mutex = Mutex()
 
@@ -66,9 +72,18 @@ class DepthBokehProcessor(context: Context) {
 
         var result: Bitmap? = null
         if (depthMap != null) {
+            val preparedDepth = DepthBokehDepthPreprocessor.prepare(
+                depthMap,
+                focusX ?: 0.5f,
+                focusY ?: 0.5f
+            )
+            PLog.d(
+                TAG,
+                "Prepared bokeh depth: inverted=${preparedDepth.inverted} focusDepth=${preparedDepth.focusDepth} normalScore=${preparedDepth.normalScore} invertedScore=${preparedDepth.invertedScore}"
+            )
             result = processor.applyBokeh(
                 originalImage,
-                depthMap,
+                preparedDepth.depthMap,
                 focusX ?: 0.5f,
                 focusY ?: 0.5f,
                 aperture
