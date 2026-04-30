@@ -655,8 +655,10 @@
     <string name="settings_raw_white_point_correction">RAW 白点校正</string>
     <string name="settings_export_dng_with_raw_export">导出 RAW 时同时导出 DNG</string>
     <string name="settings_export_dng_with_raw_export_description">导出 RAW 照片时，同时将对应的原始 DNG 文件导出到系统相册。</string>
-    <string name="settings_raw_auto_white_balance_estimate">RAW 自动白平衡估计</string>
+    <string name="settings_raw_auto_white_balance_estimate">RAW 自动白平衡</string>
     <string name="settings_raw_auto_white_balance_estimate_description">显影 DNG 时从 RAW 像素估计白平衡，适用于设备白平衡元数据不可靠的情况。</string>
+    <string name="settings_raw_auto_black_level_correction">RAW 自动黑电平</string>
+    <string name="settings_raw_auto_black_level_correction_description">显影 DNG 时从 RAW 暗部像素估计黑电平，并在 0、16、64、100 和元数据黑电平中选择最接近的值。</string>
     <string name="ghost_mode">幻影模式</string>
     <string name="close_ghost_mode">关闭幻影模式</string>
     <string name="ghost_mode_dialog_title">开启幻影模式</string>

@@ -61,6 +61,7 @@ data class UserPreferences(
     val rawBlackPointCorrection: Float = 0f,
     val rawWhitePointCorrection: Float = 0f,
     val rawAutoWhiteBalanceEstimate: Boolean = false,
+    val rawAutoBlackLevelCorrection: Boolean = false,
     val exportDngWithRawExport: Boolean = false,
     val frameId: String? = null,
     val showHistogram: Boolean = true,
@@ -151,6 +152,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BLACK_POINT_CORRECTION_KEY = floatPreferencesKey("raw_black_point_correction")
         private val RAW_WHITE_POINT_CORRECTION_KEY = floatPreferencesKey("raw_white_point_correction")
         private val RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY = booleanPreferencesKey("raw_auto_white_balance_estimate")
+        private val RAW_AUTO_BLACK_LEVEL_CORRECTION_KEY = booleanPreferencesKey("raw_auto_black_level_correction")
         private val EXPORT_DNG_WITH_RAW_EXPORT_KEY = booleanPreferencesKey("export_dng_with_raw_export")
         private val PHANTOM_BASELINE_LUT_ID_KEY = stringPreferencesKey("phantom_baseline_lut_id")
         private val FRAME_ID_KEY = stringPreferencesKey("frame_id")
@@ -250,6 +252,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawBlackPointCorrection = preferences[RAW_BLACK_POINT_CORRECTION_KEY] ?: 0f,
                 rawWhitePointCorrection = preferences[RAW_WHITE_POINT_CORRECTION_KEY] ?: 0f,
                 rawAutoWhiteBalanceEstimate = preferences[RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY] ?: false,
+                rawAutoBlackLevelCorrection = preferences[RAW_AUTO_BLACK_LEVEL_CORRECTION_KEY] ?: false,
                 exportDngWithRawExport = preferences[EXPORT_DNG_WITH_RAW_EXPORT_KEY] ?: false,
                 phantomBaselineLutId = preferences[PHANTOM_BASELINE_LUT_ID_KEY],
                 frameId = preferences[FRAME_ID_KEY],
@@ -497,6 +500,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveRawAutoWhiteBalanceEstimate(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[RAW_AUTO_WHITE_BALANCE_ESTIMATE_KEY] = enabled
+        }
+    }
+
+    suspend fun saveRawAutoBlackLevelCorrection(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[RAW_AUTO_BLACK_LEVEL_CORRECTION_KEY] = enabled
         }
     }
 

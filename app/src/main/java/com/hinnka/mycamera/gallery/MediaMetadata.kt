@@ -41,6 +41,7 @@ data class MediaMetadata(
     val rawBlackPointCorrection: Float? = null,
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
+    val rawAutoBlackLevelCorrection: Boolean? = null,
     val rawDcpId: String? = null,
     // 边框水印配置
     val frameId: String? = null,
@@ -180,6 +181,7 @@ data class MediaMetadata(
             put("rawBlackPointCorrection", rawBlackPointCorrection?.toDouble() ?: JSONObject.NULL)
             put("rawWhitePointCorrection", rawWhitePointCorrection?.toDouble() ?: JSONObject.NULL)
             put("rawAutoWhiteBalanceEstimate", rawAutoWhiteBalanceEstimate ?: JSONObject.NULL)
+            put("rawAutoBlackLevelCorrection", rawAutoBlackLevelCorrection ?: JSONObject.NULL)
             put("rawDcpId", rawDcpId ?: JSONObject.NULL)
 
             put("frameId", frameId ?: JSONObject.NULL)
@@ -350,6 +352,7 @@ data class MediaMetadata(
                     rawBlackPointCorrection = if (obj.isNull("rawBlackPointCorrection")) null else obj.optDouble("rawBlackPointCorrection").toFloat(),
                     rawWhitePointCorrection = if (obj.isNull("rawWhitePointCorrection")) null else obj.optDouble("rawWhitePointCorrection").toFloat(),
                     rawAutoWhiteBalanceEstimate = if (obj.isNull("rawAutoWhiteBalanceEstimate")) null else obj.optBoolean("rawAutoWhiteBalanceEstimate"),
+                    rawAutoBlackLevelCorrection = if (obj.isNull("rawAutoBlackLevelCorrection")) null else obj.optBoolean("rawAutoBlackLevelCorrection"),
                     rawDcpId = if (obj.isNull("rawDcpId")) null else obj.optString("rawDcpId"),
                     frameId = if (obj.isNull("frameId")) null else obj.optString("frameId"),
                     width = obj.optInt("width", 0),

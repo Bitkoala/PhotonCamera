@@ -639,8 +639,10 @@
     <string name="settings_raw_white_point_correction">RAW White Point Correction</string>
     <string name="settings_export_dng_with_raw_export">Export DNG with RAW photos</string>
     <string name="settings_export_dng_with_raw_export_description">When exporting a RAW photo, also export its original DNG file to the system gallery.</string>
-    <string name="settings_raw_auto_white_balance_estimate">RAW auto white balance estimate</string>
+    <string name="settings_raw_auto_white_balance_estimate">RAW auto white balance</string>
     <string name="settings_raw_auto_white_balance_estimate_description">Estimate white balance from RAW pixels when developing DNG files, useful when device metadata is unreliable.</string>
+    <string name="settings_raw_auto_black_level_correction">RAW auto black level</string>
+    <string name="settings_raw_auto_black_level_correction_description">Estimate the DNG black level from RAW dark pixels and choose the nearest preset from 0, 16, 64, 100, or the metadata value.</string>
     <string name="settings_use_p010">P010 (10-bit YUV)</string>
     <string name="settings_use_p010_description">Enable 10-bit YUV output for better image data precision. Effective on supported devices when RAW is disabled.</string>
     <string name="settings_use_hlg10">HLG10 HDR</string>

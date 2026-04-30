@@ -240,6 +240,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val rawAutoWhiteBalanceEstimate: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.rawAutoWhiteBalanceEstimate }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val rawAutoBlackLevelCorrection: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.rawAutoBlackLevelCorrection }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val exportDngWithRawExport: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.exportDngWithRawExport }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -703,6 +706,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setRawAutoWhiteBalanceEstimate(enabled: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveRawAutoWhiteBalanceEstimate(enabled) }
     }
+    fun setRawAutoBlackLevelCorrection(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveRawAutoBlackLevelCorrection(enabled) }
+    }
     fun importRawDcp(uri: android.net.Uri, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
             val success = contentRepository.getCustomImportManager().importDcp(uri) != null
@@ -831,6 +837,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
+            rawAutoBlackLevelCorrection = userPrefs?.rawAutoBlackLevelCorrection ?: false,
             width = width,
             height = height,
             ratio = aspectRatio,
@@ -2506,6 +2513,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
+                rawAutoBlackLevelCorrection = userPrefs?.rawAutoBlackLevelCorrection ?: false,
                 width = image.width,
                 height = image.height,
                 ratio = aspectRatio,
@@ -2615,6 +2623,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
+                rawAutoBlackLevelCorrection = userPrefs?.rawAutoBlackLevelCorrection ?: false,
                 width = bitmap.width,
                 height = bitmap.height,
                 ratio = mapVideoAspectRatioToPhotoAspectRatio(currentState.videoConfig.aspectRatio),
@@ -2753,6 +2762,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
+                rawAutoBlackLevelCorrection = userPrefs?.rawAutoBlackLevelCorrection ?: false,
                 width = (images[0].width.toFloat() * superResScale).roundToInt(),
                 height = (images[0].height.toFloat() * superResScale).roundToInt(),
                 ratio = aspectRatio,
@@ -2899,6 +2909,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
+            rawAutoBlackLevelCorrection = userPrefs?.rawAutoBlackLevelCorrection ?: false,
             width = image.width,
             height = image.height,
             ratio = aspectRatio,

@@ -109,6 +109,24 @@ object GalleryManager {
     private val detailHdrBuildJobs = ConcurrentHashMap<String, Job>()
     private val _detailHdrReadyEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val detailHdrReadyEvents: SharedFlow<String> = _detailHdrReadyEvents.asSharedFlow()
+
+    private suspend fun resolveRawAutoBlackLevelCorrection(
+        context: Context,
+        metadata: MediaMetadata?
+    ): Boolean {
+        return metadata?.rawAutoBlackLevelCorrection
+            ?: (ContentRepository.getInstance(context).userPreferencesRepository.userPreferences.firstOrNull()
+                ?.rawAutoBlackLevelCorrection ?: false)
+    }
+
+    private suspend fun resolveRawAutoWhiteBalanceEstimate(
+        context: Context,
+        metadata: MediaMetadata?
+    ): Boolean {
+        return metadata?.rawAutoWhiteBalanceEstimate
+            ?: (ContentRepository.getInstance(context).userPreferencesRepository.userPreferences.firstOrNull()
+                ?.rawAutoWhiteBalanceEstimate ?: false)
+    }
     private val _photoLibraryChangedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     val photoLibraryChangedEvents: SharedFlow<Unit> = _photoLibraryChangedEvents.asSharedFlow()
     private val hdrWorkLock = Any()
@@ -1124,7 +1142,8 @@ object GalleryManager {
                 rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
                 rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-                rawAutoWhiteBalanceEstimate = metadata.rawAutoWhiteBalanceEstimate ?: false,
+                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+                rawAutoBlackLevelCorrection = resolveRawAutoBlackLevelCorrection(context, metadata),
                 sharpeningValue = 0.4f,
                 rawDcpId = metadata.rawDcpId
             ) ?: return@withContext
@@ -1685,7 +1704,8 @@ object GalleryManager {
                     rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
                     rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
                     rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-                    rawAutoWhiteBalanceEstimate = metadata.rawAutoWhiteBalanceEstimate ?: false,
+                    rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+                    rawAutoBlackLevelCorrection = resolveRawAutoBlackLevelCorrection(context, metadata),
                     sharpeningValue = 0.4f,
                     denoiseValue = 0.2f,
                     rawDcpId = metadata.rawDcpId
@@ -2551,7 +2571,8 @@ object GalleryManager {
                         rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
                         rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
                         rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
-                        rawAutoWhiteBalanceEstimate = updatedMetadata.rawAutoWhiteBalanceEstimate ?: false,
+                        rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
+                        rawAutoBlackLevelCorrection = resolveRawAutoBlackLevelCorrection(context, updatedMetadata),
                         sharpeningValue = 0.4f,
                         denoiseValue = updatedMetadata.rawDenoiseValue,
                         rawDcpId = updatedMetadata.rawDcpId,
@@ -2666,7 +2687,8 @@ object GalleryManager {
                     rawExposureCompensation = updatedMetadata?.rawExposureCompensation ?: 0f,
                     rawBlackPointCorrection = updatedMetadata?.rawBlackPointCorrection ?: 0f,
                     rawWhitePointCorrection = updatedMetadata?.rawWhitePointCorrection ?: 0f,
-                    rawAutoWhiteBalanceEstimate = updatedMetadata?.rawAutoWhiteBalanceEstimate ?: false,
+                    rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
+                    rawAutoBlackLevelCorrection = resolveRawAutoBlackLevelCorrection(context, updatedMetadata),
                     sharpeningValue = 0.4f,
                     denoiseValue = (updatedMetadata ?: MediaMetadata()).rawDenoiseValue,
                     rawDcpId = updatedMetadata?.rawDcpId,

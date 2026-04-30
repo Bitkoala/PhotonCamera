@@ -431,6 +431,139 @@ static float sampleDngGainMapBilinear(const DngGainMap &gainMap, float x, float 
   return top + (bottom - top) * ty;
 }
 
+struct AutoBlackLevelChoice {
+  bool valid = false;
+  bool usesMetadata = true;
+  float estimated = 0.0f;
+  float selected = 0.0f;
+};
+
+static int percentileFromHistogram(const std::vector<int> &histogram, int count,
+                                   float percentile) {
+  if (count <= 0) {
+    return 0;
+  }
+  const int target = static_cast<int>((count - 1) * percentile);
+  int cumulative = 0;
+  for (int value = 0; value < static_cast<int>(histogram.size()); ++value) {
+    cumulative += histogram[value];
+    if (cumulative > target) {
+      return value;
+    }
+  }
+  return static_cast<int>(histogram.size()) - 1;
+}
+
+static AutoBlackLevelChoice chooseAutoBlackLevelPreset(
+    LibRaw &rawProcessor, const float metadataBlackLevels[4]) {
+  AutoBlackLevelChoice choice;
+  if (!rawProcessor.imgdata.rawdata.raw_image ||
+      !rawProcessor.imgdata.idata.filters) {
+    return choice;
+  }
+
+  const int rawWidth = rawProcessor.imgdata.sizes.raw_width;
+  const int rawHeight = rawProcessor.imgdata.sizes.raw_height;
+  const int rawPitch = rawProcessor.imgdata.sizes.raw_pitch > 0
+                           ? rawProcessor.imgdata.sizes.raw_pitch /
+                                 static_cast<int>(sizeof(ushort))
+                           : rawWidth;
+  const int left =
+      std::max(0, static_cast<int>(rawProcessor.imgdata.sizes.left_margin));
+  const int top =
+      std::max(0, static_cast<int>(rawProcessor.imgdata.sizes.top_margin));
+  const int activeWidth = static_cast<int>(rawProcessor.imgdata.sizes.width);
+  const int activeHeight = static_cast<int>(rawProcessor.imgdata.sizes.height);
+  const int right = std::min(rawWidth - 1, left + activeWidth - 1);
+  const int bottom = std::min(rawHeight - 1, top + activeHeight - 1);
+  if (right < left || bottom < top) {
+    return choice;
+  }
+
+  std::vector<int> histograms[4];
+  for (auto &histogram : histograms) {
+    histogram.assign(65536, 0);
+  }
+  int counts[4] = {};
+  auto *rawImage = rawProcessor.imgdata.rawdata.raw_image;
+  for (int y = top; y <= bottom; ++y) {
+    for (int x = left; x <= right; ++x) {
+      const int channel = rawProcessor.FC(y, x);
+      if (channel < 0 || channel > 3) {
+        continue;
+      }
+      const int value = rawImage[y * rawPitch + x] & 0xFFFF;
+      histograms[channel][value]++;
+      counts[channel]++;
+    }
+  }
+
+  float p01Sum = 0.0f;
+  int validChannels = 0;
+  for (int channel = 0; channel < 4; ++channel) {
+    if (counts[channel] <= 0) {
+      continue;
+    }
+    p01Sum += static_cast<float>(
+        percentileFromHistogram(histograms[channel], counts[channel], 0.001f));
+    ++validChannels;
+  }
+  if (validChannels <= 0) {
+    return choice;
+  }
+
+  const float metadataAverage =
+      (metadataBlackLevels[0] + metadataBlackLevels[1] +
+       metadataBlackLevels[2] + metadataBlackLevels[3]) *
+      0.25f;
+  const float estimated = p01Sum / static_cast<float>(validChannels);
+  const float presets[] = {0.0f, 16.0f, 64.0f, 100.0f, metadataAverage};
+  int bestIndex = 0;
+  float bestDistance = std::abs(estimated - presets[0]);
+  for (int i = 1; i < 5; ++i) {
+    const float distance = std::abs(estimated - presets[i]);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+
+  choice.valid = true;
+  choice.usesMetadata = bestIndex == 4;
+  choice.estimated = estimated;
+  choice.selected = presets[bestIndex];
+  LOGI("dng auto black level: estimated=%0.2f selected=%s%0.2f "
+       "metadata=%0.2f",
+       estimated, choice.usesMetadata ? "metadata:" : "", choice.selected,
+       metadataAverage);
+  return choice;
+}
+
+static void overrideLibRawBlackLevels(LibRaw &rawProcessor,
+                                      const float blackLevels[4]) {
+  rawProcessor.imgdata.params.user_black = 0;
+  rawProcessor.imgdata.color.black = 0;
+  rawProcessor.imgdata.color.dng_levels.dng_black = 0;
+  rawProcessor.imgdata.color.dng_levels.dng_fblack = 0.0f;
+
+  for (int i = 0; i < 4; ++i) {
+    const unsigned level =
+        static_cast<unsigned>(std::max(0.0f, blackLevels[i]) + 0.5f);
+    rawProcessor.imgdata.params.user_cblack[i] = static_cast<int>(level);
+    rawProcessor.imgdata.color.cblack[i] = level;
+    rawProcessor.imgdata.color.dng_levels.dng_cblack[i] = level;
+    rawProcessor.imgdata.color.dng_levels.dng_fcblack[i] =
+        static_cast<float>(level);
+  }
+
+  rawProcessor.imgdata.color.cblack[4] = 0;
+  rawProcessor.imgdata.color.cblack[5] = 0;
+  rawProcessor.imgdata.color.dng_levels.dng_cblack[4] = 0;
+  rawProcessor.imgdata.color.dng_levels.dng_cblack[5] = 0;
+  rawProcessor.imgdata.color.dng_levels.dng_fcblack[4] = 0.0f;
+  rawProcessor.imgdata.color.dng_levels.dng_fcblack[5] = 0.0f;
+}
+
 static bool applySupportedDngGainMaps(LibRaw &rawProcessor, const float blackLevels[4]) {
   if (!rawProcessor.imgdata.rawdata.raw_image || !rawProcessor.imgdata.idata.filters) {
     return false;
@@ -1849,7 +1982,8 @@ JNIEXPORT jobject JNICALL
 Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     JNIEnv *env, jobject /* this */, jstring filePath, jfloat xr, jfloat yr,
     jfloat xg, jfloat yg, jfloat xb, jfloat yb, jfloat xw, jfloat yw,
-    jboolean useRawAutoWhiteBalanceEstimate) {
+    jboolean useRawAutoWhiteBalanceEstimate,
+    jboolean useRawAutoBlackLevelCorrection) {
 
   const char *path = env->GetStringUTFChars(filePath, nullptr);
   if (path == nullptr) {
@@ -1876,7 +2010,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   }
 
   jobject embeddedPreviewBitmap = nullptr;
-  ret = RawProcessor.unpack_thumb();
+  /*ret = RawProcessor.unpack_thumb();
   if (ret == LIBRAW_SUCCESS) {
     libraw_processed_image_t *thumb = RawProcessor.dcraw_make_mem_thumb(&ret);
     if (thumb && ret == LIBRAW_SUCCESS) {
@@ -1906,11 +2040,32 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   } else {
     LOGI("processDngNative: unpack_thumb failed ret=%d err=%s", ret,
          libraw_strerror(ret));
-  }
+  }*/
 
   float dngBlackLevels[4] = {};
   for (int i = 0; i < 4; ++i) {
     dngBlackLevels[i] = static_cast<float>(RawProcessor.imgdata.color.dng_levels.dng_cblack[6 + i]);
+  }
+  LOGI("dng black levels: %f %f %f %f", dngBlackLevels[0], dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]);
+  const float metadataBlackLevels[4] = {
+      dngBlackLevels[0], dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]};
+  if (useRawAutoBlackLevelCorrection == JNI_TRUE) {
+    const AutoBlackLevelChoice choice =
+        chooseAutoBlackLevelPreset(RawProcessor, metadataBlackLevels);
+    if (choice.valid && !choice.usesMetadata) {
+      for (float &level : dngBlackLevels) {
+        level = choice.selected;
+      }
+      overrideLibRawBlackLevels(RawProcessor, dngBlackLevels);
+      LOGI("dng black levels auto override: %f %f %f %f", dngBlackLevels[0],
+           dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]);
+    } else if (choice.valid) {
+      LOGI("dng auto black level: using metadata black levels");
+    } else {
+      LOGI("dng auto black level: unavailable, using metadata black levels");
+    }
+  } else {
+    LOGI("dng auto black level: disabled, using metadata black levels");
   }
   const bool appliedDngGainMap = applySupportedDngGainMaps(RawProcessor, dngBlackLevels);
   LOGI("dng gain map: opcode2_len=%u applied=%d", RawProcessor.imgdata.color.dng_levels.rawopcodes[1].len,
