@@ -209,6 +209,8 @@
     <string name="raw_dcp_import">导入 DCP</string>
     <string name="raw_dcp_import_success">已导入 DCP：%1$s</string>
     <string name="raw_dcp_import_failed">导入 DCP 失败</string>
+    <string name="raw_dcp_delete_success">已删除 DCP</string>
+    <string name="raw_dcp_delete_failed">删除 DCP 失败</string>
     <string name="settings_baseline_phantom_title">幻影模式基准色彩校正</string>
     <string name="settings_baseline_phantom_description">选择幻影模式创意 LUT 之前先应用的基准 LUT 与基准配方。</string>
     <string name="settings_baseline_dialog_description">为当前目标选择一个基准 LUT。它会在普通创意 LUT 之前应用。</string>
@@ -427,6 +429,7 @@
     <string name="import_frame_image">导入图片边框</string>
     <string name="delete_filter_confirm_message">删除滤镜 "%s"？</string>
     <string name="delete_frame_confirm_message">删除边框 "%s"？</string>
+    <string name="delete_dcp_confirm_message">删除 DCP "%s"？</string>
     <string name="rename_dialog_title">重命名</string>
     <string name="export_lut_cube">导出LUT</string>
     <string name="copy">复制</string>

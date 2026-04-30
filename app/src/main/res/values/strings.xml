@@ -211,6 +211,8 @@
     <string name="raw_dcp_import">Import DCP</string>
     <string name="raw_dcp_import_success">Imported DCP: %1$s</string>
     <string name="raw_dcp_import_failed">Failed to import DCP</string>
+    <string name="raw_dcp_delete_success">Deleted DCP</string>
+    <string name="raw_dcp_delete_failed">Failed to delete DCP</string>
     <string name="settings_baseline_phantom_title">Phantom Baseline Color Correction</string>
     <string name="settings_baseline_phantom_description">Choose the baseline LUT and recipe used before Phantom mode creative LUT processing.</string>
     <string name="settings_baseline_dialog_description">Select a baseline LUT for this target. It will be applied before the regular creative LUT.</string>
@@ -432,6 +434,7 @@
     <string name="import_frame_image">Import Image Frame</string>
     <string name="delete_filter_confirm_message">Delete LUT \"%s\"?</string>
     <string name="delete_frame_confirm_message">Delete frame \"%s\"?</string>
+    <string name="delete_dcp_confirm_message">Delete DCP \"%s\"?</string>
     <string name="rename_dialog_title">Rename</string>
     <string name="export_lut_cube">Export LUT</string>
     <string name="copy">Copy</string>

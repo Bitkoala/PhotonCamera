@@ -837,6 +837,15 @@ fun PhotoEditScreen(
                                 onImportDcp = {
                                     rawDcpLauncher.launch(arrayOf("application/octet-stream", "*/*"))
                                 },
+                                onDeleteDcp = { dcp ->
+                                    viewModel.deleteRawDcp(currentPhoto, dcp.id) { success ->
+                                        Toast.makeText(
+                                            context,
+                                            if (success) R.string.raw_dcp_delete_success else R.string.raw_dcp_delete_failed,
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
                                 onRawNlmNoiseFactorChange = {
                                     viewModel.saveRawDenoiseValue(currentPhoto, it)
                                 },

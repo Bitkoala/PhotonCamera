@@ -712,6 +712,24 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun importRawDcp(uri: android.net.Uri, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
             val success = contentRepository.getCustomImportManager().importDcp(uri) != null
+            if (success) {
+                contentRepository.refreshCustomContent()
+            }
+            onComplete(success)
+        }
+    }
+
+    fun deleteRawDcp(dcpId: String, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                contentRepository.getCustomImportManager().deleteCustomDcp(dcpId)
+            }
+            if (success) {
+                if (rawDcpId.firstOrNull() == dcpId) {
+                    userPreferencesRepository.saveRawDcpId(null)
+                }
+                contentRepository.refreshCustomContent()
+            }
             onComplete(success)
         }
     }

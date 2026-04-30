@@ -1184,6 +1184,15 @@ fun SettingsScreen(
                         rawWhitePointCorrection = rawWhitePointCorrection,
                         onSelectDcp = { viewModel.setRawDcpId(it) },
                         onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
+                        onDeleteDcp = { dcp ->
+                            viewModel.deleteRawDcp(dcp.id) { success ->
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (success) R.string.raw_dcp_delete_success else R.string.raw_dcp_delete_failed,
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
                         onRawNlmNoiseFactorChange = { viewModel.setRawNlmNoiseFactor(it) },
                         onRawExposureCompensationChange = { viewModel.setRawExposureCompensation(it) },
                         onRawBlackPointCorrectionChange = { viewModel.setRawBlackPointCorrection(it) },

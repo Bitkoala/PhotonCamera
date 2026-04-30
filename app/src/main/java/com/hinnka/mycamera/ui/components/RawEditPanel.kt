@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +33,7 @@ fun RawEditPanel(
     rawWhitePointCorrection: Float,
     onSelectDcp: (String?) -> Unit,
     onImportDcp: () -> Unit,
+    onDeleteDcp: (DcpInfo) -> Unit,
     onRawNlmNoiseFactorChange: (Float) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
@@ -50,7 +52,8 @@ fun RawEditPanel(
             selectedDcpId = selectedDcpId,
             availableDcps = availableDcps,
             onSelectDcp = onSelectDcp,
-            onImportDcp = onImportDcp
+            onImportDcp = onImportDcp,
+            onDeleteDcp = onDeleteDcp
         )
         Spacer(modifier = Modifier.height(16.dp))
         SliderSettingItem(
@@ -106,9 +109,11 @@ fun RawDcpSelector(
     selectedDcpId: String?,
     availableDcps: List<DcpInfo>,
     onSelectDcp: (String?) -> Unit,
-    onImportDcp: () -> Unit
+    onImportDcp: () -> Unit,
+    onDeleteDcp: (DcpInfo) -> Unit
 ) {
     var showSheet by remember { mutableStateOf(false) }
+    var pendingDeleteDcp by remember { mutableStateOf<DcpInfo?>(null) }
     val selectedName = availableDcps.firstOrNull { it.id == selectedDcpId }?.getName()
         ?: stringResource(R.string.none)
 
@@ -200,12 +205,37 @@ fun RawDcpSelector(
                             onClick = {
                                 onSelectDcp(dcp.id)
                                 showSheet = false
-                            }
+                            },
+                            isCustom = !dcp.isBuiltIn,
+                            onDelete = { pendingDeleteDcp = dcp }
                         )
                     }
                 }
             }
         }
+    }
+
+    pendingDeleteDcp?.let { dcp ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteDcp = null },
+            title = { Text(stringResource(R.string.delete_confirm_title)) },
+            text = { Text(stringResource(R.string.delete_dcp_confirm_message, dcp.getName())) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteDcp(dcp)
+                        pendingDeleteDcp = null
+                    }
+                ) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteDcp = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 
@@ -213,7 +243,9 @@ fun RawDcpSelector(
 private fun DcpItem(
     name: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    isCustom: Boolean = false,
+    onDelete: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -240,6 +272,20 @@ private fun DcpItem(
                 tint = Color(0xFFFF6B35),
                 modifier = Modifier.size(20.dp)
             )
+        }
+        if (isCustom && onDelete != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.delete),
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }

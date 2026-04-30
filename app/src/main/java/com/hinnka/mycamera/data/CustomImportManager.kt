@@ -769,6 +769,42 @@ class CustomImportManager(private val context: Context) {
     }
 
     /**
+     * 删除自定义 DCP
+     */
+    fun deleteCustomDcp(dcpId: String): Boolean {
+        return try {
+            val configFile = File(context.filesDir, CUSTOM_DCP_CONFIG)
+            if (!configFile.exists()) {
+                return false
+            }
+
+            val jsonArray = JSONArray(configFile.readText())
+            val newArray = JSONArray()
+
+            var fileName: String? = null
+            for (i in 0 until jsonArray.length()) {
+                val dcpObj = jsonArray.getJSONObject(i)
+                if (dcpObj.getString("id") == dcpId) {
+                    fileName = dcpObj.getString("fileName")
+                } else {
+                    newArray.put(dcpObj)
+                }
+            }
+
+            if (fileName == null) {
+                return false
+            }
+
+            configFile.writeText(newArray.toString())
+            File(customDcpDir, fileName).delete()
+            true
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to delete custom DCP", e)
+            false
+        }
+    }
+
+    /**
      * 保存 LUT 到配置文件
      */
     private fun saveLutToConfig(lutId: String, name: String, fileName: String, category: String? = null) {

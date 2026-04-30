@@ -341,6 +341,7 @@
     <string name="import_frame_image">匯入圖片邊框</string>
     <string name="delete_filter_confirm_message">要刪除濾鏡 "%s"？</string>
     <string name="delete_frame_confirm_message">要刪除邊框 "%s"？</string>
+    <string name="delete_dcp_confirm_message">要刪除 DCP "%s"？</string>
     <string name="rename_dialog_title">重新命名</string>
     <string name="export_lut_cube">匯出LUT</string>
     <string name="copy">複製</string>
@@ -412,6 +413,8 @@
     <string name="settings_raw_restore_lut_description">選擇用於 RAW 色彩還原的 LUT。選擇「無」以獲得 Log 風格輸出。</string>
     <string name="settings_raw_profile">RAW 風格方案</string>
     <string name="settings_raw_profile_description">統一設定 RAW 的色彩空間、Log 曲線與還原 LUT。</string>
+    <string name="raw_dcp_delete_success">已刪除 DCP</string>
+    <string name="raw_dcp_delete_failed">刪除 DCP 失敗</string>
     <string name="settings_dro_mode">RAW 動態範圍最佳化 (DRO)</string>
     <string name="settings_dro_mode_description">透過利用 Log 曲線高光冗餘，在不犧牲高光的前提下提升陰影細節。</string>
     <string name="settings_dro_off">關閉</string>

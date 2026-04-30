@@ -1634,6 +1634,22 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteRawDcp(mediaData: MediaData, dcpId: String, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                contentRepository.getCustomImportManager().deleteCustomDcp(dcpId)
+            }
+            if (success) {
+                if (editRawDcpId.value == dcpId) {
+                    editRawDcpId.value = null
+                    persistRawEditMetadata(mediaData)
+                }
+                contentRepository.refreshCustomContent()
+            }
+            onComplete(success)
+        }
+    }
+
     /**
      * 设置裁剪矩形（归一化坐标 0-1）
      */
