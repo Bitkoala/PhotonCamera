@@ -146,36 +146,11 @@ class GalleryRepository(private val context: Context) {
      * 查询私有存储中的照片
      */
     private suspend fun queryPhotos(offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaData> {
-        val ids = GalleryManager.getPhotoIds(context)
-        val photos = mutableListOf<MediaData>()
-        var skippedValidCount = 0
-        var invalidCount = 0
-
-        for (id in ids) {
-            val photo = GalleryManager.buildPhotoData(context, id)
-            if (photo == null) {
-                invalidCount++
-                continue
-            }
-
-            if (skippedValidCount < offset) {
-                skippedValidCount++
-                continue
-            }
-
-            photos.add(photo)
-            if (photos.size >= limit) {
-                break
-            }
-        }
-
-        if (invalidCount > 0) {
-            PLog.w(
-                TAG,
-                "queryPhotos skipped $invalidCount invalid entries, offset=$offset, limit=$limit, loaded=${photos.size}"
-            )
-        }
-        return photos.sortedByDescending { it.dateAdded }
+        return GalleryManager.getPhotoIds(context)
+            .mapNotNull { GalleryManager.buildPhotoData(context, it) }
+            .sortedByDescending { it.dateAdded }
+            .drop(offset)
+            .take(limit)
     }
 
     private fun querySystemImages(offset: Int = 0, limit: Int? = null): List<MediaData> {
