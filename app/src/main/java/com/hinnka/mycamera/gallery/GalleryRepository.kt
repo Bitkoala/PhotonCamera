@@ -175,7 +175,7 @@ class GalleryRepository(private val context: Context) {
                 "queryPhotos skipped $invalidCount invalid entries, offset=$offset, limit=$limit, loaded=${photos.size}"
             )
         }
-        return photos
+        return photos.sortedByDescending { it.dateAdded }
     }
 
     private fun querySystemImages(offset: Int = 0, limit: Int? = null): List<MediaData> {

@@ -118,7 +118,7 @@ fun GalleryDetailScreen(
         if (result.resultCode == Activity.RESULT_OK) {
             // User confirmed deletion, delete internal photo
             viewModel.deletePhotoAfterConfirmation { success ->
-                if (success) {
+                if (success && viewModel.currentPhotos.value.isEmpty()) {
                     onBack()
                 }
             }
@@ -133,7 +133,7 @@ fun GalleryDetailScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.deleteSystemPhotoAfterConfirmation { success ->
-                if (success) {
+                if (success && viewModel.currentPhotos.value.isEmpty()) {
                     onBack()
                 }
             }

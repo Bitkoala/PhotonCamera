@@ -2092,7 +2092,6 @@ object GalleryManager {
         val baseDir = getPhotosBaseDir(context)
         return baseDir.listFiles()
             ?.filter { it.isDirectory }
-            ?.sortedByDescending { it.lastModified() }
             ?.map { it.name }
             ?: emptyList()
     }
@@ -2334,6 +2333,7 @@ object GalleryManager {
         }
 
         val photoFile = getPhotoFile(context, photoId)
+        val originalFile = getDngFile(context, photoId).takeIf { it.exists() } ?: getYuvFile(context, photoId).takeIf { it.exists() } ?: photoFile
         if (!photoFile.exists()) return@withContext null
         val videoFile = getVideoFile(context, photoId)
         val isBurstPhoto = hasBurstPhotos(context, photoId)
@@ -2342,7 +2342,7 @@ object GalleryManager {
             uri = Uri.fromFile(photoFile),
             thumbnailUri = thumbnailUri,
             displayName = photoFile.name,
-            dateAdded = photoFile.lastModified().takeIf { it > 0 } ?: getPhotoDir(context, photoId).lastModified(),
+            dateAdded = originalFile.lastModified().takeIf { it > 0 } ?: getPhotoDir(context, photoId).lastModified(),
             size = photoFile.length(),
             width = metadata.width,
             height = metadata.height,
@@ -2743,16 +2743,31 @@ object GalleryManager {
                     FileOutputStream(photoFile).use { out ->
                         processedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                     }
+                    // 刷新 RAW 后，AI 降噪结果已失效，清理之
+                    getAiDenoiseFile(context, photoId).takeIf { it.exists() }?.delete()
+
                     updatedMetadata?.let {
-                        generateBokehPhoto(context, photoId, it, processedBitmap.copy(Bitmap.Config.ARGB_8888, true))
-                        saveMetadata(context, photoId, it)
+                        val finalMetadata = it.copy(hasAiDenoisedBase = false)
+                        generateBokehPhoto(context, photoId, finalMetadata, processedBitmap.copy(Bitmap.Config.ARGB_8888, true))
+                        saveMetadata(context, photoId, finalMetadata)
+                        if (finalMetadata.manualHdrEffectEnabled) {
+                            deleteDetailHdrFile(context, photoId)
+                            queueDetailHdrCacheBuild(
+                                context = context,
+                                photoId = photoId,
+                                metadata = finalMetadata,
+                                sharpening = finalMetadata.sharpening ?: 0f,
+                                noiseReduction = finalMetadata.noiseReduction ?: 0f,
+                                chromaNoiseReduction = finalMetadata.chromaNoiseReduction ?: 0f
+                            )
+                        }
                     }
                     // 生成缩略图
                     generateThumbnail(processedBitmap, thumbnailFile)
                 }
                 processedBitmap
             } catch (e: Exception) {
-                PLog.e(TAG, "Failed to import photo", e)
+                PLog.e(TAG, "Failed to refresh RAW preview", e)
                 null
             }
         }
