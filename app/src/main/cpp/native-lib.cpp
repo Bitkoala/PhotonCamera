@@ -2481,4 +2481,174 @@ JNIEXPORT void JNICALL Java_com_hinnka_mycamera_raw_DngRawData_freeNativeBuffer(
   }
 }
 
+JNIEXPORT void JNICALL
+Java_com_hinnka_mycamera_ml_DnCNNDenoiseEstimator_preprocessNative(
+    JNIEnv *env, jobject, jobject bitmap, jint x, jint y, jint w, jint h,
+    jobject outBuffer, jboolean isRgb, jboolean channelsFirst) {
+
+  AndroidBitmapInfo info;
+  void *pixels = nullptr;
+  if (AndroidBitmap_getInfo(env, bitmap, &info) < 0 ||
+      AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
+    LOGE("DnCNN preprocess: failed to lock bitmap");
+    return;
+  }
+
+  auto *out = static_cast<float *>(env->GetDirectBufferAddress(outBuffer));
+  if (!out || w <= 0 || h <= 0 || info.width <= 0 || info.height <= 0) {
+    AndroidBitmap_unlockPixels(env, bitmap);
+    return;
+  }
+
+  const int stride = static_cast<int>(info.stride / 4);
+  const auto *src = static_cast<const uint32_t *>(pixels);
+  const bool rgb = isRgb == JNI_TRUE;
+  const bool nchw = channelsFirst == JNI_TRUE;
+  const int pixelCount = w * h;
+
+#pragma omp parallel for num_threads(8)
+  for (int py = 0; py < h; ++py) {
+    for (int px = 0; px < w; ++px) {
+      const int sx = std::clamp(static_cast<int>(x + px), 0,
+                                static_cast<int>(info.width) - 1);
+      const int sy = std::clamp(static_cast<int>(y + py), 0,
+                                static_cast<int>(info.height) - 1);
+      const uint32_t pixel = src[sy * stride + sx];
+      const float r = static_cast<float>((pixel >> 0) & 0xFF) / 255.0f;
+      const float g = static_cast<float>((pixel >> 8) & 0xFF) / 255.0f;
+      const float b = static_cast<float>((pixel >> 16) & 0xFF) / 255.0f;
+      const int base = py * w + px;
+
+      if (rgb) {
+        if (nchw) {
+          out[base] = r;
+          out[pixelCount + base] = g;
+          out[pixelCount * 2 + base] = b;
+        } else {
+          const int outIdx = base * 3;
+          out[outIdx] = r;
+          out[outIdx + 1] = g;
+          out[outIdx + 2] = b;
+        }
+      } else {
+        out[base] = 0.299f * r + 0.587f * g + 0.114f * b;
+      }
+    }
+  }
+
+  AndroidBitmap_unlockPixels(env, bitmap);
+}
+
+JNIEXPORT void JNICALL
+Java_com_hinnka_mycamera_ml_DnCNNDenoiseEstimator_postprocessNative(
+    JNIEnv *env, jobject, jobject inBuffer, jobject srcBitmap, jobject dstBitmap,
+    jint patchX, jint patchY, jint srcX, jint srcY, jint dstX, jint dstY,
+    jint w, jint h, jint patchW, jint patchH, jfloat strength, jboolean isRgb,
+    jboolean channelsFirst) {
+
+  AndroidBitmapInfo srcInfo, dstInfo;
+  void *srcPixels = nullptr;
+  void *dstPixels = nullptr;
+  if (AndroidBitmap_getInfo(env, srcBitmap, &srcInfo) < 0 ||
+      AndroidBitmap_lockPixels(env, srcBitmap, &srcPixels) < 0) {
+    LOGE("DnCNN postprocess: failed to lock source bitmap");
+    return;
+  }
+  if (AndroidBitmap_getInfo(env, dstBitmap, &dstInfo) < 0 ||
+      AndroidBitmap_lockPixels(env, dstBitmap, &dstPixels) < 0) {
+    AndroidBitmap_unlockPixels(env, srcBitmap);
+    LOGE("DnCNN postprocess: failed to lock destination bitmap");
+    return;
+  }
+
+  auto *in = static_cast<float *>(env->GetDirectBufferAddress(inBuffer));
+  if (!in || w <= 0 || h <= 0 || patchW <= 0 || patchH <= 0 ||
+      srcInfo.width <= 0 || srcInfo.height <= 0 || dstInfo.width <= 0 ||
+      dstInfo.height <= 0) {
+    AndroidBitmap_unlockPixels(env, srcBitmap);
+    AndroidBitmap_unlockPixels(env, dstBitmap);
+    return;
+  }
+
+  const int srcStride = static_cast<int>(srcInfo.stride / 4);
+  const int dstStride = static_cast<int>(dstInfo.stride / 4);
+  const auto *src = static_cast<const uint32_t *>(srcPixels);
+  auto *dst = static_cast<uint32_t *>(dstPixels);
+  const bool rgb = isRgb == JNI_TRUE;
+  const bool nchw = channelsFirst == JNI_TRUE;
+  const float blend = std::clamp(static_cast<float>(strength), 0.0f, 1.0f);
+  const float invBlend = 1.0f - blend;
+  const int patchPixelCount = patchW * patchH;
+
+#pragma omp parallel for num_threads(8)
+  for (int py = 0; py < h; ++py) {
+    for (int px = 0; px < w; ++px) {
+      const int srcPx = std::clamp(static_cast<int>(srcX + px), 0,
+                                   static_cast<int>(srcInfo.width) - 1);
+      const int srcPy = std::clamp(static_cast<int>(srcY + py), 0,
+                                   static_cast<int>(srcInfo.height) - 1);
+      const int dstPx = static_cast<int>(dstX + px);
+      const int dstPy = static_cast<int>(dstY + py);
+      if (dstPx < 0 || dstPy < 0 || dstPx >= static_cast<int>(dstInfo.width) ||
+          dstPy >= static_cast<int>(dstInfo.height)) {
+        continue;
+      }
+
+      const int patchPx = std::clamp(static_cast<int>(patchX + px), 0,
+                                     static_cast<int>(patchW) - 1);
+      const int patchPy = std::clamp(static_cast<int>(patchY + py), 0,
+                                     static_cast<int>(patchH) - 1);
+      const int patchBase = patchPy * patchW + patchPx;
+      const uint32_t pixel = src[srcPy * srcStride + srcPx];
+      const float origR = static_cast<float>((pixel >> 0) & 0xFF);
+      const float origG = static_cast<float>((pixel >> 8) & 0xFF);
+      const float origB = static_cast<float>((pixel >> 16) & 0xFF);
+
+      float r;
+      float g;
+      float b;
+      if (rgb) {
+        float denR;
+        float denG;
+        float denB;
+        if (nchw) {
+          denR = in[patchBase] * 255.0f;
+          denG = in[patchPixelCount + patchBase] * 255.0f;
+          denB = in[patchPixelCount * 2 + patchBase] * 255.0f;
+        } else {
+          const int inIdx = patchBase * 3;
+          denR = in[inIdx] * 255.0f;
+          denG = in[inIdx + 1] * 255.0f;
+          denB = in[inIdx + 2] * 255.0f;
+        }
+
+        r = origR * invBlend + denR * blend;
+        g = origG * invBlend + denG * blend;
+        b = origB * invBlend + denB * blend;
+      } else {
+        const float cb =
+            -0.1687f * origR - 0.3313f * origG + 0.5f * origB + 128.0f;
+        const float cr =
+            0.5f * origR - 0.4187f * origG - 0.0813f * origB + 128.0f;
+        const float originalY = 0.299f * origR + 0.587f * origG + 0.114f * origB;
+        const float denoisedY = in[patchBase] * 255.0f;
+        const float newY = originalY * invBlend + denoisedY * blend;
+
+        r = newY + 1.402f * (cr - 128.0f);
+        g = newY - 0.344136f * (cb - 128.0f) - 0.714136f * (cr - 128.0f);
+        b = newY + 1.772f * (cb - 128.0f);
+      }
+
+      const auto resR = static_cast<uint32_t>(std::clamp(r, 0.0f, 255.0f));
+      const auto resG = static_cast<uint32_t>(std::clamp(g, 0.0f, 255.0f));
+      const auto resB = static_cast<uint32_t>(std::clamp(b, 0.0f, 255.0f));
+      dst[dstPy * dstStride + dstPx] =
+          0xFF000000u | (resB << 16) | (resG << 8) | resR;
+    }
+  }
+
+  AndroidBitmap_unlockPixels(env, srcBitmap);
+  AndroidBitmap_unlockPixels(env, dstBitmap);
+}
+
 } // extern "C"

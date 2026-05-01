@@ -2,10 +2,15 @@ package com.hinnka.mycamera.ml
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
+import android.os.SystemClock
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
-import org.tensorflow.lite.DataType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
@@ -14,20 +19,29 @@ import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class DnCNNDenoiseEstimator(
     context: Context,
-    private val modelAssetName: String = MODEL_DNCNN
+    private val modelAssetName: String = MODEL_DNCNN,
+    private val backend: Backend = Backend.AUTO
 ) {
     private var interpreter: Interpreter? = null
+    private val extraCpuInterpreters = mutableListOf<Interpreter>()
     private var gpuDelegate: GpuDelegate? = null
     private var nnApiDelegate: NnApiDelegate? = null
     private var isInitialized = false
+    private var activeBackend = "none"
+    private var cpuWorkerCount = 1
+    private var cpuThreadsPerInterpreter = 4
     private var inputWidth = 256
     private var inputHeight = 256
     private var outputWidth = 256
     private var outputHeight = 256
     private var inputChannelsFirst = false
+    private var outputChannelsFirst = false
+    private val interpreterMutex = Mutex()
 
     init {
         try {
@@ -35,34 +49,37 @@ class DnCNNDenoiseEstimator(
                 FileUtil.loadMappedFile(context, modelAssetName)
             }
 
-            val gpuOptions = Interpreter.Options()
-            val compatList = StartupTrace.measure("DnCNNDenoiseEstimator.CompatibilityList()") {
-                CompatibilityList()
-            }
-            gpuDelegate = StartupTrace.measure("DnCNNDenoiseEstimator.GpuDelegate()") {
-                if (compatList.isDelegateSupportedOnThisDevice) {
-                    val delegateOptions = compatList.bestOptionsForThisDevice
-                    GpuDelegate(delegateOptions)
-                } else {
-                    GpuDelegate()
+            if (backend == Backend.AUTO || backend == Backend.GPU) {
+                val gpuOptions = Interpreter.Options()
+                val compatList = StartupTrace.measure("DnCNNDenoiseEstimator.CompatibilityList()") {
+                    CompatibilityList()
                 }
-            }
-            StartupTrace.measure("DnCNNDenoiseEstimator.gpuOptions.addDelegate") {
-                gpuOptions.addDelegate(gpuDelegate)
-            }
-            try {
-                interpreter = StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter(GPU)") {
-                    Interpreter(modelFile, gpuOptions)
+                gpuDelegate = StartupTrace.measure("DnCNNDenoiseEstimator.GpuDelegate()") {
+                    if (compatList.isDelegateSupportedOnThisDevice) {
+                        val delegateOptions = compatList.bestOptionsForThisDevice
+                        GpuDelegate(delegateOptions)
+                    } else {
+                        GpuDelegate()
+                    }
                 }
-                isInitialized = true
-                PLog.d(TAG, "Using GPU Delegate for DnCNN Denoise: $modelAssetName")
-            } catch (e: Exception) {
-                PLog.w(TAG, "Failed to initialize GPU delegate, falling back to CPU", e)
-                gpuDelegate?.close()
-                gpuDelegate = null
+                StartupTrace.measure("DnCNNDenoiseEstimator.gpuOptions.addDelegate") {
+                    gpuOptions.addDelegate(gpuDelegate)
+                }
+                try {
+                    interpreter = StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter(GPU)") {
+                        Interpreter(modelFile, gpuOptions)
+                    }
+                    isInitialized = true
+                    activeBackend = "GPU"
+                    PLog.d(TAG, "Using GPU Delegate for DnCNN Denoise: $modelAssetName")
+                } catch (e: Exception) {
+                    PLog.w(TAG, "Failed to initialize GPU delegate, falling back to ${if (backend == Backend.AUTO) "NNAPI" else "CPU"}", e)
+                    gpuDelegate?.close()
+                    gpuDelegate = null
+                }
             }
 
-            if (!isInitialized) {
+            if (backend == Backend.AUTO && !isInitialized) {
                 val nnApiOptions = Interpreter.Options()
                 nnApiDelegate = StartupTrace.measure("DnCNNDenoiseEstimator.NnApiDelegate()") {
                     NnApiDelegate()
@@ -75,9 +92,10 @@ class DnCNNDenoiseEstimator(
                         Interpreter(modelFile, nnApiOptions)
                     }
                     isInitialized = true
+                    activeBackend = "NNAPI"
                     PLog.d(TAG, "Using NNAPI (NPU) for DnCNN Denoise: $modelAssetName")
                 } catch (e: Exception) {
-                    PLog.w(TAG, "Failed to initialize NNAPI delegate, falling back to GPU", e)
+                    PLog.w(TAG, "Failed to initialize NNAPI delegate, falling back to CPU", e)
                     nnApiDelegate?.close()
                     nnApiDelegate = null
                 }
@@ -85,13 +103,24 @@ class DnCNNDenoiseEstimator(
 
             // Fallback to CPU
             if (!isInitialized) {
-                val cpuOptions = Interpreter.Options()
-                cpuOptions.setNumThreads(4)
+                configureCpuParallelism()
+                val cpuOptions = createCpuOptions(cpuThreadsPerInterpreter)
                 interpreter = StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter(CPU)") {
                     Interpreter(modelFile, cpuOptions)
                 }
+                if (backend == Backend.CPU && cpuWorkerCount > 1) {
+                    repeat(cpuWorkerCount - 1) { index ->
+                        extraCpuInterpreters += StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter(CPU worker ${index + 2})") {
+                            Interpreter(modelFile, createCpuOptions(cpuThreadsPerInterpreter))
+                        }
+                    }
+                }
                 isInitialized = true
-                PLog.d(TAG, "Using CPU for DnCNN Denoise: $modelAssetName")
+                activeBackend = "CPU"
+                PLog.d(
+                    TAG,
+                    "Using CPU for DnCNN Denoise: $modelAssetName workers=$cpuWorkerCount threadsPerInterpreter=$cpuThreadsPerInterpreter xnnpack=true"
+                )
             }
 
             interpreter?.let {
@@ -102,12 +131,31 @@ class DnCNNDenoiseEstimator(
         }
     }
 
+    private fun configureCpuParallelism() {
+        val availableProcessors = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        if (backend == Backend.CPU) {
+            cpuWorkerCount = availableProcessors.coerceIn(2, 4)
+            cpuThreadsPerInterpreter = (availableProcessors / cpuWorkerCount).coerceAtLeast(1)
+        } else {
+            cpuWorkerCount = 1
+            cpuThreadsPerInterpreter = 4
+        }
+    }
+
+    private fun createCpuOptions(numThreads: Int): Interpreter.Options {
+        return Interpreter.Options().apply {
+            setNumThreads(numThreads)
+            setUseXNNPACK(true)
+        }
+    }
+
     private fun updateTensorDimensions(interpreter: Interpreter) {
         val inputShape = interpreter.getInputTensor(0).shape()
         val outputShape = interpreter.getOutputTensor(0).shape()
 
         // typically [1, 1, H, W] or [1, H, W, 1]
-        inputChannelsFirst = inputShape.size == 4 && inputShape[1] == 1
+        inputChannelsFirst = inputShape.size == 4 && (inputShape[1] == 1 || inputShape[1] == 3)
+        outputChannelsFirst = outputShape.size == 4 && (outputShape[1] == 1 || outputShape[1] == 3)
         if (inputShape.size == 4 && inputShape[3] == 1) {
             inputHeight = inputShape[1]
             inputWidth = inputShape[2]
@@ -121,23 +169,61 @@ class DnCNNDenoiseEstimator(
             PLog.w(TAG, "Unexpected input shape: ${inputShape.contentToString()}")
         }
 
-        val outputDims = outputShape.filter { it > 1 }
-        if (outputDims.size >= 2) {
-            outputHeight = outputDims[outputDims.size - 2]
-            outputWidth = outputDims[outputDims.size - 1]
+        if (outputShape.size == 4 && outputShape[3] == 1) {
+            outputHeight = outputShape[1]
+            outputWidth = outputShape[2]
+        } else if (outputChannelsFirst) {
+            outputHeight = outputShape[2]
+            outputWidth = outputShape[3]
+        } else {
+            val outputDims = outputShape.filter { it > 1 }
+            if (outputDims.size >= 2) {
+                outputHeight = outputDims[outputDims.size - 2]
+                outputWidth = outputDims[outputDims.size - 1]
+            }
         }
 
         PLog.d(
             TAG,
-            "DnCNN model ready: asset=$modelAssetName input=${inputWidth}x$inputHeight output=${outputWidth}x$outputHeight inputLayout=${if (inputChannelsFirst) "NCHW" else "NHWC"} inputType=${interpreter.getInputTensor(0).dataType()} outputType=${interpreter.getOutputTensor(0).dataType()} inputShape=${inputShape.contentToString()} outputShape=${outputShape.contentToString()}"
+            "DnCNN model ready: asset=$modelAssetName input=${inputWidth}x$inputHeight output=${outputWidth}x$outputHeight inputLayout=${if (inputChannelsFirst) "NCHW" else "NHWC"} outputLayout=${if (outputChannelsFirst) "NCHW" else "NHWC"} inputType=${interpreter.getInputTensor(0).dataType()} outputType=${interpreter.getOutputTensor(0).dataType()} inputShape=${inputShape.contentToString()} outputShape=${outputShape.contentToString()}"
         )
     }
 
+    private external fun preprocessNative(
+        bitmap: Bitmap,
+        x: Int,
+        y: Int,
+        w: Int,
+        h: Int,
+        outBuffer: ByteBuffer,
+        isRgb: Boolean,
+        channelsFirst: Boolean
+    )
+
+    private external fun postprocessNative(
+        inBuffer: ByteBuffer,
+        srcBitmap: Bitmap,
+        dstBitmap: Bitmap,
+        patchX: Int,
+        patchY: Int,
+        srcX: Int,
+        srcY: Int,
+        dstX: Int,
+        dstY: Int,
+        w: Int,
+        h: Int,
+        patchW: Int,
+        patchH: Int,
+        strength: Float,
+        isRgb: Boolean,
+        channelsFirst: Boolean
+    )
+
     /**
-     * Denoises a single-channel (Grayscale) Luma component.
-     * Expects inputBitmap to be resized or we will resize it internally.
+     * Denoises a single-channel (Grayscale) Luma component or RGB image.
+     * [strength] (0.0 to 1.0) controls the blending with the original image.
      */
-    fun denoise(inputBitmap: Bitmap): Bitmap? {
+    suspend fun denoise(inputBitmap: Bitmap, strength: Float = 1.0f): Bitmap? {
         if (!isInitialized || interpreter == null) {
             PLog.e(TAG, "DnCNNDenoiseEstimator is not initialized")
             return null
@@ -146,83 +232,44 @@ class DnCNNDenoiseEstimator(
         try {
             val inputTensor = interpreter!!.getInputTensor(0)
             val outputTensor = interpreter!!.getOutputTensor(0)
-            val inputDataType = inputTensor.dataType()
             val outputDataType = outputTensor.dataType()
-
-            val resized = if (inputBitmap.width == inputWidth && inputBitmap.height == inputHeight) {
-                inputBitmap
-            } else {
-                Bitmap.createScaledBitmap(inputBitmap, inputWidth, inputHeight, true)
-            }
-
-            val pixels = IntArray(inputWidth * inputHeight)
-            resized.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-            if (resized !== inputBitmap) {
-                resized.recycle()
-            }
 
             val isRgb = inputTensor.shape().last() == 3 || (inputChannelsFirst && inputTensor.shape()[1] == 3)
             val channels = if (isRgb) 3 else 1
             val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
 
-            // Input normalization: typically DnCNN takes [0, 1] range float input.
-            for (pixel in pixels) {
-                if (isRgb) {
-                    val r = Color.red(pixel) / 255.0f
-                    val g = Color.green(pixel) / 255.0f
-                    val b = Color.blue(pixel) / 255.0f
-                    buffer.putFloat(r)
-                    buffer.putFloat(g)
-                    buffer.putFloat(b)
-                } else {
-                    // Convert to grayscale/luma
-                    val r = Color.red(pixel)
-                    val g = Color.green(pixel)
-                    val b = Color.blue(pixel)
-                    val luma = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f
-                    buffer.putFloat(luma)
-                }
-            }
-            buffer.rewind()
+            preprocessNative(inputBitmap, 0, 0, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
 
             val outputBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
 
             StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
-                interpreter?.run(buffer, outputBuffer.buffer)
-            }
-
-            val floatArray = outputBuffer.floatArray
-            val resultBitmap = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
-            val resultPixels = IntArray(outputWidth * outputHeight)
-
-            for (i in resultPixels.indices) {
-                if (isRgb) {
-                    val r = (floatArray[i * 3] * 255.0f).toInt().coerceIn(0, 255)
-                    val g = (floatArray[i * 3 + 1] * 255.0f).toInt().coerceIn(0, 255)
-                    val b = (floatArray[i * 3 + 2] * 255.0f).toInt().coerceIn(0, 255)
-                    resultPixels[i] = Color.rgb(r, g, b)
-                } else {
-                    val pixel = pixels[i]
-                    val origR = Color.red(pixel).toFloat()
-                    val origG = Color.green(pixel).toFloat()
-                    val origB = Color.blue(pixel).toFloat()
-
-                    // Convert original to YCbCr
-                    val cb = -0.1687f * origR - 0.3313f * origG + 0.5f * origB + 128f
-                    val cr = 0.5f * origR - 0.4187f * origG - 0.0813f * origB + 128f
-
-                    // Use new denoised Y
-                    val newY = floatArray[i] * 255.0f
-
-                    // Convert back to RGB
-                    val r = (newY + 1.402f * (cr - 128f)).toInt().coerceIn(0, 255)
-                    val g = (newY - 0.344136f * (cb - 128f) - 0.714136f * (cr - 128f)).toInt().coerceIn(0, 255)
-                    val b = (newY + 1.772f * (cb - 128f)).toInt().coerceIn(0, 255)
-
-                    resultPixels[i] = Color.rgb(r, g, b)
+                interpreterMutex.withLock {
+                    buffer.rewind()
+                    outputBuffer.buffer.rewind()
+                    interpreter?.run(buffer, outputBuffer.buffer)
                 }
             }
-            resultBitmap.setPixels(resultPixels, 0, outputWidth, 0, 0, outputWidth, outputHeight)
+
+            val resultBitmap = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
+            postprocessNative(
+                outputBuffer.buffer,
+                inputBitmap,
+                resultBitmap,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                outputWidth,
+                outputHeight,
+                outputWidth,
+                outputHeight,
+                strength,
+                isRgb,
+                outputChannelsFirst
+            )
+            
             return resultBitmap
 
         } catch (e: Exception) {
@@ -235,24 +282,37 @@ class DnCNNDenoiseEstimator(
      * Denoises the full image by splitting it into patches, processing them separately,
      * and stitching them back together. This preserves the original resolution.
      */
-    fun denoisePatchwise(inputBitmap: Bitmap, onProgress: ((Float) -> Unit)? = null): Bitmap? {
+    suspend fun denoisePatchwise(
+        inputBitmap: Bitmap,
+        strength: Float = 1.0f,
+        onProgress: ((Float) -> Unit)? = null
+    ): Bitmap? = coroutineScope {
         if (!isInitialized || interpreter == null) {
             PLog.e(TAG, "DnCNNDenoiseEstimator is not initialized")
-            return null
+            return@coroutineScope null
         }
 
         val width = inputBitmap.width
         val height = inputBitmap.height
         val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(resultBitmap)
-        val paint = android.graphics.Paint()
 
-        val overlap = 24
+        val overlap = 4
         val strideX = inputWidth - 2 * overlap
         val strideY = inputHeight - 2 * overlap
 
         val totalSteps = ((height + strideY - 1) / strideY) * ((width + strideX - 1) / strideX)
-        var currentStep = 0
+        var completedSteps = 0
+
+        val inputTensor = interpreter!!.getInputTensor(0)
+        val outputTensor = interpreter!!.getOutputTensor(0)
+        val isRgb = inputTensor.shape().last() == 3 || (inputChannelsFirst && inputTensor.shape()[1] == 3)
+        val channels = if (isRgb) 3 else 1
+        val outputDataType = outputTensor.dataType()
+        var preprocessMs = 0L
+        var inferenceMs = 0L
+        var postprocessMs = 0L
+        val totalStartMs = SystemClock.elapsedRealtime()
+        val patchTasks = mutableListOf<DenoisePatchTask>()
 
         for (dstY in 0 until height step strideY) {
             for (dstX in 0 until width step strideX) {
@@ -268,35 +328,123 @@ class DnCNNDenoiseEstimator(
                 // clamp to image bounds
                 if (startX < 0) startX = 0
                 if (startY < 0) startY = 0
-                if (startX + inputWidth > width) startX = Math.max(0, width - inputWidth)
-                if (startY + inputHeight > height) startY = Math.max(0, height - inputHeight)
+                if (startX + inputWidth > width) startX = (width - inputWidth).coerceAtLeast(0)
+                if (startY + inputHeight > height) startY = (height - inputHeight).coerceAtLeast(0)
 
-                // Create a patch of exactly inputWidth x inputHeight (with padding if image is smaller)
-                val patchBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
-                val patchCanvas = android.graphics.Canvas(patchBitmap)
-                val cropW = Math.min(width - startX, inputWidth)
-                val cropH = Math.min(height - startY, inputHeight)
-                
-                val srcRect = android.graphics.Rect(startX, startY, startX + cropW, startY + cropH)
-                val dstRect = android.graphics.Rect(0, 0, cropW, cropH)
-                patchCanvas.drawBitmap(inputBitmap, srcRect, dstRect, null)
-
-                val denoisedPatch = denoise(patchBitmap)
-                patchBitmap.recycle()
-
-                if (denoisedPatch != null) {
-                    val patchSrcRect = android.graphics.Rect(dstX - startX, dstY - startY, dstX - startX + validW, dstY - startY + validH)
-                    val patchDstRect = android.graphics.Rect(dstX, dstY, dstX + validW, dstY + validH)
-                    canvas.drawBitmap(denoisedPatch, patchSrcRect, patchDstRect, paint)
-                    denoisedPatch.recycle()
-                }
-
-                currentStep++
-                onProgress?.invoke(currentStep.toFloat() / totalSteps)
+                patchTasks += DenoisePatchTask(
+                    startX = startX,
+                    startY = startY,
+                    dstX = dstX,
+                    dstY = dstY,
+                    validW = validW,
+                    validH = validH
+                )
             }
         }
 
-        return resultBitmap
+        val cpuInterpreters = if (activeBackend == "CPU" && extraCpuInterpreters.isNotEmpty()) {
+            listOfNotNull(interpreter) + extraCpuInterpreters
+        } else {
+            emptyList()
+        }
+
+        if (cpuInterpreters.isNotEmpty()) {
+            val nextPatch = AtomicInteger(0)
+            val completedPatches = AtomicInteger(0)
+            val preprocessTotalMs = AtomicLong(0L)
+            val inferenceTotalMs = AtomicLong(0L)
+            val postprocessTotalMs = AtomicLong(0L)
+            val bitmapMutex = Mutex()
+
+            cpuInterpreters.map { workerInterpreter ->
+                async(Dispatchers.Default) {
+                    val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
+                    val outBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
+
+                    while (true) {
+                        val patchIndex = nextPatch.getAndIncrement()
+                        if (patchIndex >= patchTasks.size) break
+
+                        val task = patchTasks[patchIndex]
+                        var stageStartMs = SystemClock.elapsedRealtime()
+                        bitmapMutex.withLock {
+                            preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                        }
+                        preprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
+
+                        stageStartMs = SystemClock.elapsedRealtime()
+                        buffer.rewind()
+                        outBuffer.buffer.rewind()
+                        workerInterpreter.run(buffer, outBuffer.buffer)
+                        inferenceTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
+
+                        stageStartMs = SystemClock.elapsedRealtime()
+                        bitmapMutex.withLock {
+                            postprocessNative(
+                                outBuffer.buffer, inputBitmap, resultBitmap,
+                                task.dstX - task.startX, task.dstY - task.startY,
+                                task.dstX, task.dstY,
+                                task.dstX, task.dstY,
+                                task.validW, task.validH,
+                                outputWidth, outputHeight,
+                                strength, isRgb, outputChannelsFirst
+                            )
+                        }
+                        postprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
+
+                        val progress = completedPatches.incrementAndGet().toFloat() / totalSteps
+                        onProgress?.invoke(progress)
+                    }
+                }
+            }.awaitAll()
+
+            completedSteps = completedPatches.get()
+            preprocessMs = preprocessTotalMs.get()
+            inferenceMs = inferenceTotalMs.get()
+            postprocessMs = postprocessTotalMs.get()
+        } else {
+            val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
+            val outBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
+
+            for (task in patchTasks) {
+                var stageStartMs = SystemClock.elapsedRealtime()
+                preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                preprocessMs += SystemClock.elapsedRealtime() - stageStartMs
+
+                stageStartMs = SystemClock.elapsedRealtime()
+                StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
+                    interpreterMutex.withLock {
+                        buffer.rewind()
+                        outBuffer.buffer.rewind()
+                        interpreter?.run(buffer, outBuffer.buffer)
+                    }
+                }
+                inferenceMs += SystemClock.elapsedRealtime() - stageStartMs
+
+                stageStartMs = SystemClock.elapsedRealtime()
+                postprocessNative(
+                    outBuffer.buffer, inputBitmap, resultBitmap,
+                    task.dstX - task.startX, task.dstY - task.startY,
+                    task.dstX, task.dstY,
+                    task.dstX, task.dstY,
+                    task.validW, task.validH,
+                    outputWidth, outputHeight,
+                    strength, isRgb, outputChannelsFirst
+                )
+                postprocessMs += SystemClock.elapsedRealtime() - stageStartMs
+
+                completedSteps++
+                onProgress?.invoke(completedSteps.toFloat() / totalSteps)
+            }
+        }
+
+        val totalMs = SystemClock.elapsedRealtime() - totalStartMs
+        PLog.d(
+            TAG,
+            "DnCNN patchwise finished: backend=$activeBackend image=${width}x${height} patches=$completedSteps patch=${inputWidth}x$inputHeight stride=${strideX}x$strideY total=${totalMs}ms preprocess=${preprocessMs}ms inference=${inferenceMs}ms postprocess=${postprocessMs}ms layout=${if (inputChannelsFirst) "NCHW" else "NHWC"}->${if (outputChannelsFirst) "NCHW" else "NHWC"} rgb=$isRgb"
+        )
+
+        return@coroutineScope resultBitmap
     }
 
     fun close() {
@@ -306,11 +454,32 @@ class DnCNNDenoiseEstimator(
         gpuDelegate = null
         nnApiDelegate?.close()
         nnApiDelegate = null
+        extraCpuInterpreters.forEach { it.close() }
+        extraCpuInterpreters.clear()
         isInitialized = false
     }
 
     companion object {
         private const val TAG = "DnCNNDenoiseEstimator"
         const val MODEL_DNCNN = "dncnn.tflite"
+
+        init {
+            System.loadLibrary("my-native-lib")
+        }
     }
+
+    enum class Backend {
+        AUTO,
+        GPU,
+        CPU
+    }
+
+    private data class DenoisePatchTask(
+        val startX: Int,
+        val startY: Int,
+        val dstX: Int,
+        val dstY: Int,
+        val validW: Int,
+        val validH: Int
+    )
 }

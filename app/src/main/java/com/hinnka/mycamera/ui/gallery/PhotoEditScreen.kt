@@ -159,6 +159,8 @@ fun PhotoEditScreen(
     val editCropRect by viewModel.editCropRect.collectAsState()
     val editCropAspectOption by viewModel.editCropAspectOption.collectAsState()
 
+    val editAiDenoiseStrength by viewModel.editAiDenoiseStrength.collectAsState()
+
     val isRaw = currentPhoto?.let { viewModel.isRaw(it.id) } ?: false
 
     var showOrigin by remember { mutableStateOf(false) }
@@ -747,61 +749,32 @@ fun PhotoEditScreen(
                             }
                         } else if (editTab == 1) {
                             Spacer(modifier = Modifier.height(16.dp))
-                            var isDnCNNDenoising by remember { mutableStateOf(false) }
-                            var isDnCNNResetting by remember { mutableStateOf(false) }
-                            var dnCNNProgress by remember { mutableFloatStateOf(0f) }
-                            val aiDenoiseMetadataEnabled =
-                                (viewModel.currentMediaMetadata ?: currentPhoto.metadata)?.hasAiDenoisedBase == true
-                            var isAiDenoiseEnabled by remember(currentPhoto.id) {
-                                mutableStateOf(aiDenoiseMetadataEnabled)
-                            }
+                            val isDnCNNDenoising by viewModel.isAiDenoising.collectAsState()
+                            val dnCNNProgress by viewModel.aiDenoiseProgress.collectAsState()
 
-                            LaunchedEffect(
-                                currentPhoto.id,
-                                aiDenoiseMetadataEnabled,
-                                isDnCNNDenoising,
-                                isDnCNNResetting
-                            ) {
-                                if (!isDnCNNDenoising && !isDnCNNResetting) {
-                                    isAiDenoiseEnabled = aiDenoiseMetadataEnabled
-                                }
-                            }
-
-                            SwitchSettingItem(
+                            SliderSettingItem(
                                 title = stringResource(R.string.ai_denoise_title),
                                 description = if (isDnCNNDenoising) stringResource(R.string.ai_denoise_processing, dnCNNProgress * 100) else stringResource(R.string.ai_denoise_description),
-                                checked = isAiDenoiseEnabled || isDnCNNDenoising,
-                                onCheckedChange = { checked ->
-                                    if (isDnCNNDenoising || isDnCNNResetting) {
-                                        return@SwitchSettingItem
-                                    }
-                                    if (checked && !isAiDenoiseEnabled) {
-                                        isDnCNNDenoising = true
-                                        dnCNNProgress = 0f
+                                value = editAiDenoiseStrength,
+                                valueRange = 0f..1f,
+                                onValueChange = { viewModel.setAiDenoiseStrength(it) },
+                                onValueChangeFinished = {
+                                    if (isDnCNNDenoising) return@SliderSettingItem
+                                    if (editAiDenoiseStrength > 0.01f) {
                                         viewModel.applyDnCNNDenoise(
                                             photo = currentPhoto,
-                                            onProgress = { p -> dnCNNProgress = p },
+                                            strength = editAiDenoiseStrength,
                                             onComplete = { success ->
-                                                isDnCNNDenoising = false
-                                                if (success) {
-                                                    isAiDenoiseEnabled = true
-                                                    Toast.makeText(context, context.getString(R.string.ai_denoise_success), Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    isAiDenoiseEnabled = false
+                                                if (!success) {
                                                     Toast.makeText(context, context.getString(R.string.ai_denoise_failed), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         )
-                                    } else if (!checked && isAiDenoiseEnabled) {
-                                        isDnCNNResetting = true
+                                    } else {
                                         viewModel.resetDnCNNDenoise(
                                             photo = currentPhoto,
                                             onComplete = { success ->
-                                                isDnCNNResetting = false
-                                                if (success) {
-                                                    isAiDenoiseEnabled = false
-                                                } else {
-                                                    isAiDenoiseEnabled = true
+                                                if (!success) {
                                                     Toast.makeText(context, context.getString(R.string.ai_denoise_failed), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
@@ -809,14 +782,6 @@ fun PhotoEditScreen(
                                     }
                                 }
                             )
-                            if (isDnCNNDenoising) {
-                                LinearProgressIndicator(
-                                    progress = { dnCNNProgress },
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                    color = AccentOrange,
-                                    trackColor = Color.White.copy(alpha = 0.2f),
-                                )
-                            }
                             Spacer(modifier = Modifier.height(8.dp))
                             // 细节处理调整 (锐化, 降噪, 杂色降噪)
                             val aperture = editComputationalAperture

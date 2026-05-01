@@ -795,4 +795,5 @@
     <string name="ai_denoise_processing">正在处理... %1$.1f%%</string>
     <string name="ai_denoise_success">AI 降噪成功</string>
     <string name="ai_denoise_failed">AI 降噪失败</string>
+    <string name="ai_denoise_strength">AI 降噪强度</string>
 </resources>
