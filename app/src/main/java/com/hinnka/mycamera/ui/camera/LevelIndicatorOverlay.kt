@@ -104,12 +104,9 @@ fun LevelIndicatorOverlay(
         val lineLength = drawWidth * 0.4f
         val strokeWidth = 6f // 稍粗一点更清晰
 
-        // 核心修正：
-        // 之前是 -animatedRotation + 90f，导致竖屏多了90度变成垂直线。
-        // 现在直接取反。因为 drawLine 默认就是横向(0度)画的。
-        // 如果手机竖直拿 (角度约 0 或 180)，Canvas 旋转 0/180，线依然是横的 -> 正确。
+        // 传感器角度已经表示设备当前倾斜方向，直接用于 Canvas 旋转，保持水平仪运动方向和设备一致。
         withTransform({
-            rotate(degrees = -animatedRotation, pivot = Offset(centerX, centerY))
+            rotate(degrees = animatedRotation, pivot = Offset(centerX, centerY))
         }) {
             // 绘制主水平线
             drawLine(
