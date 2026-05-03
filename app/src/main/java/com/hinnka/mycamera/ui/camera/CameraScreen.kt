@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -153,6 +154,7 @@ fun CameraScreen(
     val burstCapturingCount = viewModel.burstImageCount
 
     var isGhostPermissionFlowActive by remember { mutableStateOf(false) }
+    val activity = remember(context) { context.findActivity() }
 
     val ghostLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
@@ -303,6 +305,18 @@ fun CameraScreen(
         }
     }
 
+    DisposableEffect(activity, state.videoRecordingState.isRecording) {
+        if (state.videoRecordingState.isRecording) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     LaunchedEffect(previewTransitionToken) {
         if (previewTransitionToken == 0) return@LaunchedEffect
         delay(700)
@@ -341,7 +355,6 @@ fun CameraScreen(
     }
 
     if (viewModel.showPaymentDialog) {
-        val activity = context.findActivity()
         PaymentDialog(
             onDismiss = { viewModel.showPaymentDialog = false },
             onPurchase = {
