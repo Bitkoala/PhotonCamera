@@ -536,8 +536,8 @@ fun CameraScreen(
                 },
                 maxValue = when (selectedParameter) {
                     CameraParameter.EXPOSURE_COMPENSATION -> state.getExposureCompensationRange().upper * state.getExposureCompensationStep()
-                    CameraParameter.SHUTTER_SPEED -> state.getShutterSpeedRange().upper.toFloat()
-                    CameraParameter.ISO -> state.getIsoRange().upper.toFloat()
+                    CameraParameter.SHUTTER_SPEED -> maxOf(state.getShutterSpeedRange().upper, 1_000_000_000L * 15).toFloat()
+                    CameraParameter.ISO -> maxOf(state.getIsoRange().upper, 3200).toFloat()
                     CameraParameter.FOCUS -> state.minimumFocusDistance
                     CameraParameter.WHITE_BALANCE -> 10000f
                 },
