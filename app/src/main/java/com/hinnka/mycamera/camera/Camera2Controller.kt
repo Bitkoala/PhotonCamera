@@ -85,8 +85,10 @@ class Camera2Controller(private val context: Context) {
         private const val STATE_PICTURE_TAKEN = 4 // Picture is already taken.
 
         // 场景变化检测阈值
-        private const val SCENE_CHANGE_EXPOSURE_RATIO = 3.0 // 曝光乘积变化超过 3x (~1.6 EV) 判定为场景变化
-        private const val SCENE_CHANGE_CONFIRM_FRAMES = 3   // 连续 N 帧检测到变化才确认
+        private const val SCENE_CHANGE_EXPOSURE_RATIO = 1.5   // 曝光乘积变化判定为场景变化
+        private const val SCENE_CHANGE_FOCUS_DISTANCE_DELTA = 0.2f // 焦距跳变阈值（diopters），对焦锁定后逐帧跟踪
+        private const val FOCUS_LOCK_SETTLE_FRAMES = 5        // 对焦锁定后等待镜头稳定的帧数
+        private const val SCENE_CHANGE_CONFIRM_FRAMES = 3     // 连续 N 帧检测到变化才确认
     }
 
     private val cameraManager: CameraManager by lazy {
@@ -200,6 +202,8 @@ class Camera2Controller(private val context: Context) {
     private var isFocusLockedWaitingForSceneChange = false
     private var focusLockedReferenceIso: Int = 0
     private var focusLockedReferenceExposureNs: Long = 0L
+    private var focusLockedReferenceDistance: Float = 0f
+    private var focusLockSettleFrames = 0       // 对焦锁定后等待镜头稳定的帧数
     private var sceneChangeFrameCount = 0
 
     // 高光优先测光：最亮区域坐标（归一化 0-1）及平滑状态
@@ -316,51 +320,68 @@ class Camera2Controller(private val context: Context) {
 
             // 监听对焦状态
             val afState = result.get(CaptureResult.CONTROL_AF_STATE)
-            if (afState != null && afState != lastAfState) {
+            val afStateChanged = afState != null && afState != lastAfState
+            if (afStateChanged) {
                 lastAfState = afState
-                PLog.d(
-                    TAG,
-                    "AF state changed: state=$afState, mode=${request.get(CaptureRequest.CONTROL_AF_MODE)}, " +
-                            "lensState=${result.get(CaptureResult.LENS_STATE)}, " +
-                            "focusDistance=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)}"
-                )
             }
             if (_state.value.isFocusing) {
                 when (afState) {
                     CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED -> {
-                        // 对焦成功并锁定
                         _state.value = _state.value.copy(focusSuccess = true)
-                        // 记录当前曝光值作为场景变化检测的参考基准
-                        recordFocusLockExposure(result)
+                        // 只在首次锁定时记录一次，后续 AF 狩猎重新锁定不再覆盖
+                        if (!isFocusLockedWaitingForSceneChange) recordFocusLockExposure(result)
                     }
 
                     CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED -> {
-                        // 对焦失败但已锁定
                         _state.value = _state.value.copy(focusSuccess = false)
-                        recordFocusLockExposure(result)
+                        if (!isFocusLockedWaitingForSceneChange) recordFocusLockExposure(result)
                     }
                 }
             }
 
-            // 场景变化检测：对焦锁定后持续监测曝光变化
+            // 场景变化检测：对焦锁定后持续监测曝光变化和焦距跳变
             if (isFocusLockedWaitingForSceneChange) {
-                val currentIso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
-                val currentExposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
-                if (focusLockedReferenceIso > 0 && focusLockedReferenceExposureNs > 0 &&
-                    currentIso > 0 && currentExposure > 0L
-                ) {
-                    val refProduct = focusLockedReferenceIso.toDouble() * focusLockedReferenceExposureNs.toDouble()
-                    val curProduct = currentIso.toDouble() * currentExposure.toDouble()
-                    if (refProduct > 0) {
-                        val ratio = if (curProduct > refProduct) curProduct / refProduct else refProduct / curProduct
-                        if (ratio > SCENE_CHANGE_EXPOSURE_RATIO) {
-                            sceneChangeFrameCount++
-                            if (sceneChangeFrameCount >= SCENE_CHANGE_CONFIRM_FRAMES) {
-                                restoreContinuousAf()
+                // 对焦锁定后前几帧镜头还在微调，跳过不检测
+                if (focusLockSettleFrames > 0) {
+                    focusLockSettleFrames--
+                } else {
+                    val currentIso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
+                    val currentExposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
+                    val currentFocusDistance = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
+                    var sceneChanged = false
+
+                    // 1. 曝光变化检测
+                    if (focusLockedReferenceIso > 0 && focusLockedReferenceExposureNs > 0 &&
+                        currentIso > 0 && currentExposure > 0L
+                    ) {
+                        val refProduct = focusLockedReferenceIso.toDouble() * focusLockedReferenceExposureNs.toDouble()
+                        val curProduct = currentIso.toDouble() * currentExposure.toDouble()
+                        if (refProduct > 0) {
+                            val ratio = if (curProduct > refProduct) curProduct / refProduct else refProduct / curProduct
+                            if (ratio > SCENE_CHANGE_EXPOSURE_RATIO) {
+                                PLog.d(TAG, "scene change: exposure ratio=$ratio")
+                                sceneChanged = true
                             }
-                        } else {
-                            sceneChangeFrameCount = 0
                         }
+                    }
+
+                    // 2. 焦距跳变检测：逐帧跟踪，CONTINUOUS_PICTURE 模式下 AF 系统持续工作
+                    //    当场景距离变化时，AF 会重新对焦导致焦距大幅跳变
+                    if (focusLockedReferenceDistance > 0f && currentFocusDistance > 0f) {
+                        val delta = abs(currentFocusDistance - focusLockedReferenceDistance)
+                        if (delta > SCENE_CHANGE_FOCUS_DISTANCE_DELTA) {
+                            PLog.d(TAG, "scene change: focusDistance delta=$delta (ref=$focusLockedReferenceDistance, cur=$currentFocusDistance)")
+                            sceneChanged = true
+                        }
+                    }
+
+                    if (sceneChanged) {
+                        sceneChangeFrameCount++
+                        if (sceneChangeFrameCount >= SCENE_CHANGE_CONFIRM_FRAMES) {
+                            restoreContinuousAf()
+                        }
+                    } else {
+                        sceneChangeFrameCount = 0
                     }
                 }
             }
@@ -2544,7 +2565,9 @@ class Camera2Controller(private val context: Context) {
         val exposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
         focusLockedReferenceIso = iso
         focusLockedReferenceExposureNs = exposure
+        focusLockedReferenceDistance = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
         isFocusLockedWaitingForSceneChange = true
+        focusLockSettleFrames = FOCUS_LOCK_SETTLE_FRAMES
         sceneChangeFrameCount = 0
     }
 
@@ -2553,6 +2576,8 @@ class Camera2Controller(private val context: Context) {
         sceneChangeFrameCount = 0
         focusLockedReferenceIso = 0
         focusLockedReferenceExposureNs = 0L
+        focusLockedReferenceDistance = 0f
+        focusLockSettleFrames = 0
 
         previewRequestBuilder?.apply {
             set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)

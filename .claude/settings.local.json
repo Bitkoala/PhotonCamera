@@ -6,7 +6,8 @@
       "Bash(./gradlew :app:compileDebugKotlin)",
       "Bash(grep:*)",
       "Bash(./gradlew compileDebugKotlin)",
-      "Bash(./gradlew assembleDebug)"
+      "Bash(./gradlew assembleDebug)",
+      "WebSearch"
     ]
   }
 }
