@@ -56,11 +56,15 @@ object AppUpdateManager {
     private val _readyApk = MutableStateFlow<File?>(null)
     val readyApk: StateFlow<File?> = _readyApk.asStateFlow()
 
-    suspend fun checkForUpdate(currentVersion: String = BuildConfig.VERSION_NAME): AppUpdateRelease? =
+    suspend fun checkForUpdate(
+        currentVersion: String = BuildConfig.VERSION_NAME,
+        flavor: String = BuildConfig.FLAVOR
+    ): AppUpdateRelease? =
         withContext(Dispatchers.IO) {
             val encodedVersion = URLEncoder.encode(currentVersion, "UTF-8")
+            val encodedFlavor = URLEncoder.encode(flavor, "UTF-8")
             val request = Request.Builder()
-                .url("$VERSION_CHECK_URL?current_version=$encodedVersion")
+                .url("$VERSION_CHECK_URL?current_version=$encodedVersion&flavor=$encodedFlavor")
                 .get()
                 .build()
 
@@ -75,7 +79,7 @@ object AppUpdateManager {
                     PLog.d(TAG, "version: $body")
                     val root = JSONObject(body)
                     if (!root.optBoolean("has_update", false)) {
-                        PLog.d(TAG, "No update available: current=$currentVersion")
+                        PLog.d(TAG, "No update available: current=$currentVersion, flavor=$flavor")
                         return@withContext null
                     }
 
@@ -85,7 +89,7 @@ object AppUpdateManager {
                     val isApkAsset = assetName.endsWith(".apk", ignoreCase = true) ||
                         downloadUrl.substringBefore("?").endsWith(".apk", ignoreCase = true)
                     if (downloadUrl.isBlank() || !isApkAsset) {
-                        PLog.w(TAG, "Update found but APK asset is missing")
+                        PLog.w(TAG, "Update found but APK asset is missing: flavor=$flavor")
                         return@withContext null
                     }
                     val versionName = root.optString("latest_version")

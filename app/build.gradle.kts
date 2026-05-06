@@ -113,6 +113,20 @@ android {
                 localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
             )
         }
+        create("meitu") {
+            dimension = "channel"
+            applicationId = "com.meitu.meiyancamera"
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_URL",
+                "https://token-plan-cn.xiaomimimo.com/v1".toBuildConfigString()
+            )
+            buildConfigField(
+                "String",
+                "BUILT_IN_API_KEY",
+                localProperties.getProperty("BUILT_IN_API_KEY", "").toBuildConfigString()
+            )
+        }
     }
 
     compileOptions {
@@ -131,6 +145,12 @@ android {
 
     sourceSets {
         getByName("samsung") {
+            java {
+                srcDir("src/default/java")
+            }
+            manifest.srcFile("src/default/AndroidManifest.xml")
+        }
+        getByName("meitu") {
             java {
                 srcDir("src/default/java")
             }
