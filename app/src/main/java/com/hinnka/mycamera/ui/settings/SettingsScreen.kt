@@ -205,6 +205,28 @@ fun SettingsScreen(
     val previewThumbnail = viewModel.previewThumbnail
 
     var selectedTab by remember { mutableStateOf(SettingsTab.GENERAL) }
+    var isRawSliderAdjusting by remember { mutableStateOf(false) }
+    var rawNlmNoiseFactorUi by remember { mutableStateOf(rawNlmNoiseFactor) }
+    var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
+    var rawBlackPointCorrectionUi by remember { mutableStateOf(rawBlackPointCorrection) }
+    var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
+
+    LaunchedEffect(rawNlmNoiseFactor, rawExposureCompensation, rawBlackPointCorrection, rawWhitePointCorrection) {
+        if (!isRawSliderAdjusting) {
+            rawNlmNoiseFactorUi = rawNlmNoiseFactor
+            rawExposureCompensationUi = rawExposureCompensation
+            rawBlackPointCorrectionUi = rawBlackPointCorrection
+            rawWhitePointCorrectionUi = rawWhitePointCorrection
+        }
+    }
+
+    fun commitRawSliderValues() {
+        isRawSliderAdjusting = false
+        viewModel.setRawNlmNoiseFactor(rawNlmNoiseFactorUi)
+        viewModel.setRawExposureCompensation(rawExposureCompensationUi)
+        viewModel.setRawBlackPointCorrection(rawBlackPointCorrectionUi)
+        viewModel.setRawWhitePointCorrection(rawWhitePointCorrectionUi)
+    }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -1238,11 +1260,11 @@ fun SettingsScreen(
                     RawEditPanel(
                         selectedDcpId = rawDcpId,
                         availableDcps = availableDcps,
-                        rawNlmNoiseFactor = rawNlmNoiseFactor,
-                        rawExposureCompensation = rawExposureCompensation,
+                        rawNlmNoiseFactor = rawNlmNoiseFactorUi,
+                        rawExposureCompensation = rawExposureCompensationUi,
                         rawAutoExposure = rawAutoExposure,
-                        rawBlackPointCorrection = rawBlackPointCorrection,
-                        rawWhitePointCorrection = rawWhitePointCorrection,
+                        rawBlackPointCorrection = rawBlackPointCorrectionUi,
+                        rawWhitePointCorrection = rawWhitePointCorrectionUi,
                         onSelectDcp = { viewModel.setRawDcpId(it) },
                         onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
                         onDeleteDcp = { dcp ->
@@ -1254,13 +1276,13 @@ fun SettingsScreen(
                                 ).show()
                             }
                         },
-                        onRawNlmNoiseFactorChange = { viewModel.setRawNlmNoiseFactor(it) },
-                        onRawExposureCompensationChange = { viewModel.setRawExposureCompensation(it) },
+                        onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
+                        onRawExposureCompensationChange = { rawExposureCompensationUi = it },
                         onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
-                        onRawBlackPointCorrectionChange = { viewModel.setRawBlackPointCorrection(it) },
-                        onRawWhitePointCorrectionChange = { viewModel.setRawWhitePointCorrection(it) },
-                        onAdjustmentStart = { },
-                        onAdjustmentEnd = { }
+                        onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
+                        onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
+                        onAdjustmentStart = { isRawSliderAdjusting = true },
+                        onAdjustmentEnd = { commitRawSliderValues() }
                     )
                 }
 
