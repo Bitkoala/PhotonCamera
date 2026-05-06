@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
@@ -66,6 +67,8 @@ class VideoRecorder(
         Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val muxerLock = Any()
     private val pendingFrameLock = Any()
+    private val videoCodecLock = Any()
+    private val audioCodecLock = Any()
 
     @Volatile
     private var isRecording = false
@@ -182,7 +185,7 @@ class VideoRecorder(
                 audioRecordJob?.join()
                 withContext(renderDispatcher) {
                     drainPendingFrames()
-                    videoEncoder?.signalEndOfInputStream()
+                    signalVideoEndOfInputStream()
                 }
                 queueAudioEndOfStream()
                 videoDrainJob?.join()
@@ -590,35 +593,9 @@ class VideoRecorder(
     private fun startDrains() {
         videoDrainJob = scope.launch {
             val bufferInfo = MediaCodec.BufferInfo()
-            while (true) {
-                val encoder = videoEncoder ?: break
-                val index = try {
-                    encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
-                } catch (_: IllegalStateException) {
+            while (isActive) {
+                if (!drainVideoEncoderOnce(bufferInfo)) {
                     break
-                }
-                when {
-                    index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        synchronized(muxerLock) {
-                            videoFormat = encoder.outputFormat
-                            maybeStartMuxerLocked()
-                        }
-                    }
-                    index >= 0 -> {
-                        val outputBuffer = encoder.getOutputBuffer(index)
-                        if (outputBuffer != null && bufferInfo.size > 0) {
-                            writeSample(
-                                isVideo = true,
-                                buffer = outputBuffer,
-                                info = bufferInfo
-                            )
-                        }
-                        val isEos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                        encoder.releaseOutputBuffer(index, false)
-                        if (isEos) {
-                            break
-                        }
-                    }
                 }
             }
         }
@@ -626,58 +603,123 @@ class VideoRecorder(
         if (audioEnabled) {
             audioDrainJob = scope.launch {
                 val bufferInfo = MediaCodec.BufferInfo()
-                while (true) {
-                    val encoder = audioEncoder ?: break
-                    val index = try {
-                        encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
-                    } catch (_: IllegalStateException) {
+                while (isActive) {
+                    if (!drainAudioEncoderOnce(bufferInfo)) {
                         break
-                    }
-                    when {
-                        index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            synchronized(muxerLock) {
-                                audioFormat = encoder.outputFormat
-                                maybeStartMuxerLocked()
-                            }
-                        }
-                        index >= 0 -> {
-                            val outputBuffer = encoder.getOutputBuffer(index)
-                            if (outputBuffer != null && bufferInfo.size > 0) {
-                                writeSample(
-                                    isVideo = false,
-                                    buffer = outputBuffer,
-                                    info = bufferInfo
-                                )
-                            }
-                            val isEos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                            encoder.releaseOutputBuffer(index, false)
-                            if (isEos) {
-                                break
-                            }
-                        }
                     }
                 }
             }
         }
     }
 
-    private fun queueAudioEndOfStream() {
-        val encoder = audioEncoder ?: return
-        val inputIndex = try {
-            encoder.dequeueInputBuffer(10_000L)
-        } catch (_: IllegalStateException) {
-            return
-        }
-        if (inputIndex >= 0) {
-            try {
-                encoder.queueInputBuffer(
-                    inputIndex,
-                    0,
-                    0,
-                    audioBytesToPresentationTimeUs(audioBytesQueued),
-                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                )
+    private fun drainVideoEncoderOnce(bufferInfo: MediaCodec.BufferInfo): Boolean {
+        return synchronized(videoCodecLock) {
+            val encoder = videoEncoder ?: return@synchronized false
+            val index = try {
+                encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
             } catch (_: IllegalStateException) {
+                return@synchronized false
+            }
+            drainEncoderOutput(
+                encoder = encoder,
+                bufferInfo = bufferInfo,
+                index = index,
+                isVideo = true
+            )
+        }
+    }
+
+    private fun drainAudioEncoderOnce(bufferInfo: MediaCodec.BufferInfo): Boolean {
+        return synchronized(audioCodecLock) {
+            val encoder = audioEncoder ?: return@synchronized false
+            val index = try {
+                encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
+            } catch (_: IllegalStateException) {
+                return@synchronized false
+            }
+            drainEncoderOutput(
+                encoder = encoder,
+                bufferInfo = bufferInfo,
+                index = index,
+                isVideo = false
+            )
+        }
+    }
+
+    private fun drainEncoderOutput(
+        encoder: MediaCodec,
+        bufferInfo: MediaCodec.BufferInfo,
+        index: Int,
+        isVideo: Boolean
+    ): Boolean {
+        when {
+            index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                synchronized(muxerLock) {
+                    if (isVideo) {
+                        videoFormat = encoder.outputFormat
+                    } else {
+                        audioFormat = encoder.outputFormat
+                    }
+                    maybeStartMuxerLocked()
+                }
+            }
+            index >= 0 -> {
+                val outputBuffer = try {
+                    encoder.getOutputBuffer(index)
+                } catch (_: IllegalStateException) {
+                    return false
+                }
+                if (outputBuffer != null && bufferInfo.size > 0) {
+                    writeSample(
+                        isVideo = isVideo,
+                        buffer = outputBuffer,
+                        info = bufferInfo
+                    )
+                }
+                val isEos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                try {
+                    encoder.releaseOutputBuffer(index, false)
+                } catch (e: IllegalStateException) {
+                    PLog.w(TAG, "Encoder output buffer release skipped during codec state change: ${e.message}")
+                    return false
+                }
+                if (isEos) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private fun queueAudioEndOfStream() {
+        synchronized(audioCodecLock) {
+            val encoder = audioEncoder ?: return
+            val inputIndex = try {
+                encoder.dequeueInputBuffer(10_000L)
+            } catch (_: IllegalStateException) {
+                return
+            }
+            if (inputIndex >= 0) {
+                try {
+                    encoder.queueInputBuffer(
+                        inputIndex,
+                        0,
+                        0,
+                        audioBytesToPresentationTimeUs(audioBytesQueued),
+                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                    )
+                } catch (_: IllegalStateException) {
+                }
+            }
+        }
+    }
+
+    private fun signalVideoEndOfInputStream() {
+        synchronized(videoCodecLock) {
+            try {
+                videoEncoder?.signalEndOfInputStream()
+            } catch (e: IllegalStateException) {
+                PLog.w(TAG, "Video encoder EOS signal skipped during codec state change: ${e.message}")
             }
         }
     }
@@ -819,18 +861,17 @@ class VideoRecorder(
         return uri
     }
 
-    private fun cleanup() {
-        isRecording = false
-        stopRequested = false
-
+    private suspend fun cleanup() {
         videoDrainJob?.cancel()
         audioDrainJob?.cancel()
         audioRecordJob?.cancel()
+        videoDrainJob?.join()
+        audioDrainJob?.join()
         videoDrainJob = null
         audioDrainJob = null
         audioRecordJob = null
 
-        scope.launch(renderDispatcher) {
+        withContext(renderDispatcher) {
             try {
                 renderer?.release()
             } catch (_: Exception) {
@@ -838,32 +879,40 @@ class VideoRecorder(
             renderer = null
             inputSurface?.release()
             inputSurface = null
-            try {
-                videoEncoder?.stop()
-            } catch (_: Exception) {
+            synchronized(videoCodecLock) {
+                try {
+                    videoEncoder?.stop()
+                } catch (_: Exception) {
+                }
+                try {
+                    videoEncoder?.release()
+                } catch (_: Exception) {
+                }
+                videoEncoder = null
             }
-            try {
-                videoEncoder?.release()
-            } catch (_: Exception) {
-            }
-            videoEncoder = null
         }
 
+        try {
+            audioRecord?.stop()
+        } catch (_: Exception) {
+        }
         try {
             audioRecord?.release()
         } catch (_: Exception) {
         }
         audioRecord = null
 
-        try {
-            audioEncoder?.stop()
-        } catch (_: Exception) {
+        synchronized(audioCodecLock) {
+            try {
+                audioEncoder?.stop()
+            } catch (_: Exception) {
+            }
+            try {
+                audioEncoder?.release()
+            } catch (_: Exception) {
+            }
+            audioEncoder = null
         }
-        try {
-            audioEncoder?.release()
-        } catch (_: Exception) {
-        }
-        audioEncoder = null
 
         resetMuxerState()
         finishCallback = null
@@ -877,6 +926,8 @@ class VideoRecorder(
             VideoMediaStoreWriter.discardPendingVideo(context, output.uri)
         }
         pendingVideoOutput = null
+        isRecording = false
+        stopRequested = false
     }
 
     private fun resetMuxerState() {
