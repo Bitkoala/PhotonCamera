@@ -1173,6 +1173,7 @@ object GalleryManager {
                 rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
                 sharpeningValue = 0.4f,
+                denoiseValue = metadata.rawDenoiseValue,
                 rawDcpId = metadata.rawDcpId
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
@@ -1738,7 +1739,7 @@ object GalleryManager {
                     rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
                     rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
                     sharpeningValue = 0.4f,
-                    denoiseValue = 0.2f,
+                    denoiseValue = metadata.rawDenoiseValue,
                     rawDcpId = metadata.rawDcpId
                 ) ?: return@run null
                 if (metadata.isMirrored) {
