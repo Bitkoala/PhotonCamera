@@ -985,15 +985,20 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        val cw = photo?.width ?: metadata.width
-        val ch = photo?.height ?: metadata.height
+        val cw = metadata.width.takeIf { it > 0 } ?: photo?.metadata?.width ?: photo?.width ?: 0
+        val ch = metadata.height.takeIf { it > 0 } ?: photo?.metadata?.height ?: photo?.height ?: 0
         if (metadata.postCropRegion != null && cw > 0 && ch > 0) {
-            editCropRect.value = RectF(
+            val cropRect = RectF(
                 metadata.postCropRegion.left.toFloat() / cw,
                 metadata.postCropRegion.top.toFloat() / ch,
                 metadata.postCropRegion.right.toFloat() / cw,
                 metadata.postCropRegion.bottom.toFloat() / ch
             )
+            editCropRect.value = normalizeEditCropRect(cropRect).also { normalized ->
+                if (normalized != cropRect) {
+                    PLog.w(TAG, "Normalized invalid crop edit state for ${photo?.id}: $cropRect -> $normalized")
+                }
+            }
 
             editCropAspectOption.value = CropAspectOption.Custom(
                 metadata.postCropRegion.width().toFloat(),
@@ -1831,7 +1836,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * 设置裁剪矩形（归一化坐标 0-1）
      */
     fun setCropRect(rect: RectF?) {
-        editCropRect.value = rect
+        editCropRect.value = normalizeEditCropRect(rect)
     }
 
     /**
@@ -1853,6 +1858,38 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun resetCrop() {
         editCropRect.value = null
         editCropAspectOption.value = CropAspectOption.Free
+    }
+
+    private fun normalizeEditCropRect(rect: RectF?, minSize: Float = 0.01f): RectF? {
+        rect ?: return null
+
+        val rawLeft = kotlin.math.min(rect.left.safeCropValue(0f), rect.right.safeCropValue(1f))
+        val rawTop = kotlin.math.min(rect.top.safeCropValue(0f), rect.bottom.safeCropValue(1f))
+        val rawRight = kotlin.math.max(rect.left.safeCropValue(0f), rect.right.safeCropValue(1f))
+        val rawBottom = kotlin.math.max(rect.top.safeCropValue(0f), rect.bottom.safeCropValue(1f))
+
+        var left = rawLeft.coerceIn(0f, 1f)
+        var top = rawTop.coerceIn(0f, 1f)
+        var right = rawRight.coerceIn(0f, 1f)
+        var bottom = rawBottom.coerceIn(0f, 1f)
+
+        val safeMinSize = minSize.coerceIn(0f, 1f)
+        if (right - left < safeMinSize) {
+            val centerX = ((left + right) / 2f).coerceIn(0f, 1f)
+            left = (centerX - safeMinSize / 2f).coerceIn(0f, 1f - safeMinSize)
+            right = left + safeMinSize
+        }
+        if (bottom - top < safeMinSize) {
+            val centerY = ((top + bottom) / 2f).coerceIn(0f, 1f)
+            top = (centerY - safeMinSize / 2f).coerceIn(0f, 1f - safeMinSize)
+            bottom = top + safeMinSize
+        }
+
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun Float.safeCropValue(fallback: Float): Float {
+        return if (isFinite()) this else fallback
     }
 
 

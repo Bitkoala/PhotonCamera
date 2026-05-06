@@ -203,7 +203,10 @@ fun CropOverlay(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var dragHandle by remember { mutableStateOf<DragHandle?>(null) }
     
-    val currentCropRect by rememberUpdatedState(cropRect)
+    val safeCropRect = remember(cropRect.left, cropRect.top, cropRect.right, cropRect.bottom) {
+        normalizeCropRect(cropRect)
+    }
+    val currentCropRect by rememberUpdatedState(safeCropRect)
 
     // 计算图片在容器中的实际显示区域
     val imageDisplayRect = remember(containerSize, imageWidth, imageHeight) {
@@ -271,7 +274,7 @@ fun CropOverlay(
                         )
                     }
             ) {
-                drawCropOverlay(cropRect, imageDisplayRect)
+                drawCropOverlay(safeCropRect, imageDisplayRect)
             }
         }
     }
@@ -364,14 +367,16 @@ private fun moveCropRect(
     imageAspect: Float
 ): RectF {
     val minSize = 0.1f // 最小裁剪区域为图片的 10%
-    val result = RectF(rect)
+    val result = normalizeCropRect(rect, minSize)
 
     when (handle) {
         DragHandle.CENTER -> {
-            val newLeft = (result.left + dx).coerceIn(0f, 1f - result.width())
-            val newTop = (result.top + dy).coerceIn(0f, 1f - result.height())
             val w = result.width()
             val h = result.height()
+            val maxLeft = (1f - w).coerceAtLeast(0f)
+            val maxTop = (1f - h).coerceAtLeast(0f)
+            val newLeft = (result.left + dx).coerceIn(0f, maxLeft)
+            val newTop = (result.top + dy).coerceIn(0f, maxTop)
             result.set(newLeft, newTop, newLeft + w, newTop + h)
         }
         else -> {
@@ -391,10 +396,40 @@ private fun moveCropRect(
 
     // 确保最小尺寸
     if (result.width() < minSize || result.height() < minSize) {
-        return rect
+        return normalizeCropRect(rect, minSize)
     }
 
     return result
+}
+
+private fun normalizeCropRect(rect: RectF, minSize: Float = 0.1f): RectF {
+    val rawLeft = min(rect.left.safeCropValue(0f), rect.right.safeCropValue(1f))
+    val rawTop = min(rect.top.safeCropValue(0f), rect.bottom.safeCropValue(1f))
+    val rawRight = max(rect.left.safeCropValue(0f), rect.right.safeCropValue(1f))
+    val rawBottom = max(rect.top.safeCropValue(0f), rect.bottom.safeCropValue(1f))
+
+    var left = rawLeft.coerceIn(0f, 1f)
+    var top = rawTop.coerceIn(0f, 1f)
+    var right = rawRight.coerceIn(0f, 1f)
+    var bottom = rawBottom.coerceIn(0f, 1f)
+
+    val safeMinSize = minSize.coerceIn(0f, 1f)
+    if (right - left < safeMinSize) {
+        val centerX = ((left + right) / 2f).coerceIn(0f, 1f)
+        left = (centerX - safeMinSize / 2f).coerceIn(0f, 1f - safeMinSize)
+        right = left + safeMinSize
+    }
+    if (bottom - top < safeMinSize) {
+        val centerY = ((top + bottom) / 2f).coerceIn(0f, 1f)
+        top = (centerY - safeMinSize / 2f).coerceIn(0f, 1f - safeMinSize)
+        bottom = top + safeMinSize
+    }
+
+    return RectF(left, top, right, bottom)
+}
+
+private fun Float.safeCropValue(fallback: Float): Float {
+    return if (isFinite()) this else fallback
 }
 
 /**
