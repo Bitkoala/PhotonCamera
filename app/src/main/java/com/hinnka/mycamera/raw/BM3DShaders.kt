@@ -112,6 +112,24 @@ object BM3DShaders {
 
         const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
 
+        vec3 rgb2ycbcr(vec3 rgb) {
+            return vec3(dot(rgb, LW),
+                        dot(rgb, vec3(-0.169, -0.331,  0.5  )) + 0.5,
+                        dot(rgb, vec3( 0.5,  -0.419, -0.081 )) + 0.5);
+        }
+        vec3 ycbcr2rgb(vec3 yuv) {
+            float cb = yuv.y - 0.5, cr = yuv.z - 0.5;
+            return vec3(yuv.x + 1.402  * cr,
+                        yuv.x - 0.3441 * cb - 0.7141 * cr,
+                        yuv.x + 1.772  * cb);
+        }
+        float softMatchWeight(float ssd, float threshold) {
+            float t = max(threshold, 1e-6);
+            float soft = exp(-ssd / t);
+            float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
+            return soft * gate;
+        }
+
         void main() {
             vec3 centerVal = texture(uInputTexture, vTexCoord).rgb;
             if (uH <= 0.00001) { fragColor = vec4(centerVal, 1.0); return; }
@@ -120,6 +138,7 @@ object BM3DShaders {
             // factor 2.7 is the standard BM3D constant, tuned here for 3×3 patches
             float threshold = uH * uH * 9.0 * 2.7;
             vec2  T = uTexelSize;
+            vec3  centerYuv = rgb2ycbcr(centerVal);
 
             // Pre-fetch the 3×3 center-patch luma values (unrolled to avoid
             // dynamic-array indexing, which can be slow on some mobile GPUs)
@@ -133,7 +152,8 @@ object BM3DShaders {
             float c21 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
 
-            vec3  sumColor  = vec3(0.0);
+            float sumLuma   = 0.0;
+            vec2  sumChroma = vec2(0.0);
             float sumWeight = 0.0;
 
             for (int dx = -SEARCH_RADIUS; dx <= SEARCH_RADIUS; dx++) {
@@ -156,18 +176,21 @@ object BM3DShaders {
                     d = c21 - dot(texture(uInputTexture, nUV + vec2( 1.0, 0.0)*T).rgb, LW); ssd += d*d;
                     d = c22 - dot(texture(uInputTexture, nUV + vec2( 1.0, 1.0)*T).rgb, LW); ssd += d*d;
 
-                    // Hard threshold: binary weight (key BM3D characteristic vs NLM soft exp)
-                    // step(edge, x) = 1 if x >= edge → step(ssd, threshold) = 1 if ssd ≤ threshold
-                    float w = step(ssd, threshold);
-                    sumColor  += nC * w;
+                    float w = softMatchWeight(ssd, threshold);
+                    if (dx == 0 && dy == 0) w = max(w, 1.0);
+
+                    vec3 nYuv = rgb2ycbcr(nC);
+                    sumLuma   += nYuv.x * w;
+                    sumChroma += nYuv.yz * w;
                     sumWeight += w;
                 }
             }
 
-            // The center itself is always included (dx=0,dy=0 gives ssd=0 ≤ threshold)
             // Store normalised match count in alpha → Pass 2 uses it to refine noise estimate
             float maxCandidates = float((2*SEARCH_RADIUS+1) * (2*SEARCH_RADIUS+1)); // 25
-            fragColor = vec4(sumColor / max(sumWeight, 1.0), sumWeight / maxCandidates);
+            float invWeight = 1.0 / max(sumWeight, 1.0);
+            vec3 outYuv = vec3(sumLuma * invWeight, mix(centerYuv.yz, sumChroma * invWeight, 0.35));
+            fragColor = vec4(clamp(ycbcr2rgb(outYuv), 0.0, 1.0), clamp(sumWeight / maxCandidates, 0.0, 1.0));
         }
     """.trimIndent()
 
@@ -207,6 +230,24 @@ object BM3DShaders {
 
         const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
 
+        vec3 rgb2ycbcr(vec3 rgb) {
+            return vec3(dot(rgb, LW),
+                        dot(rgb, vec3(-0.169, -0.331,  0.5  )) + 0.5,
+                        dot(rgb, vec3( 0.5,  -0.419, -0.081 )) + 0.5);
+        }
+        vec3 ycbcr2rgb(vec3 yuv) {
+            float cb = yuv.y - 0.5, cr = yuv.z - 0.5;
+            return vec3(yuv.x + 1.402  * cr,
+                        yuv.x - 0.3441 * cb - 0.7141 * cr,
+                        yuv.x + 1.772  * cb);
+        }
+        float softMatchWeight(float ssd, float threshold) {
+            float t = max(threshold, 1e-6);
+            float soft = exp(-ssd / t);
+            float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
+            return soft * gate;
+        }
+
         void main() {
             vec3 noisyCenter = texture(uInputTexture, vTexCoord).rgb;
             vec4 basicSample = texture(uBasicTexture,  vTexCoord);
@@ -217,8 +258,6 @@ object BM3DShaders {
 
             if (uH <= 0.00001) { fragColor = vec4(noisyCenter, 1.0); return; }
 
-            float sigma_n2 = uH * uH;
-            float threshold = sigma_n2 * 9.0 * 2.7; // same τ as Pass 1
             vec2  T = uTexelSize;
 
             // Pre-fetch 3×3 center-patch luma from BASIC estimate (less noisy guide)
@@ -232,7 +271,13 @@ object BM3DShaders {
             float c21 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
 
-            vec3  sumNoisy  = vec3(0.0);
+            float lumaNoiseBoost = mix(1.35, 0.75, smoothstep(0.05, 0.65, c11));
+            float sigma_n2 = uH * uH * lumaNoiseBoost * lumaNoiseBoost;
+            float threshold = sigma_n2 * 9.0 * 2.7; // same τ as Pass 1, adapted by luma
+
+            vec3  basicYuv  = rgb2ycbcr(basicCenter);
+            float sumNoisyY = 0.0;
+            vec2  sumNoisyC = vec2(0.0);
             float sumWeight = 0.0;
             float sumL      = 0.0;  // luma sum  for variance estimation
             float sumL2     = 0.0;  // luma² sum for variance estimation
@@ -257,14 +302,17 @@ object BM3DShaders {
                     d = c21 - dot(texture(uBasicTexture, nUV + vec2( 1.0, 0.0)*T).rgb, LW); ssd += d*d;
                     d = c22 - dot(texture(uBasicTexture, nUV + vec2( 1.0, 1.0)*T).rgb, LW); ssd += d*d;
 
-                    float w = step(ssd, threshold);
+                    float w = softMatchWeight(ssd, threshold);
+                    if (dx == 0 && dy == 0) w = max(w, 1.0);
 
                     // Accumulate signal-variance statistics from basic estimate
                     sumL      += nL * w;
                     sumL2     += nL * nL * w;
 
                     // Filter the NOISY image with weights derived from basic-estimate matching
-                    sumNoisy  += texture(uInputTexture, nUV).rgb * w;
+                    vec3 nNoisyYuv = rgb2ycbcr(texture(uInputTexture, nUV).rgb);
+                    sumNoisyY += nNoisyYuv.x * w;
+                    sumNoisyC += nNoisyYuv.yz * w;
                     sumWeight += w;
                 }
             }
@@ -284,8 +332,17 @@ object BM3DShaders {
             float noiseOfAvg = sigma_n2 / N;
             float wienerW    = varSignal / max(varSignal + noiseOfAvg, 1e-6);
 
-            vec3 avgNoisy = sumNoisy / N;
-            fragColor = vec4(mix(basicCenter, avgNoisy, wienerW), 1.0);
+            float gx = abs(c21 - c01);
+            float gy = abs(c12 - c10);
+            float detailProtect = smoothstep(sigma_n2 * 18.0, sigma_n2 * 90.0, gx * gx + gy * gy + varSignal);
+            wienerW = mix(wienerW * 0.70, max(wienerW, 0.88), detailProtect);
+
+            vec3 avgNoisyYuv = vec3(sumNoisyY / N, sumNoisyC / N);
+            vec3 outYuv = vec3(
+                mix(basicYuv.x, avgNoisyYuv.x, clamp(wienerW, 0.0, 1.0)),
+                mix(basicYuv.yz, avgNoisyYuv.yz, clamp(wienerW * 0.25, 0.0, 0.45))
+            );
+            fragColor = vec4(clamp(ycbcr2rgb(outYuv), 0.0, 1.0), 1.0);
         }
     """.trimIndent()
 }
