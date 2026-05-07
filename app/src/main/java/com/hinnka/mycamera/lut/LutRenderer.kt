@@ -429,6 +429,10 @@ class LutRenderer : GLSurfaceView.Renderer {
     private var viewportWidth: Int = 0
     private var viewportHeight: Int = 0
 
+    // 历史高光点记录（用于增加稳定性，减少跳动）
+    private var lastBestX = -1
+    private var lastBestY = -1
+
     // 预览尺寸
     private var previewWidth: Int = 1920
     private var previewHeight: Int = 1080
@@ -2475,7 +2479,14 @@ class LutRenderer : GLSurfaceView.Renderer {
                         1.0 / (1.0 + dist * 0.05) // 距离越近权重越高
                     } else 1.0
 
-                    val score = clusterSum * bias
+                    // 引入历史偏置（滞后逻辑）：如果当前点靠近上一帧的高光点，给予额外权重加成
+                    val historyBias = if (lastBestX != -1 && lastBestY != -1) {
+                        val dx = x.toDouble() - lastBestX
+                        val dy = y.toDouble() - lastBestY
+                        if (dx * dx + dy * dy < 4.0) 1.2 else 1.0 // 半径 2.0 以内给予 20% 加成
+                    } else 1.0
+
+                    val score = clusterSum * bias * historyBias
                     if (score > maxClusterLuma) {
                         maxClusterLuma = score
                         bestX = x
@@ -2485,6 +2496,8 @@ class LutRenderer : GLSurfaceView.Renderer {
             }
 
             if (bestX != -1) {
+                lastBestX = bestX
+                lastBestY = bestY
                 // 归一化到 0-1，注意 GL 坐标 Y 轴翻转
                 val hx = bestX.toFloat() / METERING_SIZE
                 val hy = 1.0f - (bestY.toFloat() / METERING_SIZE)

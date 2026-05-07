@@ -2264,24 +2264,24 @@ class Camera2Controller(private val context: Context) {
             highlightPointSmoothedY = y
             highlightPointInitialized = true
         } else {
-            val alpha = 0.3
+            val alpha = 0.1 // 降低平滑系数，增加稳定性
             highlightPointSmoothedX = (alpha * x + (1 - alpha) * highlightPointSmoothedX).toFloat()
             highlightPointSmoothedY = (alpha * y + (1 - alpha) * highlightPointSmoothedY).toFloat()
         }
         if (_state.value.meteringMode == MeteringMode.HIGHLIGHT_PRIORITY) {
-            applyMeteringRegions()
-            
             // 计算当前平滑点与上次发送点的位移距离
             val dist = hypot(
                 highlightPointSmoothedX.toDouble() - lastSentHighlightPointX,
                 highlightPointSmoothedY.toDouble() - lastSentHighlightPointY
             )
             
-            // 只有位移超过 5% (0.05) 或者这是初始化后的第一帧，才更新预览
-            // 这能有效防止测光区域频繁微动导致的画面“呼吸感”
-            if (dist > 0.05 || lastSentHighlightPointX < 0) {
+            // 只有位移超过 8% (0.08) 或者这是初始化后的第一帧，才更新测光区域并触发预览
+            // 这样可以避免微小的坐标抖动导致 AE 系统频繁重算测光
+            if (dist > 0.08 || lastSentHighlightPointX < 0) {
                 lastSentHighlightPointX = highlightPointSmoothedX
                 lastSentHighlightPointY = highlightPointSmoothedY
+                
+                applyMeteringRegions()
                 updatePreview()
             }
         }
