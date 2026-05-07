@@ -128,6 +128,13 @@ fun CameraScreen(
     val videoCodec by viewModel.videoCodec.collectAsState()
     val videoAudioInputOptions by viewModel.videoAudioInputOptions.collectAsState()
     val phantomPipPreview by viewModel.phantomPipPreview.collectAsState()
+    val rawDcpId by viewModel.rawDcpId.collectAsState()
+    val rawBaselineLutId by viewModel.rawBaselineLutId.collectAsState()
+    val rawNlmNoiseFactor by viewModel.rawNlmNoiseFactor.collectAsState()
+    val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
+    val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
+    val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
+    val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val multipleExposureState = viewModel.multipleExposureState
     var previewRecipeParamsOverride by remember(currentLutId) { mutableStateOf<ColorRecipeParams?>(null) }
     var pendingCaptureAnimationBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -161,6 +168,15 @@ fun CameraScreen(
         contract = ActivityResultContracts.StartActivityForResult(),
         onResult = { _ ->
             // Results are handled via the ON_RESUME lifecycle effect to avoid self-reference issues
+        }
+    )
+
+    val dcpImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris ->
+            if (uris.isNotEmpty()) {
+                viewModel.importRawDcps(uris) { _, _ -> }
+            }
         }
     )
 
@@ -1123,7 +1139,37 @@ fun CameraScreen(
             useMFSR = useMFSR,
             onMFSRToggle = {
                 viewModel.setUseMFSR(it)
-            }
+            },
+            selectedDcpId = rawDcpId,
+            availableDcps = viewModel.availableDcps,
+            selectedBaselineLutId = rawBaselineLutId,
+            onSelectBaselineLut = { viewModel.setRawBaselineLutId(it) },
+            onEditBaselineRecipe = { lutId ->
+                // Switch to filters panel and then edit recipe
+                activePanel = ActivePanel.FILTERS
+                scope.launch {
+                    delay(100)
+                    viewModel.setLut(lutId)
+                    activePanel = ActivePanel.LUT_EDIT
+                }
+            },
+            availableLuts = viewModel.availableLutList,
+            thumbnail = viewModel.previewThumbnail,
+            rawNlmNoiseFactor = rawNlmNoiseFactor,
+            rawExposureCompensation = rawExposureCompensation,
+            rawAutoExposure = rawAutoExposure,
+            rawBlackPointCorrection = rawBlackPointCorrection,
+            rawWhitePointCorrection = rawWhitePointCorrection,
+            onSelectDcp = { viewModel.setRawDcpId(it) },
+            onImportDcp = { dcpImportLauncher.launch(arrayOf("application/octet-stream")) },
+            onDeleteDcp = { viewModel.deleteRawDcp(it.id) { _ -> } },
+            onRawNlmNoiseFactorChange = { viewModel.setRawNlmNoiseFactor(it) },
+            onRawExposureCompensationChange = { viewModel.setRawExposureCompensation(it) },
+            onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
+            onRawBlackPointCorrectionChange = { viewModel.setRawBlackPointCorrection(it) },
+            onRawWhitePointCorrectionChange = { viewModel.setRawWhitePointCorrection(it) },
+            onAdjustmentStart = { },
+            onAdjustmentEnd = { }
         )
 
         AnimatedVisibility(

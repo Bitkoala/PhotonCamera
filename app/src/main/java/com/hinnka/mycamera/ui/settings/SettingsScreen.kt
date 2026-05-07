@@ -1189,11 +1189,37 @@ fun SettingsScreen(
                 }
 
                 SettingsTab.RAW -> {
-                    BaselineColorCorrectionSettingItem(
-                        title = stringResource(R.string.settings_baseline_raw_title),
-                        description = stringResource(R.string.settings_baseline_raw_description),
-                        selectedLut = availableLuts.find { it.id == rawBaselineLutId },
-                        onClick = { baselinePickerTarget = BaselineColorCorrectionTarget.RAW }
+                    RawEditPanel(
+                        selectedDcpId = rawDcpId,
+                        availableDcps = availableDcps,
+                        selectedBaselineLutId = rawBaselineLutId,
+                        onSelectBaselineLut = { viewModel.setBaselineLut(BaselineColorCorrectionTarget.RAW, it) },
+                        onEditBaselineRecipe = { baselineRecipeEditorTarget = BaselineColorCorrectionTarget.RAW },
+                        availableLuts = availableLuts,
+                        thumbnail = previewThumbnail,
+                        rawNlmNoiseFactor = rawNlmNoiseFactorUi,
+                        rawExposureCompensation = rawExposureCompensationUi,
+                        rawAutoExposure = rawAutoExposure,
+                        rawBlackPointCorrection = rawBlackPointCorrectionUi,
+                        rawWhitePointCorrection = rawWhitePointCorrectionUi,
+                        onSelectDcp = { viewModel.setRawDcpId(it) },
+                        onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
+                        onDeleteDcp = { dcp ->
+                            viewModel.deleteRawDcp(dcp.id) { success ->
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (success) R.string.raw_dcp_delete_success else R.string.raw_dcp_delete_failed,
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
+                        onRawExposureCompensationChange = { rawExposureCompensationUi = it },
+                        onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
+                        onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
+                        onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
+                        onAdjustmentStart = { isRawSliderAdjusting = true },
+                        onAdjustmentEnd = { commitRawSliderValues() }
                     )
 
                     HorizontalDivider(
@@ -1208,7 +1234,7 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.setExportDngWithRawExport(it) }
                     )
 
-                    HorizontalDivider(
+                    /*HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
                         color = Color.White.copy(alpha = 0.1f)
                     )
@@ -1218,7 +1244,7 @@ fun SettingsScreen(
                         description = stringResource(R.string.settings_raw_auto_white_balance_estimate_description),
                         checked = rawAutoWhiteBalanceEstimate,
                         onCheckedChange = { viewModel.setRawAutoWhiteBalanceEstimate(it) }
-                    )
+                    )*/
 
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -1260,43 +1286,6 @@ fun SettingsScreen(
                             }
                         )
                     }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = Color.White.copy(alpha = 0.1f)
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = Color.White.copy(alpha = 0.1f)
-                    )
-
-                    RawEditPanel(
-                        selectedDcpId = rawDcpId,
-                        availableDcps = availableDcps,
-                        rawNlmNoiseFactor = rawNlmNoiseFactorUi,
-                        rawExposureCompensation = rawExposureCompensationUi,
-                        rawAutoExposure = rawAutoExposure,
-                        rawBlackPointCorrection = rawBlackPointCorrectionUi,
-                        rawWhitePointCorrection = rawWhitePointCorrectionUi,
-                        onSelectDcp = { viewModel.setRawDcpId(it) },
-                        onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
-                        onDeleteDcp = { dcp ->
-                            viewModel.deleteRawDcp(dcp.id) { success ->
-                                android.widget.Toast.makeText(
-                                    context,
-                                    if (success) R.string.raw_dcp_delete_success else R.string.raw_dcp_delete_failed,
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
-                        onRawExposureCompensationChange = { rawExposureCompensationUi = it },
-                        onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
-                        onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
-                        onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
-                        onAdjustmentStart = { isRawSliderAdjusting = true },
-                        onAdjustmentEnd = { commitRawSliderValues() }
-                    )
                 }
 
                 SettingsTab.PHANTOM -> {

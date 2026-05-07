@@ -431,7 +431,7 @@
     <string name="raw_profile_arri_master">ARRI 大師</string>
     <string name="raw_profile_fuji_provia">富士 PROVIA</string>
     <string name="raw_profile_standard_srgb">標準 sRGB</string>
-    <string name="settings_raw_nlm_noise_factor">RAW 降噪</string>
+    <string name="settings_raw_nlm_noise_factor">降噪</string>
     <string name="settings_use_p010">P010 (10 位 YUV)</string>
     <string name="settings_use_p010_description">啟用 10 位 YUV 輸出以獲得更好的影像資料精度。僅在支援的裝置上且 RAW 關閉時生效。</string>
     <string name="settings_use_hlg10">HLG10 HDR</string>

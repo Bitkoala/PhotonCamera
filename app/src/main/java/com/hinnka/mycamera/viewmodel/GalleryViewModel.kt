@@ -298,6 +298,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         private set
     var editRawDcpId = MutableStateFlow<String?>(null)
         private set
+    var editRawBaselineLutId = MutableStateFlow<String?>(null)
+        private set
 
     // Computational Bokeh editing state
     var editComputationalAperture = MutableStateFlow<Float?>(null)
@@ -1579,6 +1581,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         currentMediaMetadata?.let { metadata ->
             editLutId.value = metadata.lutId
             editFrameId.value = metadata.frameId
+            editRawDcpId.value = metadata.rawDcpId
+            editRawBaselineLutId.value = metadata.baselineLutId
+            restoreCropEditState(targetPhoto, metadata)
             editPhotoRecipeParams.value = metadata.colorRecipeParams
             // 智能初始化：导入的照片默认值为 0，App 拍摄的则回退到当前全局配置
             editSharpening.value =
@@ -1593,12 +1598,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawAutoExposure.value = metadata.rawAutoExposure ?: true
             editRawBlackPointCorrection.value = metadata.rawBlackPointCorrection ?: 0f
             editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
-            editRawDcpId.value = metadata.rawDcpId
             
             editComputationalAperture.value = metadata.computationalAperture
             editFocusPointX.value = metadata.focusPointX
             editFocusPointY.value = metadata.focusPointY
-            restoreCropEditState(targetPhoto, metadata)
         } ?: run {
             editLutId.value = null
             editFrameId.value = null
@@ -1612,6 +1615,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawBlackPointCorrection.value = 0f
             editRawWhitePointCorrection.value = 0f
             editRawDcpId.value = null
+            editRawBaselineLutId.value = null
             editComputationalAperture.value = null
             editFocusPointX.value = null
             editFocusPointY.value = null
@@ -1645,6 +1649,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawBlackPointCorrection.value = 0f
         editRawWhitePointCorrection.value = 0f
         editRawDcpId.value = null
+        editRawBaselineLutId.value = null
     }
 
     /**
@@ -1748,6 +1753,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             rawBlackPointCorrection = editRawBlackPointCorrection.value,
             rawWhitePointCorrection = editRawWhitePointCorrection.value,
             rawDcpId = editRawDcpId.value,
+            baselineLutId = editRawBaselineLutId.value
         )
         if (metadata != null) {
             currentMediaMetadata = metadata
@@ -1787,6 +1793,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawDcpSelection(mediaData: MediaData, dcpId: String?) {
         editRawDcpId.value = dcpId
+        persistRawEditMetadata(mediaData)
+    }
+
+    fun saveRawBaselineLutSelection(mediaData: MediaData, lutId: String?) {
+        editRawBaselineLutId.value = lutId
         persistRawEditMetadata(mediaData)
     }
 
@@ -2014,6 +2025,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         rawBlackPointCorrection = editRawBlackPointCorrection.value,
                         rawWhitePointCorrection = editRawWhitePointCorrection.value,
                         rawDcpId = editRawDcpId.value,
+                        baselineLutId = editRawBaselineLutId.value,
                         computationalAperture = editComputationalAperture.value,
                         focusPointX = editFocusPointX.value,
                         focusPointY = editFocusPointY.value,
@@ -2298,6 +2310,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     rawBlackPointCorrection = editRawBlackPointCorrection.value,
                     rawWhitePointCorrection = editRawWhitePointCorrection.value,
                     rawDcpId = editRawDcpId.value,
+                    baselineLutId = editRawBaselineLutId.value,
                     computationalAperture = editComputationalAperture.value,
                     focusPointX = editFocusPointX.value,
                     focusPointY = editFocusPointY.value,

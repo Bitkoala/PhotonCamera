@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,13 +21,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
+import android.graphics.Bitmap
 import com.hinnka.mycamera.R
+import com.hinnka.mycamera.lut.LutInfo
+import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.raw.DcpInfo
 
 @Composable
 fun RawEditPanel(
     selectedDcpId: String?,
     availableDcps: List<DcpInfo>,
+    selectedBaselineLutId: String?,
+    onSelectBaselineLut: (String?) -> Unit,
+    onEditBaselineRecipe: (String) -> Unit,
+    availableLuts: List<LutInfo>,
+    thumbnail: Bitmap?,
     rawNlmNoiseFactor: Float,
     rawExposureCompensation: Float,
     rawAutoExposure: Boolean,
@@ -56,6 +65,14 @@ fun RawEditPanel(
             onSelectDcp = onSelectDcp,
             onImportDcp = onImportDcp,
             onDeleteDcp = onDeleteDcp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        RawBaselineColorCorrectionSelector(
+            selectedLutId = selectedBaselineLutId,
+            availableLuts = availableLuts,
+            thumbnail = thumbnail,
+            onSelectLut = onSelectBaselineLut,
+            onEditRecipe = onEditBaselineRecipe
         )
         Spacer(modifier = Modifier.height(16.dp))
         RawSwitchSettingItem(
@@ -339,5 +356,124 @@ private fun DcpItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun RawBaselineColorCorrectionSelector(
+    selectedLutId: String?,
+    availableLuts: List<LutInfo>,
+    thumbnail: Bitmap?,
+    onSelectLut: (String?) -> Unit,
+    onEditRecipe: (String) -> Unit
+) {
+    var showDialog by remember { mutableStateOf(false) }
+    val selectedLut = availableLuts.find { it.id == selectedLutId }
+    val selectedName = selectedLut?.getName() ?: stringResource(R.string.none)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable { showDialog = true }
+        ) {
+            Text(
+                text = stringResource(R.string.settings_baseline_raw_title),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = selectedName,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (selectedLutId != null) {
+                IconButton(onClick = { onEditRecipe(selectedLutId) }) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = stringResource(R.string.settings_baseline_edit_recipe),
+                        tint = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.clickable { showDialog = true }
+            )
+        }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = {
+                Text(text = stringResource(R.string.settings_baseline_raw_title))
+            },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.settings_baseline_dialog_description),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    LutSelector(
+                        availableLuts = availableLuts,
+                        currentLutId = selectedLutId,
+                        thumbnail = thumbnail,
+                        onLutSelected = { selected ->
+                            onSelectLut(selected)
+                            showDialog = false
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDialog = false
+                        if (selectedLutId != null) {
+                            onEditRecipe(selectedLutId)
+                        }
+                    },
+                    enabled = selectedLutId != null
+                ) {
+                    Text(stringResource(R.string.settings_baseline_edit_recipe))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            onSelectLut(null)
+                            showDialog = false
+                        }
+                    ) {
+                        Text(stringResource(R.string.settings_baseline_clear))
+                    }
+                    TextButton(onClick = { showDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            }
+        )
     }
 }

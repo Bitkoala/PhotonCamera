@@ -30,6 +30,8 @@ import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.video.*
 import com.hinnka.mycamera.video.VideoCodec
+import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.lut.LutInfo
 
 private enum class VideoSettingPanel {
     ASPECT_RATIO,
@@ -39,7 +41,7 @@ private enum class VideoSettingPanel {
     MICROPHONE
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun CameraTopSheet(
     visible: Boolean,
@@ -73,9 +75,33 @@ fun CameraTopSheet(
     onMultipleExposureToggle: (Boolean) -> Unit,
     useMFSR: Boolean,
     onMFSRToggle: (Boolean) -> Unit,
+    // RAW Edit Panel parameters
+    selectedDcpId: String?,
+    availableDcps: List<DcpInfo>,
+    selectedBaselineLutId: String?,
+    onSelectBaselineLut: (String?) -> Unit,
+    onEditBaselineRecipe: (String) -> Unit,
+    availableLuts: List<LutInfo>,
+    thumbnail: android.graphics.Bitmap?,
+    rawNlmNoiseFactor: Float,
+    rawExposureCompensation: Float,
+    rawAutoExposure: Boolean,
+    rawBlackPointCorrection: Float,
+    rawWhitePointCorrection: Float,
+    onSelectDcp: (String?) -> Unit,
+    onImportDcp: () -> Unit,
+    onDeleteDcp: (DcpInfo) -> Unit,
+    onRawNlmNoiseFactorChange: (Float) -> Unit,
+    onRawExposureCompensationChange: (Float) -> Unit,
+    onRawAutoExposureChange: (Boolean) -> Unit,
+    onRawBlackPointCorrectionChange: (Float) -> Unit,
+    onRawWhitePointCorrectionChange: (Float) -> Unit,
+    onAdjustmentStart: () -> Unit,
+    onAdjustmentEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expandedVideoPanel by rememberSaveable { mutableStateOf<VideoSettingPanel?>(null) }
+    var showRawSheet by rememberSaveable { mutableStateOf(false) }
     AnimatedVisibility(
         visible = visible,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -144,14 +170,12 @@ fun CameraTopSheet(
                     )
 
                     if (isRawSupported) {
-                        QuickSettingToggle(
-                            title = stringResource(R.string.settings_use_raw),
+                        QuickSettingButton2(
+                            title = "RAW",
                             checked = useRaw,
-                            onCheckedChange = onRawToggle,
+                            onClick = { showRawSheet = true },
                             modifier = Modifier.weight(1f)
                         )
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
 
@@ -434,6 +458,76 @@ fun CameraTopSheet(
             Spacer(Modifier.weight(1f))
         }
     }
+
+    if (showRawSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showRawSheet = false },
+            containerColor = Color(0xFF1E1E1E),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.2f)) }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_use_raw),
+                        color = Color.White,
+                        fontSize = 16.sp
+                    )
+                    Switch(
+                        checked = useRaw,
+                        onCheckedChange = onRawToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFFFF6B35),
+                            uncheckedThumbColor = Color.Gray,
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
+                            uncheckedBorderColor = Color.Transparent
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                com.hinnka.mycamera.ui.components.RawEditPanel(
+                    selectedDcpId = selectedDcpId,
+                    availableDcps = availableDcps,
+                    selectedBaselineLutId = selectedBaselineLutId,
+                    onSelectBaselineLut = onSelectBaselineLut,
+                    onEditBaselineRecipe = {
+                        showRawSheet = false
+                        onEditBaselineRecipe(it)
+                    },
+                    availableLuts = availableLuts,
+                    thumbnail = thumbnail,
+                    rawNlmNoiseFactor = rawNlmNoiseFactor,
+                    rawExposureCompensation = rawExposureCompensation,
+                    rawAutoExposure = rawAutoExposure,
+                    rawBlackPointCorrection = rawBlackPointCorrection,
+                    rawWhitePointCorrection = rawWhitePointCorrection,
+                    onSelectDcp = onSelectDcp,
+                    onImportDcp = onImportDcp,
+                    onDeleteDcp = onDeleteDcp,
+                    onRawNlmNoiseFactorChange = onRawNlmNoiseFactorChange,
+                    onRawExposureCompensationChange = onRawExposureCompensationChange,
+                    onRawAutoExposureChange = onRawAutoExposureChange,
+                    onRawBlackPointCorrectionChange = onRawBlackPointCorrectionChange,
+                    onRawWhitePointCorrectionChange = onRawWhitePointCorrectionChange,
+                    onAdjustmentStart = onAdjustmentStart,
+                    onAdjustmentEnd = onAdjustmentEnd
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -653,6 +747,49 @@ fun QuickSettingButton(
                 imageVector = icon,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+
+
+@Composable
+fun QuickSettingButton2(
+    title: String,
+    checked: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (checked) Color(0xFFFF6B35).copy(alpha = 0.15f) else Color.White.copy(
+                    alpha = 0.15f
+                )
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = if (checked) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.9f),
+                fontSize = 10.sp,
+                fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal,
+            )
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = if (checked) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.9f),
                 modifier = Modifier.size(18.dp)
             )
         }

@@ -53,6 +53,7 @@ import com.hinnka.mycamera.frame.TextType
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
+import com.hinnka.mycamera.ui.camera.LutEditorTarget
 import com.hinnka.mycamera.ui.camera.RecipeScope
 import com.hinnka.mycamera.ui.components.*
 import com.hinnka.mycamera.ui.components.RawEditPanel
@@ -91,6 +92,7 @@ private data class PreviewRenderSignature(
     val editRawBlackPointCorrection: Float,
     val editRawWhitePointCorrection: Float,
     val editRawDcpId: String?,
+    val editRawBaselineLutId: String?,
     val editComputationalAperture: Float?,
     val editFocusX: Float?,
     val editFocusY: Float?,
@@ -128,6 +130,8 @@ fun PhotoEditScreen(
     val lutScrollState = rememberLazyListState()
     val frameScrollState = rememberLazyListState()
     var showLutEditDialog by remember { mutableStateOf(false) }
+    var showBaselineLutEditDialog by remember { mutableStateOf(false) }
+    var baselineLutEditId by remember { mutableStateOf<String?>(null) }
     var previewRecipeParamsOverride by remember(editLutId) { mutableStateOf<ColorRecipeParams?>(null) }
 
     BackHandler {
@@ -153,6 +157,7 @@ fun PhotoEditScreen(
     val editRawBlackPointCorrection by viewModel.editRawBlackPointCorrection.collectAsState()
     val editRawWhitePointCorrection by viewModel.editRawWhitePointCorrection.collectAsState()
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
+    val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
     val availableDcps = viewModel.availableDcps
     
     val editComputationalAperture by viewModel.editComputationalAperture.collectAsState()
@@ -201,6 +206,7 @@ fun PhotoEditScreen(
             editRawBlackPointCorrection = editRawBlackPointCorrection,
             editRawWhitePointCorrection = editRawWhitePointCorrection,
             editRawDcpId = editRawDcpId,
+            editRawBaselineLutId = editRawBaselineLutId,
             editComputationalAperture = editComputationalAperture,
             editFocusX = editFocusX,
             editFocusY = editFocusY,
@@ -575,7 +581,7 @@ fun PhotoEditScreen(
 
             // 编辑控制区域
             AnimatedVisibility(
-                visible = showControls && !showLutEditDialog,
+                visible = showControls && !showLutEditDialog && !showBaselineLutEditDialog,
                 enter = slideInVertically(initialOffsetY = { it }) + expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -850,7 +856,7 @@ fun PhotoEditScreen(
                                         value = editChromaNoiseReduction,
                                         valueRange = 0f..1f,
                                         resetValue = 0f,
-                                        onValueChange = { viewModel.setChromaNoiseReduction(it) },
+                                                onValueChange = { viewModel.setChromaNoiseReduction(it) },
                                         onValueChangeFinished = { }
                                     )
                                 }
@@ -858,6 +864,16 @@ fun PhotoEditScreen(
                                     RawEditPanel(
                                         selectedDcpId = editRawDcpId,
                                         availableDcps = availableDcps,
+                                        selectedBaselineLutId = editRawBaselineLutId,
+                                        onSelectBaselineLut = { lutId ->
+                                            viewModel.saveRawBaselineLutSelection(currentPhoto, lutId)
+                                        },
+                                        onEditBaselineRecipe = { lutId ->
+                                            baselineLutEditId = lutId
+                                            showBaselineLutEditDialog = true
+                                        },
+                                        availableLuts = availableLuts,
+                                        thumbnail = previewBitmap,
                                         rawNlmNoiseFactor = editRawNlmNoiseFactor,
                                         rawExposureCompensation = editRawExposureCompensation,
                                         rawAutoExposure = editRawAutoExposure,
@@ -929,6 +945,18 @@ fun PhotoEditScreen(
             photoRecipeParams = editPhotoRecipeParams,
             onPhotoParamsChange = { viewModel.setPhotoRecipeParams(it) },
             defaultScope = RecipeScope.PHOTO_LOCAL,
+            containerColor = Color(0x151A1A1A)
+        )
+    }
+
+    if (showBaselineLutEditDialog && baselineLutEditId != null) {
+        LutEditBottomSheet(
+            lutId = baselineLutEditId!!,
+            editorTarget = LutEditorTarget.BASELINE_RAW,
+            onDismiss = {
+                showBaselineLutEditDialog = false
+                baselineLutEditId = null
+            },
             containerColor = Color(0x151A1A1A)
         )
     }

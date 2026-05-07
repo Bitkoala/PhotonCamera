@@ -484,6 +484,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPreferencesRepository.userPreferences.collect {
                 if (!firstPreferencesLogged) {
                     firstPreferencesLogged = true
+
+                    if (it.rawAutoWhiteBalanceEstimate) {
+                        setRawAutoWhiteBalanceEstimate(false)
+                    }
+
                     StartupTrace.mark(
                         "CameraViewModel.userPreferences first collect",
                         "costMs=${SystemClock.elapsedRealtime() - preferenceCollectStart}"
@@ -709,6 +714,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setRawDcpId(dcpId: String?) {
         viewModelScope.launch { userPreferencesRepository.saveRawDcpId(dcpId) }
+    }
+    fun setRawBaselineLutId(lutId: String?) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveBaselineLutConfig(com.hinnka.mycamera.lut.BaselineColorCorrectionTarget.RAW, lutId)
+        }
     }
     fun setRawNlmNoiseFactor(value: Float) {
         viewModelScope.launch { userPreferencesRepository.saveRawNlmNoiseFactor(value) }
