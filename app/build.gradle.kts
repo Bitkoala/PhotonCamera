@@ -208,6 +208,7 @@ dependencies {
     // Bugly for default flavor
     "defaultImplementation"("com.tencent.bugly:crashreport:latest.release")
     "samsungImplementation"("com.tencent.bugly:crashreport:latest.release")
+    "meituImplementation"("com.tencent.bugly:crashreport:latest.release")
 
     // Billing for google flavor
     "googleImplementation"(libs.google.billing)
