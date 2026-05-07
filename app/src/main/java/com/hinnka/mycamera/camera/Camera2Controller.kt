@@ -3028,10 +3028,8 @@ class Camera2Controller(private val context: Context) {
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
 
-                if (!isRawCapture && shouldMirrorStillCaptureToPreview()) {
+                if (shouldMirrorStillCaptureToPreview()) {
                     previewSurface?.let { addTarget(it) }
-                } else if (isRawCapture) {
-                    PLog.d(TAG, "RAW capture uses RAW target only to avoid unstable RAW+preview still requests")
                 }
 
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
