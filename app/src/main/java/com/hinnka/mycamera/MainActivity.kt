@@ -581,6 +581,9 @@ fun NavigationHost(
                     },
                     onOpenFrameEditor = { frameId ->
                         navController.navigate(Routes.frameEditor(frameId = frameId))
+                    },
+                    onFilterManagementClick = { lutId ->
+                        navController.navigate(Routes.filterManagement(lutId))
                     }
                 )
             }

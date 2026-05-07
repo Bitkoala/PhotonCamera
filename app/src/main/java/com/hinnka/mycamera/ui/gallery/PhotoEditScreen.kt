@@ -109,6 +109,7 @@ fun PhotoEditScreen(
     cameraViewModel: CameraViewModel,
     onBack: () -> Unit,
     onOpenFrameEditor: (String) -> Unit,
+    onFilterManagementClick: (String?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -681,6 +682,7 @@ fun PhotoEditScreen(
                                         thumbnail = thumbnailBitmap,
                                         onLutSelected = { viewModel.setEditLut(it) },
                                         onEditClick = { showLutEditDialog = true },
+                                        onManageClick = { onFilterManagementClick(it) },
                                         categoryOrder = categoryOrder
                                     )
 
