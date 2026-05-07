@@ -21,8 +21,10 @@ lifecycleService = "2.10.0"
 lifecycleProcess = "2.10.0"
 okhttp = "4.12.0"
 gson = "2.11.0"
+recyclerview = "1.4.0"
 
 [libraries]
+androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
 media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 google-billing = { group = "com.android.billingclient", name = "billing", version.ref = "billing" }
