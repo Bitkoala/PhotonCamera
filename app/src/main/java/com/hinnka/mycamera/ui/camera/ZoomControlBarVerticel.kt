@@ -340,7 +340,7 @@ fun ZoomRulerVertical(
                 }
             },
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceAround
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         val selectedStopIndex = stops.indices.minByOrNull { abs(stops[it] - zoomRatio) }
         stops.forEachIndexed { index, stop ->

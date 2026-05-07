@@ -95,9 +95,10 @@ fun ParameterItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = modifier
             .width(60.dp)
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .autoRotate()
             .then(
                 if (isEnabled) {

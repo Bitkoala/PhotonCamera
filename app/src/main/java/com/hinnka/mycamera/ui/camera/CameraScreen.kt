@@ -916,7 +916,8 @@ fun CameraScreen(
                                 activePanel =
                                     if (activePanel == ActivePanel.FILTERS) ActivePanel.NONE else ActivePanel.FILTERS
                             },
-                            modifier = Modifier.align(Alignment.Center)
+                            modifier = Modifier
+                                .align(Alignment.Center)
                         )
                     }
                     Box(
@@ -930,7 +931,8 @@ fun CameraScreen(
                             onParameterClick = { param ->
                                 selectedParameter = param
                             },
-                            modifier = Modifier.align(Alignment.Center)
+                            modifier = Modifier
+                                .align(Alignment.Center)
                         )
                     }
                 }
