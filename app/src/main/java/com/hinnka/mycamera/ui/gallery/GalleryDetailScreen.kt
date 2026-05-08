@@ -57,6 +57,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.isVisible
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -187,6 +188,11 @@ fun GalleryDetailScreen(
         pageCount = { photos.size }
     )
 
+    // 记录是否已经执行过初始的 photoId 跳转
+    var initialJumpDone by rememberSaveable(photoId) { mutableStateOf(false) }
+    // 记录上次的照片数量，用于判断是否有新照片增加
+    var lastPhotosCount by rememberSaveable { mutableIntStateOf(photos.size) }
+
     // 同步当前索引，并在快到底部时加载更多系统照片
     LaunchedEffect(pagerState.currentPage, photos.size) {
         viewModel.setCurrentPhoto(pagerState.currentPage)
@@ -198,17 +204,22 @@ fun GalleryDetailScreen(
     }
 
     LaunchedEffect(photos.size, isExpanded) {
-        if (isExpanded) {
+        // 仅在分屏模式且照片数量增加（通常是新拍摄）时才自动跳到第一张
+        if (isExpanded == true && photos.size > lastPhotosCount) {
             pagerState.scrollToPage(0)
         }
+        lastPhotosCount = photos.size
     }
 
-    // 当 photoId 提供时，确保在照片列表加载后自动跳转到该照片
+    // 当 photoId 提供时，确保在照片列表加载后自动跳转到该照片（仅执行一次）
     LaunchedEffect(photos, photoId) {
-        if (photoId != null) {
+        if (photoId != null && initialJumpDone == false) {
             val index = photos.indexOfFirst { it.id == photoId }
-            if (index != -1 && index != pagerState.currentPage) {
-                pagerState.scrollToPage(index)
+            if (index != -1) {
+                if (index != pagerState.currentPage) {
+                    pagerState.scrollToPage(index)
+                }
+                initialJumpDone = true
             }
         }
     }
