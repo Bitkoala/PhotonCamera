@@ -18,6 +18,7 @@ import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.hdr.GainmapResult
 import com.hinnka.mycamera.hdr.GainmapSourceSet
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
+import com.hinnka.mycamera.hdr.SourceKind
 import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
@@ -592,7 +593,10 @@ object GalleryManager {
                 }
 
                 // 读取照片
-                val processedBitmap = (ultraHdrSource?.sdrBase ?: if (metadata.hasAiDenoisedBase) {
+                val sourceBitmap = ultraHdrSource
+                    ?.takeUnless { it.sourceKind == SourceKind.SDR_BITMAP && metadata.hasEmbeddedGainmap }
+                    ?.sdrBase
+                val processedBitmap = (sourceBitmap ?: if (metadata.hasAiDenoisedBase) {
                     photoProcessor.process(
                         context, id, metadata,
                         sharpeningValue, noiseReductionValue, chromaNoiseReductionValue

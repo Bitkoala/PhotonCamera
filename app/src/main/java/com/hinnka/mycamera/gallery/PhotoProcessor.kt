@@ -198,14 +198,16 @@ class PhotoProcessor(
         if (source == null) {
             val photoFile = GalleryManager.getPhotoFile(context, photoId)
             if (photoFile.exists()) {
-                val bitmap = GalleryManager.loadBitmap(context, photoId, preserveHdr = true)
-                if (bitmap != null) {
-                    source = GainmapSourceSet(
-                        sdrBase = bitmap,
-                        sourceKind = SourceKind.SDR_BITMAP,
-                        confidence = if (metadata.hasEmbeddedGainmap) 1.0f else 0.5f,
-                        displayHdrSdrRatio = readDisplayHdrSdrRatio()
-                    )
+                if (metadata.hasEmbeddedGainmap) {
+                    val bitmap = GalleryManager.loadBitmap(context, photoId, preserveHdr = true)
+                    if (bitmap != null) {
+                        source = GainmapSourceSet(
+                            sdrBase = bitmap,
+                            sourceKind = SourceKind.SDR_BITMAP,
+                            confidence = 1.0f,
+                            displayHdrSdrRatio = readDisplayHdrSdrRatio()
+                        )
+                    }
                 }
             }
         }
