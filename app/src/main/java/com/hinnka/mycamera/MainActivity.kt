@@ -2,16 +2,16 @@ package com.hinnka.mycamera
 
 import android.Manifest
 import android.content.Intent
-import android.net.Uri
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.fadeIn
@@ -48,6 +48,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -60,30 +61,30 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.gallery.GalleryManager
+import com.hinnka.mycamera.lut.creator.LutCreatorScreen
+import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
 import com.hinnka.mycamera.screencapture.ScreenCaptureRenderConfigStore
-import com.hinnka.mycamera.ui.settings.PhantomPipCropScreen
 import com.hinnka.mycamera.ui.camera.CameraScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
-import com.hinnka.mycamera.ui.gallery.GalleryScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
+import com.hinnka.mycamera.ui.gallery.GalleryScreen
 import com.hinnka.mycamera.ui.gallery.PhotoEditScreen
 import com.hinnka.mycamera.ui.settings.FilterManagementScreen
 import com.hinnka.mycamera.ui.settings.FrameEditorScreen
 import com.hinnka.mycamera.ui.settings.FrameManagementScreen
+import com.hinnka.mycamera.ui.settings.PhantomPipCropScreen
 import com.hinnka.mycamera.ui.settings.SettingsScreen
 import com.hinnka.mycamera.ui.theme.PhotonCameraTheme
 import com.hinnka.mycamera.update.AppUpdateManager
 import com.hinnka.mycamera.utils.BuglyHelper
+import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.utils.OrientationObserver
+import com.hinnka.mycamera.utils.PLog
+import com.hinnka.mycamera.utils.StartupTrace
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import com.hinnka.mycamera.viewmodel.GalleryTab
 import com.hinnka.mycamera.viewmodel.GalleryViewModel
-import com.hinnka.mycamera.lut.creator.LutCreatorScreen
-import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
-import com.hinnka.mycamera.utils.DeviceUtil
-import com.hinnka.mycamera.gallery.GalleryManager
-import com.hinnka.mycamera.utils.PLog
-import com.hinnka.mycamera.utils.StartupTrace
 
 /**
  * 路由常量
@@ -150,6 +151,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         StartupTrace.mark("MainActivity.onCreate start")
 
@@ -181,6 +183,12 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         StartupTrace.mark("MainActivity.intent handled", "pendingRoute=$pendingRoute")
 
+        splashScreen.setKeepOnScreenCondition {
+            val cameraInitialized = cameraViewModel.isInitialized.value
+            val galleryInitialized = galleryViewModel.isInitialized.value
+            !(cameraInitialized && galleryInitialized)
+        }
+
 
         StartupTrace.mark("MainActivity.setContent start")
         setContent {
@@ -201,6 +209,15 @@ class MainActivity : ComponentActivity() {
                     color = Color.Black
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
+                        val cameraInitialized by cameraViewModel.isInitialized.collectAsState()
+                        val galleryInitialized by galleryViewModel.isInitialized.collectAsState()
+
+                        LaunchedEffect(cameraInitialized, galleryInitialized) {
+                            if (cameraInitialized && galleryInitialized) {
+                                cameraViewModel.onShutterAnimationTriggered()
+                            }
+                        }
+
                         if (hasPermissions) {
                             NavigationHost(
                                 cameraViewModel = cameraViewModel,
@@ -217,6 +234,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
+
                         AppUpdateInstallPrompt()
                     }
                 }

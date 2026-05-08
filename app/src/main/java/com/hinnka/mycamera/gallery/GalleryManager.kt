@@ -2371,31 +2371,31 @@ object GalleryManager {
         }
         if (metadata.mediaType == MediaType.VIDEO) {
             val sourceUri = metadata.sourceUri?.let(Uri::parse) ?: return@withContext null
-            val info = readVideoRecordInfo(context, sourceUri)
+//            val info = readVideoRecordInfo(context, sourceUri)
             val id = photoId
-            val resolvedWidth = info?.width ?: metadata.videoWidth ?: metadata.width
-            val resolvedHeight = info?.height ?: metadata.videoHeight ?: metadata.height
-            val resolvedDurationMs = info?.durationMs ?: metadata.durationMs
-            val resolvedMimeType = info?.mimeType ?: metadata.mimeType
+            val resolvedWidth = metadata.videoWidth ?: metadata.width
+            val resolvedHeight = metadata.videoHeight ?: metadata.height
+            val resolvedDurationMs = metadata.durationMs
+            val resolvedMimeType = metadata.mimeType
             val resolvedMetadata = metadata.copy(
                 width = resolvedWidth,
                 height = resolvedHeight,
                 mimeType = resolvedMimeType,
                 durationMs = resolvedDurationMs,
-                frameRate = info?.frameRate ?: metadata.frameRate,
-                bitrate = info?.bitrate ?: metadata.bitrate,
-                rotationDegrees = info?.rotationDegrees ?: metadata.rotationDegrees,
-                hasAudio = info?.hasAudio ?: metadata.hasAudio,
+                frameRate = metadata.frameRate,
+                bitrate = metadata.bitrate,
+                rotationDegrees = metadata.rotationDegrees,
+                hasAudio = metadata.hasAudio,
                 videoWidth = resolvedWidth,
                 videoHeight = resolvedHeight
             )
-            return@withContext MediaData(
+            val result = MediaData(
                 id = id,
                 uri = sourceUri,
                 thumbnailUri = thumbnailUri,
-                displayName = info?.displayName ?: (sourceUri.lastPathSegment ?: "video_$id"),
-                dateAdded = info?.dateTaken ?: metadata.dateTaken ?: getPhotoDir(context, id).lastModified(),
-                size = info?.size ?: 0L,
+                displayName = (sourceUri.lastPathSegment ?: "video_$id"),
+                dateAdded = metadata.dateTaken ?: getPhotoDir(context, id).lastModified(),
+                size = 0L,
                 width = resolvedWidth,
                 height = resolvedHeight,
                 mediaType = MediaType.VIDEO,
@@ -2404,14 +2404,17 @@ object GalleryManager {
                 sourceUri = sourceUri,
                 metadata = resolvedMetadata
             )
+            return@withContext result
         }
 
         val photoFile = getPhotoFile(context, photoId)
         val originalFile = getDngFile(context, photoId).takeIf { it.exists() } ?: getYuvFile(context, photoId).takeIf { it.exists() } ?: photoFile
+
         if (!photoFile.exists()) return@withContext null
         val videoFile = getVideoFile(context, photoId)
         val isBurstPhoto = hasBurstPhotos(context, photoId)
-        MediaData(
+
+        val result = MediaData(
             id = photoId,
             uri = Uri.fromFile(photoFile),
             thumbnailUri = thumbnailUri,
@@ -2427,6 +2430,7 @@ object GalleryManager {
             isBurstPhoto = isBurstPhoto,
             metadata = metadata
         )
+        return@withContext result
     }
 
     fun loadYuvData(context: Context, photoId: String): ByteBuffer? {

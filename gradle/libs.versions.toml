@@ -22,6 +22,7 @@ lifecycleProcess = "2.10.0"
 okhttp = "4.12.0"
 gson = "2.11.0"
 recyclerview = "1.4.0"
+splashscreen = "1.0.1"
 
 [libraries]
 androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
@@ -54,6 +55,7 @@ androidx-animation-core = { group = "androidx.compose.animation", name = "animat
 androidx-lifecycle-process = { group = "androidx.lifecycle", name = "lifecycle-process", version.ref = "lifecycleProcess" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 
 
 [plugins]

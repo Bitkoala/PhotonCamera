@@ -94,7 +94,7 @@ enum class ActivePanel {
     LUT_EDIT
 }
 
-private const val InitialPreviewTransitionDelayMillis = 500L
+private const val InitialPreviewTransitionDelayMillis = 0L
 private const val PreviewTransitionRevealDurationMillis = 800
 
 @Composable
@@ -136,6 +136,7 @@ fun CameraScreen(
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
     val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val multipleExposureState = viewModel.multipleExposureState
+    val canStartShutterAnimation by viewModel.canStartShutterAnimation.collectAsState()
     var previewRecipeParamsOverride by remember(currentLutId) { mutableStateOf<ColorRecipeParams?>(null) }
     var pendingCaptureAnimationBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var previewBounds by remember { mutableStateOf<Rect?>(null) }
@@ -346,8 +347,8 @@ fun CameraScreen(
         }
     }
 
-    LaunchedEffect(state.isPreviewActive, hasPlayedInitialPreviewTransition) {
-        if (hasPlayedInitialPreviewTransition || !state.isPreviewActive) return@LaunchedEffect
+    LaunchedEffect(state.isPreviewActive, hasPlayedInitialPreviewTransition, canStartShutterAnimation) {
+        if (hasPlayedInitialPreviewTransition || !state.isPreviewActive || !canStartShutterAnimation) return@LaunchedEffect
         previewTransitionActive = true
         delay(InitialPreviewTransitionDelayMillis)
         previewTransitionRevealing = true

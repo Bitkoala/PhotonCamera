@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -17,6 +19,10 @@ import kotlinx.coroutines.withContext
  * 负责从私有存储读取和管理 PhotonCamera 拍摄的照片
  */
 class GalleryRepository(private val context: Context) {
+
+    private val queryPhotosMutex = Mutex()
+    private val querySystemPhotosMutex = Mutex()
+    private val querySystemVideosMutex = Mutex()
 
     companion object {
         private const val TAG = "GalleryRepository"
@@ -108,13 +114,13 @@ class GalleryRepository(private val context: Context) {
         fallbackItems
     }
 
-    private fun queryAllSystemPhotosByPages(pageSize: Int = 200): List<MediaData> {
+    private suspend fun queryAllSystemPhotosByPages(pageSize: Int = 200): List<MediaData> {
         val imageItems = querySystemImagesByPages(pageSize)
         val videoItems = querySystemVideosByPages(pageSize)
         return (imageItems + videoItems).sortedByDescending { it.dateAdded }
     }
 
-    private fun querySystemImagesByPages(pageSize: Int): List<MediaData> {
+    private suspend fun querySystemImagesByPages(pageSize: Int): List<MediaData> {
         val items = mutableListOf<MediaData>()
         var offset = 0
         while (true) {
@@ -128,7 +134,7 @@ class GalleryRepository(private val context: Context) {
         return items
     }
 
-    private fun querySystemVideosByPages(pageSize: Int): List<MediaData> {
+    private suspend fun querySystemVideosByPages(pageSize: Int): List<MediaData> {
         val items = mutableListOf<MediaData>()
         var offset = 0
         while (true) {
@@ -146,192 +152,199 @@ class GalleryRepository(private val context: Context) {
      * 查询私有存储中的照片
      */
     private suspend fun queryPhotos(offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaData> {
-        return GalleryManager.getPhotoIds(context)
-            .mapNotNull { GalleryManager.buildPhotoData(context, it) }
-            .sortedByDescending { it.dateAdded }
-            .drop(offset)
-            .take(limit)
+        StartupTrace.mark("queryPhotos limit=$limit")
+        return queryPhotosMutex.withLock {
+            val ids = GalleryManager.getPhotoIds(context)
+            val photos = ids.mapNotNull { GalleryManager.buildPhotoData(context, it) }
+            val sorted = photos.sortedByDescending { it.dateAdded }
+            val result = sorted.drop(offset).take(limit)
+            result
+        }
     }
 
-    private fun querySystemImages(offset: Int = 0, limit: Int? = null): List<MediaData> {
-        val items = mutableListOf<MediaData>()
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.DATE_ADDED,
-            MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.WIDTH,
-            MediaStore.Images.Media.HEIGHT,
-            MediaStore.Images.Media.MIME_TYPE
-        )
-        val cursor = if (limit != null || offset > 0) {
-            val queryArgs = android.os.Bundle().apply {
-                putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
-                limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
-                putString(
-                    android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+    private suspend fun querySystemImages(offset: Int = 0, limit: Int? = null): List<MediaData> {
+        return querySystemPhotosMutex.withLock {
+            val items = mutableListOf<MediaData>()
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_TAKEN,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.WIDTH,
+                MediaStore.Images.Media.HEIGHT,
+                MediaStore.Images.Media.MIME_TYPE
+            )
+            val cursor = if (limit != null || offset > 0) {
+                val queryArgs = android.os.Bundle().apply {
+                    putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
+                    limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
+                    putString(
+                        android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                        "${MediaStore.Images.Media.DATE_ADDED} DESC"
+                    )
+                }
+                context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, queryArgs, null)
+            } else {
+                context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    null,
+                    null,
                     "${MediaStore.Images.Media.DATE_ADDED} DESC"
                 )
             }
-            context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, queryArgs, null)
-        } else {
-            context.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                null,
-                null,
-                "${MediaStore.Images.Media.DATE_ADDED} DESC"
-            )
-        }
-        cursor
-            ?.use { cursor ->
-                PLog.d(TAG, "querySystemImages offset=$offset limit=$limit cursorCount=${cursor.count}")
-                val idColumn = cursor.getColumnIndex(MediaStore.Images.Media._ID)
-                if (idColumn < 0) {
-                    PLog.e(TAG, "querySystemImages missing required _ID column")
-                    return@use
-                }
-                val nameColumn = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
-                val dateTakenColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
-                val dateColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
-                val sizeColumn = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
-                val widthColumn = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
-                val heightColumn = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
-                val mimeColumn = cursor.getColumnIndex(MediaStore.Images.Media.MIME_TYPE)
+            cursor
+                ?.use { cursor ->
+                    PLog.d(TAG, "querySystemImages offset=$offset limit=$limit cursorCount=${cursor.count}")
+                    val idColumn = cursor.getColumnIndex(MediaStore.Images.Media._ID)
+                    if (idColumn < 0) {
+                        PLog.e(TAG, "querySystemImages missing required _ID column")
+                        return@use
+                    }
+                    val nameColumn = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+                    val dateTakenColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
+                    val dateColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
+                    val sizeColumn = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
+                    val widthColumn = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
+                    val heightColumn = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
+                    val mimeColumn = cursor.getColumnIndex(MediaStore.Images.Media.MIME_TYPE)
 
-                while (cursor.moveToNext()) {
-                    try {
-                        val id = cursor.getLong(idColumn)
-                        val contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                        val displayDate = resolveSystemMediaDate(
-                            dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
-                            dateAddedSeconds = cursor.getOptionalLong(dateColumn),
-                            mediaId = "image_$id"
-                        )
-                        items.add(
-                            MediaData(
-                                id = "image_$id",
-                                uri = contentUri,
-                                thumbnailUri = contentUri,
-                                displayName = cursor.getOptionalString(nameColumn) ?: "image_$id",
-                                dateAdded = displayDate,
-                                size = cursor.getOptionalLong(sizeColumn),
-                                width = cursor.getOptionalInt(widthColumn),
-                                height = cursor.getOptionalInt(heightColumn),
-                                mediaType = MediaType.IMAGE,
-                                mimeType = cursor.getOptionalString(mimeColumn),
-                                sourceUri = contentUri
+                    while (cursor.moveToNext()) {
+                        try {
+                            val id = cursor.getLong(idColumn)
+                            val contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                            val displayDate = resolveSystemMediaDate(
+                                dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
+                                dateAddedSeconds = cursor.getOptionalLong(dateColumn),
+                                mediaId = "image_$id"
                             )
-                        )
-                    } catch (e: Exception) {
-                        PLog.e(TAG, "Failed to build system image item, skipping", e)
+                            items.add(
+                                MediaData(
+                                    id = "image_$id",
+                                    uri = contentUri,
+                                    thumbnailUri = contentUri,
+                                    displayName = cursor.getOptionalString(nameColumn) ?: "image_$id",
+                                    dateAdded = displayDate,
+                                    size = cursor.getOptionalLong(sizeColumn),
+                                    width = cursor.getOptionalInt(widthColumn),
+                                    height = cursor.getOptionalInt(heightColumn),
+                                    mediaType = MediaType.IMAGE,
+                                    mimeType = cursor.getOptionalString(mimeColumn),
+                                    sourceUri = contentUri
+                                )
+                            )
+                        } catch (e: Exception) {
+                            PLog.e(TAG, "Failed to build system image item, skipping", e)
+                        }
                     }
                 }
-            }
-        return items
+            items
+        }
     }
 
-    private fun querySystemVideos(offset: Int = 0, limit: Int? = null): List<MediaData> {
-        val items = mutableListOf<MediaData>()
-        val projection = arrayOf(
-            MediaStore.Video.Media._ID,
-            MediaStore.Video.Media.DISPLAY_NAME,
-            MediaStore.Video.Media.DATE_TAKEN,
-            MediaStore.Video.Media.DATE_ADDED,
-            MediaStore.Video.Media.SIZE,
-            MediaStore.Video.Media.WIDTH,
-            MediaStore.Video.Media.HEIGHT,
-            MediaStore.Video.Media.ORIENTATION,
-            MediaStore.Video.Media.MIME_TYPE,
-            MediaStore.Video.Media.DURATION
-        )
-        val cursor = if (limit != null || offset > 0) {
-            val queryArgs = android.os.Bundle().apply {
-                putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
-                limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
-                putString(
-                    android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+    private suspend fun querySystemVideos(offset: Int = 0, limit: Int? = null): List<MediaData> {
+        return querySystemVideosMutex.withLock {
+            val items = mutableListOf<MediaData>()
+            val projection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DATE_TAKEN,
+                MediaStore.Video.Media.DATE_ADDED,
+                MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.WIDTH,
+                MediaStore.Video.Media.HEIGHT,
+                MediaStore.Video.Media.ORIENTATION,
+                MediaStore.Video.Media.MIME_TYPE,
+                MediaStore.Video.Media.DURATION
+            )
+            val cursor = if (limit != null || offset > 0) {
+                val queryArgs = android.os.Bundle().apply {
+                    putInt(android.content.ContentResolver.QUERY_ARG_OFFSET, offset)
+                    limit?.let { putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, it) }
+                    putString(
+                        android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                        "${MediaStore.Video.Media.DATE_ADDED} DESC"
+                    )
+                }
+                context.contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, queryArgs, null)
+            } else {
+                context.contentResolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    null,
+                    null,
                     "${MediaStore.Video.Media.DATE_ADDED} DESC"
                 )
             }
-            context.contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, queryArgs, null)
-        } else {
-            context.contentResolver.query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                null,
-                null,
-                "${MediaStore.Video.Media.DATE_ADDED} DESC"
-            )
-        }
-        cursor
-            ?.use { cursor ->
-                PLog.d(TAG, "querySystemVideos offset=$offset limit=$limit cursorCount=${cursor.count}")
-                val idColumn = cursor.getColumnIndex(MediaStore.Video.Media._ID)
-                if (idColumn < 0) {
-                    PLog.e(TAG, "querySystemVideos missing required _ID column")
-                    return@use
-                }
-                val nameColumn = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
-                val dateTakenColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_TAKEN)
-                val dateColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_ADDED)
-                val sizeColumn = cursor.getColumnIndex(MediaStore.Video.Media.SIZE)
-                val widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
-                val heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
-                val orientationColumn = cursor.getColumnIndex(MediaStore.Video.Media.ORIENTATION)
-                val mimeColumn = cursor.getColumnIndex(MediaStore.Video.Media.MIME_TYPE)
-                val durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
+            cursor
+                ?.use { cursor ->
+                    PLog.d(TAG, "querySystemVideos offset=$offset limit=$limit cursorCount=${cursor.count}")
+                    val idColumn = cursor.getColumnIndex(MediaStore.Video.Media._ID)
+                    if (idColumn < 0) {
+                        PLog.e(TAG, "querySystemVideos missing required _ID column")
+                        return@use
+                    }
+                    val nameColumn = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
+                    val dateTakenColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_TAKEN)
+                    val dateColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_ADDED)
+                    val sizeColumn = cursor.getColumnIndex(MediaStore.Video.Media.SIZE)
+                    val widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
+                    val heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
+                    val orientationColumn = cursor.getColumnIndex(MediaStore.Video.Media.ORIENTATION)
+                    val mimeColumn = cursor.getColumnIndex(MediaStore.Video.Media.MIME_TYPE)
+                    val durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
 
-                while (cursor.moveToNext()) {
-                    try {
-                        val id = cursor.getLong(idColumn)
-                        val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                        val mimeType = cursor.getOptionalString(mimeColumn)
-                        val durationMs = cursor.getOptionalLong(durationColumn)
-                        val displayDate = resolveSystemMediaDate(
-                            dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
-                            dateAddedSeconds = cursor.getOptionalLong(dateColumn),
-                            mediaId = "video_$id"
-                        )
-                        val width = cursor.getOptionalInt(widthColumn)
-                        val height = cursor.getOptionalInt(heightColumn)
-                        val orientation = cursor.getOptionalInt(orientationColumn)
+                    while (cursor.moveToNext()) {
+                        try {
+                            val id = cursor.getLong(idColumn)
+                            val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                            val mimeType = cursor.getOptionalString(mimeColumn)
+                            val durationMs = cursor.getOptionalLong(durationColumn)
+                            val displayDate = resolveSystemMediaDate(
+                                dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
+                                dateAddedSeconds = cursor.getOptionalLong(dateColumn),
+                                mediaId = "video_$id"
+                            )
+                            val width = cursor.getOptionalInt(widthColumn)
+                            val height = cursor.getOptionalInt(heightColumn)
+                            val orientation = cursor.getOptionalInt(orientationColumn)
 
-                        items.add(
-                            MediaData(
-                                id = "video_$id",
-                                uri = contentUri,
-                                thumbnailUri = contentUri,
-                                displayName = cursor.getOptionalString(nameColumn) ?: "video_$id",
-                                dateAdded = displayDate,
-                                size = cursor.getOptionalLong(sizeColumn),
-                                width = width,
-                                height = height,
-                                mediaType = MediaType.VIDEO,
-                                mimeType = mimeType,
-                                durationMs = durationMs,
-                                sourceUri = contentUri,
-                                metadata = MediaMetadata(
-                                    mediaType = MediaType.VIDEO,
-                                    dateTaken = displayDate,
+                            items.add(
+                                MediaData(
+                                    id = "video_$id",
+                                    uri = contentUri,
+                                    thumbnailUri = contentUri,
+                                    displayName = cursor.getOptionalString(nameColumn) ?: "video_$id",
+                                    dateAdded = displayDate,
+                                    size = cursor.getOptionalLong(sizeColumn),
                                     width = width,
                                     height = height,
-                                    sourceUri = contentUri.toString(),
+                                    mediaType = MediaType.VIDEO,
                                     mimeType = mimeType,
                                     durationMs = durationMs,
-                                    rotationDegrees = orientation,
-                                    videoWidth = width,
-                                    videoHeight = height
+                                    sourceUri = contentUri,
+                                    metadata = MediaMetadata(
+                                        mediaType = MediaType.VIDEO,
+                                        dateTaken = displayDate,
+                                        width = width,
+                                        height = height,
+                                        sourceUri = contentUri.toString(),
+                                        mimeType = mimeType,
+                                        durationMs = durationMs,
+                                        rotationDegrees = orientation,
+                                        videoWidth = width,
+                                        videoHeight = height
+                                    )
                                 )
                             )
-                        )
-                    } catch (e: Exception) {
-                        PLog.e(TAG, "Failed to build system video item, skipping", e)
+                        } catch (e: Exception) {
+                            PLog.e(TAG, "Failed to build system video item, skipping", e)
+                        }
                     }
                 }
-            }
-        return items
+            items
+        }
     }
 
     private fun resolveSystemMediaDate(
