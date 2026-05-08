@@ -7,7 +7,7 @@ import android.media.Image
 import android.opengl.*
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.camera.AspectRatio
-import com.hinnka.mycamera.ml.DepthEstimator
+import com.hinnka.mycamera.ml.SharedDepthEstimator
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
@@ -201,17 +201,9 @@ class RawDemosaicProcessor {
     private var gfHeight = 0
     private var gfChromaTexId = 0
 
-    private var depthEstimator: DepthEstimator? = null
-
-    private fun getDepthEstimator(context: Context): DepthEstimator {
-        return depthEstimator ?: synchronized(this) {
-            depthEstimator ?: DepthEstimator(context.applicationContext).also { depthEstimator = it }
-        }
-    }
-
     suspend fun prewarmDepthEstimator(context: Context) = withContext(Dispatchers.Default) {
         val start = System.currentTimeMillis()
-        getDepthEstimator(context.applicationContext)
+        SharedDepthEstimator.prewarm(context.applicationContext)
         PLog.d(TAG, "RAW DepthEstimator prewarmed, took=${System.currentTimeMillis() - start}ms")
     }
 
@@ -2132,7 +2124,7 @@ class RawDemosaicProcessor {
         drawQuad(linearProgram)
     }
 
-    private fun resolveRawAutoExposureEv(
+    private suspend fun resolveRawAutoExposureEv(
         context: Context,
         metadata: RawMetadata,
         sourceTextureId: Int,
@@ -2170,7 +2162,7 @@ class RawDemosaicProcessor {
             bitmap.copyPixelsFromBuffer(buffer)
             buffer.position(0) // Reset for MeteringSystem
 
-            val depthMap = getDepthEstimator(context).estimateDepth(bitmap)
+            val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
             val weightBuffer = depthMap?.let {
                 val wb = ByteBuffer.allocateDirect(it.byteCount)
                 it.copyPixelsToBuffer(wb)

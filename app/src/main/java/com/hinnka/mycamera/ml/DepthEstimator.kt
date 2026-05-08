@@ -20,7 +20,7 @@ import java.nio.ByteOrder
 
 class DepthEstimator(
     context: Context,
-    private val modelAssetName: String = MODEL_MIDAS
+    val modelAssetName: String = MODEL_MIDAS
 ) {
     private var interpreter: Interpreter? = null
     private var gpuDelegate: GpuDelegate? = null

@@ -2,7 +2,7 @@ package com.hinnka.mycamera.preview
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.hinnka.mycamera.ml.DepthEstimator
+import com.hinnka.mycamera.ml.SharedDepthEstimator
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
 import kotlinx.coroutines.CoroutineScope
@@ -22,8 +22,8 @@ class PreviewDepthProcessor(private val context: Context) {
     }
 
     private val scope = CoroutineScope(Dispatchers.Default + Job())
-    private var depthEstimator: DepthEstimator? = null
     private var isPrewarming = false
+    private var isPrewarmed = false
     private var isProcessing = false
 
     // Expose the latest depth map as a StateFlow for the UI or GL pipeline
@@ -31,14 +31,15 @@ class PreviewDepthProcessor(private val context: Context) {
     val latestDepthMap = _latestDepthMap.asStateFlow()
 
     fun prewarm() {
-        if (depthEstimator != null || isPrewarming) {
+        if (isPrewarmed || isPrewarming) {
             return
         }
         isPrewarming = true
         scope.launch {
             try {
                 StartupTrace.mark("PreviewDepthProcessor.prewarm start")
-                depthEstimator = DepthEstimator(context)
+                SharedDepthEstimator.prewarm(context)
+                isPrewarmed = true
                 StartupTrace.mark("PreviewDepthProcessor.prewarm end")
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to prewarm depth estimator", e)
@@ -57,8 +58,7 @@ class PreviewDepthProcessor(private val context: Context) {
             return
         }
 
-        val estimator = depthEstimator
-        if (estimator == null) {
+        if (!isPrewarmed) {
             prewarm()
             return
         }
@@ -68,7 +68,7 @@ class PreviewDepthProcessor(private val context: Context) {
         // Process on background thread
         scope.launch {
             try {
-                val depthMap = estimator.estimateDepth(bitmap)
+                val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
                 _latestDepthMap.value = depthMap
             } catch (e: Exception) {
                 PLog.e(TAG, "Error processing preview bitmap for depth", e)
@@ -79,7 +79,6 @@ class PreviewDepthProcessor(private val context: Context) {
     }
 
     fun release() {
-        depthEstimator?.close()
-        depthEstimator = null
+        isPrewarmed = false
     }
 }

@@ -205,7 +205,7 @@ class LutManager(private val context: Context) {
 
         // 查找 LUT 信息
         val lutInfo = getLutInfo(id) ?: run {
-            PLog.w(TAG, "LUT not found: $id")
+//            PLog.w(TAG, "LUT not found: $id")
             return null
         }
 
