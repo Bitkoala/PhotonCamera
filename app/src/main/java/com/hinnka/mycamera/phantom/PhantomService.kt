@@ -385,28 +385,30 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             GalleryManager.importPhoto(context, uri, lutId, computationalAperture, existingPhotoId) ?: run {
                 return@withContext
         }
-        val metadata = GalleryManager.loadMetadata(context, photoId) ?: run {
-            return@withContext
-        }
         val phantomBaselineLutId = preferences?.phantomBaselineLutId
-        val updatedMetadata = if (phantomBaselineLutId != null) {
-            metadata.copy(
-                lutId = lutId,
-                baselineTarget = BaselineColorCorrectionTarget.PHANTOM,
-                baselineLutId = phantomBaselineLutId,
-                baselineColorRecipeParams = ContentRepository.getInstance(context)
-                    .lutManager
-                    .loadColorRecipeParams(phantomBaselineLutId, BaselineColorCorrectionTarget.PHANTOM)
-            )
-        } else {
-            metadata.copy(
-                lutId = lutId,
-                baselineTarget = null,
-                baselineLutId = null,
-                baselineColorRecipeParams = null,
-            )
+        val baselineTarget = if (phantomBaselineLutId != null) BaselineColorCorrectionTarget.PHANTOM else null
+        val baselineLutId = phantomBaselineLutId
+        val baselineColorRecipeParams = phantomBaselineLutId?.let {
+            ContentRepository.getInstance(context).lutManager.loadColorRecipeParams(it, BaselineColorCorrectionTarget.PHANTOM)
         }
-        saveMetadata(context, photoId, updatedMetadata)
+
+        val updatedMetadata = GalleryManager.updateMetadata(context, photoId) { current ->
+            if (baselineTarget != null) {
+                current.copy(
+                    lutId = lutId,
+                    baselineTarget = baselineTarget,
+                    baselineLutId = baselineLutId,
+                    baselineColorRecipeParams = baselineColorRecipeParams,
+                )
+            } else {
+                current.copy(
+                    lutId = lutId,
+                    baselineTarget = null,
+                    baselineLutId = null,
+                    baselineColorRecipeParams = null,
+                )
+            }
+        } ?: return@withContext
         if (!isActive) return@withContext
 
         if (uri != processingInfo?.uri) {
@@ -437,7 +439,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             }
 
             ExifWriter.writeExif(
-                tempExportFile, metadata.toCaptureInfo().copy(
+                tempExportFile, updatedMetadata.toCaptureInfo().copy(
                     imageWidth = processedBitmap.width,
                     imageHeight = processedBitmap.height
                 )
@@ -448,7 +450,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
 
             val writeUri = if (saveAsNew) {
                 val lutName =
-                    metadata.lutId?.let { ContentRepository.getInstance(context).lutManager.getLutInfo(it)?.getName() }
+                    updatedMetadata.lutId?.let { ContentRepository.getInstance(context).lutManager.getLutInfo(it)?.getName() }
                 var withSuffix = ""
                 lutName?.let {
                     withSuffix += ".$lutName"
@@ -489,7 +491,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     } else null
 
                     // 重新从磁盘加载最新元数据，以获取可能刚写回的 presentationTimestampUs
-                    val latestMetadata = loadMetadata(context, photoId) ?: metadata
+                    val latestMetadata = GalleryManager.loadMetadata(context, photoId) ?: updatedMetadata
                     val success = MotionPhotoWriter.write(
                         tempExportFile.absolutePath,
                         videoFile.absolutePath,
@@ -553,11 +555,11 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             }
 
             // Save exported URI to metadata
-            val currentMetadata = loadMetadata(context, photoId) ?: metadata
-            val updatedMetadata = currentMetadata.copy(
-                exportedUris = currentMetadata.exportedUris + writeUri.toString()
-            )
-            saveMetadata(context, photoId, updatedMetadata)
+            GalleryManager.updateMetadata(context, photoId) { current ->
+                current.copy(
+                    exportedUris = current.exportedUris + writeUri.toString()
+                )
+            }
             shouldNotifyGallery = true
             PLog.d(TAG, "Exported URI saved: ${writeUri.lastPathSegment} $newName $newSize for photo $photoId")
 

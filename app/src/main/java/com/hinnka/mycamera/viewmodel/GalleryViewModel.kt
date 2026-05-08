@@ -1752,22 +1752,31 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun persistRawEditMetadata(mediaData: MediaData) {
-        val metadata = (mediaData.metadata ?: currentMediaMetadata)?.copy(
-            rawDenoiseValue = editRawDenoise.value,
-            rawExposureCompensation = editRawExposureCompensation.value,
-            rawAutoExposure = editRawAutoExposure.value,
-            rawBlackPointCorrection = editRawBlackPointCorrection.value,
-            rawWhitePointCorrection = editRawWhitePointCorrection.value,
-            rawDcpId = editRawDcpId.value,
-            baselineLutId = editRawBaselineLutId.value
-        )
-        if (metadata != null) {
-            currentMediaMetadata = metadata
-        }
+        val denoise = editRawDenoise.value
+        val exposure = editRawExposureCompensation.value
+        val autoExposure = editRawAutoExposure.value
+        val blackPoint = editRawBlackPointCorrection.value
+        val whitePoint = editRawWhitePointCorrection.value
+        val dcpId = editRawDcpId.value
+        val baselineLutId = editRawBaselineLutId.value
+
         viewModelScope.launch {
             val context = getApplication<Application>()
-            metadata?.let {
-                GalleryManager.saveMetadata(context, mediaData.id, it)
+            GalleryManager.updateMetadata(context, mediaData.id) { current ->
+                current.copy(
+                    rawDenoiseValue = denoise,
+                    rawExposureCompensation = exposure,
+                    rawAutoExposure = autoExposure,
+                    rawBlackPointCorrection = blackPoint,
+                    rawWhitePointCorrection = whitePoint,
+                    rawDcpId = dcpId,
+                    baselineLutId = baselineLutId
+                )
+            }.let { updated ->
+                if (updated != null) {
+                    currentMediaMetadata = updated
+                    mediaData.metadata = updated
+                }
             }
         }
     }
@@ -2303,32 +2312,31 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
                 
-                val metadata = currentMediaMetadata?.copy(
-                    lutId = editLutId.value,
-                    frameId = editFrameId.value,
-                    colorRecipeParams = editPhotoRecipeParams.value,
-                    sharpening = editSharpening.value,
-                    noiseReduction = editNoiseReduction.value,
-                    chromaNoiseReduction = editChromaNoiseReduction.value,
-                    rawDenoiseValue = editRawDenoise.value,
-                    rawExposureCompensation = editRawExposureCompensation.value,
-                    rawAutoExposure = editRawAutoExposure.value,
-                    rawBlackPointCorrection = editRawBlackPointCorrection.value,
-                    rawWhitePointCorrection = editRawWhitePointCorrection.value,
-                    rawDcpId = editRawDcpId.value,
-                    baselineLutId = editRawBaselineLutId.value,
-                    computationalAperture = editComputationalAperture.value,
-                    focusPointX = editFocusPointX.value,
-                    focusPointY = editFocusPointY.value,
-                    postCropRegion = finalCropRegion
-                ) ?: run {
-                    onComplete(false)
-                    return@launch
+                val success = GalleryManager.updateMetadata(context, targetPhotoId) { current ->
+                    current.copy(
+                        lutId = editLutId.value,
+                        frameId = editFrameId.value,
+                        colorRecipeParams = editPhotoRecipeParams.value,
+                        sharpening = editSharpening.value,
+                        noiseReduction = editNoiseReduction.value,
+                        chromaNoiseReduction = editChromaNoiseReduction.value,
+                        rawDenoiseValue = editRawDenoise.value,
+                        rawExposureCompensation = editRawExposureCompensation.value,
+                        rawAutoExposure = editRawAutoExposure.value,
+                        rawBlackPointCorrection = editRawBlackPointCorrection.value,
+                        rawWhitePointCorrection = editRawWhitePointCorrection.value,
+                        rawDcpId = editRawDcpId.value,
+                        baselineLutId = editRawBaselineLutId.value,
+                        computationalAperture = editComputationalAperture.value,
+                        focusPointX = editFocusPointX.value,
+                        focusPointY = editFocusPointY.value,
+                        postCropRegion = finalCropRegion
+                    )
                 }
-                val success = GalleryManager.saveMetadata(context, targetPhotoId, metadata)
 
-                if (success) {
-                    currentMediaMetadata = metadata
+                if (success != null) {
+                    currentMediaMetadata = success
+                    photo.metadata = success
 
                     // 如果是新导入的，刷相册列表
                     if (selectedTab == GalleryTab.SYSTEM) {
@@ -2337,7 +2345,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         // 更新 photos 列表中对应照片的 metadata，触发 UI 刷新
                         val updatedPhotos = _photos.value.map { p ->
                             if (p.id == targetPhotoId) {
-                                p.copy(metadata = metadata)
+                                p.copy(metadata = success)
                             } else {
                                 p
                             }
@@ -2347,7 +2355,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
                     // 同步更新 latestPhoto
                     if (_latestPhoto.value?.id == targetPhotoId) {
-                        _latestPhoto.value = _latestPhoto.value?.copy(metadata = metadata)
+                        _latestPhoto.value = _latestPhoto.value?.copy(metadata = success)
                     }
 
                     exitEditMode()
@@ -2356,13 +2364,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     GalleryManager.queueDetailHdrCacheBuild(
                         context = context,
                         photoId = targetPhotoId,
-                        metadata = metadata,
-                        sharpening = metadata.sharpening ?: 0f,
-                        noiseReduction = metadata.noiseReduction ?: 0f,
-                        chromaNoiseReduction = metadata.chromaNoiseReduction ?: 0f
+                        metadata = success,
+                        sharpening = success.sharpening ?: 0f,
+                        noiseReduction = success.noiseReduction ?: 0f,
+                        chromaNoiseReduction = success.chromaNoiseReduction ?: 0f
                     )
                 }
-                onComplete(success)
+                onComplete(success != null)
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to save metadata", e)
                 onComplete(false)

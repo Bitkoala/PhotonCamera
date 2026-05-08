@@ -720,11 +720,11 @@ object GalleryManager {
                                     }
                                     tempMotionVideoFile.delete()
 
-                                    val currentMetadata = loadMetadata(context, id) ?: metadata
-                                    val updatedMetadata = currentMetadata.copy(
-                                        exportedUris = currentMetadata.exportedUris + uri.toString()
-                                    )
-                                    saveMetadata(context, id, updatedMetadata)
+                                    updateMetadata(context, id) { current ->
+                                        current.copy(
+                                            exportedUris = current.exportedUris + uri.toString()
+                                        )
+                                    }
                                 }
                             }
                         } finally {
@@ -738,11 +738,11 @@ object GalleryManager {
                     }
 
                     // Save exported URI to metadata
-                    val currentMetadata = loadMetadata(context, id) ?: metadata
-                    val updatedMetadata = currentMetadata.copy(
-                        exportedUris = currentMetadata.exportedUris + uri.toString()
-                    )
-                    saveMetadata(context, id, updatedMetadata)
+                    updateMetadata(context, id) { current ->
+                        current.copy(
+                            exportedUris = current.exportedUris + uri.toString()
+                        )
+                    }
                     PLog.d(TAG, "Exported URI saved: $uri for photo $id")
 
                     return@withContext true
@@ -799,11 +799,11 @@ object GalleryManager {
                 tempExportFile.inputStream().use { input -> input.copyTo(output) }
             }
 
-            val currentMetadata = loadMetadata(context, id) ?: metadata
-            val updatedMetadata = currentMetadata.copy(
-                exportedUris = currentMetadata.exportedUris + uri.toString()
-            )
-            saveMetadata(context, id, updatedMetadata)
+            updateMetadata(context, id) { current ->
+                current.copy(
+                    exportedUris = current.exportedUris + uri.toString()
+                )
+            }
             PLog.d(TAG, "Exported embedded-gainmap URI saved: $uri for photo $id")
             return true
         } finally {
@@ -837,11 +837,11 @@ object GalleryManager {
                     }
                     PLog.d(TAG, "DNG exported: $uri")
 
-                    val currentMetadata = loadMetadata(context, photoId) ?: metadata
-                    val updatedMetadata = currentMetadata.copy(
-                        exportedUris = currentMetadata.exportedUris + uri.toString()
-                    )
-                    saveMetadata(context, photoId, updatedMetadata)
+                    updateMetadata(context, photoId) { current ->
+                        current.copy(
+                            exportedUris = current.exportedUris + uri.toString()
+                        )
+                    }
                     PLog.d(TAG, "Exported URI saved: $uri")
                 }
             } catch (e: Exception) {
@@ -882,11 +882,11 @@ object GalleryManager {
                     }
                     PLog.d(TAG, "DNG exported from file: $uri")
 
-                    val currentMetadata = loadMetadata(context, photoId) ?: metadata
-                    val updatedMetadata = currentMetadata.copy(
-                        exportedUris = currentMetadata.exportedUris + uri.toString()
-                    )
-                    saveMetadata(context, photoId, updatedMetadata)
+                    updateMetadata(context, photoId) { current ->
+                        current.copy(
+                            exportedUris = current.exportedUris + uri.toString()
+                        )
+                    }
                     PLog.d(TAG, "Exported URI saved: $uri")
                 }
             } catch (e: Exception) {
@@ -2251,43 +2251,70 @@ object GalleryManager {
      */
     suspend fun loadMetadata(context: Context, photoId: String): MediaMetadata? {
         return metadataMutex.withLock {
-            withContext(Dispatchers.IO) {
-                try {
-                    val file = getMetadataFile(context, photoId)
-                    if (file.exists()) {
-                        val content = file.readText()
-                        val metadata = MediaMetadata.fromJson(content)
-                        if (metadata == null) {
-                            PLog.e(TAG, "loadMetadata: fromJson returned null for $photoId, content length=${content.length}")
-                        }
-                        metadata
-                    } else {
-                        null
+            loadMetadataInternal(context, photoId)
+        }
+    }
+
+    private suspend fun loadMetadataInternal(context: Context, photoId: String): MediaMetadata? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val file = getMetadataFile(context, photoId)
+                if (file.exists()) {
+                    val content = file.readText()
+                    val metadata = MediaMetadata.fromJson(content)
+                    if (metadata == null) {
+                        PLog.e(TAG, "loadMetadata: fromJson returned null for $photoId, content length=${content.length}")
                     }
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Failed to load metadata for photo: $photoId", e)
+                    metadata
+                } else {
                     null
                 }
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to load metadata for photo: $photoId", e)
+                null
             }
         }
     }
 
     /**
-     * 更新元数据
+     * 保存元数据
      */
     suspend fun saveMetadata(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
         return metadataMutex.withLock {
-            withContext(Dispatchers.IO) {
-                try {
-                    val dir = getPhotoDir(context, photoId, true)
-                    val file = File(dir, METADATA_FILE)
-                    val json = metadata.toJson()
-                    file.writeText(json)
-                    true
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Failed to save metadata for photo: $photoId", e)
-                    false
-                }
+            saveMetadataInternal(context, photoId, metadata)
+        }
+    }
+
+    private suspend fun saveMetadataInternal(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val dir = getPhotoDir(context, photoId, true)
+                val file = File(dir, METADATA_FILE)
+                val json = metadata.toJson()
+                file.writeText(json)
+                true
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to save metadata for photo: $photoId", e)
+                false
+            }
+        }
+    }
+
+    /**
+     * 原子地更新元数据
+     */
+    suspend fun updateMetadata(
+        context: Context,
+        photoId: String,
+        update: (MediaMetadata) -> MediaMetadata
+    ): MediaMetadata? {
+        return metadataMutex.withLock {
+            val current = loadMetadataInternal(context, photoId) ?: return@withLock null
+            val updated = update(current)
+            if (saveMetadataInternal(context, photoId, updated)) {
+                updated
+            } else {
+                null
             }
         }
     }
@@ -2692,13 +2719,13 @@ object GalleryManager {
                     // --- 常规 JPEG 处理逻辑 ---
                     // 传递元数据确保旋转信息被正确处理
                     tempImportJpeg(uri, context, metadata, photoFile, metadataFile, thumbnailFile)
-                    val currentMetadata = loadMetadata(context, photoId) ?: metadata
                     val hasEmbeddedGainmap = detectEmbeddedGainmap(context, photoFile)
-                    val updatedMetadata = currentMetadata.copy(
-                        hasEmbeddedGainmap = hasEmbeddedGainmap,
-                        manualHdrEffectEnabled = hasEmbeddedGainmap
-                    )
-                    saveMetadata(context, photoId, updatedMetadata)
+                    updateMetadata(context, photoId) { current ->
+                        current.copy(
+                            hasEmbeddedGainmap = hasEmbeddedGainmap,
+                            manualHdrEffectEnabled = hasEmbeddedGainmap
+                        )
+                    }
 //                    if (metadata.computationalAperture != null) {
 //                        val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
 //                        if (bitmap != null) {
@@ -2713,9 +2740,10 @@ object GalleryManager {
                     val videoFile = File(photoDir, VIDEO_FILE)
                     if (MotionPhotoWriter.extractVideo(photoFile.absolutePath, videoFile.absolutePath)) {
                         PLog.d(TAG, "Extracted video from imported Motion Photo: $photoId")
-                        val metadata = loadMetadata(context, photoId) ?: MediaMetadata()
                         val timestampUs = MotionPhotoWriter.getPresentationTimestampUs(photoFile.absolutePath)
-                        saveMetadata(context, photoId, metadata.copy(presentationTimestampUs = timestampUs))
+                        updateMetadata(context, photoId) { current ->
+                            current.copy(presentationTimestampUs = timestampUs)
+                        }
                     }
                 }
 
