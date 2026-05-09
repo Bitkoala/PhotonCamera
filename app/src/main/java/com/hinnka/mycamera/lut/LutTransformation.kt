@@ -24,7 +24,7 @@ class PhotoTransformation(
     private val chromaNoiseReduction: Float = 0f
 ) : Transformation {
     
-    override val cacheKey: String = "photo_${metadata.toJson().hashCode()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}"
+    override val cacheKey: String = "photo_${metadata.hashCode()}_s${sharpening}_n${noiseReduction}_c${chromaNoiseReduction}"
 
     override suspend fun transform(input: Bitmap, size: Size): Bitmap {
         return photoProcessor.processBitmap(
@@ -32,4 +32,3 @@ class PhotoTransformation(
         )
     }
 }
-

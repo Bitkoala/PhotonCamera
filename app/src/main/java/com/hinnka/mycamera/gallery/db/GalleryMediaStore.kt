@@ -1,0 +1,407 @@
+package com.hinnka.mycamera.gallery.db
+
+import android.content.Context
+import android.graphics.BitmapFactory
+import android.graphics.ColorSpace
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Environment
+import androidx.core.net.toUri
+import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.gallery.GalleryManager
+import com.hinnka.mycamera.gallery.MediaData
+import com.hinnka.mycamera.gallery.MediaMetadata
+import com.hinnka.mycamera.gallery.MediaType
+import com.hinnka.mycamera.hdr.HdrGainmapStrength
+import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
+import com.hinnka.mycamera.utils.PLog
+import com.hinnka.mycamera.utils.StartupTrace
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
+
+object GalleryMediaStore {
+    private const val TAG = "GalleryMediaStore"
+    private const val PREFS_NAME = "gallery_media_store"
+    private const val KEY_FILE_INDEXED = "file_indexed_v2"
+    private const val PHOTOS_DIR = "photos"
+    private const val BURST_DIR = "burst"
+    private const val PHOTO_FILE = "original.jpg"
+    private const val YUV_FILE = "original.jxl"
+    private const val VIDEO_FILE = "video.mp4"
+    private const val DNG_FILE = "original.dng"
+    private const val THUMBNAIL_FILE = "thumbnail.jpg"
+
+    private val migrationMutex = Mutex()
+
+    @Volatile
+    private var migrationChecked = false
+
+    suspend fun ensureMigrated(context: Context) {
+        if (migrationChecked) return
+        val appContext = context.applicationContext
+        migrationMutex.withLock {
+            if (migrationChecked) return
+            withContext(Dispatchers.IO) {
+                val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val dao = GalleryDatabase.getInstance(appContext).galleryMediaDao()
+                val shouldIndex = !prefs.getBoolean(KEY_FILE_INDEXED, false) || dao.count() == 0
+                if (shouldIndex) {
+                    val entities = getPhotosBaseDir(appContext)
+                        .listFiles()
+                        ?.asSequence()
+                        ?.filter { it.isDirectory }
+                        ?.mapNotNull { buildMigrateEntity(appContext, it) }
+                        ?.toList()
+                        ?: emptyList()
+                    if (entities.isNotEmpty()) dao.upsertAll(entities)
+                    prefs.edit().putBoolean(KEY_FILE_INDEXED, true).apply()
+                    PLog.d(TAG, "File gallery index complete: ${entities.size} records")
+                }
+                migrationChecked = true
+            }
+        }
+    }
+
+    suspend fun loadMetadata(context: Context, photoId: String): MediaMetadata? {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            val dao = GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao()
+            val entity = dao.getById(photoId) ?: return@withContext null
+            entity.toMetadata()
+        }
+    }
+
+    suspend fun saveMetadata(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            try {
+                GalleryDatabase.getInstance(context.applicationContext)
+                    .galleryMediaDao()
+                    .upsert(buildEntity(context.applicationContext, photoId, metadata))
+                true
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to save metadata to DB for photo: $photoId", e)
+                false
+            }
+        }
+    }
+
+    suspend fun updateMetadata(
+        context: Context,
+        photoId: String,
+        update: (MediaMetadata) -> MediaMetadata
+    ): MediaMetadata? {
+        val current = loadMetadata(context, photoId) ?: return null
+        val updated = update(current)
+        return if (saveMetadata(context, photoId, updated)) updated else null
+    }
+
+    suspend fun deleteMedia(context: Context, photoId: String) {
+        ensureMigrated(context)
+        withContext(Dispatchers.IO) {
+            GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao().deleteById(photoId)
+        }
+    }
+
+    suspend fun queryPhotos(context: Context, offset: Int, limit: Int): List<MediaData> {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            val dao = GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao()
+            val list = dao.queryPage(offset, limit)
+            val result = list.mapNotNull { entity ->
+                entity.toMediaData(context.applicationContext, entity.toMetadata())
+            }
+            result
+        }
+    }
+
+    suspend fun queryLatestPhoto(context: Context): MediaData? {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            val dao = GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao()
+            dao.queryPage(offset = 0, limit = 1).firstNotNullOfOrNull { entity ->
+                entity.toMediaData(context.applicationContext, entity.toMetadata())
+            }
+        }
+    }
+
+    suspend fun getPhotoData(context: Context, photoId: String): MediaData? {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            val dao = GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao()
+            val entity = dao.getById(photoId) ?: return@withContext null
+            entity.toMediaData(context.applicationContext, entity.toMetadata())
+        }
+    }
+
+    suspend fun getPhotoIds(context: Context): List<String> {
+        ensureMigrated(context)
+        return withContext(Dispatchers.IO) {
+            GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao().getIds()
+        }
+    }
+
+    private fun buildMigrateEntity(context: Context, photoDir: File): GalleryMediaEntity? {
+        val metadataFile = File(photoDir, "metadata.json")
+        if (!metadataFile.exists()) return null
+        val content = metadataFile.readText()
+        val metadata = MediaMetadata.fromLegacyJson(content) ?: return null
+        return buildEntity(context, photoDir.name, metadata)
+    }
+
+    private fun buildEntity(context: Context, photoId: String, metadata: MediaMetadata): GalleryMediaEntity {
+        val photoDir = getPhotoDir(context, photoId)
+        val photoFile = File(photoDir, PHOTO_FILE)
+        val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
+        val videoFile = File(photoDir, VIDEO_FILE)
+        val dngFile = File(photoDir, DNG_FILE)
+        val yuvFile = File(photoDir, YUV_FILE)
+        val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
+        val isVideo = metadata.mediaType == MediaType.VIDEO
+        val dateAdded = if (isVideo) {
+            metadata.dateTaken ?: photoDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+        } else {
+            originalFile.lastModified().takeIf { originalFile.exists() && it > 0L }
+                ?: metadata.dateTaken
+                ?: photoDir.lastModified().takeIf { it > 0L }
+                ?: System.currentTimeMillis()
+        }
+        return GalleryMediaEntity(
+            id = photoId,
+            mediaType = metadata.mediaType.name,
+            dateAdded = dateAdded,
+            size = if (photoFile.exists()) photoFile.length() else 0L,
+            photoPath = photoFile.absolutePath,
+            thumbnailPath = thumbnailFile.absolutePath,
+            videoPath = videoFile.absolutePath,
+            dngPath = dngFile.absolutePath,
+            yuvPath = yuvFile.absolutePath,
+            hasOriginal = photoFile.exists(),
+            hasThumbnail = thumbnailFile.exists(),
+            hasVideo = videoFile.exists(),
+            hasDng = dngFile.exists(),
+            hasYuv = yuvFile.exists(),
+            isBurstPhoto = hasBurstPhotos(photoDir),
+            updatedAt = System.currentTimeMillis(),
+            version = metadata.version,
+            lutId = metadata.lutId,
+            colorRecipeParams = metadata.colorRecipeParams,
+            baselineTarget = metadata.baselineTarget?.name,
+            baselineLutId = metadata.baselineLutId,
+            baselineColorRecipeParams = metadata.baselineColorRecipeParams,
+            sharpening = metadata.sharpening,
+            noiseReduction = metadata.noiseReduction,
+            chromaNoiseReduction = metadata.chromaNoiseReduction,
+            rawDenoiseValue = metadata.rawDenoiseValue,
+            rawExposureCompensation = metadata.rawExposureCompensation,
+            rawAutoExposure = metadata.rawAutoExposure,
+            rawBlackPointCorrection = metadata.rawBlackPointCorrection,
+            rawWhitePointCorrection = metadata.rawWhitePointCorrection,
+            rawAutoWhiteBalanceEstimate = metadata.rawAutoWhiteBalanceEstimate,
+            rawDcpId = metadata.rawDcpId,
+            frameId = metadata.frameId,
+            width = metadata.width,
+            height = metadata.height,
+            ratio = metadata.ratio?.name,
+            cropLeft = metadata.cropRegion?.left,
+            cropTop = metadata.cropRegion?.top,
+            cropRight = metadata.cropRegion?.right,
+            cropBottom = metadata.cropRegion?.bottom,
+            rotation = metadata.rotation,
+            deviceModel = metadata.deviceModel,
+            brand = metadata.brand,
+            dateTaken = metadata.dateTaken,
+            location = metadata.location,
+            latitude = metadata.latitude,
+            longitude = metadata.longitude,
+            altitude = metadata.altitude,
+            iso = metadata.iso,
+            shutterSpeed = metadata.shutterSpeed,
+            focalLength = metadata.focalLength,
+            focalLength35mm = metadata.focalLength35mm,
+            aperture = metadata.aperture,
+            exposureBias = metadata.exposureBias,
+            isImported = metadata.isImported,
+            sourceUri = metadata.sourceUri,
+            mimeType = metadata.mimeType ?: if (isVideo) null else "image/jpeg",
+            durationMs = metadata.durationMs,
+            frameRate = metadata.frameRate,
+            bitrate = metadata.bitrate,
+            rotationDegrees = metadata.rotationDegrees,
+            hasAudio = metadata.hasAudio,
+            videoWidth = metadata.videoWidth,
+            videoHeight = metadata.videoHeight,
+            customProperties = GalleryDelimitedCodec.encodeMap(metadata.customProperties),
+            exportedUris = GalleryDelimitedCodec.encodeList(metadata.exportedUris),
+            computationalAperture = metadata.computationalAperture,
+            focusPointX = metadata.focusPointX,
+            focusPointY = metadata.focusPointY,
+            postCropLeft = metadata.postCropRegion?.left,
+            postCropTop = metadata.postCropRegion?.top,
+            postCropRight = metadata.postCropRegion?.right,
+            postCropBottom = metadata.postCropRegion?.bottom,
+            presentationTimestampUs = metadata.presentationTimestampUs,
+            droMode = metadata.droMode,
+            software = metadata.software,
+            isMirrored = metadata.isMirrored,
+            colorSpace = metadata.colorSpace.name,
+            manualHdrEffectEnabled = metadata.manualHdrEffectEnabled,
+            hdrEffectStrength = metadata.hdrEffectStrength,
+            hasEmbeddedGainmap = metadata.hasEmbeddedGainmap,
+            dynamicRangeProfile = metadata.dynamicRangeProfile,
+            captureMode = metadata.captureMode,
+            multipleExposureFrameCount = metadata.multipleExposureFrameCount,
+            hasAiDenoisedBase = metadata.hasAiDenoisedBase,
+            aiDenoiseStrength = metadata.aiDenoiseStrength,
+            rawBlackLevelMode = metadata.rawBlackLevelMode,
+            rawCustomBlackLevel = metadata.rawCustomBlackLevel,
+            cameraId = metadata.cameraId
+        )
+    }
+
+    private fun GalleryMediaEntity.toMediaData(context: Context, metadata: MediaMetadata): MediaData? {
+        val photoDir = getPhotoDir(context, id)
+        val photoFile = File(photoDir, PHOTO_FILE)
+        val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
+        val videoFile = File(photoDir, VIDEO_FILE)
+        val dngFile = File(photoDir, DNG_FILE)
+        val yuvFile = File(photoDir, YUV_FILE)
+        val thumbnailUri = when {
+            thumbnailFile.exists() -> Uri.fromFile(thumbnailFile)
+            sourceUri != null -> sourceUri.toUri()
+            else -> return null
+        }
+        val resolvedType = runCatching { MediaType.valueOf(mediaType) }.getOrDefault(MediaType.IMAGE)
+        if (resolvedType == MediaType.VIDEO) {
+            val resolvedSourceUri = sourceUri?.let(Uri::parse) ?: return null
+            return MediaData(
+                id = id,
+                uri = resolvedSourceUri,
+                thumbnailUri = thumbnailUri,
+                displayName = resolvedSourceUri.lastPathSegment ?: "video_$id",
+                dateAdded = dateTaken ?: dateAdded,
+                size = size,
+                width = videoWidth ?: width,
+                height = videoHeight ?: height,
+                mediaType = MediaType.VIDEO,
+                mimeType = mimeType,
+                durationMs = durationMs,
+                sourceUri = resolvedSourceUri,
+                metadata = metadata
+            )
+        }
+
+        if (!photoFile.exists()) return null
+        val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
+        return MediaData(
+            id = id,
+            uri = Uri.fromFile(photoFile),
+            thumbnailUri = thumbnailUri,
+            displayName = photoFile.name,
+            dateAdded = originalFile.lastModified().takeIf { it > 0L } ?: dateAdded,
+            size = photoFile.length(),
+            width = width,
+            height = height,
+            mediaType = MediaType.IMAGE,
+            mimeType = mimeType ?: "image/jpeg",
+            sourceUri = sourceUri?.let(Uri::parse),
+            isMotionPhoto = videoFile.exists(),
+            isBurstPhoto = hasBurstPhotos(photoDir),
+            metadata = metadata
+        )
+    }
+
+    private fun GalleryMediaEntity.toMetadata(): MediaMetadata {
+        return MediaMetadata(
+            version = version.takeIf { it > 0 } ?: MediaMetadata().version,
+            mediaType = runCatching { MediaType.valueOf(mediaType) }.getOrDefault(MediaType.IMAGE),
+            lutId = lutId,
+            colorRecipeParams = colorRecipeParams,
+            baselineTarget = baselineTarget?.let { runCatching { BaselineColorCorrectionTarget.valueOf(it) }.getOrNull() },
+            baselineLutId = baselineLutId,
+            baselineColorRecipeParams = baselineColorRecipeParams,
+            sharpening = sharpening,
+            noiseReduction = noiseReduction,
+            chromaNoiseReduction = chromaNoiseReduction,
+            rawDenoiseValue = rawDenoiseValue,
+            rawExposureCompensation = rawExposureCompensation,
+            rawAutoExposure = rawAutoExposure,
+            rawBlackPointCorrection = rawBlackPointCorrection,
+            rawWhitePointCorrection = rawWhitePointCorrection,
+            rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
+            rawDcpId = rawDcpId,
+            frameId = frameId,
+            width = width,
+            height = height,
+            ratio = ratio?.let { runCatching { AspectRatio.valueOf(it) }.getOrNull() },
+            cropRegion = rectOrNull(cropLeft, cropTop, cropRight, cropBottom),
+            rotation = rotation,
+            deviceModel = deviceModel,
+            brand = brand,
+            dateTaken = dateTaken,
+            location = location,
+            latitude = latitude,
+            longitude = longitude,
+            altitude = altitude,
+            iso = iso,
+            shutterSpeed = shutterSpeed,
+            focalLength = focalLength,
+            focalLength35mm = focalLength35mm,
+            aperture = aperture,
+            exposureBias = exposureBias,
+            isImported = isImported,
+            sourceUri = sourceUri,
+            mimeType = mimeType,
+            durationMs = durationMs,
+            frameRate = frameRate,
+            bitrate = bitrate,
+            rotationDegrees = rotationDegrees,
+            hasAudio = hasAudio,
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+            customProperties = GalleryDelimitedCodec.decodeMap(customProperties),
+            exportedUris = GalleryDelimitedCodec.decodeList(exportedUris),
+            computationalAperture = computationalAperture,
+            focusPointX = focusPointX,
+            focusPointY = focusPointY,
+            postCropRegion = rectOrNull(postCropLeft, postCropTop, postCropRight, postCropBottom),
+            presentationTimestampUs = presentationTimestampUs,
+            droMode = droMode,
+            software = software,
+            isMirrored = isMirrored,
+            colorSpace = runCatching { ColorSpace.Named.valueOf(colorSpace) }.getOrDefault(ColorSpace.Named.SRGB),
+            manualHdrEffectEnabled = manualHdrEffectEnabled,
+            hdrEffectStrength = HdrGainmapStrength.coerce(hdrEffectStrength),
+            hasEmbeddedGainmap = hasEmbeddedGainmap,
+            dynamicRangeProfile = dynamicRangeProfile,
+            captureMode = captureMode,
+            multipleExposureFrameCount = multipleExposureFrameCount,
+            hasAiDenoisedBase = hasAiDenoisedBase,
+            aiDenoiseStrength = aiDenoiseStrength,
+            rawBlackLevelMode = rawBlackLevelMode,
+            rawCustomBlackLevel = rawCustomBlackLevel,
+            cameraId = cameraId
+        )
+    }
+
+    private fun rectOrNull(left: Int?, top: Int?, right: Int?, bottom: Int?): Rect? {
+        if (left == null || top == null || right == null || bottom == null) return null
+        return Rect(left, top, right, bottom)
+    }
+
+    private fun getPhotosBaseDir(context: Context): File {
+        return File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), PHOTOS_DIR)
+    }
+
+    private fun getPhotoDir(context: Context, photoId: String): File {
+        return File(getPhotosBaseDir(context), photoId)
+    }
+
+    private fun hasBurstPhotos(photoDir: File): Boolean {
+        val burstDir = File(photoDir, BURST_DIR)
+        return burstDir.exists() && (burstDir.listFiles()?.isNotEmpty() == true)
+    }
+}

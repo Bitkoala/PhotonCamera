@@ -667,6 +667,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val defaultLut = availableLutList.firstOrNull { it.isDefault }
                 defaultLut?.let { setLut(it.id) }
             }
+
+            _isInitialized.value = true
+            StartupTrace.mark("CameraViewModel.isInitialized set to true")
         }
 
         // 监听相机状态，用于同步预览渲染参数
@@ -706,15 +709,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameraController.previewDepthProcessor.latestDepthMap.collect { depth ->
                 glSurfaceView?.setDepthMap(depth)
             }
-        }
-
-        // 标记初始化完成
-        viewModelScope.launch {
-            // 等待首选配置加载完成
-            userPreferencesRepository.userPreferences.firstOrNull()
-            // 确保 LUT 列表已加载（虽然 ContentRepository 是同步初始化的，但在 ViewModel 中可能需要一点时间同步）
-            _isInitialized.value = true
-            StartupTrace.mark("CameraViewModel.isInitialized set to true")
         }
 
         StartupTrace.mark("CameraViewModel.init end")

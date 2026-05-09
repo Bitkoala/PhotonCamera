@@ -577,7 +577,7 @@ private fun ZoomableImage(
         contentAlignment = Alignment.Center
     ) {
         val metadataHash = remember(photo.metadata) {
-            photo.metadata?.toJson()?.hashCode() ?: 0
+            photo.metadata?.hashCode() ?: 0
         }
 
         var bitmap by remember { mutableStateOf<Bitmap?>(null) }

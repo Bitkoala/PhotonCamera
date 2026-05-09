@@ -25,6 +25,7 @@ data class MediaData(
     val sourceUri: Uri? = null,
     var isMotionPhoto: Boolean = false,
     var isBurstPhoto: Boolean = false,
+    // 复杂编辑元数据：LUT、边框、水印、RAW 参数、导出 URI 等。列表轻量查询不要填充它。
     var metadata: MediaMetadata? = null,
     var relatedPhoto: MediaData? = null
 ) {

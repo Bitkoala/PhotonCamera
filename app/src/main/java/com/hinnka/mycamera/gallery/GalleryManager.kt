@@ -15,6 +15,7 @@ import androidx.core.graphics.createBitmap
 import androidx.exifinterface.media.ExifInterface
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
+import com.hinnka.mycamera.gallery.db.GalleryMediaStore
 import com.hinnka.mycamera.hdr.GainmapResult
 import com.hinnka.mycamera.hdr.GainmapSourceSet
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
@@ -77,7 +78,6 @@ object GalleryManager {
     private const val HDR_FILE = "original_hdr.bin"
     private const val VIDEO_FILE = "video.mp4"
     private const val DNG_FILE = "original.dng"
-    private const val METADATA_FILE = "metadata.json"
     private const val AI_DENOISE_FILE = "ai_denoise.jpg"
     private const val THUMBNAIL_FILE = "thumbnail.jpg"
     private const val BOKEH_FILE = "bokeh.jpg"
@@ -184,10 +184,6 @@ object GalleryManager {
 
     fun getDngFile(context: Context, photoId: String): File {
         return File(getPhotoDir(context, photoId), DNG_FILE)
-    }
-
-    fun getMetadataFile(context: Context, photoId: String): File {
-        return File(getPhotoDir(context, photoId), METADATA_FILE)
     }
 
     fun getAiDenoiseFile(context: Context, photoId: String): File {
@@ -910,7 +906,6 @@ object GalleryManager {
             val photoFile = File(photoDir, PHOTO_FILE)
             val videoFile = File(photoDir, VIDEO_FILE)
             val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
-            val metadataFile = File(photoDir, METADATA_FILE)
 
             var cropRegion = captureResult?.get(CaptureResult.SCALER_CROP_REGION)
             if (superResolutionScale > 1.0f && cropRegion != null) {
@@ -2125,11 +2120,9 @@ object GalleryManager {
      * 获取所有照片 ID 列表（按时间降序）
      */
     fun getPhotoIds(context: Context): List<String> {
-        val baseDir = getPhotosBaseDir(context)
-        return baseDir.listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { it.name }
-            ?: emptyList()
+        return runBlocking {
+            GalleryMediaStore.getPhotoIds(context)
+        }
     }
 
     /**
@@ -2217,6 +2210,7 @@ object GalleryManager {
                 if (photoDir.exists()) {
                     photoDir.deleteRecursively()
                 }
+                GalleryMediaStore.deleteMedia(context, photoId)
                 PLog.d(TAG, "Photo deleted: $photoId")
                 deleteEmptyDirs(getPhotosBaseDir(context))
                 true
@@ -2261,24 +2255,7 @@ object GalleryManager {
     }
 
     private suspend fun loadMetadataInternal(context: Context, photoId: String): MediaMetadata? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val file = getMetadataFile(context, photoId)
-                if (file.exists()) {
-                    val content = file.readText()
-                    val metadata = MediaMetadata.fromJson(content)
-                    if (metadata == null) {
-                        PLog.e(TAG, "loadMetadata: fromJson returned null for $photoId, content length=${content.length}")
-                    }
-                    metadata
-                } else {
-                    null
-                }
-            } catch (e: Exception) {
-                PLog.e(TAG, "Failed to load metadata for photo: $photoId", e)
-                null
-            }
-        }
+        return GalleryMediaStore.loadMetadata(context, photoId)
     }
 
     /**
@@ -2291,18 +2268,8 @@ object GalleryManager {
     }
 
     private suspend fun saveMetadataInternal(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val dir = getPhotoDir(context, photoId, true)
-                val file = File(dir, METADATA_FILE)
-                val json = metadata.toJson()
-                file.writeText(json)
-                true
-            } catch (e: Exception) {
-                PLog.e(TAG, "Failed to save metadata for photo: $photoId", e)
-                false
-            }
-        }
+        getPhotoDir(context, photoId, true)
+        return GalleryMediaStore.saveMetadata(context, photoId, metadata)
     }
 
     /**
@@ -2314,13 +2281,7 @@ object GalleryManager {
         update: (MediaMetadata) -> MediaMetadata
     ): MediaMetadata? {
         return metadataMutex.withLock {
-            val current = loadMetadataInternal(context, photoId) ?: return@withLock null
-            val updated = update(current)
-            if (saveMetadataInternal(context, photoId, updated)) {
-                updated
-            } else {
-                null
-            }
+            GalleryMediaStore.updateMetadata(context, photoId, update)
         }
     }
 
@@ -2359,78 +2320,6 @@ object GalleryManager {
         dir.setLastModified(info.dateTaken)
         notifyPhotoLibraryChanged()
         photoId
-    }
-
-    suspend fun buildPhotoData(context: Context, photoId: String): MediaData? = withContext(Dispatchers.IO) {
-        val metadata = loadMetadata(context, photoId) ?: return@withContext null
-        val thumbnailFile = getThumbnailFile(context, photoId)
-        val thumbnailUri = when {
-            thumbnailFile.exists() -> Uri.fromFile(thumbnailFile)
-            metadata.sourceUri != null -> metadata.sourceUri.toUri()
-            else -> return@withContext null
-        }
-        if (metadata.mediaType == MediaType.VIDEO) {
-            val sourceUri = metadata.sourceUri?.let(Uri::parse) ?: return@withContext null
-//            val info = readVideoRecordInfo(context, sourceUri)
-            val id = photoId
-            val resolvedWidth = metadata.videoWidth ?: metadata.width
-            val resolvedHeight = metadata.videoHeight ?: metadata.height
-            val resolvedDurationMs = metadata.durationMs
-            val resolvedMimeType = metadata.mimeType
-            val resolvedMetadata = metadata.copy(
-                width = resolvedWidth,
-                height = resolvedHeight,
-                mimeType = resolvedMimeType,
-                durationMs = resolvedDurationMs,
-                frameRate = metadata.frameRate,
-                bitrate = metadata.bitrate,
-                rotationDegrees = metadata.rotationDegrees,
-                hasAudio = metadata.hasAudio,
-                videoWidth = resolvedWidth,
-                videoHeight = resolvedHeight
-            )
-            val result = MediaData(
-                id = id,
-                uri = sourceUri,
-                thumbnailUri = thumbnailUri,
-                displayName = (sourceUri.lastPathSegment ?: "video_$id"),
-                dateAdded = metadata.dateTaken ?: getPhotoDir(context, id).lastModified(),
-                size = 0L,
-                width = resolvedWidth,
-                height = resolvedHeight,
-                mediaType = MediaType.VIDEO,
-                mimeType = resolvedMimeType,
-                durationMs = resolvedDurationMs,
-                sourceUri = sourceUri,
-                metadata = resolvedMetadata
-            )
-            return@withContext result
-        }
-
-        val photoFile = getPhotoFile(context, photoId)
-        val originalFile = getDngFile(context, photoId).takeIf { it.exists() } ?: getYuvFile(context, photoId).takeIf { it.exists() } ?: photoFile
-
-        if (!photoFile.exists()) return@withContext null
-        val videoFile = getVideoFile(context, photoId)
-        val isBurstPhoto = hasBurstPhotos(context, photoId)
-
-        val result = MediaData(
-            id = photoId,
-            uri = Uri.fromFile(photoFile),
-            thumbnailUri = thumbnailUri,
-            displayName = photoFile.name,
-            dateAdded = originalFile.lastModified().takeIf { it > 0 } ?: getPhotoDir(context, photoId).lastModified(),
-            size = photoFile.length(),
-            width = metadata.width,
-            height = metadata.height,
-            mediaType = MediaType.IMAGE,
-            mimeType = metadata.mimeType ?: "image/jpeg",
-            sourceUri = metadata.sourceUri?.let(Uri::parse),
-            isMotionPhoto = videoFile.exists(),
-            isBurstPhoto = isBurstPhoto,
-            metadata = metadata
-        )
-        return@withContext result
     }
 
     fun loadYuvData(context: Context, photoId: String): ByteBuffer? {
@@ -2678,7 +2567,6 @@ object GalleryManager {
                 val photoDir = getPhotoDir(context, photoId, true)
                 val photoFile = File(photoDir, PHOTO_FILE)
                 val dngFile = File(photoDir, DNG_FILE)
-                val metadataFile = File(photoDir, METADATA_FILE)
                 val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
 
                 if (photoFile.exists()) {
@@ -2762,12 +2650,12 @@ object GalleryManager {
                     } else {
                         // 降级：如果 RAW 处理失败，尝试直接解码（某些 DNG 包含内置预览图）
                         // 传递元数据确保旋转信息被正确处理
-                        tempImportJpeg(uri, context, metadata, photoFile, metadataFile, thumbnailFile)
+                        tempImportJpeg(uri, context, metadata, photoFile, thumbnailFile)
                     }
                 } else {
                     // --- 常规 JPEG 处理逻辑 ---
                     // 传递元数据确保旋转信息被正确处理
-                    tempImportJpeg(uri, context, metadata, photoFile, metadataFile, thumbnailFile)
+                    tempImportJpeg(uri, context, metadata, photoFile, thumbnailFile)
                     val hasEmbeddedGainmap = detectEmbeddedGainmap(context, photoFile)
                     updateMetadata(context, photoId) { current ->
                         current.copy(
@@ -2890,7 +2778,6 @@ object GalleryManager {
         context: Context,
         metadata: MediaMetadata,
         photoFile: File,
-        metadataFile: File,
         thumbnailFile: File
     ) {
         val photoDir = photoFile.parentFile ?: return

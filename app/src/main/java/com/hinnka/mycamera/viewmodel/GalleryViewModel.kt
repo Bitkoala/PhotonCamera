@@ -601,6 +601,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             checkGalleryPermission()
         }
 
+        refreshLatestPhoto()
+        viewModelScope.launch {
+            loadPhotos()
+        }
+
         viewModelScope.launch {
             GalleryManager.detailHdrReadyEvents.collect { photoId ->
                 invalidatePreviewCache(photoId)
@@ -651,15 +656,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             contentRepository.availableDcps.collect { dcps ->
                 availableDcps = dcps.sortedBy { it.getName() }
             }
-        }
-
-        viewModelScope.launch {
-            // 等待初始照片加载完成
-            StartupTrace.measure("GalleryViewModel.loadPhotos") {
-                loadPhotos()
-            }
-            _isInitialized.value = true
-            StartupTrace.mark("GalleryViewModel.isInitialized set to true")
         }
 
         StartupTrace.mark("GalleryViewModel.init end")
@@ -755,7 +751,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val newList = repository.getPhotosSync()
             val currentMap = _photos.value.associateBy { it.id }
 
-            // 保留运行时状态，但使用最新加载到的 metadata/sourceUri 等持久化信息
+            // 保留运行时状态和已加载的复杂 metadata，同时刷新列表基础信息。
             val mergedList = newList.map { fresh ->
                 currentMap[fresh.id]?.let { existing ->
                     existing.copy(
@@ -772,7 +768,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         sourceUri = fresh.sourceUri,
                         isMotionPhoto = fresh.isMotionPhoto,
                         isBurstPhoto = fresh.isBurstPhoto,
-                        metadata = fresh.metadata,
+                        metadata = existing.metadata ?: fresh.metadata,
                         relatedPhoto = fresh.relatedPhoto
                     )
                 } ?: fresh
@@ -852,50 +848,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val photo = repository.getLatestPhoto()
             photo?.let {
-                if (it.isVideo) {
-                    _latestPhoto.value = it
-                    if (_photos.value.none { existing -> existing.id == it.id }) {
-                        _photos.value = listOf(it) + _photos.value
-                    }
-                    return@let
+                _latestPhoto.value = it
+                if (_photos.value.none { existing -> existing.id == it.id }) {
+                    _photos.value = listOf(it) + _photos.value
                 }
-                val context = getApplication<Application>()
-                val metadata = GalleryManager.loadMetadata(context, it.id)
-                var updatedPhoto = if (metadata != null) {
-                    it.copy(
-                        metadata = metadata,
-                        width = if (metadata.width > 0) metadata.width else it.width,
-                        height = if (metadata.height > 0) metadata.height else it.height
-                    )
-                } else {
-                    it
-                }
-
-                // If dimensions are missing, load from file (same as loadPhotos)
-                if (updatedPhoto.width == 0 || updatedPhoto.height == 0) {
-                    try {
-                        val photoFile = GalleryManager.getPhotoFile(context, it.id)
-                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeFile(photoFile.absolutePath, options)
-                        updatedPhoto =
-                            updatedPhoto.copy(width = options.outWidth, height = options.outHeight)
-
-                        metadata?.let { m ->
-                            val newMetadata =
-                                m.copy(width = options.outWidth, height = options.outHeight)
-                            GalleryManager.saveMetadata(context, it.id, newMetadata)
-                        }
-                    } catch (e: Exception) {
-                        PLog.e(TAG, "Failed to load dimensions for latest photo", e)
-                    }
-                }
-                _latestPhoto.value = updatedPhoto
-
-                // Also update the photos list if it's not already in it
-                val currentPhotos = _photos.value
-                if (currentPhotos.none { it.id == updatedPhoto.id }) {
-                    _photos.value = listOf(updatedPhoto) + currentPhotos
-                }
+            }
+            if (!_isInitialized.value) {
+                _isInitialized.value = true
+                StartupTrace.mark("GalleryViewModel.isInitialized set to true")
             }
         }
     }
@@ -935,40 +895,28 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun registerRecordedVideo(uri: Uri, onComplete: (String?) -> Unit = {}) {
-        viewModelScope.launch {
-            val context = getApplication<Application>()
-            val mediaId = GalleryManager.recordVideoCapture(context, uri)
-            if (mediaId != null) {
-                loadPhotos()
-                refreshLatestPhoto()
-            }
-            onComplete(mediaId)
-        }
-    }
-
     /**
      * 加载当前照片的元数据
      */
     fun loadCurrentPhotoMetadata() {
         val photo = getCurrentPhoto() ?: return
 
-        // 如果已经加载了该照片的元数据，且不是正在编辑模式（编辑模式下可能需要刷新），则跳过
-        if (!isEditing && currentPhotoMetadataId == photo.id) {
+        // Photon 列表只携带轻量 metadata；只有 currentMediaMetadata 才代表详情所需完整 metadata 已加载。
+        if (!isEditing && currentPhotoMetadataId == photo.id && currentMediaMetadata != null) {
             return
         }
 
-        // 优先使用 PhotoData 中已有的元数据（由 loadPhotos 预加载）
-        photo.metadata?.let { m ->
-            currentPhotoMetadataId = photo.id
-            applyMetadataToEditState(m)
-            return
-        }
-
-        photo.relatedPhoto?.metadata?.let { m ->
-            currentPhotoMetadataId = photo.id
-            applyMetadataToEditState(m)
-            return
+        if (selectedTab == GalleryTab.SYSTEM) {
+            photo.metadata?.let { m ->
+                currentPhotoMetadataId = photo.id
+                applyMetadataToEditState(m)
+                return
+            }
+            photo.relatedPhoto?.metadata?.let { m ->
+                currentPhotoMetadataId = photo.id
+                applyMetadataToEditState(m)
+                return
+            }
         }
 
         viewModelScope.launch {
@@ -1008,8 +956,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        val cw = metadata.width.takeIf { it > 0 } ?: photo?.metadata?.width ?: photo?.width ?: 0
-        val ch = metadata.height.takeIf { it > 0 } ?: photo?.metadata?.height ?: photo?.height ?: 0
+        val cw = metadata.width.takeIf { it > 0 } ?: photo?.width ?: 0
+        val ch = metadata.height.takeIf { it > 0 } ?: photo?.height ?: 0
         if (metadata.postCropRegion != null && cw > 0 && ch > 0) {
             val cropRect = RectF(
                 metadata.postCropRegion.left.toFloat() / cw,
@@ -1579,9 +1527,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
         if (currentMediaMetadata == null || currentPhotoMetadataId != targetPhoto.id) {
             val context = getApplication<Application>()
-            val metadata = targetPhoto.metadata ?: runBlocking {
-                withContext(Dispatchers.IO) {
-                    GalleryManager.loadMetadata(context, targetPhoto.id)
+            val metadata = if (selectedTab == GalleryTab.PHOTON) {
+                runBlocking {
+                    withContext(Dispatchers.IO) {
+                        GalleryManager.loadMetadata(context, targetPhoto.id)
+                    }
+                }
+            } else {
+                targetPhoto.metadata ?: runBlocking {
+                    withContext(Dispatchers.IO) {
+                        GalleryManager.loadMetadata(context, targetPhoto.id)
+                    }
                 }
             }
             applyMetadataToEditState(metadata)
@@ -1968,7 +1924,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     private fun previewCacheKey(mediaData: MediaData, metadata: MediaMetadata, showOrigin: Boolean, maxEdge: Int = 4096): String {
         val photoId = mediaData.id
-        val metadataHash = metadata.toJson().hashCode()
+        val metadataHash = metadata.hashCode()
         val refreshKey = photoRefreshKeys[photoId] ?: 0L
         return if (showOrigin) {
             "${photoId}_${refreshKey}"

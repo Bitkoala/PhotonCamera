@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -94,7 +95,7 @@ enum class ActivePanel {
     LUT_EDIT
 }
 
-private const val InitialPreviewTransitionDelayMillis = 0L
+private const val InitialPreviewTransitionDelayMillis = 150L
 private const val PreviewTransitionRevealDurationMillis = 800
 
 @Composable
@@ -260,7 +261,7 @@ fun CameraScreen(
 
     val previewSize = state.currentPreviewSize
     val previewAspectRatio = state.getPreviewAspectRatio()
-    val previewTransitionCoverFraction by animateFloatAsState(
+    val previewTransitionCoverFractionState = animateFloatAsState(
         targetValue = when {
             previewTransitionActive && !previewTransitionRevealing -> 1f
             previewTransitionActive -> 0f
@@ -276,6 +277,7 @@ fun CameraScreen(
         },
         label = "previewTransitionCoverFraction"
     )
+    val previewTransitionCoverFraction = previewTransitionCoverFractionState.value
 
     fun runPreviewTransition(onSwitch: () -> Unit) {
         previewTransitionActive = true
@@ -766,24 +768,33 @@ fun CameraScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    if (previewTransitionActive || previewTransitionCoverFraction > 0.001f) {
-                        val shutterHeightFraction = (previewTransitionCoverFraction / 2f).coerceIn(0f, 0.5f)
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight(shutterHeightFraction)
-                                    .align(Alignment.TopCenter)
-                                    .background(Color.Black)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight(shutterHeightFraction)
-                                    .align(Alignment.BottomCenter)
-                                    .background(Color.Black)
-                            )
-                        }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = if (previewTransitionActive || previewTransitionCoverFractionState.value > 0.001f) 1f else 0f
+                            }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.5f)
+                                .align(Alignment.TopCenter)
+                                .graphicsLayer {
+                                    translationY = -size.height * (1f - previewTransitionCoverFractionState.value)
+                                }
+                                .background(Color.Black)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.5f)
+                                .align(Alignment.BottomCenter)
+                                .graphicsLayer {
+                                    translationY = size.height * (1f - previewTransitionCoverFractionState.value)
+                                }
+                                .background(Color.Black)
+                        )
                     }
 
                     // Live Photo Indicator

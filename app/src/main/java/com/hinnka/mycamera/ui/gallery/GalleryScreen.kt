@@ -1089,8 +1089,8 @@ private class GalleryRecyclerAdapter : RecyclerView.Adapter<RecyclerView.ViewHol
 
 private fun MediaData.shouldUseFullLineSpan(): Boolean {
     if (!isImage) return false
-    val width = (metadata?.width ?: width).takeIf { it > 0 } ?: return false
-    val height = (metadata?.height ?: height).takeIf { it > 0 } ?: return false
+    val width = width.takeIf { it > 0 } ?: return false
+    val height = height.takeIf { it > 0 } ?: return false
     return width.toFloat() / height.toFloat() >= 2.2f
 }
 
@@ -1157,7 +1157,7 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
         burstIcon.visibility = if (photo.isBurstPhoto) VISIBLE else GONE
         rawBadge.visibility = if (photo.isImage && viewModel.isRawInGallery(photo.id)) VISIBLE else GONE
         importedBadge.visibility =
-            if (viewModel.selectedTab == GalleryTab.PHOTON && photo.metadata?.isImported == true) VISIBLE else GONE
+            if (viewModel.selectedTab == GalleryTab.PHOTON && photo.sourceUri != null) VISIBLE else GONE
         importedBadge.text = context.getString(R.string.imported)
         relatedBadge.visibility =
             if (viewModel.selectedTab == GalleryTab.SYSTEM && photo.relatedPhoto != null) VISIBLE else GONE
@@ -1237,14 +1237,14 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
 
 private fun MediaData.galleryAspectRatio(isLandscape: Boolean): Float {
     val rawWidth = if (isVideo) {
-        metadata?.videoWidth ?: width
+        width
     } else {
-        metadata?.width ?: width
+        width
     }
     val rawHeight = if (isVideo) {
-        metadata?.videoHeight ?: height
+        height
     } else {
-        metadata?.height ?: height
+        height
     }
     val rotationDegrees = if (isVideo) metadata?.rotationDegrees ?: 0 else 0
     val shouldSwapDimensions = rotationDegrees == 90 || rotationDegrees == 270

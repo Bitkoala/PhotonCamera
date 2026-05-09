@@ -11,8 +11,8 @@ import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.utils.PLog
-import org.json.JSONObject
 import com.hinnka.mycamera.raw.RawMetadata
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.log2
@@ -159,120 +159,6 @@ data class MediaMetadata(
     val resolution: String
         get() = "${width}x${height}"
 
-    fun toJson(): String {
-        return JSONObject().apply {
-            put("version", version)
-            put("mediaType", mediaType.name.lowercase(Locale.US))
-            put("lutId", lutId ?: JSONObject.NULL)
-            // 色彩配方配置
-            if (colorRecipeParams != null) {
-                put("colorRecipeParams", JSONObject(colorRecipeParams.toJson()))
-            } else {
-                put("colorRecipeParams", JSONObject.NULL)
-            }
-            put("baselineTarget", baselineTarget?.name ?: JSONObject.NULL)
-            put("baselineLutId", baselineLutId ?: JSONObject.NULL)
-            if (baselineColorRecipeParams != null) {
-                put("baselineColorRecipeParams", JSONObject(baselineColorRecipeParams.toJson()))
-            } else {
-                put("baselineColorRecipeParams", JSONObject.NULL)
-            }
-            // 软件处理参数
-            put("sharpening", sharpening?.toDouble() ?: JSONObject.NULL)
-            put("noiseReduction", noiseReduction?.toDouble() ?: JSONObject.NULL)
-            put("chromaNoiseReduction", chromaNoiseReduction?.toDouble() ?: JSONObject.NULL)
-            put("denoiseValue", rawDenoiseValue?.toDouble() ?: JSONObject.NULL)
-            put("rawExposureCompensation", rawExposureCompensation?.toDouble() ?: JSONObject.NULL)
-            put("rawAutoExposure", rawAutoExposure ?: JSONObject.NULL)
-            put("rawBlackPointCorrection", rawBlackPointCorrection?.toDouble() ?: JSONObject.NULL)
-            put("rawWhitePointCorrection", rawWhitePointCorrection?.toDouble() ?: JSONObject.NULL)
-            put("rawAutoWhiteBalanceEstimate", rawAutoWhiteBalanceEstimate ?: JSONObject.NULL)
-            put("rawDcpId", rawDcpId ?: JSONObject.NULL)
-            put("rawBlackLevelMode", rawBlackLevelMode ?: JSONObject.NULL)
-            put("rawCustomBlackLevel", rawCustomBlackLevel?.toDouble() ?: JSONObject.NULL)
-            put("cameraId", cameraId ?: JSONObject.NULL)
-
-            put("frameId", frameId ?: JSONObject.NULL)
-            put("width", width)
-            put("height", height)
-            put("ratio", ratio?.getDisplayName() ?: JSONObject.NULL)
-            put(
-                "cropRegion", if (cropRegion != null) {
-                    JSONObject().apply {
-                        put("left", cropRegion.left)
-                        put("top", cropRegion.top)
-                        put("right", cropRegion.right)
-                        put("bottom", cropRegion.bottom)
-                    }
-                } else {
-                    JSONObject.NULL
-                })
-            put(
-                "postCropRegion", if (postCropRegion != null) {
-                    JSONObject().apply {
-                        put("left", postCropRegion.left)
-                        put("top", postCropRegion.top)
-                        put("right", postCropRegion.right)
-                        put("bottom", postCropRegion.bottom)
-                    }
-                } else {
-                    JSONObject.NULL
-                })
-            put("rotation", rotation)
-            // 拍摄信息
-            put("deviceModel", deviceModel ?: JSONObject.NULL)
-            put("brand", brand ?: JSONObject.NULL)
-            put("dateTaken", dateTaken ?: JSONObject.NULL)
-            put("location", location ?: JSONObject.NULL)
-            put("latitude", latitude ?: JSONObject.NULL)
-            put("longitude", longitude ?: JSONObject.NULL)
-            put("altitude", altitude ?: JSONObject.NULL)
-            put("iso", iso ?: JSONObject.NULL)
-            put("shutterSpeed", shutterSpeed ?: JSONObject.NULL)
-            put("focalLength", focalLength ?: JSONObject.NULL)
-            put("focalLength35mm", focalLength35mm ?: JSONObject.NULL)
-            put("aperture", aperture ?: JSONObject.NULL)
-            put("exposureBias", exposureBias ?: JSONObject.NULL)
-            put("isImported", isImported)
-            put("sourceUri", sourceUri ?: JSONObject.NULL)
-            put("mimeType", mimeType ?: JSONObject.NULL)
-            put("durationMs", durationMs ?: JSONObject.NULL)
-            put("frameRate", frameRate ?: JSONObject.NULL)
-            put("bitrate", bitrate ?: JSONObject.NULL)
-            put("rotationDegrees", rotationDegrees ?: JSONObject.NULL)
-            put("hasAudio", hasAudio ?: JSONObject.NULL)
-            put("videoWidth", videoWidth ?: JSONObject.NULL)
-            put("videoHeight", videoHeight ?: JSONObject.NULL)
-            // 边框水印自定义
-            val customPropsObj = JSONObject()
-            customProperties.forEach { (k, v) -> customPropsObj.put(k, v) }
-            put("customProperties", customPropsObj)
-            // 导出的 URI 列表
-            put("exportedUris", org.json.JSONArray(exportedUris))
-
-            // 计算摄影光圈与焦点
-            put("computationalAperture", computationalAperture?.toDouble() ?: JSONObject.NULL)
-            put("focusPointX", focusPointX?.toDouble() ?: JSONObject.NULL)
-            put("focusPointY", focusPointY?.toDouble() ?: JSONObject.NULL)
-
-            // Live Photo 时间戳
-            put("presentationTimestampUs", presentationTimestampUs ?: JSONObject.NULL)
-            // DRO 模式
-            put("droMode", droMode ?: JSONObject.NULL)
-            put("software", software ?: JSONObject.NULL)
-            put("isMirrored", isMirrored)
-            put("colorSpace", colorSpace.name)
-            put("manualHdrEffectEnabled", manualHdrEffectEnabled)
-            put("hdrEffectStrength", hdrEffectStrength.toDouble())
-            put("hasEmbeddedGainmap", hasEmbeddedGainmap)
-            put("dynamicRangeProfile", dynamicRangeProfile ?: JSONObject.NULL)
-            put("captureMode", captureMode ?: JSONObject.NULL)
-            put("multipleExposureFrameCount", multipleExposureFrameCount ?: JSONObject.NULL)
-            put("hasAiDenoisedBase", hasAiDenoisedBase)
-            put("aiDenoiseStrength", aiDenoiseStrength?.toDouble() ?: JSONObject.NULL)
-        }.toString(2)
-    }
-
     /**
      * 从 RawMetadata 补齐信息
      */
@@ -306,7 +192,8 @@ data class MediaMetadata(
     companion object {
         private const val TAG = "PhotoMetadata"
 
-        fun fromJson(json: String): MediaMetadata? {
+        // 旧格式，以后不再更新
+        fun fromLegacyJson(json: String): MediaMetadata? {
             return try {
                 val obj = JSONObject(json)
 

@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 val localProperties = Properties().apply {
@@ -202,6 +203,9 @@ dependencies {
     implementation(libs.androidx.animation.core)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     implementation(libs.okhttp)
     implementation(libs.gson)
