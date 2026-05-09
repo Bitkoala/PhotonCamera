@@ -45,6 +45,7 @@ private:
 
   // Pre-conversion resources
   VulkanImage rgbFrame;
+  VulkanImage referenceRgbFrame;
   VkDescriptorSetLayout yuvToRgbaLayout = VK_NULL_HANDLE;
   VkDescriptorSet yuvToRgbaSet = VK_NULL_HANDLE;
   VkPipelineLayout yuvToRgbaPipelineLayout = VK_NULL_HANDLE;

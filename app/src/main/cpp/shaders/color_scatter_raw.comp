@@ -192,7 +192,7 @@ void processPlane(ivec2 samplePlane, uint planeIndex) {
             vec2 d = (vec2(outPos) / pc.scale) - refPlanePos;
             float mahalanobis = OmegaInv.x * d.x * d.x + 2.0 * OmegaInv.y * d.x * d.y + OmegaInv.z * d.y * d.y;
             float effectiveSigma2 = 1.0 + 4.0 * flowVar;
-            float inlierWeight = 0.18 + 0.82 * pInlier;
+            float inlierWeight = pInlier * pInlier;
             float w = inlierWeight *
                       exp(-0.5 * max(mahalanobis, 0.0) / effectiveSigma2) *
                       reconWeight * (0.45 + 0.55 * pc.frameWeight);

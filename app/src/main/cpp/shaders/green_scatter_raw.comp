@@ -171,7 +171,7 @@ void splatSample(int phaseIndex, vec2 outCenter, vec2 refPos, float val,
                                 (OmegaInv.y * d.x * d.y) * 2.0 +
                                 OmegaInv.z * d.y * d.y;
             float effectiveSigma2 = 1.0 + 4.0 * flowVar;
-            float inlierWeight = 0.18 + 0.82 * pInlier;
+            float inlierWeight = pInlier * pInlier;
             float w = inlierWeight *
                       exp(-0.5 * max(mahalanobis, 0.0) / effectiveSigma2) *
                       reconWeight * (0.45 + 0.55 * pc.frameWeight);

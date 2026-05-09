@@ -24,6 +24,8 @@ layout(binding = 5, scalar) buffer LocalTileMask {
     float weights[];
 } localTileMask;
 
+layout(binding = 6) uniform sampler2D referenceSampler;
+
 layout(push_constant, scalar) uniform PushConstants {
     float t0, t1, t2, t3, t4, t5;
     float offsetX, offsetY;
@@ -125,7 +127,6 @@ void main() {
     float motionError = 0.0;
     
     if (pc.isFirstFrame == 0) {
-        // ... (bilinear sampling of offsets) ...
         vec2 gCoord = finalUV * vec2(float(pc.gridW), float(pc.gridH)) - 0.5;
         ivec2 g0 = ivec2(floor(gCoord));
         vec2 gf = gCoord - vec2(g0);
@@ -139,10 +140,8 @@ void main() {
         vec2 f11 = alignmentGrid.offsets[g1.y * pc.gridW + g1.x];
         alignment = mix(mix(f00, f10, gf.x), mix(f01, f11, gf.x), gf.y);
         
-        // Clamp alignment to prevent extreme smears from failures in flat areas
         alignment = clamp(alignment, vec2(-128.0), vec2(128.0));
         
-        // Bilinear interpolation of motion prior error
         float e00 = motionPrior.errors[g0.y * pc.gridW + g0.x];
         float e10 = motionPrior.errors[g0.y * pc.gridW + g1.x];
         float e01 = motionPrior.errors[g1.y * pc.gridW + g0.x];
@@ -152,44 +151,40 @@ void main() {
         finalUV += alignment / nativeSize;
     }
 
-    // 4. Kernel Regression Elements
     vec2 posInSource = finalUV * nativeSize;
     vec2 centerSource = floor(posInSource - 0.5) + 0.5;
     
-    // Read Kernel Params for the current output pixel
-    // [REPLACED BY PREVIOUS DEFINITION AT TOP]
-    
-    // 1. Read reference accumulator state (used for both center robustness and per-sample checks)
     vec4 accumValue = accumulator.data[outIndex];
     float currentW = accumValue.a;
-    float refLuma = 0.0;
     float expectedSigma = 0.025;
     float centerRobustness = 1.0;
 
     vec3 centerColor = vec3(0.0);
     vec3 centerYCC = vec3(0.0);
 
-    if (pc.isFirstFrame == 0 && currentW > 0.001) {
-        refLuma = accumulator.data[outIndex].r / currentW;
+    if (pc.isFirstFrame == 0) {
         centerColor = sampleBicubic(rgbSampler, finalUV, nativeSize).rgb;
         centerYCC = rgb2ycbcr(centerColor);
-        float diff = abs(centerYCC.x - refLuma);
-        float expectedVar = pc.noiseAlpha * refLuma + pc.noiseBeta;
+
+        vec3 refYCC = rgb2ycbcr(sampleBicubic(referenceSampler, finalUV, nativeSize).rgb);
+        float diff = length((centerYCC - refYCC) * vec3(1.0, 0.5, 0.5));
+        
+        float expectedVar = pc.noiseAlpha * refYCC.x + pc.noiseBeta;
         expectedSigma = sqrt(max(expectedVar, 1e-7));
         expectedSigma = max(expectedSigma, 0.025);
 
         float ratio = diff / expectedSigma;
-        float T1 = 3.0; float T2 = 12.0;
+        float T1 = 2.5; float T2 = 8.0;
         if (ratio <= T1) centerRobustness = 1.0;
         else if (ratio >= T2) centerRobustness = 0.0;
         else centerRobustness = (T2 - ratio) / (T2 - T1);
 
         if (isnan(centerRobustness) || isinf(centerRobustness)) centerRobustness = 0.0;
 
-        float motionPenalty = 0.010;
+        float motionPenalty = 0.015;
         centerRobustness *= (1.0 / (1.0 + motionError * motionPenalty));
-        if (isnan(centerRobustness)) centerRobustness = 0.0;
     }
+
     float localTileWeight = sampleLocalTileWeight(finalUV);
     float fusionMask = localTileWeight;
     int supportRadius = 0;
@@ -197,32 +192,20 @@ void main() {
     if (pc.isFirstFrame == 0) {
         supportRadius = 2;
         float tilePenalty = 1.0 - smoothstep(0.10, 0.55, localTileWeight);
-        fusionMask *= mix(0.90, 0.55, tilePenalty);
-//        fusionMask *= 1.0 - smoothstep(0.05, 0.75, fineDetailMask);
+        fusionMask *= mix(0.95, 0.65, tilePenalty);
     }
-    // Super-res first frame: supportRadius stays 0.
-    // Bicubic at each 2x pixel's unique sub-pixel position already provides
-    // distinct values. Kernel regression neighbors only add blur.
 
-    // Pre-compute constants (hoisted from loop)
     float c_ = kp.z; float s_ = kp.w;
     float cosT = sqrt(0.5 * (1.0 + c_));
     float sinT = sqrt(0.5 * (1.0 - c_));
     if (s_ < 0.0) sinT = -sinT;
 
-    // kp.x/kp.y (inverse variances) are tuned for RAW 0.5x coordinate space.
-    // d is in 1x native space. Base correction: 0.25 (from 0.5x to 1x).
-    // For super-res, output is at pc.scale × native. To keep the kernel's
-    // effective sigma constant in OUTPUT space, multiply by scale²:
-    //   non-SR (scale=1): 0.25 * 1 = 0.25  (unchanged)
-    //   SR 2x  (scale=2): 0.25 * 4 = 1.0   (4× tighter in source space)
     float kernelScale = 0.25 * pc.scale * pc.scale;
     float invVarU = kp.x * kernelScale;
     float invVarV = kp.y * kernelScale;
     float baseWeightScale = pc.frameWeight * fusionMask;
-    float robustnessFloor = 0.25 * localTileWeight;
+    float robustnessFloor = 0.01 * localTileWeight;
 
-    // Accumulate neighbors
     for (int j = -2; j <= 2; ++j) {
         for (int i = -2; i <= 2; ++i) {
             if (abs(i) > supportRadius || abs(j) > supportRadius) {
@@ -230,8 +213,6 @@ void main() {
             }
             vec2 d = (centerSource + vec2(float(i), float(j)) - posInSource);
 
-            // Compute the anisotropic kernel weight before sampling texture.
-            // This lets us skip neighbors whose theoretical contribution is already negligible.
             float u = d.x * cosT + d.y * sinT;
             float v = -d.x * sinT + d.y * cosT;
             float w = exp(-0.5 * (u*u * invVarU + v*v * invVarV));
@@ -250,11 +231,9 @@ void main() {
             vec2 samplePos = centerSource + vec2(float(i), float(j));
             vec2 sampleUV = samplePos / nativeSize;
 
-            // Center pixel uses bicubic for max quality;
-            // neighbors use hardware bilinear (1 texture() vs 16 texelFetch())
             vec3 sampleColor;
             if (i == 0 && j == 0) {
-                if (pc.isFirstFrame == 0 && currentW > 0.001) {
+                if (pc.isFirstFrame == 0) {
                     sampleColor = centerColor;
                 } else {
                     sampleColor = sampleBicubic(rgbSampler, sampleUV, nativeSize).rgb;
@@ -264,21 +243,17 @@ void main() {
             }
             vec3 sampleYCC = rgb2ycbcr(sampleColor);
 
-            // Per-sample robustness
             float robustness = centerRobustness;
-
-            float sampleFusionMask = fusionMask;
             if (pc.isFirstFrame == 0) {
-                float sampleLumaDiff = abs(sampleYCC.x - refLuma);
-                float lumaDiffRatio = sampleLumaDiff / expectedSigma;
-                float sampleLumaRobustness = 1.0 - smoothstep(4.0, 10.0, lumaDiffRatio);
-                float largeLumaPenalty = smoothstep(5.5, 9.5, lumaDiffRatio);
-                sampleFusionMask *= mix(1.0, 0.70, largeLumaPenalty);
-                robustness *= sampleLumaRobustness;
+                vec3 sampleRefYCC = rgb2ycbcr(texture(referenceSampler, sampleUV).rgb);
+                float sampleDiff = length((sampleYCC - sampleRefYCC) * vec3(1.0, 0.5, 0.5));
+                float sampleRatio = sampleDiff / expectedSigma;
+                float sampleRobustness = 1.0 - smoothstep(3.0, 9.0, sampleRatio);
+                robustness *= sampleRobustness;
                 robustness = max(robustness, robustnessFloor);
             }
 
-            float combinedWeight = w * robustness * pc.frameWeight * sampleFusionMask;
+            float combinedWeight = w * robustness * pc.frameWeight * fusionMask;
             if (isnan(combinedWeight) || isinf(combinedWeight)) combinedWeight = 0.0;
 
             if (combinedWeight <= 1e-6) continue;
