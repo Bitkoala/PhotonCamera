@@ -220,6 +220,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     val defaultFocalLength: Flow<Float> = userPreferencesRepository.userPreferences.map { it.defaultFocalLength }
     val customFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.customFocalLengths }
+    val hiddenFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.hiddenFocalLengths }
     val customLensIds: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.customLensIds }
     val userPreferences: StateFlow<com.hinnka.mycamera.data.UserPreferences> = userPreferencesRepository.userPreferences
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.data.UserPreferences())
@@ -2269,7 +2270,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // 2. 计算变焦档位 (逻辑同步自 ZoomControlBar.kt)
         val lensZoomStops = calculateLensZoomStops(availableCameras, currentCamera)
-        val zoomStops = allZoomStops(lensZoomStops, mainCamera, currentCamera)
+        val zoomStops = allZoomStops(
+            lensZoomStops,
+            mainCamera,
+            currentCamera,
+            userPreferences.value.customFocalLengths,
+            userPreferences.value.hiddenFocalLengths
+        )
 
         if (zoomStops.isEmpty()) return
 
@@ -2337,20 +2344,33 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         lensZoomStops: List<Float>,
         mainCamera: CameraInfo?,
         currentCamera: CameraInfo?,
-        customFocalLengths: List<Float> = emptyList()
+        customFocalLengths: List<Float> = emptyList(),
+        hiddenFocalLengths: List<Float> = emptyList()
     ): List<Float> {
         val stops = mutableListOf<Float>()
-        stops.addAll(lensZoomStops)
 
         if (currentCamera?.lensType == LensType.FRONT) {
+            stops.addAll(lensZoomStops)
             if (stops.none { abs(it - 2f) <= 0.1f }) {
                 stops.add(2f)
             }
             return stops.sorted()
         }
 
-        mainCamera ?: return stops.sorted()
+        mainCamera ?: return lensZoomStops.sorted()
 
+        // 1. 添加并过滤原生镜头焦段
+        if (mainCamera.focalLength35mmEquivalent > 0) {
+            val filteredLensStops = lensZoomStops.filter { zoom ->
+                val fl = zoom * mainCamera.focalLength35mmEquivalent
+                hiddenFocalLengths.none { abs(it - fl) < 0.5f }
+            }
+            stops.addAll(filteredLensStops)
+        } else {
+            stops.addAll(lensZoomStops)
+        }
+
+        // 2. 添加自定义焦段 (不参与隐藏过滤)
         if (mainCamera.focalLength35mmEquivalent > 0) {
             customFocalLengths.forEach { fl ->
                 val zoom = fl / mainCamera.focalLength35mmEquivalent
@@ -2359,6 +2379,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+
         return stops.sorted()
     }
 
@@ -2388,6 +2409,49 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setAutoSaveAfterCapture(enabled: Boolean) {
         viewModelScope.launch {
             userPreferencesRepository.saveAutoSaveAfterCapture(enabled)
+        }
+    }
+
+    fun addCustomFocalLength(focalLength: Float) {
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val list = prefs.customFocalLengths.toMutableList()
+            if (list.none { abs(it - focalLength) < 0.5f }) {
+                list.add(focalLength)
+                userPreferencesRepository.saveCustomFocalLengths(list.sorted())
+            }
+        }
+    }
+
+    fun removeCustomFocalLength(focalLength: Float) {
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val list = prefs.customFocalLengths.toMutableList()
+            list.removeAll { abs(it - focalLength) < 0.5f }
+            userPreferencesRepository.saveCustomFocalLengths(list)
+
+            // 如果删除了当前的默认焦段，重置为0
+            if (abs(prefs.defaultFocalLength - focalLength) < 0.5f) {
+                userPreferencesRepository.saveDefaultFocalLength(0f)
+            }
+        }
+    }
+
+    fun toggleFocalLengthVisibility(focalLength: Float) {
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val list = prefs.hiddenFocalLengths.toMutableList()
+            val index = list.indexOfFirst { abs(it - focalLength) < 0.5f }
+            if (index != -1) {
+                list.removeAt(index)
+            } else {
+                list.add(focalLength)
+                // 如果隐藏了当前的默认焦段，重置默认焦段为0
+                if (abs(prefs.defaultFocalLength - focalLength) < 0.5f) {
+                    userPreferencesRepository.saveDefaultFocalLength(0f)
+                }
+            }
+            userPreferencesRepository.saveHiddenFocalLengths(list)
         }
     }
 
@@ -2501,21 +2565,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun addCustomFocalLength(fl: Float) {
-        viewModelScope.launch {
-            val current = userPreferencesRepository.userPreferences.firstOrNull()?.customFocalLengths ?: emptyList()
-            val physicalCount = getAvailableFocalLengths().size
-            if (physicalCount + current.size >= 8 || current.any { abs(it - fl) < 0.5f }) return@launch
-            userPreferencesRepository.saveCustomFocalLengths((current + fl).sortedBy { it })
-        }
-    }
-
-    fun removeCustomFocalLength(fl: Float) {
-        viewModelScope.launch {
-            val current = userPreferencesRepository.userPreferences.firstOrNull()?.customFocalLengths ?: emptyList()
-            userPreferencesRepository.saveCustomFocalLengths(current.filter { abs(it - fl) >= 0.5f })
-        }
-    }
 
     fun setCustomLensIds(value: String) {
         viewModelScope.launch {

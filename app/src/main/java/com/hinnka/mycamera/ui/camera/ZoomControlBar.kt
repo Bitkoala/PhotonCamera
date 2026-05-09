@@ -77,6 +77,7 @@ fun ZoomControlBar(
 
     // 根据可用相机计算变焦档位
     val customFocalLengths by viewModel.customFocalLengths.collectAsState(initial = emptyList())
+    val hiddenFocalLengths by viewModel.hiddenFocalLengths.collectAsState(initial = emptyList())
     val lensZoomStops = viewModel.calculateLensZoomStops(availableCameras, currentCamera)
     val customLensZoomStops = remember(availableCameras, currentCamera) {
         availableCameras
@@ -90,7 +91,7 @@ fun ZoomControlBar(
             }
             .map { it.intrinsicZoomRatio }
     }
-    val zoomStops = viewModel.allZoomStops(lensZoomStops, mainCamera, currentCamera, customFocalLengths)
+    val zoomStops = viewModel.allZoomStops(lensZoomStops, mainCamera, currentCamera, customFocalLengths, hiddenFocalLengths)
 
     val cameraState by viewModel.state.collectAsState()
     val minZoom = remember(cameraState.availableCameras) {

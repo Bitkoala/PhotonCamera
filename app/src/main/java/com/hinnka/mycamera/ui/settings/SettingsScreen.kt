@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -45,6 +46,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -2456,6 +2459,7 @@ fun DefaultFocalLengthSetting(
     var showAddDialog by remember { mutableStateOf(false) }
     var inputValue by remember { mutableStateOf("") }
     val customFocalLengths by viewModel.customFocalLengths.collectAsState(initial = emptyList())
+    val hiddenFocalLengths by viewModel.hiddenFocalLengths.collectAsState(initial = emptyList())
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -2502,62 +2506,34 @@ fun DefaultFocalLengthSetting(
 
             // Device focal length chips
             availableFLs.forEach { fl ->
-                val isSelected = kotlin.math.abs(currentFocalLength - fl) < 0.5f
-                Box(
-                    modifier = Modifier
-                        .width(64.dp)
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.1f))
-                        .clickable { onFocalLengthSelected(fl) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "${fl.roundToInt()}mm",
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        textAlign = TextAlign.Center
-                    )
-                }
+                FocalLengthChip(
+                    focalLength = fl,
+                    isCustom = false,
+                    isSelected = abs(currentFocalLength - fl) < 0.5f,
+                    isHidden = hiddenFocalLengths.any { abs(it - fl) < 0.5f },
+                    onSelect = { onFocalLengthSelected(fl) },
+                    onToggleVisibility = { viewModel.toggleFocalLengthVisibility(fl) }
+                )
             }
 
-            // Custom focal length chips (with remove button)
+            // Custom focal length chips
             customFocalLengths.forEach { fl ->
-                val isSelected = kotlin.math.abs(currentFocalLength - fl) < 0.5f
-                Box(
-                    modifier = Modifier
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) Color(0xFFFF6B35) else Color(0xFF2A3A5C))
-                        .clickable { onFocalLengthSelected(fl) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Text(
-                            text = "${fl.roundToInt()}mm*",
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                        )
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
-                            tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clickable { viewModel.removeCustomFocalLength(fl) }
-                        )
-                    }
-                }
+                FocalLengthChip(
+                    focalLength = fl,
+                    isCustom = true,
+                    isSelected = abs(currentFocalLength - fl) < 0.5f,
+                    isHidden = false,
+                    onSelect = { onFocalLengthSelected(fl) },
+                    onToggleVisibility = { },
+                    onRemove = { viewModel.removeCustomFocalLength(fl) }
+                )
             }
 
-            // Add button (shown when total physical + custom < 8)
-            if (availableFLs.size + customFocalLengths.size < 8) {
+            // Add button (shown when total visible < 8)
+            val visibleFLCount = availableFLs.count { fl ->
+                hiddenFocalLengths.none { abs(it - fl) < 0.5f }
+            } + customFocalLengths.size
+            if (visibleFLCount < 8) {
                 Box(
                     modifier = Modifier
                         .width(40.dp)
@@ -2762,6 +2738,76 @@ private fun CustomBackgroundItem(
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocalLengthChip(
+    focalLength: Float,
+    isCustom: Boolean,
+    isSelected: Boolean,
+    isHidden: Boolean,
+    onSelect: () -> Unit,
+    onToggleVisibility: () -> Unit,
+    onRemove: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (isSelected) Color(0xFFFF6B35)
+                else if (isHidden) Color.White.copy(alpha = 0.05f)
+                else if (isCustom) Color(0xFF2A3A5C)
+                else Color.White.copy(alpha = 0.1f)
+            )
+            .border(
+                width = 1.dp,
+                color = if (isHidden && !isSelected) Color.White.copy(alpha = 0.1f) else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .clickable {
+                if (isHidden) {
+                    onToggleVisibility()
+                }
+                onSelect()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "${focalLength.roundToInt()}mm${if (isCustom) "*" else ""}",
+                color = if (isSelected) Color.White else if (isHidden) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                textAlign = TextAlign.Center
+            )
+            if (!isCustom) {
+                Icon(
+                    imageVector = if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = null,
+                    tint = if (isSelected) Color.White else if (isHidden) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onToggleVisibility() }
+                )
+            }
+            if (onRemove != null) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onRemove() }
                 )
             }
         }
