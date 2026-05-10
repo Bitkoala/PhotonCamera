@@ -29,77 +29,87 @@
             android:layout_marginEnd="6dp"
             android:visibility="gone" />
 
+        <!-- Top Start Badges -->
         <LinearLayout
-            android:id="@+id/gallery_photo_video_badge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|start"
-            android:layout_marginStart="4dp"
-            android:layout_marginBottom="4dp"
-            android:background="@drawable/bg_gallery_badge_pill"
+            android:layout_gravity="top|start"
+            android:paddingStart="4dp"
+            android:paddingTop="4dp"
             android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="4dp"
-            android:visibility="gone">
+            android:orientation="horizontal">
 
             <ImageView
-                android:layout_width="14dp"
-                android:layout_height="14dp"
-                android:src="@drawable/ic_gallery_play"
-                android:tint="#FFFFFFFF" />
+                android:id="@+id/gallery_photo_motion_icon"
+                android:layout_width="13dp"
+                android:layout_height="13dp"
+                android:src="@drawable/ic_live_photo"
+                android:tint="#FFFFFFFF"
+                android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/gallery_photo_video_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="2dp"
-                android:fontFamily="sans"
-                android:includeFontPadding="false"
-                android:lineHeight="14sp"
-                android:textColor="#FFFFFFFF"
-                android:textSize="10sp"
-                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/gallery_photo_burst_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_gallery_burst"
+                android:tint="#FFFFFFFF"
+                android:visibility="gone" />
         </LinearLayout>
 
-        <ImageView
-            android:id="@+id/gallery_photo_motion_icon"
-            android:layout_width="13dp"
-            android:layout_height="13dp"
-            android:layout_gravity="top|start"
-            android:layout_marginStart="4dp"
-            android:layout_marginTop="4dp"
-            android:src="@drawable/ic_live_photo"
-            android:tint="#FFFFFFFF"
-            android:visibility="gone" />
-
-        <ImageView
-            android:id="@+id/gallery_photo_burst_icon"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:layout_gravity="top|start"
-            android:layout_marginStart="4dp"
-            android:layout_marginTop="4dp"
-            android:src="@drawable/ic_gallery_burst"
-            android:tint="#FFFFFFFF"
-            android:visibility="gone" />
-
+        <!-- Bottom Start Badges -->
         <LinearLayout
-            android:id="@+id/gallery_photo_bottom_badges"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
+            android:paddingStart="4dp"
+            android:paddingBottom="4dp"
+            android:gravity="bottom"
             android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/gallery_photo_video_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_gallery_badge_pill"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="4dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:src="@drawable/ic_gallery_play"
+                    android:tint="#FFFFFFFF" />
+
+                <TextView
+                    android:id="@+id/gallery_photo_video_duration"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:fontFamily="sans"
+                    android:includeFontPadding="false"
+                    android:lineHeight="14sp"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/gallery_photo_raw_badge"
                 style="@style/GallerySmallBadge"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="0dp"
                 android:text="RAW"
                 android:visibility="gone" />
 
             <TextView
                 android:id="@+id/gallery_photo_imported_badge"
                 style="@style/GallerySmallBadge"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="0dp"
                 android:visibility="gone" />
         </LinearLayout>
 
