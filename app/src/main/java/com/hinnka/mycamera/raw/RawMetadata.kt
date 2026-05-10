@@ -564,18 +564,26 @@ data class RawMetadata(
                 mS[6] * sR, mS[7] * sG, mS[8] * sB
             )
 
-            // 2. 色彩适应：从 XYZ(D65) 转换到 XYZ(D50) 基准
-            // 使用标准 Bradford 矩阵
+            // 2. 色彩适应：从目标色域白点转换到 XYZ(D50) 基准。
+            // ProPhoto 等 D50 色域不能再额外套一次 D65 -> D50，否则 RAW CCM 会整体偏色。
             val BRADFORD_D65_TO_D50 = floatArrayOf(
                 1.0478112f, 0.0228866f, -0.0501270f,
                 0.0295424f, 0.9904844f, -0.0170491f,
                 -0.0092345f, 0.0150436f, 0.7521316f
             )
 
-            val gamutToXYZD50 = multiplyMatrix3x3(BRADFORD_D65_TO_D50, gamutToXYZD65)
+            val gamutToXYZD50 = if (isD50WhitePoint(xw, yw)) {
+                gamutToXYZD65
+            } else {
+                multiplyMatrix3x3(BRADFORD_D65_TO_D50, gamutToXYZD65)
+            }
 
             // 3. 求逆：得到最终的 XYZ(D50) -> Gamut 转换矩阵
             return invertMatrix3x3(gamutToXYZD50)
+        }
+
+        private fun isD50WhitePoint(x: Float, y: Float): Boolean {
+            return kotlin.math.abs(x - 0.3457f) < 0.002f && kotlin.math.abs(y - 0.3585f) < 0.002f
         }
 
         /**

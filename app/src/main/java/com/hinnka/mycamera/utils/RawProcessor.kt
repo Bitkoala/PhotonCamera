@@ -168,7 +168,16 @@ object RawProcessor {
 //                PLog.d(TAG, "Embedded stacked DNG thumbnail written: ${it.width}x${it.height}")
 //            }
 
-            val dngInputBuffer = rawBuffer.duplicate().order(ByteOrder.nativeOrder())
+            val dngInputBuffer = if (valueDomain == RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
+                val source = rawBuffer.duplicate().order(ByteOrder.nativeOrder())
+                source.position(0)
+                val copy = ByteBuffer.allocateDirect(width * height * 2).order(ByteOrder.nativeOrder())
+                copy.put(source)
+                copy.position(0)
+                copy
+            } else {
+                rawBuffer.duplicate().order(ByteOrder.nativeOrder())
+            }
             if (valueDomain == RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
                 denormalizeNormalizedRawBufferInPlace(
                     rawBuffer = dngInputBuffer,

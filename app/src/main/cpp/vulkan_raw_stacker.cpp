@@ -28,7 +28,7 @@
 constexpr uint32_t kDenseAlignmentGridSpacing = 8;
 constexpr int kAlignmentRegularizationPasses = 2;
 constexpr float kAlignmentOutlierThreshold = 0.65f;
-constexpr bool kEnableRawSuperResPerfLogs = true;
+constexpr bool kEnableRawSuperResPerfLogs = false;
 constexpr bool kFastPath = false;
 
 using PerfClock = std::chrono::steady_clock;

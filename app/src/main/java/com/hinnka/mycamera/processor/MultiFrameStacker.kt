@@ -5,6 +5,7 @@ import android.graphics.ColorSpace
 import android.media.Image
 import android.util.Log
 import com.hinnka.mycamera.utils.PLog
+import com.hinnka.mycamera.utils.DirectBufferAllocator
 import java.nio.ByteBuffer
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
@@ -18,7 +19,14 @@ data class RawStackResult(
     val width: Int,
     val height: Int,
     val isNormalizedSensorData: Boolean,
-)
+) {
+    fun release() {
+        fusedBayerBuffer?.let {
+            DirectBufferAllocator.freeNative(it)
+            fusedBayerBuffer = null
+        }
+    }
+}
 
 /**
  * Multi-Frame Stacker
@@ -286,11 +294,11 @@ object MultiFrameStacker {
 
                     val outWidth = (width * outputScale).roundToInt()
                     val outHeight = (height * outputScale).roundToInt()
-                    vulkanFusedBayer = try {
-                        ByteBuffer.allocateDirect(outWidth * outHeight * 2)
-                            .order(ByteOrder.nativeOrder())
-                    } catch (e: OutOfMemoryError) {
-                        PLog.e(TAG, "OOM allocating Vulkan fused Bayer buffer", e)
+                    vulkanFusedBayer = DirectBufferAllocator.allocateNative((outWidth * outHeight * 2).toLong())
+                        ?.order(ByteOrder.nativeOrder())
+
+                    if (vulkanFusedBayer == null) {
+                        PLog.e(TAG, "Failed to allocate Vulkan fused Bayer buffer")
                         return null
                     }
 
@@ -306,17 +314,17 @@ object MultiFrameStacker {
                         )
                     } else {
                         PLog.w(TAG, "Vulkan RAW stacking failed, falling back to CPU")
+                        DirectBufferAllocator.freeNative(vulkanFusedBayer)
                     }
                 } catch (e: Exception) {
                     PLog.e(TAG, "Vulkan RAW stacking error: ${e.message}, falling back to CPU")
+                    vulkanFusedBayer?.let { DirectBufferAllocator.freeNative(it) }
                 } finally {
                     releaseVulkanRawStackerNative(vulkanStackerPtr)
                 }
                 // fallback 到 CPU 路径前显式释放 Vulkan buffer 引用，避免与 CPU 路径的分配叠加
                 // 仅 fused Bayer 持续到 DNG 保存完成。
                 vulkanFusedBayer = null
-                @Suppress("ExplicitGarbageCollectionCall")
-                System.gc()
             } else {
                 PLog.w(TAG, "Failed to create Vulkan RAW stacker, falling back to CPU")
             }
@@ -347,11 +355,9 @@ object MultiFrameStacker {
 
             val stackedWidth = if (useNativeSuperResolution) width * 2 else width
             val stackedHeight = if (useNativeSuperResolution) height * 2 else height
-            val fusedBayerBuffer = try {
-                ByteBuffer.allocateDirect(stackedWidth * stackedHeight * 2)
-                    .order(ByteOrder.nativeOrder())
-            } catch (e: OutOfMemoryError) {
-                PLog.e(TAG, "OOM allocating fused Bayer buffer", e)
+            val fusedBayerBuffer = DirectBufferAllocator.allocateNative((stackedWidth * stackedHeight * 2).toLong())
+                ?.order(ByteOrder.nativeOrder()) ?: run {
+                PLog.e(TAG, "Failed to allocate fused Bayer buffer")
                 return null
             }
             processRawStackWithBufferNative(stackerPtr, fusedBayerBuffer)
