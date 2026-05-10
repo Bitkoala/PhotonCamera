@@ -172,60 +172,68 @@ void main() {
 
     float observationNorm = 0.0;
     float observationSupport = 0.0;
-    float normalizedRaw = 0.0;
-    float primaryConfidence = 0.0;
-    if (primary.y > 0u || primaryNeighborSupport > 0.0) {
-        float primaryVal = accumMean(primary);
-        primaryConfidence = clamp(float(primary.y) / 768.0, 0.0, 1.0);
-        observationSupport = max(primaryConfidence, 0.28 * primaryNeighborSupport);
-        float val = (primary.y > 0u) ? primaryVal : primaryNeighborVal;
+    float primaryVal = (primary.y > 0u) ? accumMean(primary) : 0.0;
+    float primaryConfidence = clamp(float(primary.y) / 768.0, 0.0, 1.0);
 
-        if (primaryNeighborSupport > 0.0 && primaryConfidence < 0.999) {
-            val = mix(primaryNeighborVal, val, primaryConfidence);
+    // --- MERGED SPATIAL PASS (Performance Optimization) ---
+    // Instead of three separate loops for gather, denoise, and BTV,
+    // we do one 3x3 pass to collect all necessary neighborhood statistics.
+    float neighborSum = 0.0;
+    float neighborWeight = 0.0;
+    float btvGrad = 0.0;
+    float denoiseSum = primaryVal;
+    float denoiseWeight = 1.0;
+    
+    const float alpha = 0.7; // BTV decay
+    const float sigmaRangeSq = mix(0.00008, 0.00030, smoothstep(0.85, 0.10, primaryConfidence));
+
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            if (ox == 0 && oy == 0) continue;
+            uvec2 neighAccum = readGreenAccum(familyIndex, int(tx) + ox, int(ty) + oy);
+            if (neighAccum.y == 0u) continue;
+
+            float val = accumMean(neighAccum);
+            float conf = clamp(float(neighAccum.y) / 768.0, 0.0, 1.0);
+            
+            // 1. Hole filling statistics
+            float spatialW = 1.0 / (1.0 + float(ox * ox + oy * oy));
+            neighborSum += val * spatialW * conf;
+            neighborWeight += spatialW * conf;
+            
+            // 2. BTV Gradient (L1 sign)
+            float btvW = pow(alpha, float(abs(ox) + abs(oy)));
+            btvGrad += btvW * sign(primaryVal - val);
+            
+            // 3. Denoise (Bilateral)
+            if (primaryConfidence < 0.85) {
+                float d = val - primaryVal;
+                float rangeW = exp(-(d * d) / max(2.0 * sigmaRangeSq, 1e-8));
+                float dw = spatialW * conf * rangeW;
+                denoiseSum += val * dw;
+                denoiseWeight += dw;
+            }
         }
+    }
 
+    if (primary.y > 0u || neighborWeight > 0.0) {
+        float neighborVal = (neighborWeight > 0.0) ? (neighborSum / neighborWeight) : 0.0;
+        float support = (neighborWeight > 0.0) ? clamp(neighborWeight / 2.0, 0.0, 1.0) : 0.0;
+        observationSupport = max(primaryConfidence, 0.28 * support);
+        float val = (primary.y > 0u) ? primaryVal : neighborVal;
+        
+        if (neighborWeight > 0.0 && primaryConfidence < 0.99) {
+            val = mix(neighborVal, val, primaryConfidence);
+        }
         observationNorm = computeObservationNorm(val, bayerIndex);
     }
 
+    float normalizedRaw = observationNorm;
     if (observationSupport > 0.0 && priorSupport > 0.0) {
-        float obsBlend = observationSupport /
-                         max(observationSupport + priorSupport, 1e-5);
+        float obsBlend = observationSupport / max(observationSupport + priorSupport, 1e-5);
         normalizedRaw = mix(priorNorm, observationNorm, obsBlend);
-    } else if (observationSupport > 0.0) {
-        normalizedRaw = observationNorm;
     } else if (priorSupport > 0.0) {
         normalizedRaw = priorNorm;
-    }
-
-    // Mild Y-equivalent denoise on the green plane only when frame support is low.
-    // Keep the range tight so edge detail stays in the luminance proxy.
-    if (observationSupport > 0.0 && observationSupport < 0.85) {
-        float centerNorm = normalizedRaw;
-        float denoiseStrength =
-            smoothstep(0.85, 0.10, max(observationSupport, 0.75 * primaryConfidence));
-        float sigmaRangeSq = mix(0.00008, 0.00030, denoiseStrength);
-        float sum = centerNorm;
-        float wsum = 1.0;
-
-        for (int oy = -1; oy <= 1; ++oy) {
-            for (int ox = -1; ox <= 1; ++ox) {
-                if (ox == 0 && oy == 0) continue;
-                uvec2 neighAccum = readGreenAccum(familyIndex, int(tx) + ox, int(ty) + oy);
-                float neighSupport = clamp(float(neighAccum.y) / 768.0, 0.0, 1.0);
-                if (neighSupport <= 0.0) continue;
-
-                float neighNorm = computeObservationNorm(accumMean(neighAccum), bayerIndex);
-                float spatialW = (ox == 0 || oy == 0) ? 0.7 : 0.45;
-                float d = neighNorm - centerNorm;
-                float rangeW = exp(-(d * d) / max(2.0 * sigmaRangeSq, 1e-8));
-                float w = spatialW * neighSupport * rangeW;
-                sum += neighNorm * w;
-                wsum += w;
-            }
-        }
-
-        float denoisedNorm = sum / max(wsum, 1e-4);
-        normalizedRaw = mix(centerNorm, denoisedNorm, denoiseStrength);
     }
 
     outputBuffer.data[outIndex] = uint16_t(clamp(normalizedRaw * 65535.0, 0.0, 65535.0));

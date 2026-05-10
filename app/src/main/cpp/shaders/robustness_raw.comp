@@ -195,27 +195,28 @@ void main() {
              vec2 trgPlane = vec2(nx, ny) + flow;
              float greenTrg = sampleTargetGreen(trgPlane);
 
-             // Squared difference
+             // --- Principled Robustness Model (SIGGRAPH 2019 §6.4) ---
              float diff = greenRef - greenTrg;
-             // Scale from UNORM to native 14-bit equivalent to match noise models roughly?
-             // Actually, noise model expects UNORM.
-             float d_ms_sq = diff * diff;
+             float d_sq = diff * diff;
 
-             // Wiener shrinkage noise correction (Paper §6.4 & Python Reference)
-             float sigma2_adapted = sigma2 * mix(1.0, 2.4, edgeRelax);
-             float d_noise_sq = 2.0 * sigma2_adapted;
-             float shrink = d_ms_sq / max(d_ms_sq + d_noise_sq, 1e-10);
-             float d_corrected_sq = d_ms_sq * shrink * shrink; // Multiplied twice per paper
-             
-             float baseRelax = (flowRange > 0.8) ? 0.0 : 1.0;
-             float S_param = mix(2.0, 12.0, max(baseRelax, edgeRelax));
-             float t_param = mix(0.12, 0.04, edgeRelax);
-             
-             // Robustness calculation: R = S * exp(-d / sigma^2) - t
-             float exponential = exp(-d_corrected_sq / max(sigma2_adapted, 1e-10));
-             float R = clamp(S_param * exponential - t_param, 0.0, 1.0);
+             // --- USER OPTIMIZED ADAPTIVE NOISE FLOOR ---
+             // Flat areas: 4.5x multiplier on max variance (high SNR).
+             // Sharp edges: 1.0x multiplier on physical noise (kill ghosting).
+             float noise_floor = mix(4.5 * sigma2, sigma2_noise, edgeRelax); 
 
-             // Apply pre-computed penalties
+             // Normalization must also adapt. On edges, if we divide by sigma2 
+             // (which is huge), we mask the error. We must use the local floor as den.
+             float den = mix(sigma2, sigma2_noise, edgeRelax);
+             float residual = max(0.0, d_sq - noise_floor) / max(den, 1e-10);
+
+             // Robustness decay factor:
+             // On edges, keep it tight.
+             float tau = 1.0 + 1.2 * edgeRelax;
+
+             // 6th-order decay for brick-wall behavior.
+             float R = exp(-0.5 * pow(residual / tau, 8.0));
+             
+             // Combined with global flow-consistency penalty
              R *= globalPenalty;
 
              float spatialWeight = (dx == 0 && dy == 0) ? 2.0 : 1.0;
@@ -224,7 +225,7 @@ void main() {
              minRobustness = min(minRobustness, R);
              if (dx == 0 && dy == 0) {
                  centerRobustness = R;
-                 centerResidualSq = d_corrected_sq;
+                 centerResidualSq = d_sq;
              }
         }
     }
@@ -232,12 +233,17 @@ void main() {
     // Output
     uint outIdx = planeY * pc.planeWidth + planeX;
     float avgRobustness = (weightSum > 0.0) ? (sumRobustness / weightSum) : minRobustness;
-    float minMix = mix(0.22, 0.08, edgeRelax);
-    float centerMix = mix(0.43, 0.56, edgeRelax);
+    
+    // Balanced "Veto" logic: 
+    // Strong veto in non-edge areas to catch ghosting, 
+    // but relaxed on edges where edgeRelax handles the sharpening.
+    float minMix = mix(0.35, 0.15, edgeRelax);
+    float centerMix = mix(0.35, 0.55, edgeRelax);
     float avgMix = 1.0 - minMix - centerMix;
     float robustness = minMix * minRobustness +
                        centerMix * centerRobustness +
                        avgMix * avgRobustness;
+    
     robustness = clamp(robustness, 0.0, 1.0);
 
     float residualRatio = centerResidualSq / max(sigma2, 1e-8);

@@ -1231,7 +1231,7 @@ object GalleryManager {
                     preparedGainmapResult = preparedGainmapResult
                 )
             }
-            updateThumbnail(context, photoId, photoProcessor, metadata)
+            updateThumbnail(context, photoId, photoProcessor, metadata, bitmap)
             if (shouldAutoSave) {
                 exportPhoto(
                     context,
@@ -1701,24 +1701,6 @@ object GalleryManager {
                 lensShadingHeight = 0,
             )
 
-            if (rawStackResult == null && currentUseSuperResolution) {
-                PLog.w(TAG, "processBurstRaw failed with SR, retrying without SR")
-                currentUseSuperResolution = false
-                rawStackResult = MultiFrameStacker.processBurstRaw(
-                    images, rawMetadata.cfaPattern,
-                    false,
-                    1.0f,
-                    useGpuAcceleration,
-                    masterBlackLevel = rawMetadata.blackLevel,
-                    whiteLevel = rawMetadata.whiteLevel.toInt(),
-                    whiteBalanceGains = rawMetadata.whiteBalanceGains,
-                    noiseModel = rawMetadata.noiseProfile,
-                    lensShading = null,
-                    lensShadingWidth = 0,
-                    lensShadingHeight = 0,
-                )
-            }
-
             val finalStackResult = rawStackResult ?: return@withContext
 
             val dngWritten = trySaveStackedRawDng(
@@ -1746,51 +1728,100 @@ object GalleryManager {
             @Suppress("ExplicitGarbageCollectionCall")
             System.gc()
 
-            val result: Bitmap = run {
-                var bitmap = RawDemosaicProcessor.getInstance().process(
-                    context,
-                    dngFile.absolutePath,
-                    aspectRatio,
-                    metadata.cropRegion,
-                    rotation,
-                    exposureBias = exposureBias ?: 0f,
-                    rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
-                    rawAutoExposure = resolveRawAutoExposure(context, metadata),
-                    rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
-                    rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-                    rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
-                    sharpeningValue = 0.4f,
-                    denoiseValue = metadata.rawDenoiseValue,
-                    rawDcpId = metadata.rawDcpId
-                ) ?: return@run null
-                if (metadata.isMirrored) {
-                    bitmap = BitmapUtils.flipHorizontal(bitmap)
-                }
+            val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
+                context,
+                dngFile.absolutePath,
+                aspectRatio = aspectRatio,
+                cropRegion = metadata.cropRegion,
+                rotation = rotation,
+                exposureBias = exposureBias ?: 0f,
+                rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
+                rawAutoExposure = resolveRawAutoExposure(context, metadata),
+                rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
+                rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
+                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+                sharpeningValue = 0.4f,
+                denoiseValue = metadata.rawDenoiseValue,
+                rawDcpId = metadata.rawDcpId
+            ) ?: return@withContext
+            var bitmap = rawResult.sdrBitmap
 
-                bitmap
-            } ?: return@withContext
+            if (metadata.isMirrored) {
+                bitmap = BitmapUtils.flipHorizontal(bitmap)
+            }
 
             // Save Original (Stacked Result)
             FileOutputStream(tempFile).use { outputStream ->
-                writeFinalJpeg(result, outputStream, photoQuality)
+                writeFinalJpeg(bitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
-            generateBokehPhoto(context, photoId, metadata, result)
+            generateBokehPhoto(context, photoId, metadata, bitmap)
 
-            updateThumbnail(context, photoId, photoProcessor, metadata)
+            val preparedUltraHdrSource = if (metadata.manualHdrEffectEnabled) {
+                photoProcessor.prepareUltraHdrSourceFromRawResult(
+                    context = context,
+                    photoId = photoId,
+                    rawResult = rawResult,
+                    metadata = metadata,
+                    sharpening = sharpeningValue,
+                    noiseReduction = noiseReductionValue,
+                    chromaNoiseReduction = chromaNoiseReductionValue,
+                    applyMirror = true
+                )
+            } else {
+                null
+            }
+            val preparedGainmapResult = preparedUltraHdrSource?.let { source ->
+                var result: GainmapResult? = null
+                val gainmapElapsed = measureTimeMillis {
+                    result = gainmapProducer.build(source, HdrGainmapStrength.coerce(metadata.hdrEffectStrength))
+                }
+                PLog.d(TAG, "saveRawStackedPhoto prepared gainmap for reuse, took=${gainmapElapsed}ms")
+                result
+            }
+            preparedUltraHdrSource?.let {
+                PLog.d(TAG, "saveRawStackedPhoto building detail HDR from in-memory RAW result: $photoId")
+                buildDetailHdrCache(
+                    context = context,
+                    photoId = photoId,
+                    metadata = metadata,
+                    sharpening = sharpeningValue,
+                    noiseReduction = noiseReductionValue,
+                    chromaNoiseReduction = chromaNoiseReductionValue,
+                    preparedUltraHdrSource = it,
+                    preparedGainmapResult = preparedGainmapResult
+                )
+            }
+
+            updateThumbnail(context, photoId, photoProcessor, metadata, bitmap)
             // Auto Save
             if (shouldAutoSave) {
                 exportPhoto(
                     context,
                     photoId,
-                    result,
+                    bitmap,
                     photoProcessor,
                     metadata,
                     sharpeningValue,
                     noiseReductionValue,
                     chromaNoiseReductionValue,
-                    photoQuality
+                    photoQuality,
+                    preparedUltraHdrSource = preparedUltraHdrSource,
+                    preparedGainmapResult = preparedGainmapResult
                 )
+            }
+            preparedUltraHdrSource?.hdrReference?.bitmap?.let {
+                if (!it.isRecycled) {
+                    it.recycle()
+                }
+            }
+            preparedUltraHdrSource?.sdrBase?.let {
+                if (it !== bitmap && !it.isRecycled) {
+                    it.recycle()
+                }
+            }
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to savePhoto", e)
@@ -2427,15 +2458,18 @@ object GalleryManager {
         context: Context,
         photoId: String,
         photoProcessor: PhotoProcessor,
-        metadata: MediaMetadata? = null
+        metadata: MediaMetadata? = null,
+        inputBitmap: Bitmap? = null
     ) {
         withContext(Dispatchers.IO) {
             try {
                 val resolvedMetadata = metadata ?: loadMetadata(context, photoId) ?: return@withContext
-                // 加载原始位图，限制尺寸以提高性能
-                val originalBitmap = loadOriginalBitmap(context, photoId, maxEdge = THUMBNAIL_MAX_EDGE)
-                    ?: loadBitmap(context, photoId, maxEdge = THUMBNAIL_MAX_EDGE)
-                    ?: return@withContext
+                // Use provided bitmap or load from disk if unavailable
+                val originalBitmap = inputBitmap?.let { 
+                    createScaledThumbnail(it, THUMBNAIL_MAX_EDGE) 
+                } ?: loadOriginalBitmap(context, photoId, maxEdge = THUMBNAIL_MAX_EDGE)
+                  ?: loadBitmap(context, photoId, maxEdge = THUMBNAIL_MAX_EDGE)
+                  ?: return@withContext
 
                 // 应用所有效果（LUT、虚化、裁切、边框等）到缩略图尺寸的位图
                 val processedBitmap = photoProcessor.processBitmap(
@@ -2455,7 +2489,10 @@ object GalleryManager {
                 if (processedBitmap !== originalBitmap) {
                     processedBitmap.recycle()
                 }
-                originalBitmap.recycle()
+                // Only recycle originalBitmap if it was newly loaded or scaled
+                if (originalBitmap !== inputBitmap) {
+                    originalBitmap.recycle()
+                }
                 PLog.d(TAG, "Thumbnail updated for photo: $photoId")
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to update thumbnail for photo: $photoId", e)
