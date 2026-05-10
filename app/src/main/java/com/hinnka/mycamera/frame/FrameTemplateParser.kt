@@ -155,6 +155,8 @@ object FrameTemplateParser {
                 put("position", template.layout.position.name)
                 put("height", template.layout.heightDp)
                 put("backgroundColor", colorToHex(template.layout.backgroundColor))
+                put("borderColor", colorToHex(template.layout.borderColor))
+                put("lineSpacing", template.layout.lineSpacingDp)
                 put("padding", template.layout.paddingDp)
                 if (template.layout.borderWidthDp > 0) {
                     put("borderWidth", template.layout.borderWidthDp)
@@ -219,10 +221,13 @@ object FrameTemplateParser {
      * 解析布局配置
      */
     private fun parseLayout(obj: JSONObject): FrameLayout {
+        val backgroundColor = parseColor(obj.optString("backgroundColor", "#FFFFFF"))
         return FrameLayout(
             position = FramePosition.valueOf(obj.optString("position", "BOTTOM")),
             heightDp = obj.optInt("height", 80),
-            backgroundColor = parseColor(obj.optString("backgroundColor", "#FFFFFF")),
+            backgroundColor = backgroundColor,
+            borderColor = parseColor(obj.optString("borderColor", colorToHex(backgroundColor))),
+            lineSpacingDp = obj.optInt("lineSpacing", 8),
             paddingDp = obj.optInt("padding", 16),
             borderWidthDp = obj.optInt("borderWidth", 0),
             imageResName = obj.optString("imageResName").takeIf { it.isNotEmpty() },

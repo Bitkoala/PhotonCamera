@@ -560,6 +560,20 @@ private fun FrameBasicTab(
                             onDraftChange(draft.copy(layout = draft.layout.copy(backgroundColor = it)))
                         }
                     )
+                    ColorField(
+                        label = stringResource(R.string.frame_editor_layout_border_color),
+                        value = draft.layout.borderColor,
+                        onValueChange = {
+                            onDraftChange(draft.copy(layout = draft.layout.copy(borderColor = it)))
+                        }
+                    )
+                    IntField(
+                        label = stringResource(R.string.frame_editor_layout_line_spacing),
+                        value = draft.layout.lineSpacingDp,
+                        onValueChange = {
+                            onDraftChange(draft.copy(layout = draft.layout.copy(lineSpacingDp = it.coerceAtLeast(0))))
+                        }
+                    )
                     if (draft.layout.position == FramePosition.BORDER) {
                         IntField(
                             label = stringResource(R.string.frame_editor_layout_border_width),
@@ -1460,6 +1474,7 @@ private fun textTypeLabel(type: TextType): String = when (type) {
     TextType.RESOLUTION -> stringResource(R.string.frame_editor_text_type_resolution)
     TextType.CUSTOM -> stringResource(R.string.frame_editor_text_type_custom)
     TextType.APP_NAME -> stringResource(R.string.frame_editor_text_type_app_name)
+    TextType.FILTER_NAME -> stringResource(R.string.frame_editor_text_type_filter_name)
 }
 
 @Composable
@@ -1519,6 +1534,7 @@ private fun logoSourceOptions(): List<Pair<String?, String>> = listOf(
     "fujifilm" to "Fujifilm",
     "leica" to "Leica",
     "hasselblad" to "Hasselblad",
+    "hasselblad_l" to "Hasselblad L",
     "dji" to "DJI",
     "panasonic" to "Panasonic",
     "olympus" to "Olympus",

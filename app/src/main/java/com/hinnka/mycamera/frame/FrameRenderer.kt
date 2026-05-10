@@ -6,6 +6,7 @@ import android.util.TypedValue
 import androidx.core.graphics.drawable.toBitmap
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.gallery.MediaMetadata
+import com.hinnka.mycamera.lut.LutManager
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.core.graphics.createBitmap
@@ -17,7 +18,10 @@ import com.hinnka.mycamera.utils.PLog
  * 
  * 使用 Android Canvas 渲染带边框水印的照片
  */
-class FrameRenderer(private val context: Context) {
+class FrameRenderer(
+    private val context: Context,
+    private val lutManager: LutManager? = null
+) {
 
     companion object {
         private const val TAG = "FrameRenderer"
@@ -84,7 +88,7 @@ class FrameRenderer(private val context: Context) {
             FramePosition.BORDER -> {
                 // 四周边框 + 底部信息区
                 outputWidth = originalBitmap.width + borderWidth * 2
-                outputHeight = originalBitmap.height + borderWidth * 2 + frameHeight
+                outputHeight = originalBitmap.height + frameHeight + borderWidth * 2
             }
 
             FramePosition.IMAGE -> {
@@ -99,8 +103,22 @@ class FrameRenderer(private val context: Context) {
 
         // OVERLAY 模式不需要绘制整体背景
         if (layout.position != FramePosition.OVERLAY) {
-            backgroundPaint.color = layout.backgroundColor
+            // 首先填充整体背景色（作为边框颜色）
+            backgroundPaint.color = if (layout.position == FramePosition.BORDER) layout.borderColor else layout.backgroundColor
             canvas.drawRect(0f, 0f, outputWidth.toFloat(), outputHeight.toFloat(), backgroundPaint)
+
+            // 如果是 BORDER 模式，则在文字区域填充背景色
+            if (layout.position == FramePosition.BORDER) {
+                backgroundPaint.color = layout.backgroundColor
+                val infoTop = (originalBitmap.height + borderWidth).toFloat()
+                canvas.drawRect(
+                    borderWidth.toFloat(),
+                    infoTop,
+                    (outputWidth - borderWidth).toFloat(),
+                    (outputHeight - borderWidth).toFloat(),
+                    backgroundPaint
+                )
+            }
         }
 
         // 绘制原图
@@ -139,7 +157,7 @@ class FrameRenderer(private val context: Context) {
         when (layout.position) {
             FramePosition.BOTTOM -> {
                 drawFrameContent(
-                    canvas, template.elements, metadata,
+                    canvas, template.elements, metadata, template.layout,
                     left = padding.toFloat(),
                     top = originalBitmap.height.toFloat(),
                     right = (outputWidth - padding).toFloat(),
@@ -150,7 +168,7 @@ class FrameRenderer(private val context: Context) {
 
             FramePosition.TOP -> {
                 drawFrameContent(
-                    canvas, template.elements, metadata,
+                    canvas, template.elements, metadata, template.layout,
                     left = padding.toFloat(),
                     top = 0f,
                     right = (outputWidth - padding).toFloat(),
@@ -162,7 +180,7 @@ class FrameRenderer(private val context: Context) {
             FramePosition.BOTH -> {
                 // 顶部
                 drawFrameContent(
-                    canvas, template.elements, metadata,
+                    canvas, template.elements, metadata, template.layout,
                     left = padding.toFloat(),
                     top = 0f,
                     right = (outputWidth - padding).toFloat(),
@@ -171,7 +189,7 @@ class FrameRenderer(private val context: Context) {
                 )
                 // 底部
                 drawFrameContent(
-                    canvas, template.elements, metadata,
+                    canvas, template.elements, metadata, template.layout,
                     left = padding.toFloat(),
                     top = (originalBitmap.height + frameHeight).toFloat(),
                     right = (outputWidth - padding).toFloat(),
@@ -199,7 +217,7 @@ class FrameRenderer(private val context: Context) {
 
                 // 绘制水印内容
                 drawFrameContent(
-                    canvas, template.elements, metadata,
+                    canvas, template.elements, metadata, template.layout,
                     left = padding.toFloat(),
                     top = overlayTop + padding.toFloat(),
                     right = (outputWidth - padding).toFloat(),
@@ -210,13 +228,13 @@ class FrameRenderer(private val context: Context) {
 
             FramePosition.BORDER -> {
                 // 四周边框模式：底部信息区
-                val infoTop = (originalBitmap.height + borderWidth * 2).toFloat()
+                val infoTop = (originalBitmap.height + borderWidth).toFloat()
                 drawFrameContent(
-                    canvas, template.elements, metadata,
-                    left = padding.toFloat(),
+                    canvas, template.elements, metadata, template.layout,
+                    left = (borderWidth + padding).toFloat(),
                     top = infoTop,
-                    right = (outputWidth - padding).toFloat(),
-                    bottom = outputHeight.toFloat() - padding.toFloat(),
+                    right = (outputWidth - borderWidth - padding).toFloat(),
+                    bottom = (outputHeight - borderWidth).toFloat(),
                     scale = scale
                 )
             }
@@ -229,6 +247,7 @@ class FrameRenderer(private val context: Context) {
         canvas: Canvas,
         elements: List<FrameElement>,
         metadata: MediaMetadata,
+        layout: FrameLayout,
         left: Float,
         top: Float,
         right: Float,
@@ -256,10 +275,17 @@ class FrameRenderer(private val context: Context) {
 
         val height = bottom - top
 
-        val lineWeights = allLines.map { line ->
-            visibleElements.filter { it.line == line }.maxBy { it.size }.size.toFloat()
+        val linePixelHeights = allLines.map { line ->
+            val maxElement = visibleElements.filter { it.line == line }.maxBy { it.size }
+            when (maxElement) {
+                is FrameElement.Text -> spToPx(maxElement.fontSizeSp) * scale
+                else -> dpToPx(maxElement.size) * scale
+            }
         }
-        val totalWeight = lineWeights.sum()
+        val spacingPx = dpToPx(layout.lineSpacingDp) * scale
+        val totalContentHeight = linePixelHeights.sum() + (if (lineCount > 1) (lineCount - 1) * spacingPx else 0f)
+
+        val startY = top + (height - totalContentHeight) / 2f
 
         /**
          * 计算指定行号的垂直中心位置
@@ -270,20 +296,11 @@ class FrameRenderer(private val context: Context) {
             val lineIndex = allLines.indexOf(line)
             if (lineIndex == -1) return top + height / 2f
 
-            // 根据行数决定内容区域的占比和边距
-            val contentRatio = when (lineCount) {
-                2 -> 0.6f
-                else -> 0.84f
-            }
-            val startOffset = (1f - contentRatio) / 2f
-
-            var currentYOffset = 0f
+            var currentY = startY
             for (i in 0 until lineIndex) {
-                currentYOffset += (lineWeights[i] / totalWeight) * contentRatio
+                currentY += linePixelHeights[i] + spacingPx
             }
-            val currentLineWeightRatio = (lineWeights[lineIndex] / totalWeight) * contentRatio
-
-            return top + (startOffset + currentYOffset + currentLineWeightRatio / 2f) * height
+            return currentY + linePixelHeights[lineIndex] / 2f
         }
 
         /**
@@ -581,6 +598,7 @@ class FrameRenderer(private val context: Context) {
             TextType.FOCAL_LENGTH_35MM -> metadata.focalLength35mm
             TextType.APERTURE -> metadata.aperture
             TextType.RESOLUTION -> metadata.resolution
+            TextType.FILTER_NAME -> metadata.lutId?.let { lutManager?.getLutInfo(it)?.getName() }
             TextType.CUSTOM -> null
             TextType.APP_NAME -> context.getString(R.string.app_name)
         }
@@ -726,6 +744,7 @@ class FrameRenderer(private val context: Context) {
         "dji" to listOf(R.drawable.ic_brand_dji, R.drawable.ic_brand_dji),
         "fujifilm" to listOf(R.drawable.ic_brand_fujifilm, R.drawable.ic_brand_fujifilm_light),
         "hasselblad" to listOf(R.drawable.ic_brand_hasselblad, R.drawable.ic_brand_hasselblad_light),
+        "hasselblad_l" to listOf(R.drawable.ic_brand_hasselblad_l, R.drawable.ic_brand_hasselblad_l),
         "leica" to listOf(R.drawable.ic_brand_leica, R.drawable.ic_brand_leica),
         "nikon" to listOf(R.drawable.ic_brand_nikon, R.drawable.ic_brand_nikon),
         "panasonic" to listOf(R.drawable.ic_brand_panasonic, R.drawable.ic_brand_panasonic_light),
@@ -740,7 +759,7 @@ class FrameRenderer(private val context: Context) {
         // 尝试获取品牌特定的 Logo
         val brandLower = brand.lowercase()
         val drawableRes = logoMap.firstNotNullOfOrNull { (key, value) ->
-            if (brandLower.contains(key)) value.getOrNull(if (light) 1 else 0) else null
+            if (brandLower == key) value.getOrNull(if (light) 1 else 0) else null
         }
 
         // 使用通用品牌图标作为后备

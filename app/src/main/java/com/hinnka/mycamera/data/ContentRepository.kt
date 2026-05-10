@@ -61,7 +61,7 @@ class ContentRepository private constructor(context: Context) {
     val availableDcps: StateFlow<List<DcpInfo>> = _availableDcps.asStateFlow()
 
     // 边框渲染器
-    val frameRenderer = startupInit("FrameRenderer()") { FrameRenderer(appContext) }
+    val frameRenderer = startupInit("FrameRenderer()") { FrameRenderer(appContext, lutManager) }
 
     val depthBokehProcessor = startupInit("DepthBokehProcessor()") { DepthBokehProcessor(appContext) }
 

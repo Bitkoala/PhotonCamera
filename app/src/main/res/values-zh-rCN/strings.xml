@@ -491,6 +491,8 @@
     <string name="frame_editor_layout_height">边框高度 (dp)</string>
     <string name="frame_editor_layout_padding">内边距 (dp)</string>
     <string name="frame_editor_layout_background">背景色</string>
+    <string name="frame_editor_layout_border_color">边框颜色</string>
+    <string name="frame_editor_layout_line_spacing">行间距 (dp)</string>
     <string name="frame_editor_layout_border_width">边框宽度 (dp)</string>
     <string name="frame_editor_image_hint">图片边框使用带透明区域的 PNG 或 WebP。选中的素材会被复制到应用私有目录。</string>
     <string name="frame_editor_pick_image">选择边框图片</string>
@@ -819,4 +821,5 @@
     <string name="center_weight">中央重点</string>
     <string name="avg">平均</string>
     <string name="spot">点测光</string>
+    <string name="frame_editor_text_type_filter_name">滤镜名称</string>
 </resources>

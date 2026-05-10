@@ -501,6 +501,8 @@
     <string name="frame_editor_layout_height">Frame Height (dp)</string>
     <string name="frame_editor_layout_padding">Padding (dp)</string>
     <string name="frame_editor_layout_background">Background Color</string>
+    <string name="frame_editor_layout_border_color">Border Color</string>
+    <string name="frame_editor_layout_line_spacing">Line Spacing (dp)</string>
     <string name="frame_editor_layout_border_width">Border Width (dp)</string>
     <string name="frame_editor_image_hint">Image frames use a transparent PNG or WebP. The selected asset will be copied into app storage.</string>
     <string name="frame_editor_pick_image">Choose Frame Image</string>
@@ -819,4 +821,5 @@
     <string name="center_weight">CW</string>
     <string name="avg">AVG</string>
     <string name="spot">SPOT</string>
+    <string name="frame_editor_text_type_filter_name">Filter Name</string>
 </resources>
