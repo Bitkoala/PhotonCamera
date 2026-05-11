@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -705,13 +706,19 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                     .clip(CircleShape)
                             )
                         } else {
-                            Image(
-                                painter = painterResource(id = R.mipmap.ic_launcher_round),
-                                contentDescription = stringResource(R.string.app_name),
+                            Box(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(CircleShape)
-                            )
+                                    .background(Color(0xFF252525)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                                    contentDescription = stringResource(R.string.app_name),
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
 
