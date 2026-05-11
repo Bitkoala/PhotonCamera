@@ -2,6 +2,8 @@ package com.hinnka.mycamera.frame
 
 import android.content.Context
 import android.graphics.*
+import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.Drawable
 import android.util.TypedValue
 import androidx.core.graphics.drawable.toBitmap
 import com.hinnka.mycamera.R
@@ -639,7 +641,7 @@ class FrameRenderer(
                     LogoType.BRAND -> getBrandLogoDrawable(logoKey ?: metadata?.brand, element.light)
                 }
                 val drawable = context.getDrawable(drawableRes) ?: return 0 to 0
-                drawable.toBitmap()
+                drawableToBitmap(drawable, size, size)
             } ?: return 0 to 0
 
             val intrinsicW = bitmap.width
@@ -697,7 +699,7 @@ class FrameRenderer(
                     LogoType.BRAND -> getBrandLogoDrawable(logoKey ?: metadata?.brand, element.light)
                 }
                 val drawable = context.getDrawable(drawableRes) ?: return x
-                drawable.toBitmap(bmpW.coerceAtLeast(1), bmpH.coerceAtLeast(1))
+                drawableToBitmap(drawable, bmpW.coerceAtLeast(1), bmpH.coerceAtLeast(1))
             } ?: return x
 
             // 如果 bitmap 尺寸与 measure 不一致，则缩放
@@ -1018,6 +1020,21 @@ class FrameRenderer(
         } catch (e: Exception) {
             ""
         }
+    }
+
+    private fun drawableToBitmap(drawable: Drawable, width: Int, height: Int): Bitmap {
+        if (drawable is AdaptiveIconDrawable) {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val path = Path().apply {
+                addCircle(width / 2f, height / 2f, minOf(width, height) / 2f, Path.Direction.CW)
+            }
+            canvas.clipPath(path)
+            drawable.setBounds(0, 0, width, height)
+            drawable.draw(canvas)
+            return bitmap
+        }
+        return drawable.toBitmap(width, height)
     }
 
     private val typefaceCache = mutableMapOf<String, Typeface>()
