@@ -189,7 +189,27 @@ object BM3DShaders {
             // Store normalised match count in alpha → Pass 2 uses it to refine noise estimate
             float maxCandidates = float((2*SEARCH_RADIUS+1) * (2*SEARCH_RADIUS+1)); // 25
             float invWeight = 1.0 / max(sumWeight, 1.0);
-            vec3 outYuv = vec3(sumLuma * invWeight, mix(centerYuv.yz, sumChroma * invWeight, 0.35));
+            float basicLuma = sumLuma * invWeight;
+
+            // Fallback for low-match cases (edges/isolated noise) to break up clusters.
+            // Uses a tiny 3x3 guided luma average since we already have the patch data.
+            float lwSum = 1.0; float lvalSum = c11;
+            float invH2 = 1.0 / max(uH * uH * 2.0, 1e-5);
+            float w;
+            w = exp(-(c00-c11)*(c00-c11)*invH2); lwSum += w; lvalSum += c00*w;
+            w = exp(-(c01-c11)*(c01-c11)*invH2); lwSum += w; lvalSum += c01*w;
+            w = exp(-(c02-c11)*(c02-c11)*invH2); lwSum += w; lvalSum += c02*w;
+            w = exp(-(c10-c11)*(c10-c11)*invH2); lwSum += w; lvalSum += c10*w;
+            w = exp(-(c12-c11)*(c12-c11)*invH2); lwSum += w; lvalSum += c12*w;
+            w = exp(-(c20-c11)*(c20-c11)*invH2); lwSum += w; lvalSum += c20*w;
+            w = exp(-(c21-c11)*(c21-c11)*invH2); lwSum += w; lvalSum += c21*w;
+            w = exp(-(c22-c11)*(c22-c11)*invH2); lwSum += w; lvalSum += c22*w;
+
+            float localGuided = lvalSum / lwSum;
+            float edgeFallback = clamp(3.0 - sumWeight, 0.0, 1.0);
+            basicLuma = mix(basicLuma, localGuided, edgeFallback * 0.35);
+
+            vec3 outYuv = vec3(basicLuma, mix(centerYuv.yz, sumChroma * invWeight, 0.35));
             fragColor = vec4(clamp(ycbcr2rgb(outYuv), 0.0, 1.0), clamp(sumWeight / maxCandidates, 0.0, 1.0));
         }
     """.trimIndent()
@@ -271,7 +291,8 @@ object BM3DShaders {
             float c21 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
 
-            float lumaNoiseBoost = mix(1.35, 0.75, smoothstep(0.05, 0.65, c11));
+            // Smoother luma noise boost to avoid abrupt transitions at edges
+            float lumaNoiseBoost = mix(1.25, 0.85, smoothstep(0.02, 0.80, c11));
             float sigma_n2 = uH * uH * lumaNoiseBoost * lumaNoiseBoost;
             float threshold = sigma_n2 * 9.0 * 2.7; // same τ as Pass 1, adapted by luma
 
@@ -327,15 +348,18 @@ object BM3DShaders {
             float varSignal = max(0.0, varTotal - sigma_n2 / N_basic);
 
             // Wiener weight: w = σ_s² / (σ_s² + σ_n²/N)
-            //   Large N, large σ_s² (texture)  → w≈1 → trust matched noisy average
-            //   Small N or small σ_s² (smooth) → w≈0 → trust the basic estimate
             float noiseOfAvg = sigma_n2 / N;
             float wienerW    = varSignal / max(varSignal + noiseOfAvg, 1e-6);
 
-            float gx = abs(c21 - c01);
-            float gy = abs(c12 - c10);
-            float detailProtect = smoothstep(sigma_n2 * 18.0, sigma_n2 * 90.0, gx * gx + gy * gy + varSignal);
-            wienerW = mix(wienerW * 0.70, max(wienerW, 0.88), detailProtect);
+            // Enhanced edge/detail protection:
+            // Trust the noisy image more at edges, but only if we have enough matches (N)
+            // to actually reduce noise. If N is small, we favor the basic estimate.
+            float relN = smoothstep(1.0, 5.0, N);
+            float edgeSq = (c21 - c01) * (c21 - c01) + (c12 - c10) * (c12 - c10);
+            float detailProtect = smoothstep(sigma_n2 * 20.0, sigma_n2 * 100.0, edgeSq + varSignal);
+
+            float maxTrust = mix(0.65, 0.92, relN);
+            wienerW = mix(wienerW * 0.70, min(wienerW, maxTrust), detailProtect);
 
             vec3 avgNoisyYuv = vec3(sumNoisyY / N, sumNoisyC / N);
             vec3 outYuv = vec3(
