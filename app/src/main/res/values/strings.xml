@@ -7,6 +7,8 @@
     <string name="settings">Settings</string>
     <string name="flash">Flash</string>
     <string name="timer">Timer</string>
+    <string name="toolbox_title">Toolbox</string>
+    <string name="toolbox_description">Utility tools and creative features</string>
     <string name="histogram">Histogram</string>
     <string name="grid">Grid</string>
     <string name="back">Back</string>

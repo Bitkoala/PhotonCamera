@@ -7,6 +7,8 @@
     <string name="settings">设置</string>
     <string name="flash">闪光灯</string>
     <string name="timer">定时器</string>
+    <string name="toolbox_title">工具箱</string>
+    <string name="toolbox_description">实用工具与创意功能</string>
     <string name="histogram">直方图</string>
     <string name="grid">网格</string>
     <string name="back">返回</string>

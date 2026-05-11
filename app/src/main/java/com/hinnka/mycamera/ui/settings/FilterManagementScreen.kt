@@ -83,7 +83,6 @@ private fun isZipImportUri(uri: Uri): Boolean {
 fun FilterManagementScreen(
     viewModel: CameraViewModel,
     onBack: () -> Unit,
-    onLutCreatorClick: () -> Unit = {},
     pendingZipImportUris: List<Uri> = emptyList(),
     onZipImportHandled: () -> Unit = {},
     locateLutId: String? = null,
@@ -477,17 +476,6 @@ fun FilterManagementScreen(
                         )
                     }
 
-                    // 制作 LUT 按钮
-                    IconButton(
-                        onClick = onLutCreatorClick,
-                        enabled = !isImporting
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = "Create LUT",
-                            tint = Color.White
-                        )
-                    }
 
                     // 导入按钮
                     IconButton(

@@ -66,6 +66,7 @@ fun CameraTopSheet(
     onMeteringModeChange: (MeteringMode) -> Unit,
     onFilterManageClick: () -> Unit,
     onFrameManageClick: () -> Unit,
+    onToolboxClick: () -> Unit,
     phantomMode: Boolean,
     onPhantomModeToggle: (Boolean) -> Unit,
     onMoreSettingsClick: () -> Unit,
@@ -394,6 +395,13 @@ fun CameraTopSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                QuickSettingButton(
+                    title = stringResource(R.string.toolbox_title),
+                    icon = Icons.Default.Palette,
+                    onClick = onToolboxClick,
+                    modifier = Modifier.weight(1f)
+                )
+
                 QuickSettingButton(
                     title = stringResource(R.string.settings_filter_management),
                     icon = Icons.Default.AutoAwesome,
@@ -729,7 +737,7 @@ fun QuickSettingButton(
             .clip(RoundedCornerShape(8.dp))
             .background(Color.White.copy(alpha = 0.15f))
             .clickable { onClick() }
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 8.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(

@@ -66,6 +66,7 @@ import com.hinnka.mycamera.lut.creator.LutCreatorScreen
 import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
 import com.hinnka.mycamera.screencapture.ScreenCaptureRenderConfigStore
 import com.hinnka.mycamera.ui.camera.CameraScreen
+import com.hinnka.mycamera.ui.camera.ToolboxScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryScreen
@@ -100,6 +101,7 @@ object Routes {
     const val FRAME_MANAGEMENT = "frame_management"
     const val FRAME_EDITOR = "frame_editor?frameId={frameId}&imageFrame={imageFrame}"
     const val LUT_CREATOR = "lut_creator"
+    const val TOOLBOX = "toolbox"
     const val PHANTOM_PIP_CROP = "phantom_pip_crop"
 
     fun photoDetail(tab: GalleryTab = GalleryTab.PHOTON, index: Int = 0, photoId: String? = null) =
@@ -489,6 +491,9 @@ fun NavigationHost(
                             onFrameManagementClick = {
                                 navController.navigate(Routes.FRAME_MANAGEMENT)
                             },
+                            onToolboxClick = {
+                                navController.navigate(Routes.TOOLBOX)
+                            },
                             modifier = Modifier.weight(1f)
                         )
                         GalleryDetailScreen(
@@ -523,6 +528,9 @@ fun NavigationHost(
                         },
                         onFrameManagementClick = {
                             navController.navigate(Routes.FRAME_MANAGEMENT)
+                        },
+                        onToolboxClick = {
+                            navController.navigate(Routes.TOOLBOX)
                         },
                     )
                 }
@@ -651,9 +659,6 @@ fun NavigationHost(
                     onBack = {
                         navController.popBackStack()
                     },
-                    onLutCreatorClick = {
-                        navController.navigate(Routes.LUT_CREATOR)
-                    },
                     pendingZipImportUris = pendingZipImportUris,
                     onZipImportHandled = onZipImportHandled,
                     locateLutId = locateLutId
@@ -668,6 +673,15 @@ fun NavigationHost(
                     onSuccess = { lutId ->
                         cameraViewModel.refreshCustomContent()
                         navController.popBackStack()
+                    }
+                )
+            }
+
+            composable(Routes.TOOLBOX) {
+                ToolboxScreen(
+                    onBack = { navController.popBackStack() },
+                    onLutCreatorClick = {
+                        navController.navigate(Routes.LUT_CREATOR)
                     }
                 )
             }

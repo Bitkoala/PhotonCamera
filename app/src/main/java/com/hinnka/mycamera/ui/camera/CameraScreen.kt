@@ -106,6 +106,7 @@ fun CameraScreen(
     onSettingsClick: () -> Unit,
     onFilterManagementClick: (String?) -> Unit,
     onFrameManagementClick: () -> Unit,
+    onToolboxClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1138,6 +1139,10 @@ fun CameraScreen(
             onFrameManageClick = {
                 activePanel = ActivePanel.NONE
                 onFrameManagementClick()
+            },
+            onToolboxClick = {
+                activePanel = ActivePanel.NONE
+                onToolboxClick()
             },
             phantomMode = phantomMode,
             onPhantomModeToggle = {
