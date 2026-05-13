@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.gallery
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
 import android.graphics.Rect
 import android.net.Uri
@@ -357,6 +358,28 @@ data class MediaMetadata(
          * 从指定的 URI 加载 EXIF 元数据
          */
         fun fromUri(context: Context, uri: Uri): MediaMetadata {
+            var width = 0
+            var height = 0
+            var mimeType: String? = null
+            var rotation = 0
+
+            // 尝试从图片流获取基础信息（宽高、MIME 类型）作为兜底
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeStream(stream, null, options)
+                    width = options.outWidth
+                    height = options.outHeight
+                    mimeType = options.outMimeType
+                }
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to decode bounds from $uri", e)
+            }
+
+            if (mimeType == null) {
+                mimeType = context.contentResolver.getType(uri)
+            }
+
             return try {
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     val exif = ExifInterface(inputStream)
@@ -391,10 +414,22 @@ data class MediaMetadata(
                     val focalLength35mm = exif.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0)
                         .takeIf { it > 0 }?.let { "${it}mm" }
 
-                    val width = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
+                    val exifWidth = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
                         .let { if (it == 0) exif.getAttributeInt(ExifInterface.TAG_PIXEL_X_DIMENSION, 0) else it }
-                    val height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+                    val exifHeight = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
                         .let { if (it == 0) exif.getAttributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION, 0) else it }
+
+                    if (exifWidth > 0) width = exifWidth
+                    if (exifHeight > 0) height = exifHeight
+
+                    rotation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL).let {
+                        when (it) {
+                            ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                            ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                            ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                            else -> 0
+                        }
+                    }
 
                     val dateTaken = dateStr?.let {
                         try {
@@ -423,16 +458,18 @@ data class MediaMetadata(
                         aperture = aperture,
                         width = width,
                         height = height,
+                        rotation = rotation,
                         latitude = latitude,
                         longitude = longitude,
                         altitude = altitude,
                         software = software,
+                        mimeType = mimeType,
                         isImported = true
                     )
-                } ?: createDefault(0, 0)
+                } ?: createDefault(width, height).copy(mimeType = mimeType, isImported = true)
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to load EXIF from $uri", e)
-                createDefault(0, 0)
+                createDefault(width, height).copy(mimeType = mimeType, isImported = true)
             }
         }
     }
