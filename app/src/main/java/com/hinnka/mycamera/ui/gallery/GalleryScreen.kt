@@ -663,6 +663,7 @@ private class GalleryFastScrollerView(
     private val thumbWidth = (4 * density).toInt()
     private val thumbHeight = (56 * density).toInt()
     private val trackWidth = (6 * density).toInt()
+    private val touchAreaWidth = (24 * density).toInt()
     private val bubbleMargin = (48 * density).toInt()
 
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -776,7 +777,7 @@ private class GalleryFastScrollerView(
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                if (x < width - 40 * density) return false
+                if (x < width - touchAreaWidth) return false
                 isDragging = true
                 showThumb()
                 scrollTo(y)
