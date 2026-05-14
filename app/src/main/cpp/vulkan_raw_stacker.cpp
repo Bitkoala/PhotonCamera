@@ -29,6 +29,7 @@ constexpr uint32_t kDenseAlignmentGridSpacing = 8;
 constexpr int kAlignmentRegularizationPasses = 2;
 constexpr float kAlignmentOutlierThreshold = 0.65f;
 constexpr bool kEnableRawSuperResPerfLogs = false;
+constexpr bool kEnableRawFlatVarianceLogs = false;
 constexpr bool kFastPath = false;
 
 using PerfClock = std::chrono::steady_clock;
@@ -122,7 +123,7 @@ struct RawSuperResPerfStats {
       return;
     LOGI(
         "RawSuperResPerf summary: total=%.3f ms output=%ux%u scale=%.2f "
-        "frames=%zu kept=%zu skipped=%zu tiles=%zu effFrames=%.2f avgR=%.3f weakF=%.3f",
+        "frames=%zu kept=%zu skipped=%zu tiles=%zu robustEffFrames=%.2f avgR=%.3f weakF=%.3f",
         totalMs, outputW, outputH, scale, totalFrames, keptFrames,
         skippedFrames, tilesProcessed, totalEffectiveFrames, avgRobustness, avgWeakFraction);
     LOGI(
@@ -1205,6 +1206,229 @@ inline PlaneTileRange computePlaneTileRange(int cfaPattern, int planeIndex,
   range.width = (uint32_t)(planeX1 - planeX0 + 1);
   range.height = (uint32_t)(planeY1 - planeY0 + 1);
   return range;
+}
+
+struct RawFlatVarianceChannelStats {
+  size_t patches = 0;
+  double refMeanSum = 0.0;
+  double fusedMeanSum = 0.0;
+  double refVarianceSum = 0.0;
+  double fusedVarianceSum = 0.0;
+
+  void add(double refMean, double fusedMean, double refVariance,
+           double fusedVariance) {
+    ++patches;
+    refMeanSum += refMean;
+    fusedMeanSum += fusedMean;
+    refVarianceSum += refVariance;
+    fusedVarianceSum += fusedVariance;
+  }
+};
+
+inline float sampleLensShadingGain(const std::vector<float> &lensShadingMap,
+                                   uint32_t lscWidth, uint32_t lscHeight,
+                                   uint32_t sensorWidth,
+                                   uint32_t sensorHeight, int bayerIndex,
+                                   int x, int y) {
+  if (lensShadingMap.empty() || lscWidth == 0 || lscHeight == 0)
+    return 1.0f;
+
+  float u = sensorWidth > 1 ? (float)x / (float)(sensorWidth - 1u) : 0.0f;
+  float v = sensorHeight > 1 ? (float)y / (float)(sensorHeight - 1u) : 0.0f;
+  float fx = std::clamp(u, 0.0f, 1.0f) * (float)(lscWidth - 1u);
+  float fy = std::clamp(v, 0.0f, 1.0f) * (float)(lscHeight - 1u);
+  uint32_t x0 = (uint32_t)std::floor(fx);
+  uint32_t y0 = (uint32_t)std::floor(fy);
+  uint32_t x1 = std::min(x0 + 1u, lscWidth - 1u);
+  uint32_t y1 = std::min(y0 + 1u, lscHeight - 1u);
+  float tx = fx - (float)x0;
+  float ty = fy - (float)y0;
+  size_t channel = (size_t)std::clamp(bayerIndex, 0, 3);
+  auto read = [&](uint32_t sx, uint32_t sy) -> float {
+    size_t idx = ((size_t)sy * lscWidth + sx) * 4u + channel;
+    return idx < lensShadingMap.size() ? lensShadingMap[idx] : 1.0f;
+  };
+  float v00 = read(x0, y0);
+  float v10 = read(x1, y0);
+  float v01 = read(x0, y1);
+  float v11 = read(x1, y1);
+  return std::max(0.0f, (1.0f - ty) * ((1.0f - tx) * v00 + tx * v10) +
+                            ty * ((1.0f - tx) * v01 + tx * v11));
+}
+
+inline float normalizedReferenceRawAt(
+    const std::vector<uint16_t> &raw, uint32_t sensorWidth,
+    uint32_t sensorHeight, const float *blackLevel, float whiteLevel,
+    const std::vector<float> &lensShadingMap, uint32_t lscWidth,
+    uint32_t lscHeight, int bayerIndex, int x, int y) {
+  x = std::clamp(x, 0, (int)sensorWidth - 1);
+  y = std::clamp(y, 0, (int)sensorHeight - 1);
+  float rawValue = (float)raw[(size_t)y * sensorWidth + (uint32_t)x];
+  float val = std::max(0.0f, rawValue - blackLevel[bayerIndex]);
+  val *= sampleLensShadingGain(lensShadingMap, lscWidth, lscHeight,
+                               sensorWidth, sensorHeight, bayerIndex, x, y);
+  float whiteRange = std::max(whiteLevel - blackLevel[bayerIndex], 1.0f);
+  return std::clamp(val / whiteRange, 0.0f, 1.0f);
+}
+
+inline float fusedRawAtPlaneSample(const uint16_t *fused, uint32_t outputW,
+                                   uint32_t outputH, int cfaPattern,
+                                   int bayerIndex, float scale, int planeX,
+                                   int planeY) {
+  Point offset = getBayerPlaneOffset(cfaPattern, bayerIndex);
+  int outPlaneX = (int)std::lround((float)planeX * scale);
+  int outPlaneY = (int)std::lround((float)planeY * scale);
+  int outX = (int)offset.x + outPlaneX * 2;
+  int outY = (int)offset.y + outPlaneY * 2;
+  outX = std::clamp(outX, 0, (int)outputW - 1);
+  outY = std::clamp(outY, 0, (int)outputH - 1);
+  return (float)fused[(size_t)outY * outputW + (uint32_t)outX] / 65535.0f;
+}
+
+inline float greenProxyFlatScore(const GrayImage &proxy, int x, int y) {
+  if (proxy.data.empty() || proxy.width <= 4 || proxy.height <= 4)
+    return std::numeric_limits<float>::max();
+  double sum = 0.0;
+  double sumSq = 0.0;
+  double gradSum = 0.0;
+  int count = 0;
+  for (int dy = -2; dy <= 2; ++dy) {
+    for (int dx = -2; dx <= 2; ++dx) {
+      int px = std::clamp(x + dx, 0, proxy.width - 1);
+      int py = std::clamp(y + dy, 0, proxy.height - 1);
+      float center = (float)proxy.data[(size_t)py * proxy.width + px] / 255.0f;
+      float xp = (float)proxy.data[(size_t)py * proxy.width +
+                                   std::min(px + 1, proxy.width - 1)] /
+                 255.0f;
+      float xm = (float)proxy.data[(size_t)py * proxy.width +
+                                   std::max(px - 1, 0)] /
+                 255.0f;
+      float yp = (float)proxy.data[(size_t)std::min(py + 1, proxy.height - 1) *
+                                       proxy.width +
+                                   px] /
+                 255.0f;
+      float ym = (float)proxy.data[(size_t)std::max(py - 1, 0) * proxy.width +
+                                   px] /
+                 255.0f;
+      sum += center;
+      sumSq += center * center;
+      gradSum += std::abs(xp - xm) + std::abs(yp - ym);
+      ++count;
+    }
+  }
+  double mean = sum / std::max(count, 1);
+  double variance = std::max(0.0, sumSq / std::max(count, 1) - mean * mean);
+  return (float)(variance + 0.25 * gradSum / std::max(count, 1));
+}
+
+inline void logRawFlatVarianceDiagnostics(
+    const std::vector<uint16_t> &referenceRaw, const uint16_t *fused,
+    uint32_t sensorWidth, uint32_t sensorHeight, uint32_t outputW,
+    uint32_t outputH, int cfaPattern, float scale, const float *blackLevel,
+    float whiteLevel, const std::vector<float> &lensShadingMap,
+    uint32_t lscWidth, uint32_t lscHeight, const GrayImage &referenceProxy) {
+  if (!kEnableRawFlatVarianceLogs || referenceRaw.empty() || fused == nullptr ||
+      referenceProxy.data.empty())
+    return;
+
+  struct Candidate {
+    float score;
+    int x;
+    int y;
+  };
+  std::vector<Candidate> candidates;
+  for (int y = 4; y < referenceProxy.height - 4; y += 8) {
+    for (int x = 4; x < referenceProxy.width - 4; x += 8) {
+      candidates.push_back({greenProxyFlatScore(referenceProxy, x, y), x, y});
+    }
+  }
+  if (candidates.empty())
+    return;
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &a, const Candidate &b) {
+              return a.score < b.score;
+            });
+
+  size_t targetFlatCount = std::max((size_t)64, candidates.size() / 4);
+  size_t flatCount =
+      std::min(candidates.size(), std::min(targetFlatCount, (size_t)2048));
+  RawFlatVarianceChannelStats channelStats[4];
+  constexpr int kPatchRadius = 2;
+  for (size_t ci = 0; ci < flatCount; ++ci) {
+    int centerPlaneX = candidates[ci].x;
+    int centerPlaneY = candidates[ci].y;
+    for (int bayerIndex = 0; bayerIndex < 4; ++bayerIndex) {
+      Point offset = getBayerPlaneOffset(cfaPattern, bayerIndex);
+      double refSum = 0.0;
+      double refSumSq = 0.0;
+      double fusedSum = 0.0;
+      double fusedSumSq = 0.0;
+      int count = 0;
+      for (int dy = -kPatchRadius; dy <= kPatchRadius; ++dy) {
+        for (int dx = -kPatchRadius; dx <= kPatchRadius; ++dx) {
+          int planeX = centerPlaneX + dx;
+          int planeY = centerPlaneY + dy;
+          int sx = (int)offset.x + planeX * 2;
+          int sy = (int)offset.y + planeY * 2;
+          if (sx < 0 || sy < 0 || sx >= (int)sensorWidth ||
+              sy >= (int)sensorHeight) {
+            continue;
+          }
+          float ref = normalizedReferenceRawAt(
+              referenceRaw, sensorWidth, sensorHeight, blackLevel, whiteLevel,
+              lensShadingMap, lscWidth, lscHeight, bayerIndex, sx, sy);
+          float out = fusedRawAtPlaneSample(fused, outputW, outputH, cfaPattern,
+                                            bayerIndex, scale, planeX, planeY);
+          refSum += ref;
+          refSumSq += ref * ref;
+          fusedSum += out;
+          fusedSumSq += out * out;
+          ++count;
+        }
+      }
+      if (count >= 9) {
+        double refMean = refSum / count;
+        double fusedMean = fusedSum / count;
+        double refVar = std::max(0.0, refSumSq / count - refMean * refMean);
+        double fusedVar =
+            std::max(0.0, fusedSumSq / count - fusedMean * fusedMean);
+        channelStats[bayerIndex].add(refMean, fusedMean, refVar, fusedVar);
+      }
+    }
+  }
+
+  static constexpr const char *kChannelNames[4] = {"R", "Gr", "Gb", "B"};
+  double ratioSum = 0.0;
+  double gainSum = 0.0;
+  size_t ratioCount = 0;
+  for (int c = 0; c < 4; ++c) {
+    const RawFlatVarianceChannelStats &s = channelStats[c];
+    if (s.patches == 0)
+      continue;
+    double refVar = s.refVarianceSum / (double)s.patches;
+    double fusedVar = s.fusedVarianceSum / (double)s.patches;
+    double ratio = refVar > 1e-12 ? fusedVar / refVar : 0.0;
+    double gain = fusedVar > 1e-12 ? refVar / fusedVar : 0.0;
+    double stdRatio = std::sqrt(std::max(ratio, 0.0));
+    LOGI("RawDenoiseEffect[%s]: patches=%zu refMean=%.6f fusedMean=%.6f "
+         "refVar=%.9f fusedVar=%.9f varRatio=%.3f varGain=%.2f stdRatio=%.3f",
+         kChannelNames[c], s.patches, s.refMeanSum / (double)s.patches,
+         s.fusedMeanSum / (double)s.patches, refVar, fusedVar, ratio, gain,
+         stdRatio);
+    if (ratio > 0.0 && gain > 0.0) {
+      ratioSum += ratio;
+      gainSum += gain;
+      ++ratioCount;
+    }
+  }
+  if (ratioCount > 0) {
+    double avgRatio = ratioSum / (double)ratioCount;
+    double avgGain = gainSum / (double)ratioCount;
+    LOGI("RawDenoiseEffect summary: channels=%zu avgVarRatio=%.3f "
+         "avgVarGain=%.2f avgStdRatio=%.3f",
+         ratioCount, avgRatio, avgGain,
+         std::sqrt(std::max(avgRatio, 0.0)));
+  }
 }
 
 struct GreenPhaseSummary {
@@ -4080,6 +4304,11 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
     size_t reqSize = (size_t)outputW * outputH * sizeof(uint16_t);
     if (bufferSize >= reqSize) {
       memcpy(outBuffer, mapData, reqSize);
+      logRawFlatVarianceDiagnostics(
+          pendingFrames.front().rawData, static_cast<const uint16_t *>(mapData),
+          width, height, outputW, outputH, mCfaPattern, (float)scale,
+          mBlackLevel, mWhiteLevel, mLensShadingMap, mLscWidth, mLscHeight,
+          uploadedFrames[0].proxy);
     } else {
       LOGE("Buffer too small! Req: %zu, Has: %zu", reqSize, bufferSize);
     }
