@@ -267,6 +267,30 @@ object BM3DShaders {
             float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
             return soft * gate;
         }
+        float wideGuidedLumaBase(vec2 uv, vec2 texelSize, float centerGuideLuma, float sigma_n2) {
+            float sumY = 0.0;
+            float sumW = 0.0;
+            float stepScale = 3.5;
+            float guideSigma2 = max(sigma_n2 * 48.0, 8e-5);
+
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = -2; dy <= 2; dy++) {
+                    vec2 ofs = vec2(float(dx), float(dy)) * texelSize * stepScale;
+                    vec2 suv = uv + ofs;
+                    float guideY = dot(texture(uBasicTexture, suv).rgb, LW);
+                    float noisyY = dot(texture(uInputTexture, suv).rgb, LW);
+                    float dGuide = guideY - centerGuideLuma;
+                    float wSpatial = exp(-float(dx * dx + dy * dy) * 0.18);
+                    float wRange = exp(-(dGuide * dGuide) / guideSigma2);
+                    float w = wSpatial * wRange;
+                    if (dx == 0 && dy == 0) w = max(w, 0.25);
+                    sumY += noisyY * w;
+                    sumW += w;
+                }
+            }
+
+            return sumY / max(sumW, 1e-5);
+        }
 
         void main() {
             vec3 noisyCenter = texture(uInputTexture, vTexCoord).rgb;
@@ -362,8 +386,25 @@ object BM3DShaders {
             wienerW = mix(wienerW * 0.70, min(wienerW, maxTrust), detailProtect);
 
             vec3 avgNoisyYuv = vec3(sumNoisyY / N, sumNoisyC / N);
+            float fullResY = mix(basicYuv.x, avgNoisyYuv.x, clamp(wienerW, 0.0, 1.0));
+
+            // Low-frequency luma residual suppression. This does not replace the
+            // signal with a blurred image: it only removes a bounded residual, and
+            // only where the basic-estimate guide says the area is flat.
+            float lowFreqY = wideGuidedLumaBase(vTexCoord, T, c11, sigma_n2);
+            float flatness = 1.0 - smoothstep(
+                max(sigma_n2 * 18.0, 2e-5),
+                max(sigma_n2 * 120.0, 1.2e-4),
+                edgeSq + varSignal
+            );
+            float matchConfidence = smoothstep(2.5, 8.0, N) * smoothstep(0.08, 0.36, basicSample.a);
+            float residualLimit = max(uH * 0.65, 0.003);
+            float residualPull = clamp(fullResY - lowFreqY, -residualLimit, residualLimit);
+            float lowFreqStrength = 0.35 * flatness * matchConfidence * (1.0 - detailProtect * 0.65);
+            float finalY = fullResY - residualPull * clamp(lowFreqStrength, 0.0, 0.35);
+
             vec3 outYuv = vec3(
-                mix(basicYuv.x, avgNoisyYuv.x, clamp(wienerW, 0.0, 1.0)),
+                finalY,
                 mix(basicYuv.yz, avgNoisyYuv.yz, clamp(wienerW * 0.25, 0.0, 0.45))
             );
             fragColor = vec4(clamp(ycbcr2rgb(outYuv), 0.0, 1.0), 1.0);
