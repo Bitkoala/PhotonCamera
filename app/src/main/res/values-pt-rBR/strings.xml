@@ -309,6 +309,9 @@
     <string name="settings_dro_off">Desativado</string>
     <string name="settings_dro_low">Baixo</string>
     <string name="settings_dro_high">Alto</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">Estratégia de Exposição Ultra HDR</string>
     <string name="settings_apply_ultra_hdr_description">Com base no empilhamento de vários quadros e na análise de histograma, reduz automaticamente a exposição para proteger os realces quando a iluminação é suficiente. Eficaz apenas quando RAW e Multi-Frame estão ativados.</string>
     <string name="settings_color_space">Espaço de Cor RAW</string>

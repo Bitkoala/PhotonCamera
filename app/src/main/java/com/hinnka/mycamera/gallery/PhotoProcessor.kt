@@ -20,6 +20,7 @@ import com.hinnka.mycamera.lut.LutManager
 import com.hinnka.mycamera.processor.DepthBokehProcessor
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrRenderResult
+import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.YuvProcessor
@@ -61,11 +62,6 @@ class PhotoProcessor(
     private suspend fun resolveRawAutoExposure(metadata: MediaMetadata): Boolean {
         return metadata.rawAutoExposure
             ?: (userPreferencesRepository.userPreferences.firstOrNull()?.rawAutoExposure ?: true)
-    }
-
-    private suspend fun resolveRawDROEnabled(metadata: MediaMetadata): Boolean {
-        return metadata.rawDROEnabled
-            ?: (userPreferencesRepository.userPreferences.firstOrNull()?.rawDROEnabled ?: false)
     }
 
     suspend fun prepareUltraHdrSource(
@@ -450,7 +446,9 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
-            rawDROEnabled = resolveRawDROEnabled(metadata),
+            rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
+                metadata.droMode
+            ),
             sharpeningValue = 0.4f,
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId
@@ -512,7 +510,9 @@ class PhotoProcessor(
             rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
-            rawDROEnabled = resolveRawDROEnabled(metadata),
+            rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
+                metadata.droMode
+            ),
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId
         )

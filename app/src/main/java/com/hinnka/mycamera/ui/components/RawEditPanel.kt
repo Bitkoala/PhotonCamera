@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +27,7 @@ import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 
 @Composable
 fun RawEditPanel(
@@ -39,7 +41,7 @@ fun RawEditPanel(
     rawNlmNoiseFactor: Float,
     rawExposureCompensation: Float,
     rawAutoExposure: Boolean,
-    rawDROEnabled: Boolean,
+    rawDROMode: String,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
     onSelectDcp: (String?) -> Unit,
@@ -48,7 +50,7 @@ fun RawEditPanel(
     onRawNlmNoiseFactorChange: (Float) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
     onRawAutoExposureChange: (Boolean) -> Unit,
-    onRawDROEnabledChange: (Boolean) -> Unit,
+    onRawDROModeChange: (String) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onAdjustmentStart: () -> Unit,
@@ -83,11 +85,11 @@ fun RawEditPanel(
             checked = rawAutoExposure,
             onCheckedChange = onRawAutoExposureChange
         )
-        RawSwitchSettingItem(
+        RawDROModeSettingItem(
             title = stringResource(R.string.settings_raw_dro),
             description = stringResource(R.string.settings_raw_dro_description),
-            checked = rawDROEnabled,
-            onCheckedChange = onRawDROEnabledChange
+            currentMode = DROMode.fromPersistedName(rawDROMode),
+            onModeSelected = { onRawDROModeChange(it.name) }
         )
         SliderSettingItem(
             title = stringResource(R.string.settings_raw_exposure_compensation),
@@ -133,6 +135,73 @@ fun RawEditPanel(
             },
             onValueChangeFinished = onAdjustmentEnd
         )
+    }
+}
+
+@Composable
+private fun RawDROModeSettingItem(
+    title: String,
+    description: String,
+    currentMode: DROMode,
+    onModeSelected: (DROMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val levels = listOf(
+        DROMode.OFF to stringResource(R.string.settings_dro_off),
+        DROMode.DR100 to stringResource(R.string.settings_dro_dr100),
+        DROMode.DR200 to stringResource(R.string.settings_dro_dr200),
+        DROMode.DR400 to stringResource(R.string.settings_dro_dr400)
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Normal
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = description,
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 13.sp,
+            lineHeight = 18.sp
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            levels.forEach { (mode, label) ->
+                val isSelected = currentMode == mode
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.1f)
+                        )
+                        .clickable { onModeSelected(mode) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp)
+                            .widthIn(min = 48.dp)
+                    )
+                }
+            }
+        }
     }
 }
 

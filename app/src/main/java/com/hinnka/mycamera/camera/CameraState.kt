@@ -207,6 +207,7 @@ data class CameraState(
     val useMFSR: Boolean = false,
     val useRaw: Boolean = false,
     val useLivePhoto: Boolean = false,
+    val droMode: String = "OFF",
     // 是否正在拍摄 Live Photo (用于 UI 动画)
     val isCapturingLivePhoto: Boolean = false,
     val applyUltraHDR: Boolean = true,

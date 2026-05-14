@@ -514,6 +514,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setEdgeLevel(it.edgeLevel)
                 // 同步 RAW 设置到相机控制器
                 cameraController.setUseRaw(it.useRaw)
+                cameraController.setDroMode(it.droMode)
                 if (cameraController.state.value.meteringMode != it.meteringMode) {
                     cameraController.setMeteringMode(it.meteringMode)
                 }
@@ -660,6 +661,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setUseMFSR(prefs.useMFSR)
                 cameraController.setMultiFrameCount(prefs.multiFrameCount)
                 cameraController.setUseLivePhoto(prefs.useLivePhoto && prefs.captureMode == CaptureMode.PHOTO)
+                cameraController.setDroMode(prefs.droMode)
 
                 // 应用保存的虚拟光圈
                 if (prefs.defaultVirtualAperture > 0f) {
@@ -2652,11 +2654,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
             val droModeString = droMode.value
-            val droModeForProcessing = try {
-                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.valueOf(droModeString)
-            } catch (e: Exception) {
-                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.OFF
-            }
+            val droModeForProcessing =
+                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.fromPersistedName(droModeString)
             val currentCameraId = cameraController.getCurrentCameraId()
 
             // 计算旋转角度
@@ -2708,7 +2707,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = userPrefs?.rawAutoExposure ?: true,
-                rawDROEnabled = userPrefs?.rawDROEnabled ?: false,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -2914,11 +2912,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
             val droModeString = droMode.value
-            val droModeForProcessing = try {
-                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.valueOf(droModeString)
-            } catch (e: Exception) {
-                com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.OFF
-            }
             val currentCameraId = cameraController.getCurrentCameraId()
 
             // 计算旋转角度
@@ -2973,7 +2966,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = userPrefs?.rawAutoExposure ?: true,
-                rawDROEnabled = userPrefs?.rawDROEnabled ?: false,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -3054,7 +3046,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     superResolutionScale = superResScale,
                     useGpuAcceleration = useGpuAcceleration.value,
                     exposureBias = state.value.exposureBias,
-                    droMode = droModeForProcessing,
                     exportDngWithRawExport = exportDngWithRawExport.value
                 )
             }
@@ -3312,7 +3303,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setDroMode(mode: String) {
         viewModelScope.launch {
-            userPreferencesRepository.saveDroMode(mode)
+            val resolvedMode = com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode.fromPersistedName(mode)
+            userPreferencesRepository.saveDroMode(resolvedMode.name)
+            userPreferencesRepository.updateRawDROEnabled(resolvedMode.isEnabled)
         }
     }
 

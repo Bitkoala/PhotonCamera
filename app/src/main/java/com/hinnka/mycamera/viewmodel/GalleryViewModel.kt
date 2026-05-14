@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import android.util.LruCache
 import androidx.compose.runtime.*
@@ -38,9 +37,7 @@ import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileOutputStream
@@ -236,7 +233,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     // 正在刷新的照片 ID 集合
     val refreshingPhotos = mutableStateListOf<String>()
-    private val rawEditMetadataJobs = ConcurrentHashMap<String, Job>()
 
     // 预览图 LRU 缓存，按 Bitmap 字节数计算大小
     private val previewBitmapCache = object : LruCache<String, Bitmap>(
@@ -299,7 +295,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         private set
     var editRawWhitePointCorrection = MutableStateFlow(0f)
         private set
-    var editRawDROEnabled = MutableStateFlow(false)
+    var editRawDROMode = MutableStateFlow("OFF")
         private set
     var editRawDcpId = MutableStateFlow<String?>(null)
         private set
@@ -1574,8 +1570,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawAutoExposure.value = metadata.rawAutoExposure ?: true
             editRawBlackPointCorrection.value = metadata.rawBlackPointCorrection ?: 0f
             editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
-            editRawDROEnabled.value = metadata.rawDROEnabled ?: false
-            
+            editRawDROMode.value = RawProcessingPreferences.DROMode.fromPersistedName(metadata.droMode).name
             editComputationalAperture.value = metadata.computationalAperture
             editFocusPointX.value = metadata.focusPointX
             editFocusPointY.value = metadata.focusPointY
@@ -1591,7 +1586,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawAutoExposure.value = true
             editRawBlackPointCorrection.value = 0f
             editRawWhitePointCorrection.value = 0f
-            editRawDROEnabled.value = false
+            editRawDROMode.value = "OFF"
             editRawDcpId.value = null
             editRawBaselineLutId.value = null
             editComputationalAperture.value = null
@@ -1626,7 +1621,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawAutoExposure.value = true
         editRawBlackPointCorrection.value = 0f
         editRawWhitePointCorrection.value = 0f
-        editRawDROEnabled.value = false
+        editRawDROMode.value = "OFF"
         editRawDcpId.value = null
         editRawBaselineLutId.value = null
     }
@@ -1730,59 +1725,52 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val autoExposure = editRawAutoExposure.value
         val blackPoint = editRawBlackPointCorrection.value
         val whitePoint = editRawWhitePointCorrection.value
-        val droEnabled = editRawDROEnabled.value
+        val droMode = editRawDROMode.value
         val dcpId = editRawDcpId.value
         val baselineLutId = editRawBaselineLutId.value
 
-        val previousJob = rawEditMetadataJobs[mediaData.id]
-        val job = viewModelScope.launch {
-            try {
-                previousJob?.join()
-                val context = getApplication<Application>()
-                PLog.d(
-                    TAG,
-                    "persist RAW edit metadata: ${mediaData.id}, dro=$droEnabled, denoise=$denoise"
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            PLog.d(
+                TAG,
+                "persist RAW edit metadata: ${mediaData.id}, dro=$droMode, denoise=$denoise"
+            )
+            GalleryManager.updateMetadata(context, mediaData.id) { current ->
+                current.copy(
+                    rawDenoiseValue = denoise,
+                    rawExposureCompensation = exposure,
+                    rawAutoExposure = autoExposure,
+                    rawBlackPointCorrection = blackPoint,
+                    rawWhitePointCorrection = whitePoint,
+                    droMode = droMode,
+                    rawDcpId = dcpId,
+                    baselineLutId = baselineLutId
                 )
-                GalleryManager.updateMetadata(context, mediaData.id) { current ->
-                    current.copy(
-                        rawDenoiseValue = denoise,
-                        rawExposureCompensation = exposure,
-                        rawAutoExposure = autoExposure,
-                        rawBlackPointCorrection = blackPoint,
-                        rawWhitePointCorrection = whitePoint,
-                        rawDROEnabled = droEnabled,
-                        rawDcpId = dcpId,
-                        baselineLutId = baselineLutId
-                    )
-                }.let { updated ->
-                    if (updated != null) {
-                        withContext(Dispatchers.Main) {
-                            if (currentPhotoMetadataId == mediaData.id || currentMediaMetadata != null) {
-                                currentMediaMetadata = updated
-                                currentPhotoMetadataId = mediaData.id
-                            }
-                            mediaData.metadata = updated
-                            _photos.value = _photos.value.map { photo ->
-                                if (photo.id == mediaData.id) photo.copy(metadata = updated) else photo
-                            }
-                            if (_latestPhoto.value?.id == mediaData.id) {
-                                _latestPhoto.value = _latestPhoto.value?.copy(metadata = updated)
-                            }
-                            photoRefreshKeys[mediaData.id] = System.currentTimeMillis()
+            }.let { updated ->
+                if (updated != null) {
+                    withContext(Dispatchers.Main) {
+                        if (currentPhotoMetadataId == mediaData.id || currentMediaMetadata != null) {
+                            currentMediaMetadata = updated
+                            currentPhotoMetadataId = mediaData.id
                         }
-                        GalleryManager.updateThumbnail(
-                            context = context,
-                            photoId = mediaData.id,
-                            photoProcessor = contentRepository.photoProcessor,
-                            metadata = updated
-                        )
+                        mediaData.metadata = updated
+                        _photos.value = _photos.value.map { photo ->
+                            if (photo.id == mediaData.id) photo.copy(metadata = updated) else photo
+                        }
+                        if (_latestPhoto.value?.id == mediaData.id) {
+                            _latestPhoto.value = _latestPhoto.value?.copy(metadata = updated)
+                        }
+                        photoRefreshKeys[mediaData.id] = System.currentTimeMillis()
                     }
+                    GalleryManager.updateThumbnail(
+                        context = context,
+                        photoId = mediaData.id,
+                        photoProcessor = contentRepository.photoProcessor,
+                        metadata = updated
+                    )
                 }
-            } finally {
-                rawEditMetadataJobs.remove(mediaData.id, coroutineContext[Job])
             }
         }
-        rawEditMetadataJobs[mediaData.id] = job
     }
 
     fun saveRawDenoiseValue(mediaData: MediaData, value: Float) {
@@ -1800,8 +1788,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         persistRawEditMetadata(mediaData)
     }
 
-    fun saveRawDROEnabledValue(mediaData: MediaData, enabled: Boolean) {
-        editRawDROEnabled.value = enabled
+    fun saveRawDROModeValue(mediaData: MediaData, mode: String) {
+        val resolvedMode = RawProcessingPreferences.DROMode.fromPersistedName(mode)
+        editRawDROMode.value = resolvedMode.name
         persistRawEditMetadata(mediaData)
     }
 
@@ -2404,15 +2393,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             refreshingPhotos.add(photo.id)
             try {
                 val context = getApplication<Application>()
-                rawEditMetadataJobs[photo.id]?.let { pendingRawEditJob ->
-                    PLog.d(TAG, "refresh RAW preview waiting pending RAW edit metadata: ${photo.id}")
-                    pendingRawEditJob.join()
-                }
-                val result = GalleryManager.refreshRawPreview(
-                    context,
-                    photo.id,
-                    RawProcessingPreferences.DROMode.valueOf(droMode.value)
-                )
+                val result = GalleryManager.refreshRawPreview(context, photo.id)
                 if (result != null) {
                     updatePhotoMetadata(photo.id) { it }
                     // 更新刷新密钥以强制 UI 重新加载

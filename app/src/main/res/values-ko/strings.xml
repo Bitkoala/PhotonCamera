@@ -311,6 +311,9 @@
     <string name="settings_dro_off">꺼짐</string>
     <string name="settings_dro_low">낮음</string>
     <string name="settings_dro_high">높음</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">Ultra HDR 노출 전략</string>
     <string name="settings_apply_ultra_hdr_description">멀티 프레임 스태킹 및 히스토그램 분석을 기반으로, 조명이 충분할 때 하이라이트를 보호하기 위해 자동으로 노출을 줄입니다. RAW 및 멀티 프레임이 활성화된 경우에만 유효합니다.</string>
     <string name="settings_color_space">RAW 색 공간</string>

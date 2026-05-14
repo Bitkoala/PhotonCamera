@@ -309,6 +309,9 @@
     <string name="settings_dro_off">Mati</string>
     <string name="settings_dro_low">Rendah</string>
     <string name="settings_dro_high">Tinggi</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">Strategi Eksposur Ultra HDR</string>
     <string name="settings_apply_ultra_hdr_description">Berdasarkan penumpukan multi-frame dan analisis histogram, secara otomatis mengurangi eksposur untuk melindungi sorotan saat cahaya cukup. Efektif hanya jika RAW dan Multi-Frame diaktifkan.</string>
     <string name="settings_color_space">Ruang Warna RAW</string>

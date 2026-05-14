@@ -43,7 +43,6 @@ data class MediaMetadata(
     val rawBlackPointCorrection: Float? = null,
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
-    val rawDROEnabled: Boolean? = null,
     val rawDcpId: String? = null,
     // 边框水印配置
     val frameId: String? = null,
@@ -170,7 +169,6 @@ data class MediaMetadata(
             shutterSpeed = formatShutterSpeed(raw.shutterSpeed).takeIf { it.isNotEmpty() } ?: shutterSpeed,
             aperture = formatAperture(raw.aperture).takeIf { it.isNotEmpty() } ?: aperture,
             exposureBias = raw.exposureBias,
-            droMode = null,
             width = raw.width.takeIf { it > 0 } ?: width,
             height = raw.height.takeIf { it > 0 } ?: height
         )
@@ -252,7 +250,6 @@ data class MediaMetadata(
                     rawBlackPointCorrection = if (obj.isNull("rawBlackPointCorrection")) null else obj.optDouble("rawBlackPointCorrection").toFloat(),
                     rawWhitePointCorrection = if (obj.isNull("rawWhitePointCorrection")) null else obj.optDouble("rawWhitePointCorrection").toFloat(),
                     rawAutoWhiteBalanceEstimate = if (obj.isNull("rawAutoWhiteBalanceEstimate")) null else obj.optBoolean("rawAutoWhiteBalanceEstimate"),
-                    rawDROEnabled = if (obj.isNull("rawDROEnabled")) null else obj.optBoolean("rawDROEnabled"),
                     rawDcpId = if (obj.isNull("rawDcpId")) null else obj.optString("rawDcpId"),
                     rawBlackLevelMode = if (obj.isNull("rawBlackLevelMode")) null else obj.optString("rawBlackLevelMode"),
                     rawCustomBlackLevel = if (obj.isNull("rawCustomBlackLevel")) null else obj.optDouble("rawCustomBlackLevel").toFloat(),

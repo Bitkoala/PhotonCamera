@@ -199,7 +199,7 @@ fun SettingsScreen(
     val rawNlmNoiseFactor by viewModel.rawNlmNoiseFactor.collectAsState()
     val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
     val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
-    val rawDROEnabled by viewModel.rawDROEnabled.collectAsState()
+    val droMode by viewModel.droMode.collectAsState()
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
     val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
@@ -1214,7 +1214,7 @@ fun SettingsScreen(
                         rawNlmNoiseFactor = rawNlmNoiseFactorUi,
                         rawExposureCompensation = rawExposureCompensationUi,
                         rawAutoExposure = rawAutoExposure,
-                        rawDROEnabled = rawDROEnabled,
+                        rawDROMode = droMode,
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
                         onSelectDcp = { viewModel.setRawDcpId(it) },
@@ -1231,7 +1231,7 @@ fun SettingsScreen(
                         onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
                         onRawExposureCompensationChange = { rawExposureCompensationUi = it },
                         onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
-                        onRawDROEnabledChange = { viewModel.setRawDROEnabled(it) },
+                        onRawDROModeChange = { viewModel.setDroMode(it) },
                         onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
                         onAdjustmentStart = { isRawSliderAdjusting = true },

@@ -91,7 +91,7 @@ private data class PreviewRenderSignature(
     val editRawAutoExposure: Boolean,
     val editRawBlackPointCorrection: Float,
     val editRawWhitePointCorrection: Float,
-    val editRawDROEnabled: Boolean,
+    val editRawDROMode: String,
     val editRawDcpId: String?,
     val editRawBaselineLutId: String?,
     val editComputationalAperture: Float?,
@@ -157,7 +157,7 @@ fun PhotoEditScreen(
     val editRawAutoExposure by viewModel.editRawAutoExposure.collectAsState()
     val editRawBlackPointCorrection by viewModel.editRawBlackPointCorrection.collectAsState()
     val editRawWhitePointCorrection by viewModel.editRawWhitePointCorrection.collectAsState()
-    val editRawDROEnabled by viewModel.editRawDROEnabled.collectAsState()
+    val editRawDROMode by viewModel.editRawDROMode.collectAsState()
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
     val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
     val availableDcps = viewModel.availableDcps
@@ -207,7 +207,7 @@ fun PhotoEditScreen(
             editRawAutoExposure = editRawAutoExposure,
             editRawBlackPointCorrection = editRawBlackPointCorrection,
             editRawWhitePointCorrection = editRawWhitePointCorrection,
-            editRawDROEnabled = editRawDROEnabled,
+            editRawDROMode = editRawDROMode,
             editRawDcpId = editRawDcpId,
             editRawBaselineLutId = editRawBaselineLutId,
             editComputationalAperture = editComputationalAperture,
@@ -880,7 +880,7 @@ fun PhotoEditScreen(
                                         rawNlmNoiseFactor = editRawNlmNoiseFactor,
                                         rawExposureCompensation = editRawExposureCompensation,
                                         rawAutoExposure = editRawAutoExposure,
-                                        rawDROEnabled = editRawDROEnabled,
+                                        rawDROMode = editRawDROMode,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
                                         onSelectDcp = { dcpId ->
@@ -907,9 +907,7 @@ fun PhotoEditScreen(
                                         onRawAutoExposureChange = {
                                             viewModel.saveRawAutoExposureValue(currentPhoto, it)
                                         },
-                                        onRawDROEnabledChange = {
-                                            viewModel.saveRawDROEnabledValue(currentPhoto, it)
-                                        },
+                                        onRawDROModeChange = { viewModel.saveRawDROModeValue(currentPhoto, it) },
                                         onRawBlackPointCorrectionChange = {
                                             viewModel.saveRawBlackPointCorrectionValue(currentPhoto, it)
                                         },

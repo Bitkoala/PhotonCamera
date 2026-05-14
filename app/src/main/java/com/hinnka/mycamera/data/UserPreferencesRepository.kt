@@ -312,7 +312,7 @@ class UserPreferencesRepository(private val context: Context) {
                 enableDevelopAnimation = preferences[ENABLE_DEVELOP_ANIMATION] ?: false,
                 backgroundImage = preferences[BACKGROUND_IMAGE] ?: "camera_bg",
                 useGpuAcceleration = preferences[USE_GPU_ACCELERATION] ?: DeviceUtil.defaultGpuAcceleration,
-                droMode = preferences[DRO_MODE] ?: "OFF",
+                droMode = preferences[DRO_MODE] ?: if (preferences[RAW_DRO_ENABLED_KEY] == true) "DR100" else "OFF",
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
                 logCurve = TransferCurve.fromPersistedName(preferences[LOG_CURVE] ?: TransferCurve.SRGB.name),

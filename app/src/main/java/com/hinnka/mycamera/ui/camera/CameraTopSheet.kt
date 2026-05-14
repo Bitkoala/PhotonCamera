@@ -87,7 +87,7 @@ fun CameraTopSheet(
     rawNlmNoiseFactor: Float,
     rawExposureCompensation: Float,
     rawAutoExposure: Boolean,
-    rawDROEnabled: Boolean,
+    rawDROMode: String,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
     onSelectDcp: (String?) -> Unit,
@@ -96,7 +96,7 @@ fun CameraTopSheet(
     onRawNlmNoiseFactorChange: (Float) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
     onRawAutoExposureChange: (Boolean) -> Unit,
-    onRawDROEnabledChange: (Boolean) -> Unit,
+    onRawDROModeChange: (String) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onAdjustmentStart: () -> Unit,
@@ -478,6 +478,7 @@ fun CameraTopSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 32.dp)
             ) {
@@ -522,7 +523,7 @@ fun CameraTopSheet(
                     rawNlmNoiseFactor = rawNlmNoiseFactor,
                     rawExposureCompensation = rawExposureCompensation,
                     rawAutoExposure = rawAutoExposure,
-                    rawDROEnabled = rawDROEnabled,
+                    rawDROMode = rawDROMode,
                     rawBlackPointCorrection = rawBlackPointCorrection,
                     rawWhitePointCorrection = rawWhitePointCorrection,
                     onSelectDcp = onSelectDcp,
@@ -531,7 +532,7 @@ fun CameraTopSheet(
                     onRawNlmNoiseFactorChange = onRawNlmNoiseFactorChange,
                     onRawExposureCompensationChange = onRawExposureCompensationChange,
                     onRawAutoExposureChange = onRawAutoExposureChange,
-                    onRawDROEnabledChange = onRawDROEnabledChange,
+                    onRawDROModeChange = onRawDROModeChange,
                     onRawBlackPointCorrectionChange = onRawBlackPointCorrectionChange,
                     onRawWhitePointCorrectionChange = onRawWhitePointCorrectionChange,
                     onAdjustmentStart = onAdjustmentStart,

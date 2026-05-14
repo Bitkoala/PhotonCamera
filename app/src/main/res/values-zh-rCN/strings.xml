@@ -639,6 +639,9 @@
     <string name="settings_dro_off">关闭</string>
     <string name="settings_dro_low">中等</string>
     <string name="settings_dro_high">最高</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_log_curve_description">选择 RAW 处理的传输函数 (Log 曲线)。</string>
     <string name="raw_profile_aces_cine">ACES 电影</string>
     <string name="raw_profile_apple_cinema">Apple 电影</string>

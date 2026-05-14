@@ -309,6 +309,9 @@
     <string name="settings_dro_off">ปิด</string>
     <string name="settings_dro_low">ต่ำ</string>
     <string name="settings_dro_high">สูง</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">กลยุทธ์การเปิดรับแสง Ultra HDR</string>
     <string name="settings_apply_ultra_hdr_description">อ้างอิงจากการซ้อนภาพหลายเฟรมและการวิเคราะห์ฮิสโตแกรม จะลดการเปิดรับแสงโดยอัตโนมัติเพื่อป้องกันไฮไลท์เมื่อมีแสงเพียงพอ มีผลเมื่อเปิดใช้งาน RAW และ Multi-Frame เท่านั้น</string>
     <string name="settings_color_space">พื้นที่สี RAW</string>

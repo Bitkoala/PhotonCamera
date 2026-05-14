@@ -311,6 +311,9 @@
     <string name="settings_dro_off">オフ</string>
     <string name="settings_dro_low">低</string>
     <string name="settings_dro_high">高</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">Ultra HDR露出戦略</string>
     <string name="settings_apply_ultra_hdr_description">マルチフレーム合成とヒストグラム分析に基づき、十分な光量がある場合に露出を自動的に下げてハイライトを保護します。RAWとマルチフレームが有効な場合のみ機能します。</string>
     <string name="settings_color_space">RAW色空間</string>

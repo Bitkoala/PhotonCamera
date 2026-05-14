@@ -53,13 +53,10 @@ import kotlin.io.deleteRecursively
 import kotlin.io.extension
 import kotlin.io.inputStream
 import kotlin.io.readBytes
-import kotlin.io.readText
 import kotlin.io.walkBottomUp
-import kotlin.io.writeText
 import kotlin.math.roundToInt
 import kotlin.system.measureTimeMillis
 import kotlin.use
-import androidx.core.net.toUri
 
 /**
  * 照片管理器
@@ -1179,7 +1176,7 @@ object GalleryManager {
                 rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
-                rawDROEnabled = metadata.rawDROEnabled ?: false,
+                rawDROMode = droMode,
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
                 rawDcpId = metadata.rawDcpId
@@ -1739,7 +1736,9 @@ object GalleryManager {
                 rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
-                rawDROEnabled = metadata.rawDROEnabled ?: false,
+                rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
+                    metadata.droMode
+                ),
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
                 rawDcpId = metadata.rawDcpId
@@ -1935,7 +1934,6 @@ object GalleryManager {
         superResolutionScale: Float = 1.0f,
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
-        droMode: RawProcessingPreferences.DROMode = RawProcessingPreferences.DROMode.OFF,
         exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
         when (val format = images[0].format) {
@@ -2654,7 +2652,9 @@ object GalleryManager {
                         rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
                         rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
                         rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
-                        rawDROEnabled = updatedMetadata.rawDROEnabled ?: false,
+                        rawDROMode = RawProcessingPreferences.DROMode.fromPersistedName(
+                            updatedMetadata.droMode
+                        ),
                         sharpeningValue = 0.4f,
                         denoiseValue = updatedMetadata.rawDenoiseValue,
                         rawDcpId = updatedMetadata.rawDcpId,
@@ -2744,7 +2744,6 @@ object GalleryManager {
     suspend fun refreshRawPreview(
         context: Context,
         photoId: String,
-        droMode: RawProcessingPreferences.DROMode
     ): Bitmap? {
         return withContext(Dispatchers.IO) {
             try {
@@ -2769,8 +2768,9 @@ object GalleryManager {
                     rawBlackPointCorrection = updatedMetadata?.rawBlackPointCorrection ?: 0f,
                     rawWhitePointCorrection = updatedMetadata?.rawWhitePointCorrection ?: 0f,
                     rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
-                    rawDROEnabled = (updatedMetadata ?: metadata)?.rawDROEnabled ?: false,
-                    sharpeningValue = 0.4f,
+                    rawDROMode = updatedMetadata?.droMode?.let { RawProcessingPreferences.DROMode.fromPersistedName(it) }
+                        ?: RawProcessingPreferences.DROMode.OFF,
+                    sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
                     denoiseValue = (updatedMetadata ?: MediaMetadata()).rawDenoiseValue,
                     rawDcpId = updatedMetadata?.rawDcpId,
                     onMetadata = { raw ->

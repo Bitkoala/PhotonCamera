@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
+import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.utils.OrientationObserver
 import com.hinnka.mycamera.video.CaptureMode
@@ -1489,6 +1490,70 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    private fun resolveCaptureExposureCompensation(state: CameraState, droExposureReductionEv: Float): Int {
+        if (droExposureReductionEv <= 0f) return state.exposureCompensation
+        val evStep = state.getExposureCompensationStep().takeIf { it > 0f } ?: return state.exposureCompensation
+        val droSteps = (droExposureReductionEv / evStep).roundToInt()
+        val range = state.getExposureCompensationRange()
+        val adjusted = (state.exposureCompensation - droSteps).coerceIn(range.lower, range.upper)
+        PLog.d(TAG, "RAW DRO ${state.droMode} AE compensation adjusted: ${state.exposureCompensation} -> $adjusted")
+        return adjusted
+    }
+
+    private fun calculateDroAdjustedExposure(state: CameraState): Pair<Int, Long> {
+        val droExposureReductionEv = if (state.useRaw && state.captureMode == CaptureMode.PHOTO) {
+            DROMode.fromPersistedName(state.droMode).captureExposureReductionEv
+        } else {
+            0f
+        }
+
+        if (droExposureReductionEv <= 0f) return Pair(state.iso, state.shutterSpeed)
+
+        var remainingEv = droExposureReductionEv.toDouble()
+        var targetIso = state.iso
+        var targetShutter = state.shutterSpeed
+
+        val isoRange = state.getIsoRange()
+        val shutterRange = state.getShutterSpeedRange()
+
+        if (state.iso > 200) {
+            // Prioritize ISO reduction
+            val maxIsoReductionEv = ln(targetIso.toDouble() / isoRange.lower.toDouble()) / ln(2.0)
+            val isoReductionEv = remainingEv.coerceAtMost(maxIsoReductionEv)
+            if (isoReductionEv > 0) {
+                targetIso = (targetIso / 2.0.pow(isoReductionEv)).roundToInt().coerceIn(isoRange.lower, isoRange.upper)
+                remainingEv -= isoReductionEv
+            }
+
+            if (remainingEv > 0.01) {
+                val maxShutterReductionEv = ln(targetShutter.toDouble() / shutterRange.lower.toDouble()) / ln(2.0)
+                val shutterReductionEv = remainingEv.coerceAtMost(maxShutterReductionEv)
+                if (shutterReductionEv > 0) {
+                    targetShutter = (targetShutter / 2.0.pow(shutterReductionEv)).toLong().coerceIn(shutterRange.lower, shutterRange.upper)
+                    remainingEv -= shutterReductionEv
+                }
+            }
+        } else {
+            // Prioritize Shutter reduction
+            val maxShutterReductionEv = ln(targetShutter.toDouble() / shutterRange.lower.toDouble()) / ln(2.0)
+            val shutterReductionEv = remainingEv.coerceAtMost(maxShutterReductionEv)
+            if (shutterReductionEv > 0) {
+                targetShutter = (targetShutter / 2.0.pow(shutterReductionEv)).toLong().coerceIn(shutterRange.lower, shutterRange.upper)
+                remainingEv -= shutterReductionEv
+            }
+
+            if (remainingEv > 0.01) {
+                val maxIsoReductionEv = ln(targetIso.toDouble() / isoRange.lower.toDouble()) / ln(2.0)
+                val isoReductionEv = remainingEv.coerceAtMost(maxIsoReductionEv)
+                if (isoReductionEv > 0) {
+                    targetIso = (targetIso / 2.0.pow(isoReductionEv)).roundToInt().coerceIn(isoRange.lower, isoRange.upper)
+                    remainingEv -= isoReductionEv
+                }
+            }
+        }
+        return Pair(targetIso, targetShutter)
+    }
+
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
         val characteristics = cachedCharacteristics ?: return
         val availableRanges =
@@ -1871,6 +1936,12 @@ class Camera2Controller(private val context: Context) {
     fun setUseRaw(enabled: Boolean) {
         _state.value = _state.value.copy(useRaw = enabled)
         PLog.d(TAG, "RAW 格式拍照: $enabled")
+    }
+
+    fun setDroMode(mode: String) {
+        val resolvedMode = DROMode.fromPersistedName(mode).name
+        _state.value = _state.value.copy(droMode = resolvedMode)
+        PLog.d(TAG, "RAW DRO mode: $resolvedMode")
     }
 
     /**
@@ -3075,6 +3146,7 @@ class Camera2Controller(private val context: Context) {
     private fun performCapture(device: CameraDevice, reader: ImageReader) {
         try {
             val isRawCapture = isRawCaptureReader(reader)
+
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader.surface)
 
@@ -3085,6 +3157,30 @@ class Camera2Controller(private val context: Context) {
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
                 // isCapture = true 确保使用完整的曝光时间（不限制长曝光）
                 applyBaseCameraSettings(this, isCapture = true, isRawCapture = isRawCapture)
+
+                // 强制手动控制 DRO 曝光调整 (覆盖 applyBaseCameraSettings 中的 AE 设置)
+                if (state.value.useRaw && state.value.captureMode == CaptureMode.PHOTO) {
+                    val droExposureReductionEv = DROMode.fromPersistedName(state.value.droMode).captureExposureReductionEv
+                    if (droExposureReductionEv > 0f) {
+                        if (isManualSensorSupported) {
+                            val (adjustedIso, adjustedShutter) = calculateDroAdjustedExposure(_state.value)
+                            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                            set(CaptureRequest.SENSOR_SENSITIVITY, adjustedIso)
+                            set(CaptureRequest.SENSOR_EXPOSURE_TIME, adjustedShutter)
+                            PLog.d(
+                                TAG,
+                                "Capture DRO ${state.value.droMode} override (Manual): ISO=$adjustedIso, shutter=$adjustedShutter"
+                            )
+                        } else if (state.value.isIsoAuto && state.value.isShutterSpeedAuto) {
+                            val adjustedCompensation = resolveCaptureExposureCompensation(state.value, droExposureReductionEv)
+                            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, adjustedCompensation)
+                            PLog.d(
+                                TAG,
+                                "Capture DRO ${state.value.droMode} override (AE Compensation): $adjustedCompensation"
+                            )
+                        }
+                    }
+                }
 
                 // 强制将此请求的触发器设为 IDLE，防止携带预览中的触发状态
                 set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)

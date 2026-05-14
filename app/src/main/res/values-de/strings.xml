@@ -309,6 +309,9 @@
     <string name="settings_dro_off">Aus</string>
     <string name="settings_dro_low">Niedrig</string>
     <string name="settings_dro_high">Hoch</string>
+    <string name="settings_dro_dr100">DR100</string>
+    <string name="settings_dro_dr200">DR200</string>
+    <string name="settings_dro_dr400">DR400</string>
     <string name="settings_apply_ultra_hdr">Ultra HDR Belichtungsstrategie</string>
     <string name="settings_apply_ultra_hdr_description">Reduziert basierend auf Multi-Frame-Stacking und Histogrammanalyse automatisch die Belichtung, um Glanzlichter bei ausreichenden Lichtverhältnissen zu schützen. Nur wirksam, wenn RAW und Multi-Frame aktiviert sind.</string>
     <string name="settings_color_space">RAW-Farbraum</string>

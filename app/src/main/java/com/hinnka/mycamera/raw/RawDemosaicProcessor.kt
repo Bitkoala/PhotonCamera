@@ -9,6 +9,7 @@ import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.ml.SharedDepthEstimator
+import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
@@ -275,7 +276,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
-        rawDROEnabled: Boolean = false,
+        rawDROMode: DROMode = DROMode.fromPersistedName(null),
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -300,7 +301,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
-                rawDROEnabled = rawDROEnabled,
+                rawDROMode = rawDROMode,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
@@ -329,11 +330,10 @@ class RawDemosaicProcessor {
         rotation: Int,
         rawExposureCompensation: Float = 0f,
         rawAutoExposure: Boolean = true,
-        rawMeteringCenterWeight: Float = 0f,
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
-        rawDROEnabled: Boolean = false,
+        rawDROMode: DROMode = DROMode.fromPersistedName(null),
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -363,7 +363,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
-                rawDROEnabled = rawDROEnabled,
+                rawDROMode = rawDROMode,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -388,7 +388,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
-        rawDROEnabled: Boolean = false,
+        rawDROMode: DROMode = DROMode.fromPersistedName(null),
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -413,7 +413,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
-                rawDROEnabled = rawDROEnabled,
+                rawDROMode = rawDROMode,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
@@ -447,7 +447,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
-        rawDROEnabled: Boolean = false,
+        rawDROMode: DROMode = DROMode.fromPersistedName(null),
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -621,13 +621,13 @@ class RawDemosaicProcessor {
                     dcpRenderPlan = resolvedDcpRenderPlan
                 )
                 val autoExposureEv = meteringResult.meteredEv
-                if (rawDROEnabled && autoExposureEv > 0f && meteringResult.dynamicRangeGap > 1.2f) {
+                if (rawDROMode.isEnabled && autoExposureEv > 0f && meteringResult.dynamicRangeGap > 1.2f) {
                     val maxLinearGainEv = ln(1.0f / meteringResult.p998.coerceAtLeast(0.01f)) / ln(2.0f)
                     val linearEv = autoExposureEv.coerceAtMost(maxLinearGainEv).coerceAtLeast(0f)
                     val remainingEv = autoExposureEv - linearEv
-                    shadowLift = ((2.0f.pow(remainingEv) - 1.0f) / 0.67f).coerceIn(0f, 1.0f)
+                    shadowLift = ((2.0f.pow(remainingEv) - 1.0f) / 0.67f).coerceIn(0f, 5.0f)
 
-                    PLog.d(TAG, "Raw DRO enabled linearEv = $linearEv shadowLift=$shadowLift")
+                    PLog.d(TAG, "Raw DRO ${rawDROMode.name} linearEv=$linearEv shadowLift=$shadowLift")
 
                     effectiveExposureCompensation += linearEv
                 } else {
@@ -635,6 +635,7 @@ class RawDemosaicProcessor {
                 }
 
                 if (effectiveExposureCompensation != rawExposureCompensation) {
+                    PLog.d(TAG, "final auto exposure compensation = $effectiveExposureCompensation")
                     renderLinearPass(
                         metadata = actualMetadata,
                         rawExposureCompensation = effectiveExposureCompensation,
@@ -1870,15 +1871,17 @@ class RawDemosaicProcessor {
         val combinedLut = if (shadowLift > 0f) {
             FloatArray(baseCurve.size) { i ->
                 val v = baseCurve[i]
-                val gammaPower = 0.75f
-                val shadowRangeEnd = 0.6f
+                val x = shadowLift.coerceIn(0f, 5f)
+                val boost = smoothstep(1f, 5f, x)
+                val gammaPower = 0.75f + 0.13f * boost
+                val shadowRangeEnd = 0.6f + 0.25f * boost
+                val liftStrength = 1.35f - 0.25f * boost
                 val blackProtectStart = 0.02f
                 val black = 0.004f
                 val liftBase = (v.pow(gammaPower) - v).coerceAtLeast(0f)
                 val shadowMask = smoothstep(shadowRangeEnd, 0.02f, v)
                 val blackProtect = smoothstep(black, blackProtectStart, v)
-                val liftStrength = 1.35f
-                val lift = shadowLift * liftBase * liftStrength * shadowMask * blackProtect
+                val lift = x * liftBase * liftStrength * shadowMask * blackProtect
                 (v + lift - black).coerceIn(0f, 1f)
             }
         } else {
@@ -2239,10 +2242,6 @@ class RawDemosaicProcessor {
             if (!bitmap.isRecycled) {
                 bitmap.recycle()
             }
-            PLog.d(
-                TAG,
-                "RAW auto exposure: renderedEv=${meteringResult.meteredEv} gap=${meteringResult.dynamicRangeGap}"
-            )
             meteringResult
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
