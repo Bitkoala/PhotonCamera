@@ -29,6 +29,11 @@ import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.ui.theme.AccentOrange
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.FilterNone
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -77,15 +82,18 @@ sealed class CropAspectOption(
 /**
  * 获取所有可用的裁剪选项列表
  */
-fun getCropAspectOptions(): List<CropAspectOption> {
+fun getCropAspectOptions(allRatios: List<AspectRatio>): List<CropAspectOption> {
     val options = mutableListOf<CropAspectOption>()
     options.add(CropAspectOption.Free)
     options.add(CropAspectOption.Original)
-    for (ratio in AspectRatio.entries) {
+    
+    // Sort ratios to put common ones first if needed, but here we just take them all
+    for (ratio in allRatios) {
         val option = CropAspectOption.FromAspectRatio(ratio)
         options.add(option)
-        if (option.widthRatio / option.heightRatio != 1f) {
-            options.add(CropAspectOption.Custom(option.heightRatio, option.widthRatio))
+        // Also add the inverted version (e.g., 3:4 for 4:3) if not square
+        if (ratio.widthRatio != ratio.heightRatio) {
+            options.add(CropAspectOption.Custom(ratio.heightRatio.toFloat(), ratio.widthRatio.toFloat()))
         }
     }
     return options
@@ -98,46 +106,58 @@ fun getCropAspectOptions(): List<CropAspectOption> {
 fun CropEditPanel(
     selectedOption: CropAspectOption,
     onOptionSelected: (CropAspectOption) -> Unit,
+    availableRatios: List<AspectRatio>,
     imageWidth: Int,
     imageHeight: Int,
     modifier: Modifier = Modifier
 ) {
-    val options = remember {
-        getCropAspectOptions()
+    val options = remember(availableRatios) {
+        getCropAspectOptions(availableRatios)
     }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 16.dp)
+            .padding(vertical = 12.dp)
     ) {
         // 比例选择标题
-        Text(
-            text = stringResource(R.string.crop).uppercase(),
-            color = Color.White.copy(alpha = 0.4f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.crop).uppercase(),
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            
+            Text(
+                text = when (selectedOption) {
+                    is CropAspectOption.Free -> stringResource(R.string.crop_free)
+                    is CropAspectOption.Original -> stringResource(R.string.crop_original)
+                    else -> selectedOption.displayName
+                },
+                color = AccentOrange,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = selectedOption.displayName,
-            color = Color.White,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(options) { option ->
                 CropAspectOptionItem(
                     option = option,
-                    isSelected = option == selectedOption,
+                    isSelected = option.displayName == selectedOption.displayName && 
+                                 option.widthRatio == selectedOption.widthRatio && 
+                                 option.heightRatio == selectedOption.heightRatio,
                     onClick = { onOptionSelected(option) }
                 )
             }
@@ -160,26 +180,82 @@ private fun CropAspectOptionItem(
         else -> option.displayName
     }
 
-    Box(
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-                if (isSelected) AccentOrange.copy(alpha = 0.2f)
-                else Color.White.copy(alpha = 0.08f)
-            )
-            .border(
-                1.dp,
-                if (isSelected) AccentOrange else Color.White.copy(alpha = 0.15f),
-                RoundedCornerShape(16.dp)
-            )
+            .width(64.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Visual Preview
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .background(
+                    if (isSelected) AccentOrange.copy(alpha = 0.15f)
+                    else Color.White.copy(alpha = 0.05f),
+                    RoundedCornerShape(10.dp)
+                )
+                .border(
+                    1.dp,
+                    if (isSelected) AccentOrange else Color.White.copy(alpha = 0.1f),
+                    RoundedCornerShape(10.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            when (option) {
+                is CropAspectOption.Free -> {
+                    Icon(
+                        imageVector = Icons.Default.FilterNone,
+                        contentDescription = null,
+                        tint = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                is CropAspectOption.Original -> {
+                    Icon(
+                        imageVector = Icons.Default.Article,
+                        contentDescription = null,
+                        tint = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                else -> {
+                    val w = option.widthRatio
+                    val h = option.heightRatio
+                    val maxDim = 24.dp
+                    val displayW: androidx.compose.ui.unit.Dp
+                    val displayH: androidx.compose.ui.unit.Dp
+                    
+                    if (w > h) {
+                        displayW = maxDim
+                        displayH = maxDim * (h / w)
+                    } else {
+                        displayH = maxDim
+                        displayW = maxDim * (w / h)
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .size(displayW, displayH)
+                            .background(
+                                if (isSelected) AccentOrange else Color.White.copy(alpha = 0.4f),
+                                RoundedCornerShape(2.dp)
+                            )
+                    )
+                }
+            }
+        }
+
         Text(
             text = displayText,
-            color = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.7f),
-            fontSize = 13.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            color = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.6f),
+            fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            textAlign = TextAlign.Center
         )
     }
 }

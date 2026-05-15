@@ -127,6 +127,7 @@ fun CameraScreen(
     val enableDevelopAnimation by viewModel.enableDevelopAnimation.collectAsState()
     val hlgHardwareCompatibilityEnabled by viewModel.hlgHardwareCompatibilityEnabled.collectAsState()
     val phantomMode by viewModel.phantomMode.collectAsState()
+    val topSheetAspectRatios by viewModel.topSheetAspectRatios.collectAsState()
     val videoCodec by viewModel.videoCodec.collectAsState()
     val videoAudioInputOptions by viewModel.videoAudioInputOptions.collectAsState()
     val phantomPipPreview by viewModel.phantomPipPreview.collectAsState()
@@ -1116,6 +1117,7 @@ fun CameraScreen(
             visible = activePanel == ActivePanel.SETTINGS,
             captureMode = state.captureMode,
             aspectRatio = state.aspectRatio,
+            topSheetAspectRatios = topSheetAspectRatios,
             onAspectRatioChange = { runPreviewTransition { viewModel.setAspectRatio(it) } },
             videoAspectRatio = state.videoConfig.aspectRatio,
             onVideoAspectRatioChange = { runPreviewTransition { viewModel.setVideoAspectRatio(it) } },

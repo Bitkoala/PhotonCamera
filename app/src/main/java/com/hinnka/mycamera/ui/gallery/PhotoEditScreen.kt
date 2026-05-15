@@ -921,9 +921,11 @@ fun PhotoEditScreen(
                                 }
                                 3 -> {
                                     // 裁剪编辑
+                                    val availablePhotoAspectRatios by cameraViewModel.availablePhotoAspectRatios.collectAsState()
                                     CropEditPanel(
                                         selectedOption = editCropAspectOption,
                                         onOptionSelected = { viewModel.setCropAspectOption(it) },
+                                        availableRatios = availablePhotoAspectRatios,
                                         imageWidth = previewBitmap?.width ?: 1,
                                         imageHeight = previewBitmap?.height ?: 1
                                     )

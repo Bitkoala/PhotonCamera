@@ -9,15 +9,25 @@ import com.hinnka.mycamera.video.VideoConfig
 import com.hinnka.mycamera.video.VideoRecordingState
 
 /**
- * 画面比例枚举
+ * 画面比例。内置比例使用稳定名称持久化，自定义比例使用 CUSTOM_宽_高。
  */
-enum class AspectRatio(val widthRatio: Int, val heightRatio: Int) {
-        RATIO_3_2(3, 2),
-    RATIO_4_3(4, 3),
-    RATIO_16_9(16, 9),
-    RATIO_1_1(1, 1),
-    RATIO_21_9(21, 9),
-    XPAN(65, 24);
+class AspectRatio private constructor(
+    val name: String,
+    val widthRatio: Int,
+    val heightRatio: Int
+) {
+    override fun equals(other: Any?): Boolean {
+        return other is AspectRatio && name == other.name
+    }
+
+    override fun hashCode(): Int {
+        return name.hashCode()
+    }
+
+    override fun toString(): String {
+        return name
+    }
+
 
     fun getValue(isLandscape: Boolean): Float {
         return if (isLandscape) {
@@ -35,8 +45,83 @@ enum class AspectRatio(val widthRatio: Int, val heightRatio: Int) {
     }
 
     companion object {
+        const val TOP_SHEET_MAX_COUNT = 5
+        private const val CUSTOM_PREFIX = "CUSTOM_"
+
+        val RATIO_3_2 = AspectRatio("RATIO_3_2", 3, 2)
+        val RATIO_4_3 = AspectRatio("RATIO_4_3", 4, 3)
+        val RATIO_16_9 = AspectRatio("RATIO_16_9", 16, 9)
+        val RATIO_1_1 = AspectRatio("RATIO_1_1", 1, 1)
+        val RATIO_21_9 = AspectRatio("RATIO_21_9", 21, 9)
+        val XPAN = AspectRatio("XPAN", 65, 24)
+
+        val entries: List<AspectRatio> = listOf(
+            RATIO_3_2,
+            RATIO_4_3,
+            RATIO_16_9,
+            RATIO_1_1,
+            RATIO_21_9,
+            XPAN
+        )
+
+        val defaultTopSheetRatios: List<AspectRatio> = listOf(
+            RATIO_3_2,
+            RATIO_4_3,
+            RATIO_16_9,
+            RATIO_1_1,
+            XPAN
+        )
+
         fun fromString(string: String): AspectRatio {
-            return entries.firstOrNull { it.getDisplayName() == string } ?: RATIO_4_3
+            return valueOfOrNull(string) ?: entries.firstOrNull { it.getDisplayName() == string } ?: RATIO_4_3
+        }
+
+        fun valueOf(name: String): AspectRatio {
+            return valueOfOrNull(name) ?: throw IllegalArgumentException("Unknown AspectRatio: $name")
+        }
+
+        fun valueOfOrNull(name: String): AspectRatio? {
+            entries.firstOrNull { it.name == name }?.let { return it }
+            if (!name.startsWith(CUSTOM_PREFIX)) return null
+            val parts = name.removePrefix(CUSTOM_PREFIX).split("_")
+            if (parts.size != 2) return null
+            val width = parts[0].toIntOrNull() ?: return null
+            val height = parts[1].toIntOrNull() ?: return null
+            return custom(width, height)
+        }
+
+        fun custom(widthRatio: Int, heightRatio: Int): AspectRatio {
+            val width = widthRatio.coerceIn(1, 999)
+            val height = heightRatio.coerceIn(1, 999)
+            val divisor = gcd(width, height)
+            val normalizedWidth = width / divisor
+            val normalizedHeight = height / divisor
+            entries.firstOrNull {
+                it.widthRatio == normalizedWidth && it.heightRatio == normalizedHeight
+            }?.let { return it }
+            return AspectRatio(
+                name = "${CUSTOM_PREFIX}${normalizedWidth}_${normalizedHeight}",
+                widthRatio = normalizedWidth,
+                heightRatio = normalizedHeight
+            )
+        }
+
+        fun sanitizeTopSheetRatios(ratios: List<AspectRatio>): List<AspectRatio> {
+            val sanitized = ratios
+                .distinct()
+                .take(TOP_SHEET_MAX_COUNT)
+            return sanitized.ifEmpty { defaultTopSheetRatios }
+        }
+
+        fun sanitizeCustomRatios(ratios: List<AspectRatio>): List<AspectRatio> {
+            return ratios
+                .map { custom(it.widthRatio, it.heightRatio) }
+                .filter { ratio -> entries.none { it.name == ratio.name } }
+                .distinctBy { it.name }
+        }
+
+        private tailrec fun gcd(a: Int, b: Int): Int {
+            return if (b == 0) kotlin.math.abs(a) else gcd(b, a % b)
         }
     }
 }

@@ -209,6 +209,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         userPreferencesRepository.userPreferences.map { it.volumeKeyAction }
             .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = VolumeKeyAction.NONE)
     val autoSaveAfterCapture: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.autoSaveAfterCapture }
+    val topSheetAspectRatios: StateFlow<List<AspectRatio>> = userPreferencesRepository.userPreferences
+        .map { it.topSheetAspectRatios }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AspectRatio.defaultTopSheetRatios)
+    val customAspectRatios: StateFlow<List<AspectRatio>> = userPreferencesRepository.userPreferences
+        .map { it.customAspectRatios }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val availablePhotoAspectRatios: StateFlow<List<AspectRatio>> = userPreferencesRepository.userPreferences
+        .map { AspectRatio.entries + it.customAspectRatios }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AspectRatio.entries)
     val nrLevel: StateFlow<Int> = userPreferencesRepository.userPreferences
         .map { it.nrLevel }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 5)
@@ -1411,6 +1420,38 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // 保存到用户偏好设置
         viewModelScope.launch {
             userPreferencesRepository.saveAspectRatio(ratio.name)
+        }
+    }
+
+    fun setTopSheetAspectRatios(ratios: List<AspectRatio>) {
+        val sanitizedRatios = AspectRatio.sanitizeTopSheetRatios(ratios)
+        if (state.value.aspectRatio !in sanitizedRatios) {
+            setAspectRatio(sanitizedRatios.first())
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.saveTopSheetAspectRatios(sanitizedRatios)
+        }
+    }
+
+    fun addCustomAspectRatio(widthRatio: Int, heightRatio: Int) {
+        val ratio = AspectRatio.custom(widthRatio, heightRatio)
+        val customRatios = AspectRatio.sanitizeCustomRatios(customAspectRatios.value + ratio)
+        viewModelScope.launch {
+            userPreferencesRepository.saveCustomAspectRatios(customRatios)
+            val selectedRatios = AspectRatio.sanitizeTopSheetRatios(topSheetAspectRatios.value + ratio)
+            userPreferencesRepository.saveTopSheetAspectRatios(selectedRatios)
+        }
+    }
+
+    fun deleteCustomAspectRatio(ratio: AspectRatio) {
+        val customRatios = customAspectRatios.value.filterNot { it.name == ratio.name }
+        val selectedRatios = topSheetAspectRatios.value.filterNot { it.name == ratio.name }
+        if (state.value.aspectRatio.name == ratio.name) {
+            setAspectRatio(AspectRatio.RATIO_4_3)
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.saveCustomAspectRatios(customRatios)
+            userPreferencesRepository.saveTopSheetAspectRatios(selectedRatios)
         }
     }
 

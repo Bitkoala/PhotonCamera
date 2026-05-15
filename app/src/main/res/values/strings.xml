@@ -36,6 +36,12 @@
 
     <!-- Aspect Ratio -->
     <string name="aspect_ratio">Aspect Ratio</string>
+    <string name="settings_top_sheet_aspect_ratios">Aspect Ratios</string>
+    <string name="settings_top_sheet_aspect_ratios_description">Choose up to 5 aspect ratios to show in the camera top sheet.</string>
+    <string name="settings_top_sheet_aspect_ratios_summary">Shown: %1$s</string>
+    <string name="settings_custom_aspect_ratio">Custom Aspect Ratio</string>
+    <string name="settings_custom_aspect_ratio_width">Width</string>
+    <string name="settings_custom_aspect_ratio_height">Height</string>
     <string name="ratio_3_2">3:2</string>
     <string name="ratio_4_3">4:3</string>
     <string name="ratio_16_9">16:9</string>

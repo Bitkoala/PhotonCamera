@@ -95,9 +95,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.media3.common.DeviceInfo
 import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.R
+import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.data.VolumeKeyAction
 import com.hinnka.mycamera.frame.FrameInfo
@@ -153,6 +153,9 @@ fun SettingsScreen(
     val shutterSoundEnabled by viewModel.shutterSoundEnabled.collectAsState(initial = true)
     val vibrationEnabled by viewModel.vibrationEnabled.collectAsState(initial = true)
     val volumeKeyAction by viewModel.volumeKeyAction.collectAsState()
+    val topSheetAspectRatios by viewModel.topSheetAspectRatios.collectAsState()
+    val customAspectRatios by viewModel.customAspectRatios.collectAsState()
+    val availablePhotoAspectRatios by viewModel.availablePhotoAspectRatios.collectAsState()
     val autoSaveAfterCapture by viewModel.autoSaveAfterCapture.collectAsState(initial = true)
     val nrLevel by viewModel.nrLevel.collectAsState(initial = 5)
     val edgeLevel by viewModel.edgeLevel.collectAsState(initial = 1)
@@ -215,6 +218,7 @@ fun SettingsScreen(
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
     var rawBlackPointCorrectionUi by remember { mutableStateOf(rawBlackPointCorrection) }
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
+    var showAspectRatioDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(rawNlmNoiseFactor, rawExposureCompensation, rawBlackPointCorrection, rawWhitePointCorrection) {
         if (!isRawSliderAdjusting) {
@@ -726,6 +730,34 @@ fun SettingsScreen(
                             checked = showGrid,
                             onCheckedChange = { viewModel.setShowGrid(it) }
                         )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_top_sheet_aspect_ratios),
+                            description = stringResource(
+                                R.string.settings_top_sheet_aspect_ratios_summary,
+                                topSheetAspectRatios.joinToString(" / ") { it.getDisplayName() }
+                            ),
+                            onClick = { showAspectRatioDialog = true }
+                        )
+
+                        if (showAspectRatioDialog) {
+                            AspectRatioDialog(
+                                availableRatios = availablePhotoAspectRatios,
+                                selectedRatios = topSheetAspectRatios,
+                                customRatios = customAspectRatios,
+                                onSelectionChange = { viewModel.setTopSheetAspectRatios(it) },
+                                onAddCustomRatio = { width, height ->
+                                    viewModel.addCustomAspectRatio(width, height)
+                                },
+                                onDeleteCustomRatio = { viewModel.deleteCustomAspectRatio(it) },
+                                onDismiss = { showAspectRatioDialog = false }
+                            )
+                        }
 
                         HorizontalDivider(
                             color = Color.White.copy(alpha = 0.1f),
@@ -1776,6 +1808,316 @@ fun SettingsSection(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AspectRatioDialog(
+    availableRatios: List<AspectRatio>,
+    selectedRatios: List<AspectRatio>,
+    customRatios: List<AspectRatio>,
+    onSelectionChange: (List<AspectRatio>) -> Unit,
+    onAddCustomRatio: (Int, Int) -> Unit,
+    onDeleteCustomRatio: (AspectRatio) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val selected = AspectRatio.sanitizeTopSheetRatios(selectedRatios)
+    var customWidth by remember { mutableStateOf("") }
+    var customHeight by remember { mutableStateOf("") }
+    val parsedWidth = customWidth.toIntOrNull()
+    val parsedHeight = customHeight.toIntOrNull()
+    val canAddCustomRatio = parsedWidth != null && parsedHeight != null && parsedWidth > 0 && parsedHeight > 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = {
+            Text(
+                text = stringResource(R.string.settings_top_sheet_aspect_ratios),
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_top_sheet_aspect_ratios_description),
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Built-in Ratios
+                Text(
+                    text = stringResource(R.string.built_in).uppercase(),
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    AspectRatio.entries.forEach { ratio ->
+                        val isChecked = selected.any { it.name == ratio.name }
+                        val canToggle = if (isChecked) selected.size > 1 else selected.size < AspectRatio.TOP_SHEET_MAX_COUNT
+                        AspectRatioGridItem(
+                            ratio = ratio,
+                            isSelected = isChecked,
+                            enabled = canToggle,
+                            onClick = {
+                                if (canToggle) {
+                                    onSelectionChange(toggleTopSheetAspectRatio(selected, ratio))
+                                }
+                            }
+                        )
+                    }
+                }
+
+                if (customRatios.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Text(
+                        text = stringResource(R.string.category_custom).uppercase(),
+                        color = Color.White.copy(alpha = 0.4f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        customRatios.forEach { ratio ->
+                            val isChecked = selected.any { it.name == ratio.name }
+                            val canToggle = if (isChecked) selected.size > 1 else selected.size < AspectRatio.TOP_SHEET_MAX_COUNT
+                            AspectRatioGridItem(
+                                ratio = ratio,
+                                isSelected = isChecked,
+                                enabled = canToggle,
+                                isCustom = true,
+                                onClick = {
+                                    if (canToggle) {
+                                        onSelectionChange(toggleTopSheetAspectRatio(selected, ratio))
+                                    }
+                                },
+                                onDelete = { onDeleteCustomRatio(ratio) }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = stringResource(R.string.settings_custom_aspect_ratio),
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = customWidth,
+                        onValueChange = { customWidth = it.filter(Char::isDigit).take(3) },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(stringResource(R.string.settings_custom_aspect_ratio_width), fontSize = 12.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = Color(0xFFFF6B35),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                            cursorColor = Color(0xFFFF6B35)
+                        )
+                    )
+                    Text(
+                        text = ":",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    androidx.compose.material3.OutlinedTextField(
+                        value = customHeight,
+                        onValueChange = { customHeight = it.filter(Char::isDigit).take(3) },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(stringResource(R.string.settings_custom_aspect_ratio_height), fontSize = 12.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = Color(0xFFFF6B35),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                            cursorColor = Color(0xFFFF6B35)
+                        )
+                    )
+                    IconButton(
+                        enabled = canAddCustomRatio,
+                        onClick = {
+                            onAddCustomRatio(parsedWidth ?: 1, parsedHeight ?: 1)
+                            customWidth = ""
+                            customHeight = ""
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                if (canAddCustomRatio) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.1f),
+                                RoundedCornerShape(12.dp)
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = stringResource(R.string.settings_custom_aspect_ratio),
+                            tint = if (canAddCustomRatio) Color.White else Color.White.copy(alpha = 0.3f)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = stringResource(R.string.confirm),
+                    color = Color(0xFFFF6B35),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun AspectRatioGridItem(
+    ratio: AspectRatio,
+    isSelected: Boolean,
+    enabled: Boolean,
+    isCustom: Boolean = false,
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
+    Box(
+        modifier = Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.15f)
+                else Color.White.copy(alpha = 0.05f)
+            )
+            .border(
+                1.dp,
+                if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.1f),
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Visual Shape Preview
+            Box(
+                modifier = Modifier
+                    .size(32.dp, 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                val w = ratio.widthRatio.toFloat()
+                val h = ratio.heightRatio.toFloat()
+                val maxWidth = 28.dp
+                val maxHeight = 20.dp
+                
+                val displayW: androidx.compose.ui.unit.Dp
+                val displayH: androidx.compose.ui.unit.Dp
+                
+                if (w / h > maxWidth / maxHeight) {
+                    displayW = maxWidth
+                    displayH = maxWidth * (h / w)
+                } else {
+                    displayH = maxHeight
+                    displayW = maxHeight * (w / h)
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .size(displayW, displayH)
+                        .background(
+                            if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.3f),
+                            RoundedCornerShape(2.dp)
+                        )
+                )
+            }
+            
+            Text(
+                text = ratio.getDisplayName(),
+                color = if (isSelected) Color(0xFFFF6B35) else if (enabled) Color.White else Color.White.copy(alpha = 0.3f),
+                fontSize = 11.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (isCustom && onDelete != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .clickable { onDelete() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(10.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun toggleTopSheetAspectRatio(
+    selectedRatios: List<AspectRatio>,
+    ratio: AspectRatio
+): List<AspectRatio> {
+    val updated = if (selectedRatios.any { it.name == ratio.name }) {
+        selectedRatios.filterNot { it.name == ratio.name }
+    } else {
+        selectedRatios + ratio
+    }
+    return AspectRatio.sanitizeTopSheetRatios(
+        updated
+    )
 }
 
 /**

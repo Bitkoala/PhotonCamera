@@ -47,6 +47,7 @@ fun CameraTopSheet(
     visible: Boolean,
     captureMode: CaptureMode,
     aspectRatio: AspectRatio,
+    topSheetAspectRatios: List<AspectRatio>,
     onAspectRatioChange: (AspectRatio) -> Unit,
     videoAspectRatio: VideoAspectRatio,
     onVideoAspectRatioChange: (VideoAspectRatio) -> Unit,
@@ -127,7 +128,7 @@ fun CameraTopSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    AspectRatio.entries.forEach { ratio ->
+                    AspectRatio.sanitizeTopSheetRatios(topSheetAspectRatios).forEach { ratio ->
                         val isSelected = aspectRatio == ratio
                         Box(
                             modifier = Modifier

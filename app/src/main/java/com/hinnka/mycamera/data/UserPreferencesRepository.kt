@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
@@ -51,6 +52,8 @@ enum class WidgetTheme {
 data class UserPreferences(
     val captureMode: CaptureMode = CaptureMode.PHOTO,
     val aspectRatio: String = "RATIO_4_3",
+    val topSheetAspectRatios: List<AspectRatio> = AspectRatio.defaultTopSheetRatios,
+    val customAspectRatios: List<AspectRatio> = emptyList(),
     val lutId: String? = null,  // 默认为 null，由 CameraViewModel 根据配置文件设置
     val phantomLutId: String? = null,
     val jpgBaselineLutId: String? = null,
@@ -149,6 +152,8 @@ class UserPreferencesRepository(private val context: Context) {
         // DataStore Keys
         private val CAPTURE_MODE = stringPreferencesKey("capture_mode")
         private val ASPECT_RATIO_KEY = stringPreferencesKey("aspect_ratio")
+        private val TOP_SHEET_ASPECT_RATIOS = stringPreferencesKey("top_sheet_aspect_ratios")
+        private val CUSTOM_ASPECT_RATIOS = stringPreferencesKey("custom_aspect_ratios")
         private val LUT_ID_KEY = stringPreferencesKey("lut_id")
         private val PHANTOM_LUT_ID_KEY = stringPreferencesKey("phantom_lut_id")
         private val JPG_BASELINE_LUT_ID_KEY = stringPreferencesKey("jpg_baseline_lut_id")
@@ -252,9 +257,16 @@ class UserPreferencesRepository(private val context: Context) {
      */
     val userPreferences: Flow<UserPreferences> = context.dataStore.data
         .map { preferences ->
+            val customAspectRatios = parseCustomAspectRatios(preferences[CUSTOM_ASPECT_RATIOS])
+            val availableAspectRatios = AspectRatio.entries + customAspectRatios
             UserPreferences(
                 captureMode = CaptureMode.valueOf(preferences[CAPTURE_MODE] ?: CaptureMode.PHOTO.name),
                 aspectRatio = preferences[ASPECT_RATIO_KEY] ?: "RATIO_4_3",
+                topSheetAspectRatios = parseTopSheetAspectRatios(
+                    preferences[TOP_SHEET_ASPECT_RATIOS],
+                    availableAspectRatios
+                ),
+                customAspectRatios = customAspectRatios,
                 lutId = preferences[LUT_ID_KEY],  // 不提供默认值，由 CameraViewModel 处理
                 phantomLutId = preferences[PHANTOM_LUT_ID_KEY],
                 jpgBaselineLutId = preferences[JPG_BASELINE_LUT_ID_KEY],
@@ -463,6 +475,31 @@ class UserPreferencesRepository(private val context: Context) {
         return result
     }
 
+    private fun parseCustomAspectRatios(value: String?): List<AspectRatio> {
+        if (value.isNullOrBlank()) {
+            return emptyList()
+        }
+        return AspectRatio.sanitizeCustomRatios(
+            value.split(",")
+                .mapNotNull { name -> AspectRatio.valueOfOrNull(name) }
+        )
+    }
+
+    private fun parseTopSheetAspectRatios(
+        value: String?,
+        availableAspectRatios: List<AspectRatio>
+    ): List<AspectRatio> {
+        if (value.isNullOrBlank()) {
+            return AspectRatio.defaultTopSheetRatios
+        }
+        val availableByName = availableAspectRatios.associateBy { it.name }
+        val ratios = value.split(",")
+            .mapNotNull { name ->
+                availableByName[name] ?: AspectRatio.valueOfOrNull(name)
+            }
+        return AspectRatio.sanitizeTopSheetRatios(ratios)
+    }
+
     /**
      * 保存最近拍摄模式
      */
@@ -478,6 +515,20 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveAspectRatio(aspectRatio: String) {
         context.dataStore.edit { preferences ->
             preferences[ASPECT_RATIO_KEY] = aspectRatio
+        }
+    }
+
+    suspend fun saveTopSheetAspectRatios(aspectRatios: List<AspectRatio>) {
+        context.dataStore.edit { preferences ->
+            preferences[TOP_SHEET_ASPECT_RATIOS] = AspectRatio.sanitizeTopSheetRatios(aspectRatios)
+                .joinToString(",") { it.name }
+        }
+    }
+
+    suspend fun saveCustomAspectRatios(aspectRatios: List<AspectRatio>) {
+        context.dataStore.edit { preferences ->
+            preferences[CUSTOM_ASPECT_RATIOS] = AspectRatio.sanitizeCustomRatios(aspectRatios)
+                .joinToString(",") { it.name }
         }
     }
 
