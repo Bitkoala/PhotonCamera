@@ -13,8 +13,8 @@
     {
       "id": "standard",
       "name": {
-        "en": "Standard",
-        "zh": "标准"
+        "en": "STD",
+        "zh": "STD"
       },
       "path": "standard.plut",
       "isDefault": true,
@@ -27,7 +27,7 @@
         "zh": "理光负片"
       },
       "path": "ricoh_negative.plut",
-      "isDefault": true,
+      "isDefault": false,
       "isVip": false
     },
     {
@@ -37,6 +37,42 @@
         "zh": "理光正片"
       },
       "path": "ricoh_positive.plut",
+      "isVip": false
+    },
+    {
+      "id": "ricoh_gr2_positive",
+      "name": {
+        "en": "Positive GR2",
+        "zh": "理光正片GR2"
+      },
+      "path": "Ricoh_GR2_POSI.plut",
+      "isVip": false
+    },
+    {
+      "id": "ricoh_green",
+      "name": {
+        "en": "Green",
+        "zh": "电影绿"
+      },
+      "path": "ricoh_green.plut",
+      "isVip": false
+    },
+    {
+      "id": "ricoh_yellow",
+      "name": {
+        "en": "Yellow",
+        "zh": "电影黄"
+      },
+      "path": "ricoh_yellow.plut",
+      "isVip": false
+    },
+    {
+      "id": "leica_m9",
+      "name": {
+        "en": "M9 CCD",
+        "zh": "徕卡M9"
+      },
+      "path": "Leica_M9_STD.plut",
       "isVip": false
     },
     {
@@ -58,12 +94,66 @@
       "isVip": false
     },
     {
+      "id": "Hasselblad",
+      "name": {
+        "en": "Hasselblad",
+        "zh": "哈苏自然"
+      },
+      "path": "Hasselblad.plut",
+      "isVip": false
+    },
+    {
+      "id": "Hasselblad_portrait",
+      "name": {
+        "en": "Hasselblad Portrait",
+        "zh": "哈苏人像"
+      },
+      "path": "Hasselblad_portrait.plut",
+      "isVip": false
+    },
+    {
       "id": "pentax",
       "name": {
         "en": "Pentax",
         "zh": "宾得明亮"
       },
       "path": "pentax.plut",
+      "isVip": false
+    },
+    {
+      "id": "pentax_harubeni",
+      "name": {
+        "en": "Harubeni",
+        "zh": "宾得春红"
+      },
+      "path": "Pentax_Harubeni.plut",
+      "isVip": false
+    },
+    {
+      "id": "pentax_katen",
+      "name": {
+        "en": "Katen",
+        "zh": "宾得夏天"
+      },
+      "path": "Pentax_Katen.plut",
+      "isVip": false
+    },
+    {
+      "id": "pentax_kyushu",
+      "name": {
+        "en": "Kyushu",
+        "zh": "宾得九秋"
+      },
+      "path": "Pentax_Kyushu.plut",
+      "isVip": false
+    },
+    {
+      "id": "pentax_fuyuno",
+      "name": {
+        "en": "Fuyuno",
+        "zh": "宾得冬野"
+      },
+      "path": "Pentax_Fuyuno.plut",
       "isVip": false
     },
     {
@@ -83,24 +173,6 @@
       },
       "path": "cc.plut",
       "isDefault": true,
-      "isVip": false
-    },
-    {
-      "id": "ricoh_green",
-      "name": {
-        "en": "Green",
-        "zh": "电影绿"
-      },
-      "path": "ricoh_green.plut",
-      "isVip": false
-    },
-    {
-      "id": "ricoh_yellow",
-      "name": {
-        "en": "Yellow",
-        "zh": "电影黄"
-      },
-      "path": "ricoh_yellow.plut",
       "isVip": false
     },
     {
