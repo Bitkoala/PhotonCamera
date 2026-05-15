@@ -1,7 +1,8 @@
 package com.hinnka.mycamera.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -11,6 +12,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -71,21 +74,20 @@ fun CustomSlider(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(enabled, valueRange, thumbRadiusPx) {
-                    if (!enabled) return@pointerInput
-                    detectDragGestures(
-                        onDragStart = { isDragging = true },
-                        onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
-                        onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
-                    ) { change, _ ->
-                        change.consume()
-                        val trackWidth = size.width - thumbRadiusPx * 2
-                        val trackStart = thumbRadiusPx
-                        val x = change.position.x.coerceIn(trackStart, trackStart + trackWidth)
-                        val fraction = (x - trackStart) / trackWidth
-                        val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
-                        currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
-                    }
+                .horizontalSliderDragInput(
+                    enabled = enabled,
+                    key1 = valueRange,
+                    key2 = thumbRadiusPx,
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
+                    onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
+                ) { positionX ->
+                    val trackWidth = size.width - thumbRadiusPx * 2
+                    val trackStart = thumbRadiusPx
+                    val x = positionX.coerceIn(trackStart, trackStart + trackWidth)
+                    val fraction = (x - trackStart) / trackWidth
+                    val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
+                    currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
                 }
                 .pointerInput(enabled, valueRange, thumbRadiusPx) {
                     if (!enabled) return@pointerInput
@@ -237,21 +239,20 @@ fun CustomSliderThinThumb(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(enabled, valueRange, thumbWidthPx) {
-                    if (!enabled) return@pointerInput
-                    detectDragGestures(
-                        onDragStart = { isDragging = true },
-                        onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
-                        onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
-                    ) { change, _ ->
-                        change.consume()
-                        val trackWidth = size.width - thumbWidthPx
-                        val trackStart = thumbWidthPx / 2
-                        val x = change.position.x.coerceIn(trackStart, trackStart + trackWidth)
-                        val fraction = (x - trackStart) / trackWidth
-                        val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
-                        currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
-                    }
+                .horizontalSliderDragInput(
+                    enabled = enabled,
+                    key1 = valueRange,
+                    key2 = thumbWidthPx,
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false; currentOnValueChangeFinished?.invoke() },
+                    onDragCancel = { isDragging = false; currentOnValueChangeFinished?.invoke() }
+                ) { positionX ->
+                    val trackWidth = size.width - thumbWidthPx
+                    val trackStart = thumbWidthPx / 2
+                    val x = positionX.coerceIn(trackStart, trackStart + trackWidth)
+                    val fraction = (x - trackStart) / trackWidth
+                    val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
+                    currentOnValueChange(newValue.coerceIn(valueRange.start, valueRange.endInclusive))
                 }
                 .pointerInput(enabled, valueRange, thumbWidthPx) {
                     if (!enabled) return@pointerInput
@@ -317,6 +318,54 @@ fun CustomSliderThinThumb(
                 size = Size(thumbWidthPx, thumbHeightPx),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(thumbWidthPx / 2, thumbWidthPx / 2)
             )
+        }
+    }
+}
+
+private fun Modifier.horizontalSliderDragInput(
+    enabled: Boolean,
+    key1: Any?,
+    key2: Any?,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onPositionChange: PointerInputScope.(Float) -> Unit
+): Modifier = pointerInput(enabled, key1, key2) {
+    if (!enabled) return@pointerInput
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var totalX = 0f
+        var totalY = 0f
+        var dragging = false
+
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null) {
+                if (dragging) onDragCancel()
+                break
+            }
+            if (!change.pressed) {
+                if (dragging) onDragEnd()
+                break
+            }
+
+            val positionChange = change.positionChange()
+            if (!dragging) {
+                totalX += positionChange.x
+                totalY += positionChange.y
+                if (abs(totalY) > viewConfiguration.touchSlop && abs(totalY) > abs(totalX)) {
+                    break
+                }
+                if (abs(totalX) <= viewConfiguration.touchSlop || abs(totalX) <= abs(totalY)) {
+                    continue
+                }
+                dragging = true
+                onDragStart()
+            }
+
+            change.consume()
+            onPositionChange(change.position.x)
         }
     }
 }
