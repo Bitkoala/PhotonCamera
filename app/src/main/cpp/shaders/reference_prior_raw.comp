@@ -79,6 +79,30 @@ float fetchNormalizedRaw(int bayerIndex, ivec2 samplePos) {
     return float(normalizedReferenceBuffer.data[idx]) / 65535.0;
 }
 
+float fetchReferenceNorm(ivec2 samplePos) {
+    samplePos.x = clamp(samplePos.x, 0, int(pc.sensorWidth) - 1);
+    samplePos.y = clamp(samplePos.y, 0, int(pc.sensorHeight) - 1);
+    uint idx = uint(samplePos.y) * pc.sensorWidth + uint(samplePos.x);
+    return float(normalizedReferenceBuffer.data[idx]) / 65535.0;
+}
+
+float referenceGuide(ivec2 samplePos) {
+    float sum = 0.0;
+    float weight = 0.0;
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            float w = (ox == 0 && oy == 0) ? 1.0 : 0.45;
+            sum += fetchReferenceNorm(samplePos + ivec2(ox, oy)) * w;
+            weight += w;
+        }
+    }
+    return sum / max(weight, 1e-5);
+}
+
+vec2 outputToSourceCenter(vec2 outputPos) {
+    return (outputPos + vec2(0.5)) / max(pc.scale, 1e-5) - vec2(0.5);
+}
+
 void samplePrior(int bayerIndex, vec2 sourcePos,
                  out float normalizedRaw, out float support) {
     ivec2 offset = getBayerOffset(pc.cfaPattern, bayerIndex);
@@ -98,11 +122,42 @@ void samplePrior(int bayerIndex, vec2 sourcePos,
 
     float vx0 = mix(v00, v10, frac.x);
     float vx1 = mix(v01, v11, frac.x);
-    normalizedRaw = mix(vx0, vx1, frac.y);
+    float bilinearRaw = mix(vx0, vx1, frac.y);
+
+    float g00 = referenceGuide(p00);
+    float g10 = referenceGuide(p10);
+    float g01 = referenceGuide(p01);
+    float g11 = referenceGuide(p11);
+    float gx0 = mix(g00, g10, frac.x);
+    float gx1 = mix(g01, g11, frac.x);
+    float guideCenter = mix(gx0, gx1, frac.y);
+    ivec2 nearestPos = (frac.x < 0.5)
+                           ? ((frac.y < 0.5) ? p00 : p01)
+                           : ((frac.y < 0.5) ? p10 : p11);
+    float nearestGuide = referenceGuide(nearestPos);
+    float guideTarget = mix(guideCenter, nearestGuide, 0.65);
+
+    vec4 spatialWeights = vec4((1.0 - frac.x) * (1.0 - frac.y),
+                               frac.x * (1.0 - frac.y),
+                               (1.0 - frac.x) * frac.y,
+                               frac.x * frac.y);
+    vec4 guideVals = vec4(g00, g10, g01, g11);
+    vec4 rawVals = vec4(v00, v10, v01, v11);
+    vec4 rangeWeights = exp(-pow(guideVals - vec4(guideTarget), vec4(2.0)) /
+                            vec4(2.0 * 0.028 * 0.028));
+    vec4 weights = max(spatialWeights, vec4(0.015)) * rangeWeights;
+    float edgeWeightSum = weights.x + weights.y + weights.z + weights.w;
+    float edgeRaw = dot(rawVals, weights) / max(edgeWeightSum, 1e-5);
+
+    float guideMin = min(min(g00, g10), min(g01, g11));
+    float guideMax = max(max(g00, g10), max(g01, g11));
+    float edgeStrength = smoothstep(0.035, 0.14, guideMax - guideMin);
+    normalizedRaw = mix(bilinearRaw, edgeRaw, edgeStrength);
 
     float sampleMin = min(min(v00, v10), min(v01, v11));
     float sampleMax = max(max(v00, v10), max(v01, v11));
-    float coherence = 1.0 - smoothstep(0.04, 0.18, sampleMax - sampleMin);
+    float coherence = 1.0 - smoothstep(0.04, 0.18,
+                                       max(sampleMax - sampleMin, guideMax - guideMin));
     float interpolationPenalty =
         0.5 * (4.0 * frac.x * (1.0 - frac.x) + 4.0 * frac.y * (1.0 - frac.y));
     float exactness = 1.0 - interpolationPenalty;
@@ -121,7 +176,7 @@ void main() {
     uint outIndex = y * pc.width + x;
     int bayerIndex = getBayerIndex(pc.cfaPattern, uvec2(x, y));
 
-    vec2 sourcePos = vec2(x, y) / max(pc.scale, 1e-5);
+    vec2 sourcePos = outputToSourceCenter(vec2(x, y));
     float normalizedRaw = 0.0;
     float support = 0.0;
     samplePrior(bayerIndex, sourcePos, normalizedRaw, support);

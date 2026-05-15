@@ -64,6 +64,18 @@ float inlierDecisionGate(float inlierPosterior) {
     return (inlierPosterior >= 0.5) ? 1.0 : 0.0;
 }
 
+vec2 sourceToOutputPlaneCenter(vec2 sourcePlanePos, ivec2 planeOffset) {
+    vec2 sourceSensorPos = vec2(planeOffset) + sourcePlanePos * 2.0;
+    vec2 outputSensorPos = (sourceSensorPos + vec2(0.5)) * pc.scale - vec2(0.5);
+    return (outputSensorPos - vec2(planeOffset)) * 0.5;
+}
+
+vec2 outputToSourcePlaneCenter(vec2 outputPlanePos, ivec2 planeOffset) {
+    vec2 outputSensorPos = vec2(planeOffset) + outputPlanePos * 2.0;
+    vec2 sourceSensorPos = (outputSensorPos + vec2(0.5)) / pc.scale - vec2(0.5);
+    return (sourceSensorPos - vec2(planeOffset)) * 0.5;
+}
+
 vec3 getKernelMatrix(vec4 params) {
     float k1 = params.x;
     float k2 = params.y;
@@ -168,7 +180,7 @@ void processPlane(ivec2 samplePlane, uint planeIndex) {
     vec2 samplePlanePos = vec2(samplePlane);
     vec2 flow = (pc.isFirstFrame == 0u) ? sampleFlow(samplePlanePos) : vec2(0.0);
     vec2 refPlanePos = samplePlanePos - flow;
-    vec2 outCenter = refPlanePos * pc.scale;
+    vec2 outCenter = sourceToOutputPlaneCenter(refPlanePos, sampleOffset);
     ivec2 base = ivec2(floor(outCenter));
 
     float raw = texelFetch(inputRawSampler, samplePos, 0).r;
@@ -206,7 +218,7 @@ void processPlane(ivec2 samplePlane, uint planeIndex) {
             vec2 d_hr = vec2(outPos) - outCenter;
             float reconWeight = cubicWeight(d_hr.x) * cubicWeight(d_hr.y);
             if (reconWeight <= 0.0) continue;
-            vec2 d = (vec2(outPos) / pc.scale) - refPlanePos;
+            vec2 d = outputToSourcePlaneCenter(vec2(outPos), sampleOffset) - refPlanePos;
             float mahalanobis = OmegaInv.x * d.x * d.x + 2.0 * OmegaInv.y * d.x * d.y + OmegaInv.z * d.y * d.y;
             float effectiveSigma2 = 1.0 + 4.0 * flowVar;
             float geometricLikelihood =
@@ -236,7 +248,11 @@ void main() {
     uint localY = gl_GlobalInvocationID.y;
     if (localX >= pc.tileW || localY >= pc.tileH) return;
 
-    ivec2 samplePlane = ivec2(int(pc.tileX + localX), int(pc.tileY + localY));
+    ivec2 sourceStart = ivec2(int(pc.tileX), int(pc.tileY));
+    if (pc.scale > 1.001) {
+        sourceStart = ivec2(floor(vec2(float(pc.tileX), float(pc.tileY)) / pc.scale)) - ivec2(2);
+    }
+    ivec2 samplePlane = sourceStart + ivec2(int(localX), int(localY));
     processPlane(samplePlane, 0u);
     processPlane(samplePlane, 3u);
 }

@@ -188,8 +188,12 @@ void main() {
         observationSupport = confidence;
         if (neighborSupport > 0.0 && confidence < 0.999) {
             float highlightBlend = smoothstep(0.70, 0.96, max(val, neighborVal));
-            float preserveCenter = confidence * (1.0 - 0.55 * highlightBlend);
-            val = mix(neighborVal, val, preserveCenter);
+            float edgeDelta = abs(neighborVal - val);
+            float edgeKeep = smoothstep(0.025, 0.090, edgeDelta);
+            float neighborBlend =
+                (1.0 - confidence) * (1.0 - 0.55 * highlightBlend) *
+                (1.0 - edgeKeep);
+            val = mix(val, neighborVal, neighborBlend);
             observationSupport = max(observationSupport, 0.30 * neighborSupport);
         }
         hasEstimate = true;
@@ -237,8 +241,10 @@ void main() {
                 float neighLocalSupport = clamp(float(neighAccum.y) / 768.0, 0.0, 1.0);
                 if (neighLocalSupport <= 0.0) continue;
 
-                uint neighGlobalX = uint(offset.x) + uint(clamp(nx, 0, int(pc.tileW) - 1)) * 2u;
-                uint neighGlobalY = uint(offset.y) + uint(clamp(ny, 0, int(pc.tileH) - 1)) * 2u;
+                uint neighGlobalX = uint(offset.x) +
+                                    (pc.tileX + uint(clamp(nx, 0, int(pc.tileW) - 1))) * 2u;
+                uint neighGlobalY = uint(offset.y) +
+                                    (pc.tileY + uint(clamp(ny, 0, int(pc.tileH) - 1))) * 2u;
                 float neighNorm = computeObservationNorm(accumMean(neighAccum), bayerIndex);
                 float neighGreen = readGuidedGreenNorm(neighGlobalX, neighGlobalY);
                 float neighDiff = neighNorm - neighGreen;

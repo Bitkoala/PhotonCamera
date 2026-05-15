@@ -223,7 +223,10 @@ void main() {
         float val = (primary.y > 0u) ? primaryVal : neighborVal;
         
         if (neighborWeight > 0.0 && primaryConfidence < 0.99) {
-            val = mix(neighborVal, val, primaryConfidence);
+            float edgeDelta = abs(neighborVal - val);
+            float edgeKeep = smoothstep(0.025, 0.085, edgeDelta);
+            float neighborBlend = (1.0 - primaryConfidence) * (1.0 - edgeKeep);
+            val = mix(val, neighborVal, neighborBlend);
         }
         observationNorm = computeObservationNorm(val, bayerIndex);
     }
