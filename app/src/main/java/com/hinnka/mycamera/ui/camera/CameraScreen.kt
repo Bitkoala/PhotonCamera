@@ -194,9 +194,7 @@ fun CameraScreen(
 
     // 从后台返回时检查并恢复相机，刷新最新照片
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (cameraOpened) {
-            viewModel.checkAndRecoverCamera()
-        }
+        viewModel.checkAndRecoverCamera()
         galleryViewModel.refreshLatestPhoto()
 
         // Handle automated ghost mode permission sequence
@@ -726,6 +724,7 @@ fun CameraScreen(
                     CameraPreviewGL(
                         aspectRatio = previewAspectRatio,
                         previewSize = previewSize,
+                        captureMode = state.captureMode,
                         sensorOrientation = state.getCurrentCameraInfo()?.sensorOrientation ?: 0,
                         lensFacing = if (state.getCurrentCameraInfo()?.lensFacing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT) 0 else 1,
                         calibrationOffset = calibrationOffset,

@@ -371,7 +371,7 @@ class Camera2Controller(private val context: Context) {
                         if (refProduct > 0) {
                             val ratio = if (curProduct > refProduct) curProduct / refProduct else refProduct / curProduct
                             if (ratio > SCENE_CHANGE_EXPOSURE_RATIO) {
-                                PLog.d(TAG, "scene change: exposure ratio=$ratio")
+//                                PLog.d(TAG, "scene change: exposure ratio=$ratio")
                                 sceneChanged = true
                             }
                         }
@@ -382,7 +382,7 @@ class Camera2Controller(private val context: Context) {
                     if (focusLockedReferenceDistance > 0f && currentFocusDistance > 0f) {
                         val delta = abs(currentFocusDistance - focusLockedReferenceDistance)
                         if (delta > SCENE_CHANGE_FOCUS_DISTANCE_DELTA) {
-                            PLog.d(TAG, "scene change: focusDistance delta=$delta (ref=$focusLockedReferenceDistance, cur=$currentFocusDistance)")
+//                            PLog.d(TAG, "scene change: focusDistance delta=$delta (ref=$focusLockedReferenceDistance, cur=$currentFocusDistance)")
                             sceneChanged = true
                         }
                     }
@@ -669,6 +669,7 @@ class Camera2Controller(private val context: Context) {
     fun openCamera(surfaceTexture: SurfaceTexture, preserveVideoRecording: Boolean = false) {
         // 先关闭旧的相机和资源，防止资源泄漏
         closeCamera(preserveVideoRecording = preserveVideoRecording)
+        previewAiFocusProcessor.resetForPreviewRestart()
         val openGeneration = ++cameraOpenGeneration
 
         // 确保在权限已授予后才发现相机（延迟初始化）
@@ -3523,6 +3524,7 @@ class Camera2Controller(private val context: Context) {
     fun closeCamera(preserveVideoRecording: Boolean = false) {
         try {
             cameraOpenGeneration++
+            previewAiFocusProcessor.resetForPreviewRestart()
             val keepVideoRecording = preserveVideoRecording && _state.value.videoRecordingState.isRecording
             if (keepVideoRecording) {
                 PLog.d(TAG, "Closing camera while keeping active video recording")

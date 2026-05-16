@@ -69,10 +69,10 @@ fun FocusIndicator(
             val x = position.first * size.width
             val y = position.second * size.height
             val isAiFocus = source == FocusPointSource.AI
-            val boxSize = (if (isAiFocus) 38.dp else 60.dp).toPx() * scale
+            val boxSize = (if (isAiFocus) 20.dp else 60.dp).toPx() * scale
             val halfSize = boxSize / 2
-            val cornerLength = (if (isAiFocus) 9.dp else 15.dp).toPx()
-            val strokeWidth = (if (isAiFocus) 1.5.dp else 2.dp).toPx()
+            val cornerLength = (if (isAiFocus) 5.dp else 15.dp).toPx()
+            val strokeWidth = (if (isAiFocus) 1.dp else 2.dp).toPx()
 
             val drawColor = color.copy(alpha = alpha)
 

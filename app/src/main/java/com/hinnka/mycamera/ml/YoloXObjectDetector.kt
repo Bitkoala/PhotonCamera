@@ -44,6 +44,12 @@ class YoloXObjectDetector(context: Context) {
     private var isInitialized = false
     private var activeBackend = "NONE"
     private val labels: List<String>
+    private val inputBuffer = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3).order(ByteOrder.nativeOrder())
+    private val boxesBuffer = ByteBuffer.allocateDirect(DETECTION_COUNT * 4).order(ByteOrder.nativeOrder())
+    private val scoresBuffer = ByteBuffer.allocateDirect(DETECTION_COUNT).order(ByteOrder.nativeOrder())
+    private val classIdxBuffer = ByteBuffer.allocateDirect(DETECTION_COUNT).order(ByteOrder.nativeOrder())
+    private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+    private val outputs = mapOf(0 to boxesBuffer, 1 to scoresBuffer, 2 to classIdxBuffer)
 
     @Volatile
     var targetMode: AiFocusTargetMode = AiFocusTargetMode.PERSON
@@ -131,13 +137,12 @@ class YoloXObjectDetector(context: Context) {
 
         return try {
             val input = createInputBuffer(inputBitmap)
-            val boxes = ByteBuffer.allocateDirect(DETECTION_COUNT * 4).order(ByteOrder.nativeOrder())
-            val scores = ByteBuffer.allocateDirect(DETECTION_COUNT).order(ByteOrder.nativeOrder())
-            val classIdx = ByteBuffer.allocateDirect(DETECTION_COUNT).order(ByteOrder.nativeOrder())
-            val outputs = mapOf(0 to boxes, 1 to scores, 2 to classIdx)
+            boxesBuffer.rewind()
+            scoresBuffer.rewind()
+            classIdxBuffer.rewind()
 
             activeInterpreter.runForMultipleInputsOutputs(arrayOf(input), outputs)
-            val detections = parseDetections(boxes, scores, classIdx)
+            val detections = parseDetections(boxesBuffer, scoresBuffer, classIdxBuffer)
             detections
         } catch (e: Exception) {
             PLog.e(TAG, "Error during YOLOX inference", e)
@@ -162,16 +167,15 @@ class YoloXObjectDetector(context: Context) {
         } else {
             Bitmap.createScaledBitmap(inputBitmap, INPUT_SIZE, INPUT_SIZE, true)
         }
-        val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
         scaled.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
-        val buffer = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3).order(ByteOrder.nativeOrder())
+        inputBuffer.rewind()
         for (pixel in pixels) {
-            buffer.put(((pixel shr 16) and 0xFF).toByte())
-            buffer.put(((pixel shr 8) and 0xFF).toByte())
-            buffer.put((pixel and 0xFF).toByte())
+            inputBuffer.put(((pixel shr 16) and 0xFF).toByte())
+            inputBuffer.put(((pixel shr 8) and 0xFF).toByte())
+            inputBuffer.put((pixel and 0xFF).toByte())
         }
-        buffer.rewind()
-        return buffer
+        inputBuffer.rewind()
+        return inputBuffer
     }
 
     private fun parseDetections(

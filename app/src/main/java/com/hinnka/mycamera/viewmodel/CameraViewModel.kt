@@ -838,6 +838,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 关闭相机
      */
     fun closeCamera() {
+        currentSurfaceTexture = null
         cameraController.closeCamera()
     }
 
@@ -1468,7 +1469,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val shouldDisableVideoLog = mode == CaptureMode.PHOTO &&
             state.value.videoConfig.logProfile != VideoLogProfile.OFF
         cameraController.setCaptureMode(mode)
-        reopenCamera()
+        cameraController.previewAiFocusProcessor.resetForPreviewRestart()
+        currentSurfaceTexture = null
+        cameraController.closeCamera()
         viewModelScope.launch {
             userPreferencesRepository.saveCaptureMode(mode)
             if (shouldDisableVideoLog) {

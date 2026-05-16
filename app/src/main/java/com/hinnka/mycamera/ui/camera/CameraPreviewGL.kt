@@ -24,6 +24,7 @@ import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.components.FocusIndicator
 import com.hinnka.mycamera.utils.OrientationObserver
+import com.hinnka.mycamera.video.CaptureMode
 import com.hinnka.mycamera.video.VideoLogProfile
 import com.hinnka.mycamera.video.VideoRecorder
 
@@ -36,6 +37,7 @@ import com.hinnka.mycamera.video.VideoRecorder
 fun CameraPreviewGL(
     aspectRatio: Float,
     previewSize: Size,
+    captureMode: CaptureMode,
     sensorOrientation: Int,
     lensFacing: Int,
     calibrationOffset: Int,
@@ -69,6 +71,7 @@ fun CameraPreviewGL(
     val rotationDegrees = OrientationObserver.rotationDegrees
     val lifecycleOwner = LocalLifecycleOwner.current
     var glSurfaceViewRef by remember { mutableStateOf<CameraGLSurfaceView?>(null) }
+    var resumeGeneration by remember { mutableIntStateOf(0) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -77,6 +80,7 @@ fun CameraPreviewGL(
                 Lifecycle.Event.ON_RESUME -> {
                     glSurfaceViewRef?.onResume()
                     glSurfaceViewRef?.restoreRenderStateAfterResume()
+                    resumeGeneration++
                 }
                 else -> Unit
             }
@@ -120,6 +124,7 @@ fun CameraPreviewGL(
         // 标记是否已经通知过 SurfaceTexture
         var surfaceTextureNotified by remember { mutableStateOf(false) }
         var notifiedPreviewSize by remember { mutableStateOf<Size?>(null) }
+        var notifiedResumeGeneration by remember { mutableIntStateOf(-1) }
         // 标记 Surface 是否已经准备好
         var surfaceAvailable by remember { mutableStateOf(false) }
 
@@ -139,7 +144,7 @@ fun CameraPreviewGL(
                 }
         ) {
             // GLSurfaceView 用于相机预览
-            key(previewSize.width, previewSize.height) {
+            key(previewSize.width, previewSize.height, captureMode) {
                 AndroidView(
                     factory = { ctx ->
                         CameraGLSurfaceView(ctx).apply {
@@ -160,10 +165,13 @@ fun CameraPreviewGL(
                         }
 
                         glSurfaceView.onSurfaceDestroyed = {
-                            surfaceAvailable = false
-                            surfaceTextureNotified = false
-                            notifiedPreviewSize = null
-                            onSurfaceDestroyed()
+                            if (glSurfaceViewRef === glSurfaceView) {
+                                surfaceAvailable = false
+                                surfaceTextureNotified = false
+                                notifiedPreviewSize = null
+                                notifiedResumeGeneration = -1
+                                onSurfaceDestroyed()
+                            }
                         }
 
                         glSurfaceView.onHistogramUpdated = { onHistogramUpdated?.invoke(it) }
@@ -187,10 +195,13 @@ fun CameraPreviewGL(
                             glSurfaceView.getSurfaceTexture()?.let { surfaceTexture ->
                                 glSurfaceView.setPreviewSize(previewSize.width, previewSize.height)
                                 val shouldNotifySurfaceTexture =
-                                    !surfaceTextureNotified || notifiedPreviewSize != previewSize
+                                    !surfaceTextureNotified ||
+                                        notifiedPreviewSize != previewSize ||
+                                        notifiedResumeGeneration != resumeGeneration
                                 if (shouldNotifySurfaceTexture) {
                                     surfaceTextureNotified = true
                                     notifiedPreviewSize = previewSize
+                                    notifiedResumeGeneration = resumeGeneration
                                     onSurfaceTextureReady(surfaceTexture)
                                 }
                             }
