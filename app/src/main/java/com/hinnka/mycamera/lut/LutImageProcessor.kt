@@ -22,6 +22,7 @@ import java.nio.FloatBuffer
 import java.nio.ShortBuffer
 import java.util.concurrent.Executors
 import androidx.core.graphics.createBitmap
+import kotlin.math.sqrt
 
 /**
  * LUT 图片处理器
@@ -1155,8 +1156,11 @@ class LutImageProcessor {
         val texelW = 1.0f / width
         val texelH = 1.0f / height
         // 将降噪强度映射到合理范围 (0.001 ~ 0.1)
-        val h = 0.001f + noiseReduction * noiseReduction * 0.2f
-        val ch = 0.001f + chromaNoiseReduction * chromaNoiseReduction * 0.2f
+        val h = noiseReduction
+        val ch = chromaNoiseReduction
+
+        val s = 0.015f
+        val o = 0.001f
 
         val identityMatrix = FloatArray(16)
         android.opengl.Matrix.setIdentityM(identityMatrix, 0)
@@ -1177,6 +1181,7 @@ class LutImageProcessor {
             0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmChromaProgram, "uH"), ch)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(nlmChromaProgram, "uNoiseModel"), s, o)
         drawQuad(nlmChromaProgram)
 
         // NLM Pass H
@@ -1195,6 +1200,7 @@ class LutImageProcessor {
             0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmPassHProgram, "uH"), h)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(nlmPassHProgram, "uNoiseModel"), s, o)
         drawQuad(nlmPassHProgram)
 
         // NLM Pass V
@@ -1216,6 +1222,7 @@ class LutImageProcessor {
             0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmPassVProgram, "uH"), h)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(nlmPassVProgram, "uNoiseModel"), s, o)
         drawQuad(nlmPassVProgram)
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)

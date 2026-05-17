@@ -366,7 +366,6 @@ class RawDemosaicProcessor {
                 rawDROMode = rawDROMode,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
-                chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan
             )?.sdrBitmap
@@ -450,7 +449,6 @@ class RawDemosaicProcessor {
         rawDROMode: DROMode = DROMode.fromPersistedName(null),
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
-        chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
         dngFile: File? = null,
@@ -660,7 +658,7 @@ class RawDemosaicProcessor {
                 height = actualHeight,
                 metadata = actualMetadata,
                 denoiseValue = denoiseValue,
-                chromaDenoiseValue = chromaDenoiseValue,
+                chromaDenoiseValue = denoiseValue,
             )
             // demosaicTextureId / gfChromaTexId / gfTexId[0] 已被 NLM Pass 消费，提前释放
             if (demosaicTextureId != 0) {
@@ -1156,31 +1154,19 @@ class RawDemosaicProcessor {
         val postGain = ExposureNormalization.compute(metadata)
         val totalGain = (isoGain * digitalGain * postGain).coerceAtLeast(0f)
 
-        // 基于噪声特性的基础强度
-        val s = metadata.noiseProfile[0]
-        val o = metadata.noiseProfile[1]
-        // 估算标准差，映射到一个易用的量级 (使用 1e-3 作为中等 RAW 亮度的估算)
-        val noiseBase = (sqrt((s * 1e-3f + o * 1e-6f).toDouble()).toFloat() * 100.0f)
+        var (s, o) = resolveDenoiseNoiseModel(metadata, totalGain)
 
-        // 动态计算 h 值 (衰减系数)
-        // 让 noiseProfile 的基础噪声和总增益都更明显地参与估算：
-        // 1. noiseBase 直接决定主体强度
-        // 2. totalGain 同时以 sqrt 与线性两部分参与，提升高增益场景下的去噪力度
-        val gainSqrt = sqrt(totalGain.toDouble()).toFloat()
-        val gainNoise = 0.0035f * gainSqrt + 0.0006f * totalGain
-        val baseNoise = if (noiseBase > 0f) {
-            noiseBase * 0.8f
-        } else {
-            0.010f * gainSqrt
+        if (s <= 0 || o <= 0) {
+            s = 1E-4f * totalGain
+            o = 4.5E-7f * sqrt(totalGain)
         }
-        val noise = baseNoise + gainNoise
 
         val denoiseValue = denoiseValue ?: 0f
         val chromaDenoiseValue = chromaDenoiseValue ?: 0f
 
-        val h = (noise * denoiseValue).coerceIn(0.0f, 0.1f)
-        val ch = (noise * (chromaDenoiseValue + 0.5f)).coerceIn(0.0f, 0.1f)
-        PLog.d(TAG, "Dynamic BM3D: noise=$noise, h=$h ch=$ch")
+        val h = denoiseValue
+        val ch = chromaDenoiseValue + 0.5f
+        PLog.d(TAG, "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch iso=${metadata.iso}")
 
         val identityMatrix = FloatArray(16)
         GlMatrix.setIdentityM(identityMatrix, 0)
@@ -1199,6 +1185,7 @@ class RawDemosaicProcessor {
             1, false, identityMatrix, 0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(gfPass0Program, "uH"), ch)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(gfPass0Program, "uNoiseModel"), s, o)
         drawQuad(gfPass0Program)
 
         // ===== BM3D Pass 1: Basic Estimate (gfChromaTexId -> gfFboId[0]) =====
@@ -1215,6 +1202,7 @@ class RawDemosaicProcessor {
             1, false, identityMatrix, 0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmPassHProgram, "uH"), h)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(nlmPassHProgram, "uNoiseModel"), s, o)
         drawQuad(nlmPassHProgram)
 
         // ===== BM3D Pass 2: Wiener Refinement (gfChromaTexId + gfTexId[0] -> gfFboId[1]) =====
@@ -1236,9 +1224,22 @@ class RawDemosaicProcessor {
             1, false, identityMatrix, 0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmPassVProgram, "uH"), h)
+        GLES30.glUniform2f(GLES30.glGetUniformLocation(nlmPassVProgram, "uNoiseModel"), s, o)
         drawQuad(nlmPassVProgram)
 
         checkGlError("renderNLMDenoise")
+    }
+
+    private fun resolveDenoiseNoiseModel(metadata: RawMetadata, totalGain: Float): Pair<Float, Float> {
+        var s = metadata.noiseProfile.getOrElse(0) { 0f }
+        var o = metadata.noiseProfile.getOrElse(1) { 0f }
+
+        if (s <= 0f || o <= 0f) {
+            s = 1E-4f * totalGain
+            o = 4.5E-7f * sqrt(totalGain)
+        }
+
+        return s.coerceAtLeast(1e-10f) to o.coerceAtLeast(1e-10f)
     }
 
     private fun dhtSetCommonUniforms(program: Int, metadata: RawMetadata) {

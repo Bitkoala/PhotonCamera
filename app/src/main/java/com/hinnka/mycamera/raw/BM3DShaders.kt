@@ -13,10 +13,10 @@ package com.hinnka.mycamera.raw
  *   PASS2_WIENER          →  gfFboId[1]   (final Wiener-filtered result)
  *
  * Uniform interface (caller side):
- *   Pass 0  uInputTexture=source,              uH=chromaH
- *   Pass 1  uInputTexture=chromaTex,           uH=h
+ *   Pass 0  uInputTexture=source,              uH=chromaH, uNoiseModel=(S,O)
+ *   Pass 1  uInputTexture=chromaTex,           uH=h,       uNoiseModel=(S,O)
  *   Pass 2  uInputTexture=chromaTex (noisy),
- *           uBasicTexture=gfTexId[0] (basic),  uH=h
+ *           uBasicTexture=gfTexId[0] (basic),  uH=h,       uNoiseModel=(S,O)
  *
  * Performance budget (5×5 search, 3×3 luma patch):
  *   Pass 1 ≈ 234 tex reads/px   Pass 2 ≈ 260 tex reads/px
@@ -39,6 +39,7 @@ object BM3DShaders {
         uniform vec2 uTexelSize;
         uniform mat4 uTexMatrix;
         uniform float uH;
+        uniform vec2 uNoiseModel;
 
         vec3 rgb2ycbcr(vec3 rgb) {
             float y = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -52,6 +53,11 @@ object BM3DShaders {
                         yuv.x - 0.3441 * cb - 0.7141 * cr,
                         yuv.x + 1.772  * cb);
         }
+        float noiseScaleForLuma(float luma) {
+            float x = max(luma, 0.001);
+            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
+            return 1.0 / snr;
+        }
 
         void main() {
             vec3 oriRgb = texture(uInputTexture, vTexCoord).rgb;
@@ -63,8 +69,9 @@ object BM3DShaders {
 
             // Chroma noise is low-frequency → large spatial step scale
             float stepScale   = 6.5;
-            float invChromaH2 = 1.0 / max((uH * 1.5) * (uH * 1.5), 1e-6);
-            float invLumaH2   = 1.0 / max((uH * 0.5) * (uH * 0.5), 1e-6);
+            float localH      = uH * noiseScaleForLuma(yuv.x);
+            float invChromaH2 = 1.0 / max((localH * 1.5) * (localH * 1.5), 1e-6);
+            float invLumaH2   = 1.0 / max((localH * 0.5) * (localH * 0.5), 1e-6);
 
             for (int x = -2; x <= 2; x++) {
                 for (int y = -2; y <= 2; y++) {
@@ -105,6 +112,7 @@ object BM3DShaders {
         uniform vec2 uTexelSize;
         uniform mat4 uTexMatrix;
         uniform float uH;
+        uniform vec2 uNoiseModel;
 
         // 5×5 search window, 3×3 luma patch
         #define SEARCH_RADIUS 2
@@ -129,14 +137,16 @@ object BM3DShaders {
             float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
             return soft * gate;
         }
+        float noiseScaleForLuma(float luma) {
+            float x = max(luma, 0.001);
+            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
+            return 1.0 / snr;
+        }
 
         void main() {
             vec3 centerVal = texture(uInputTexture, vTexCoord).rgb;
             if (uH <= 0.00001) { fragColor = vec4(centerVal, 1.0); return; }
 
-            // BM3D hard threshold: τ = factor × σ² × patch_size
-            // factor 2.7 is the standard BM3D constant, tuned here for 3×3 patches
-            float threshold = uH * uH * 9.0 * 2.7;
             vec2  T = uTexelSize;
             vec3  centerYuv = rgb2ycbcr(centerVal);
 
@@ -151,6 +161,11 @@ object BM3DShaders {
             float c20 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0,-1.0)*T).rgb, LW);
             float c21 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
+            float localH = uH * noiseScaleForLuma(c11);
+
+            // BM3D hard threshold: τ = factor × σ² × patch_size
+            // factor 2.7 is the standard BM3D constant, tuned here for 3×3 patches
+            float threshold = localH * localH * 9.0 * 2.7;
 
             float sumLuma   = 0.0;
             vec2  sumChroma = vec2(0.0);
@@ -194,7 +209,7 @@ object BM3DShaders {
             // Fallback for low-match cases (edges/isolated noise) to break up clusters.
             // Uses a tiny 3x3 guided luma average since we already have the patch data.
             float lwSum = 1.0; float lvalSum = c11;
-            float invH2 = 1.0 / max(uH * uH * 2.0, 1e-5);
+            float invH2 = 1.0 / max(localH * localH * 2.0, 1e-5);
             float w;
             w = exp(-(c00-c11)*(c00-c11)*invH2); lwSum += w; lvalSum += c00*w;
             w = exp(-(c01-c11)*(c01-c11)*invH2); lwSum += w; lvalSum += c01*w;
@@ -243,6 +258,7 @@ object BM3DShaders {
         uniform vec2 uTexelSize;
         uniform mat4 uTexMatrix;
         uniform float uH;
+        uniform vec2 uNoiseModel;
 
         // Same search / patch geometry as Pass 1
         #define SEARCH_RADIUS 2
@@ -266,6 +282,11 @@ object BM3DShaders {
             float soft = exp(-ssd / t);
             float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
             return soft * gate;
+        }
+        float noiseScaleForLuma(float luma) {
+            float x = max(luma, 0.001);
+            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
+            return 1.0 / snr;
         }
         float wideGuidedLumaBase(vec2 uv, vec2 texelSize, float centerGuideLuma, float sigma_n2) {
             float sumY = 0.0;
@@ -315,9 +336,10 @@ object BM3DShaders {
             float c21 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
 
-            // Smoother luma noise boost to avoid abrupt transitions at edges
-            float lumaNoiseBoost = mix(1.25, 0.85, smoothstep(0.02, 0.80, c11));
-            float sigma_n2 = uH * uH * lumaNoiseBoost * lumaNoiseBoost;
+            // Sensor noise model: variance = S * luma + O, normalized so uH keeps
+            // its existing mid-gray strength while local denoise follows brightness.
+            float localH = uH * noiseScaleForLuma(c11);
+            float sigma_n2 = localH * localH;
             float threshold = sigma_n2 * 9.0 * 2.7; // same τ as Pass 1, adapted by luma
 
             vec3  basicYuv  = rgb2ycbcr(basicCenter);
@@ -398,7 +420,7 @@ object BM3DShaders {
                 edgeSq + varSignal
             );
             float matchConfidence = smoothstep(2.5, 8.0, N) * smoothstep(0.08, 0.36, basicSample.a);
-            float residualLimit = max(uH * 0.65, 0.003);
+            float residualLimit = max(localH * 0.65, 0.003);
             float residualPull = clamp(fullResY - lowFreqY, -residualLimit, residualLimit);
             float lowFreqStrength = 0.35 * flatness * matchConfidence * (1.0 - detailProtect * 0.65);
             float finalY = fullResY - residualPull * clamp(lowFreqStrength, 0.0, 0.35);
