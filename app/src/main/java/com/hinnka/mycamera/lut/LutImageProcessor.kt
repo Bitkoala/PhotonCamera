@@ -1156,8 +1156,8 @@ class LutImageProcessor {
         val texelW = 1.0f / width
         val texelH = 1.0f / height
         // 将降噪强度映射到合理范围 (0.001 ~ 0.1)
-        val h = noiseReduction
-        val ch = chromaNoiseReduction
+        val h = noiseReduction * noiseReduction
+        val ch = chromaNoiseReduction * chromaNoiseReduction
 
         val s = 0.015f
         val o = 0.001f

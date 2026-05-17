@@ -1164,8 +1164,8 @@ class RawDemosaicProcessor {
         val denoiseValue = denoiseValue ?: 0f
         val chromaDenoiseValue = chromaDenoiseValue ?: 0f
 
-        val h = denoiseValue
-        val ch = chromaDenoiseValue + 0.5f
+        val h = denoiseValue * denoiseValue
+        val ch = chromaDenoiseValue * chromaDenoiseValue + 0.5f
         PLog.d(TAG, "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch iso=${metadata.iso}")
 
         val identityMatrix = FloatArray(16)
