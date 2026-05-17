@@ -152,8 +152,8 @@ fun LutSelector(
     LaunchedEffect(activeLutId, availableLuts, categoryTabs) {
         val selectedLut = availableLuts.find { it.id == activeLutId }
         selectedCategory = when {
-            selectedLut?.isFavorite == true -> LutCategoryTab.Favorite
             selectedLut != null && selectedCategory.contains(selectedLut) -> selectedCategory
+            selectedLut?.isFavorite == true -> LutCategoryTab.Favorite
             selectedLut != null -> preferredCategoryFor(selectedLut)
             selectedCategory in categoryTabs -> selectedCategory
             else -> LutCategoryTab.BuiltIn
