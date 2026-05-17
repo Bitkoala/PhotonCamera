@@ -30,8 +30,6 @@ import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.video.*
 import com.hinnka.mycamera.video.VideoCodec
-import com.hinnka.mycamera.raw.DcpInfo
-import com.hinnka.mycamera.lut.LutInfo
 
 private enum class VideoSettingPanel {
     ASPECT_RATIO,
@@ -41,7 +39,7 @@ private enum class VideoSettingPanel {
     MICROPHONE
 }
 
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CameraTopSheet(
     visible: Boolean,
@@ -77,35 +75,9 @@ fun CameraTopSheet(
     onMultipleExposureToggle: (Boolean) -> Unit,
     useMFSR: Boolean,
     onMFSRToggle: (Boolean) -> Unit,
-    // RAW Edit Panel parameters
-    selectedDcpId: String?,
-    availableDcps: List<DcpInfo>,
-    selectedBaselineLutId: String?,
-    onSelectBaselineLut: (String?) -> Unit,
-    onEditBaselineRecipe: (String) -> Unit,
-    availableLuts: List<LutInfo>,
-    thumbnail: android.graphics.Bitmap?,
-    rawNlmNoiseFactor: Float,
-    rawExposureCompensation: Float,
-    rawAutoExposure: Boolean,
-    rawDROMode: String,
-    rawBlackPointCorrection: Float,
-    rawWhitePointCorrection: Float,
-    onSelectDcp: (String?) -> Unit,
-    onImportDcp: () -> Unit,
-    onDeleteDcp: (DcpInfo) -> Unit,
-    onRawNlmNoiseFactorChange: (Float) -> Unit,
-    onRawExposureCompensationChange: (Float) -> Unit,
-    onRawAutoExposureChange: (Boolean) -> Unit,
-    onRawDROModeChange: (String) -> Unit,
-    onRawBlackPointCorrectionChange: (Float) -> Unit,
-    onRawWhitePointCorrectionChange: (Float) -> Unit,
-    onAdjustmentStart: () -> Unit,
-    onAdjustmentEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expandedVideoPanel by rememberSaveable { mutableStateOf<VideoSettingPanel?>(null) }
-    var showRawSheet by rememberSaveable { mutableStateOf(false) }
     AnimatedVisibility(
         visible = visible,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -174,10 +146,10 @@ fun CameraTopSheet(
                     )
 
                     if (isRawSupported) {
-                        QuickSettingButton2(
+                        QuickSettingToggle(
                             title = "RAW",
                             checked = useRaw,
-                            onClick = { showRawSheet = true },
+                            onCheckedChange = onRawToggle,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -467,79 +439,6 @@ fun CameraTopSheet(
             }
 
             Spacer(Modifier.weight(1f))
-        }
-    }
-
-    if (showRawSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showRawSheet = false },
-            containerColor = Color(0xFF1E1E1E),
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.2f)) }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 32.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.settings_use_raw),
-                        color = Color.White,
-                        fontSize = 16.sp
-                    )
-                    Switch(
-                        checked = useRaw,
-                        onCheckedChange = onRawToggle,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFFFF6B35),
-                            uncheckedThumbColor = Color.Gray,
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
-                            uncheckedBorderColor = Color.Transparent
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                com.hinnka.mycamera.ui.components.RawEditPanel(
-                    selectedDcpId = selectedDcpId,
-                    availableDcps = availableDcps,
-                    selectedBaselineLutId = selectedBaselineLutId,
-                    onSelectBaselineLut = onSelectBaselineLut,
-                    onEditBaselineRecipe = {
-                        showRawSheet = false
-                        onEditBaselineRecipe(it)
-                    },
-                    availableLuts = availableLuts,
-                    thumbnail = thumbnail,
-                    rawNlmNoiseFactor = rawNlmNoiseFactor,
-                    rawExposureCompensation = rawExposureCompensation,
-                    rawAutoExposure = rawAutoExposure,
-                    rawDROMode = rawDROMode,
-                    rawBlackPointCorrection = rawBlackPointCorrection,
-                    rawWhitePointCorrection = rawWhitePointCorrection,
-                    onSelectDcp = onSelectDcp,
-                    onImportDcp = onImportDcp,
-                    onDeleteDcp = onDeleteDcp,
-                    onRawNlmNoiseFactorChange = onRawNlmNoiseFactorChange,
-                    onRawExposureCompensationChange = onRawExposureCompensationChange,
-                    onRawAutoExposureChange = onRawAutoExposureChange,
-                    onRawDROModeChange = onRawDROModeChange,
-                    onRawBlackPointCorrectionChange = onRawBlackPointCorrectionChange,
-                    onRawWhitePointCorrectionChange = onRawWhitePointCorrectionChange,
-                    onAdjustmentStart = onAdjustmentStart,
-                    onAdjustmentEnd = onAdjustmentEnd
-                )
-            }
         }
     }
 }

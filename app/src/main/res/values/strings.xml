@@ -250,6 +250,11 @@
     <string name="settings_baseline_dialog_description">Select a baseline LUT for this target. It will be applied before the regular creative LUT.</string>
     <string name="settings_baseline_edit_recipe">Edit Recipe</string>
     <string name="settings_baseline_clear">Clear</string>
+    <string name="lut_selector_style_tab">Style</string>
+    <string name="lut_selector_baseline_tab">Baseline</string>
+    <string name="baseline_target_jpg">JPG</string>
+    <string name="baseline_target_raw">RAW</string>
+    <string name="baseline_target_phantom">Phantom</string>
     <string name="settings_shutter_sound">Shutter Sound</string>
     <string name="settings_shutter_sound_description">Play sound when taking a photo</string>
     <string name="settings_vibration">Vibration</string>

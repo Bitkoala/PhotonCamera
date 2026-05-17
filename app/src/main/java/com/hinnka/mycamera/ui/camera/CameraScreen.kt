@@ -70,6 +70,7 @@ import com.hinnka.mycamera.MyCameraApplication
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.CameraState
+import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.components.*
 import com.hinnka.mycamera.utils.OrientationObserver
@@ -133,7 +134,9 @@ fun CameraScreen(
     val videoAudioInputOptions by viewModel.videoAudioInputOptions.collectAsState()
     val phantomPipPreview by viewModel.phantomPipPreview.collectAsState()
     val rawDcpId by viewModel.rawDcpId.collectAsState()
+    val jpgBaselineLutId by viewModel.jpgBaselineLutId.collectAsState()
     val rawBaselineLutId by viewModel.rawBaselineLutId.collectAsState()
+    val phantomBaselineLutId by viewModel.phantomBaselineLutId.collectAsState()
     val rawNlmNoiseFactor by viewModel.rawNlmNoiseFactor.collectAsState()
     val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
     val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
@@ -155,6 +158,8 @@ fun CameraScreen(
     var previewTransitionSawPause by remember { mutableStateOf(false) }
     var hasPlayedInitialPreviewTransition by remember { mutableStateOf(false) }
     var rawCaptureTapLocked by remember { mutableStateOf(false) }
+    var baselineEditLutId by remember { mutableStateOf<String?>(null) }
+    var baselineEditTarget by remember { mutableStateOf<BaselineColorCorrectionTarget?>(null) }
 
     // 标记相机是否已打开
     var cameraOpened by remember { mutableStateOf(false) }
@@ -164,6 +169,16 @@ fun CameraScreen(
     var selectedParameter by remember { mutableStateOf(CameraParameter.EXPOSURE_COMPENSATION) }
     var showVideoParameterRuler by remember { mutableStateOf(false) }
     val isXpan = state.aspectRatio == AspectRatio.XPAN
+    val activeBaselineTarget = when {
+        phantomMode -> BaselineColorCorrectionTarget.PHANTOM
+        useRaw && state.captureMode == CaptureMode.PHOTO && state.isRawSupported -> BaselineColorCorrectionTarget.RAW
+        else -> BaselineColorCorrectionTarget.JPG
+    }
+    val activeBaselineLutId = when (activeBaselineTarget) {
+        BaselineColorCorrectionTarget.JPG -> jpgBaselineLutId
+        BaselineColorCorrectionTarget.RAW -> rawBaselineLutId
+        BaselineColorCorrectionTarget.PHANTOM -> phantomBaselineLutId
+    }
 
 
     val burstCapturingCount = viewModel.burstImageCount
@@ -1189,39 +1204,7 @@ fun CameraScreen(
             useMFSR = useMFSR,
             onMFSRToggle = {
                 viewModel.setUseMFSR(it)
-            },
-            selectedDcpId = rawDcpId,
-            availableDcps = viewModel.availableDcps,
-            selectedBaselineLutId = rawBaselineLutId,
-            onSelectBaselineLut = { viewModel.setRawBaselineLutId(it) },
-            onEditBaselineRecipe = { lutId ->
-                // Switch to filters panel and then edit recipe
-                activePanel = ActivePanel.FILTERS
-                scope.launch {
-                    delay(100)
-                    viewModel.setLut(lutId)
-                    activePanel = ActivePanel.LUT_EDIT
-                }
-            },
-            availableLuts = viewModel.availableLutList,
-            thumbnail = viewModel.previewThumbnail,
-            rawNlmNoiseFactor = rawNlmNoiseFactor,
-            rawExposureCompensation = rawExposureCompensation,
-            rawAutoExposure = rawAutoExposure,
-            rawDROMode = droMode,
-            rawBlackPointCorrection = rawBlackPointCorrection,
-            rawWhitePointCorrection = rawWhitePointCorrection,
-            onSelectDcp = { viewModel.setRawDcpId(it) },
-            onImportDcp = { dcpImportLauncher.launch(arrayOf("application/octet-stream")) },
-            onDeleteDcp = { viewModel.deleteRawDcp(it.id) { _ -> } },
-            onRawNlmNoiseFactorChange = { viewModel.setRawNlmNoiseFactor(it) },
-            onRawExposureCompensationChange = { viewModel.setRawExposureCompensation(it) },
-            onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
-            onRawDROModeChange = { viewModel.setDroMode(it) },
-            onRawBlackPointCorrectionChange = { viewModel.setRawBlackPointCorrection(it) },
-            onRawWhitePointCorrectionChange = { viewModel.setRawWhitePointCorrection(it) },
-            onAdjustmentStart = { },
-            onAdjustmentEnd = { }
+            }
         )
 
         AnimatedVisibility(
@@ -1308,6 +1291,13 @@ fun CameraScreen(
                         currentLutId = currentLutId,
                         thumbnail = viewModel.previewThumbnail,
                         onLutSelected = { viewModel.setLut(it) },
+                        currentBaselineLutId = activeBaselineLutId,
+                        baselineTarget = activeBaselineTarget,
+                        onBaselineLutSelected = { viewModel.setBaselineLut(activeBaselineTarget, it) },
+                        onBaselineEditClick = { lutId ->
+                            baselineEditLutId = lutId
+                            baselineEditTarget = activeBaselineTarget
+                        },
                         onEditClick = {
                             activePanel = ActivePanel.LUT_EDIT
                         },
@@ -1328,6 +1318,21 @@ fun CameraScreen(
                 onDismiss = {
                     previewRecipeParamsOverride = null
                     activePanel = ActivePanel.FILTERS
+                }
+            )
+        }
+
+        if (baselineEditLutId != null && baselineEditTarget != null) {
+            LutEditBottomSheet(
+                lutId = baselineEditLutId!!,
+                editorTarget = when (baselineEditTarget!!) {
+                    BaselineColorCorrectionTarget.JPG -> LutEditorTarget.BASELINE_JPG
+                    BaselineColorCorrectionTarget.RAW -> LutEditorTarget.BASELINE_RAW
+                    BaselineColorCorrectionTarget.PHANTOM -> LutEditorTarget.BASELINE_PHANTOM
+                },
+                onDismiss = {
+                    baselineEditLutId = null
+                    baselineEditTarget = null
                 }
             )
         }

@@ -227,6 +227,11 @@
     <string name="edit_name">編輯名稱</string>
     <string name="name">名稱</string>
     <string name="confirm">確認</string>
+    <string name="lut_selector_style_tab">風格</string>
+    <string name="lut_selector_baseline_tab">基準</string>
+    <string name="baseline_target_jpg">JPG</string>
+    <string name="baseline_target_raw">RAW</string>
+    <string name="baseline_target_phantom">幻影</string>
 
     <!-- Color Recipe -->
     <string name="color_recipe">色彩配方</string>

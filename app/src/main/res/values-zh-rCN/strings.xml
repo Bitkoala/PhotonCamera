@@ -248,6 +248,11 @@
     <string name="settings_baseline_dialog_description">为当前目标选择一个基准 LUT。它会在普通创意 LUT 之前应用。</string>
     <string name="settings_baseline_edit_recipe">编辑配方</string>
     <string name="settings_baseline_clear">清除</string>
+    <string name="lut_selector_style_tab">风格</string>
+    <string name="lut_selector_baseline_tab">基准</string>
+    <string name="baseline_target_jpg">JPG</string>
+    <string name="baseline_target_raw">RAW</string>
+    <string name="baseline_target_phantom">幻影</string>
     <string name="settings_shutter_sound">快门声音</string>
     <string name="settings_shutter_sound_description">拍照时播放快门声音</string>
     <string name="settings_vibration">拍摄震动</string>
