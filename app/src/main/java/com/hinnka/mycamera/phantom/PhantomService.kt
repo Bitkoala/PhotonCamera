@@ -862,7 +862,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                         }
                                         items(
                                             items = luts,
-                                            key = { it.id }
+                                            key = { "${groupTitle}_${it.id}" }
                                         ) { lut ->
                                                 val isSelected = lut.id == currentLutId
                                                 Row(

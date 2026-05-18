@@ -165,8 +165,8 @@ class LutManager(private val context: Context) {
         val categoryOverrides = customImportManager.getCategoryOverrides()
         val favoriteOverrides = customImportManager.getFavoriteOverrides()
 
-        // 合并列表
-        val allLuts = customLuts + builtInLuts
+        // 合并列表并以 ID 去重，避免 ID 重复导致的 Jetpack Compose 主键重复崩溃
+        val allLuts = (customLuts + builtInLuts).distinctBy { it.id }
 
         // 应用分类重写 (用户手动创建的分类会通过这里恢复)
         availableLuts = allLuts.map { lut ->

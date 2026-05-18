@@ -52,7 +52,7 @@ class FrameManager(private val context: Context) {
     fun initialize() {
         val builtInFrames = FrameTemplateParser.listAvailableFrames(context)
         val customFrames = customImportManager.getCustomFrames()
-        availableFrames = builtInFrames + customFrames
+        availableFrames = (builtInFrames + customFrames).distinctBy { it.id }
         PLog.d(TAG, "Found ${availableFrames.size} frame templates (${builtInFrames.size} built-in, ${customFrames.size} custom)")
     }
     

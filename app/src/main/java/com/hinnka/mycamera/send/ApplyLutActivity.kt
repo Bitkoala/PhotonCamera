@@ -859,7 +859,7 @@ private fun ApplyLutScreen(
                                 modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
                             )
                         }
-                        items(luts, key = { it.id }) { lut ->
+                        items(luts, key = { "${groupTitle}_${it.id}" }) { lut ->
                             val selectedLutId = currentPhotoLutId ?: lutData.third
                             val isDefault = lut.id == selectedLutId
                             Row(

@@ -7,7 +7,7 @@ class DcpManager(private val context: Context) {
     private val customImportManager = CustomImportManager(context)
 
     fun getAvailableDcps(): List<DcpInfo> {
-        return getBuiltInDcps() + customImportManager.getCustomDcps()
+        return (getBuiltInDcps() + customImportManager.getCustomDcps()).distinctBy { it.id }
     }
 
     private fun getBuiltInDcps(): List<DcpInfo> {
