@@ -48,7 +48,7 @@ inline double averageMillis(double totalMs, size_t count) {
 }
 
 inline void logRawSuperResStage(const char *stage, double elapsedMs) {
-  if (!kEnableRawSuperResPerfLogs)
+  if (!kEnableRawSuperResPerfLogs || elapsedMs < 5.0)
     return;
   LOGI("RawSuperResPerf[%s]: %.3f ms", stage, elapsedMs);
 }
@@ -141,37 +141,23 @@ struct RawSuperResPerfStats {
     if (coarseAlignedFrames > 0 || globalReliabilityFrames > 0) {
       LOGI(
           "RawSuperResPerf align-detail: coarse=%.3f avgCoarse=%.3f "
-          "seed=%.3f lk1=%.3f reg1=%.3f rb1=%.3f lk2=%.3f rb1+lk2=%.3f "
-          "reg2=%.3f rb2=%.3f summary=%.3f avgReliabilityFrame=%.3f",
+          "seed=%.3f summary=%.3f avgReliabilityFrame=%.3f",
           coarseAlignmentComputeMs,
           averageMillis(coarseAlignmentComputeMs, coarseAlignedFrames),
-          globalReliabilitySeedMs, globalReliabilityLkStage1Ms,
-          globalReliabilityRegularize1Ms, globalReliabilityRobustness1Ms,
-          globalReliabilityLkStage2Ms,
-          globalReliabilityRobustness1AndLkStage2Ms,
-          globalReliabilityRegularize2Ms, globalReliabilityRobustness2Ms,
+          globalReliabilitySeedMs,
           globalReliabilityReadbackMs,
           averageMillis(globalReliabilityMs, globalReliabilityFrames));
     }
     if (tilesProcessed > 0) {
       LOGI(
           "RawSuperResPerf tile-detail: clearOut=%.3f clearTile=%.3f "
-          "maskUpload=%.3f refinedUpload=%.3f alignSeed=%.3f lk1=%.3f reg1=%.3f rb1=%.3f "
-          "lk2=%.3f reg2=%.3f rb2=%.3f scatter=%.3f normalize=%.3f "
+          "maskUpload=%.3f refinedUpload=%.3f scatter=%.3f normalize=%.3f "
           "avgTile=%.3f avgScatterFrame=%.3f avgNonRefFramePrep=%.3f",
           outputClearMs, tileClearMs, localMaskUploadMs,
-          tileRefinedStateUploadMs, tileAlignmentSeedMs,
-          tileAlignmentLkStage1Ms, tileAlignmentRegularize1Ms,
-          tileRobustness1Ms, tileAlignmentLkStage2Ms,
-          tileAlignmentRegularize2Ms, tileRobustness2Ms, scatterMs,
+          tileRefinedStateUploadMs, scatterMs,
           normalizeMs, averageMillis(tileProcessingMs, tilesProcessed),
           averageMillis(scatterMs, tileScatterFrameInstances),
-          averageMillis(tileRefinedStateUploadMs + tileAlignmentSeedMs +
-                            tileAlignmentLkStage1Ms +
-                            tileAlignmentRegularize1Ms + tileRobustness1Ms +
-                            tileAlignmentLkStage2Ms +
-                            tileAlignmentRegularize2Ms + tileRobustness2Ms,
-                        tileAlignedFrameInstances));
+          averageMillis(tileRefinedStateUploadMs, tileAlignedFrameInstances));
     }
   }
 };
@@ -3088,186 +3074,9 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   // =====================================================================
   TIME_START(phase3b_GlobalReliability);
   if (!kFastPath) {
-    for (size_t i = 1; i < pendingFrames.size(); ++i) {
-      if (skipFusionFrame[i] || !runGlobalReliability[i]) {
-        continue;
-      }
-      ++perf.globalReliabilityFrames;
-
-      PushConstants pc{};
-      pc.width = outputW;
-      pc.height = outputH;
-      pc.planeWidth = inputW;
-      pc.planeHeight = inputH;
-      pc.sensorWidth = width;
-      pc.sensorHeight = height;
-      pc.scale = (float)scale;
-      pc.cfaPattern = (uint32_t)pendingFrames[i].cfaPattern;
-      memcpy(pc.blackLevel, mBlackLevel, 4 * sizeof(float));
-      pc.whiteLevel = mWhiteLevel;
-      memcpy(pc.wbGains, mWbGains, 4 * sizeof(float));
-      pc.gridW = gridW;
-      pc.gridH = gridH;
-      pc.tileSize = (uint32_t)tileSize;
-      pc.noiseAlpha = mNoiseModel[0] / 65535.0f;
-      pc.noiseBeta = mNoiseModel[1] / (65535.0f * 65535.0f);
-      pc.baseNoise = pc.noiseBeta;
-      pc.frameWeight = frameFusionWeights[i];
-      pc.tileX = 0;
-      pc.tileY = 0;
-      pc.tileW = inputW;
-      pc.tileH = inputH;
-      pc.bufferStride = tileW + 16;
-
-      const auto &coarseAlign = frameAlignments[i].coarseAlign;
-      const auto reliabilitySeedStart = PerfClock::now();
-      std::vector<Point> seededFlow = frameAlignments[i].seededFlow;
-      uploadAlignmentField(device, alignmentMemory, seededFlow);
-      fillFloatBuffer(device, robustnessMemory, (size_t)inputW * inputH, 1.0f);
-      perf.globalReliabilitySeedMs += elapsedMillis(reliabilitySeedStart);
-
-      const auto reliabilityLkStage1Start = PerfClock::now();
-      VkCommandBuffer cb = vm.beginSingleTimeCommands();
-
-    VkBufferMemoryBarrier hostBarriers[2]{};
-    hostBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    hostBarriers[0].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-    hostBarriers[0].dstAccessMask =
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    hostBarriers[0].buffer = alignmentBuffer;
-    hostBarriers[0].size = VK_WHOLE_SIZE;
-    hostBarriers[1].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    hostBarriers[1].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-    hostBarriers[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    hostBarriers[1].buffer = robustnessBuffer;
-    hostBarriers[1].size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_HOST_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                         2, hostBarriers, 0, nullptr);
-
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, robustnessPipeline);
-    updateImageDescriptorSet(device, robustSet, uploadedFrames[0].view, sampler,
-                             0);
-    updateImageDescriptorSet(device, robustSet, uploadedFrames[i].view, sampler,
-                             1);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            robustnessPipelineLayout, 0, 1, &robustSet, 0,
-                            nullptr);
-    vkCmdPushConstants(cb, robustnessPipelineLayout,
-                       VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vkCmdDispatch(cb, (inputW + 15) / 16, (inputH + 15) / 16, 1);
-
-    VkBufferMemoryBarrier rbBarriers[2]{};
-    rbBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    rbBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    rbBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    rbBarriers[0].buffer = robustnessBuffer;
-    rbBarriers[0].size = VK_WHOLE_SIZE;
-    rbBarriers[1].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    rbBarriers[1].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    rbBarriers[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    rbBarriers[1].buffer = flowVarianceBuffer;
-    rbBarriers[1].size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 2,
-                         rbBarriers, 0, nullptr);
-
-    vm.endSingleTimeCommands(cb);
-    perf.globalReliabilityMs += elapsedMillis(reliabilityLkStage1Start);
-
-    const auto reliabilityReadbackStart = PerfClock::now();
-    RefinedFrameCache &refinedCache = frameRefinedCaches[i];
-    refinedCache.alignment = seededFlow;
-    refinedCache.valid = downloadFloatBuffer(device, robustnessMemory,
-                                             (size_t)inputW * inputH,
-                                             refinedCache.robustness) &&
-                         downloadFloatBuffer(device, flowVarianceMemory,
-                                             (size_t)inputW * inputH,
-                                             refinedCache.flowVariance);
-    if (!refinedCache.valid) {
-      if (kEnableRawSuperResPerfLogs) {
-        LOGW("RawSuperResPerf: failed to cache refined state for frame %zu",
-             i);
-      }
-    }
-
-    FlowSummary refinedFlow;
-    if (!refinedCache.alignment.empty()) {
-      std::vector<float> magnitudes;
-      magnitudes.reserve(refinedCache.alignment.size());
-      double sumX = 0.0;
-      double sumY = 0.0;
-      for (const Point &point : refinedCache.alignment) {
-        sumX += point.x;
-        sumY += point.y;
-        magnitudes.push_back(std::sqrt(point.x * point.x + point.y * point.y));
-      }
-      refinedFlow.magnitude =
-          computeScalarStats(magnitudes.data(), magnitudes.size());
-      refinedFlow.meanX = (float)(sumX / (double)magnitudes.size());
-      refinedFlow.meanY = (float)(sumY / (double)magnitudes.size());
-    }
-    RobustnessSummary robustSummary =
-        refinedCache.valid
-            ? readRobustnessSummary(refinedCache.robustness, inputW, inputH)
-            : readRobustnessSummary(device, robustnessMemory, inputW, inputH);
-    LocalReliabilityMap localMap =
-        refinedCache.valid
-            ? readLocalReliabilityMap(refinedCache.robustness, inputW, inputH,
-                                      uploadedFrames[0].proxy)
-            : readLocalReliabilityMap(device, robustnessMemory, inputW, inputH,
-                                      uploadedFrames[0].proxy);
-    LocalReliabilitySummary localSummary = localMap.summary;
-    frameLocalMaps[i] = std::move(localMap);
-    frameLocalSummaries[i] = localSummary;
-    float robustWeight =
-        computeRobustnessFrameWeight(refinedFlow, robustSummary, localSummary);
-    frameFusionWeights[i] *= robustWeight;
-    float localPriority =
-        0.55f * localSummary.edgeGoodFraction + 0.45f * localSummary.textGoodFraction;
-    float retentionScore = frameFusionWeights[i] *
-                           (0.85f + 0.30f * localPriority);
-    frameRetentionScores[i] = retentionScore;
-    float keepThreshold = (localPriority > 0.58f) ? 0.16f : 0.20f;
-    skipFusionFrame[i] = frameFusionWeights[i] < keepThreshold;
-      perf.globalReliabilityReadbackMs +=
-          elapsedMillis(reliabilityReadbackStart);
-    }
-
-    if (pendingFrames.size() > 2) {
-      std::vector<std::pair<float, size_t>> rankedFrames;
-      rankedFrames.reserve(pendingFrames.size() - 1);
-      for (size_t i = 1; i < pendingFrames.size(); ++i) {
-        if (!skipFusionFrame[i]) {
-          rankedFrames.push_back({frameRetentionScores[i], i});
-        }
-      }
-      std::sort(rankedFrames.begin(), rankedFrames.end(),
-                [](const auto &a, const auto &b) { return a.first > b.first; });
-
-      const size_t baseMaxExtraFrames = 6;
-      size_t edgeReserve = 0;
-      for (size_t i = 1; i < pendingFrames.size(); ++i) {
-        if (!skipFusionFrame[i] &&
-            frameLocalSummaries[i].textGoodFraction > 0.72f &&
-            frameFusionWeights[i] > 0.14f) {
-          ++edgeReserve;
-        }
-      }
-      edgeReserve = std::min<size_t>(edgeReserve, 2);
-      const size_t maxExtraFrames = baseMaxExtraFrames + edgeReserve;
-      for (size_t rank = maxExtraFrames; rank < rankedFrames.size(); ++rank) {
-        size_t frameIndex = rankedFrames[rank].second;
-        const LocalReliabilitySummary &local = frameLocalSummaries[frameIndex];
-        bool preserveForText =
-            local.textGoodFraction > 0.80f &&
-            frameFusionWeights[frameIndex] > 0.16f;
-        if (preserveForText) {
-          continue;
-        }
-        skipFusionFrame[frameIndex] = true;
-      }
-    }
+      // Phase 3b skipped.
+      // All candidate frames will be refined during Phase 4 instead,
+      // and we avoid the heavy 396ms global robustness readback entirely.
   }
   TIME_END(phase3b_GlobalReliability);
   perf.globalReliabilityMs =
@@ -3336,7 +3145,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                             nullptr);
     vkCmdPushConstants(cb, alignLkPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(pc), &pc);
-    for (int iter = 0; iter < 5; ++iter) {
+    for (int iter = 0; iter < 1; ++iter) {
       vkCmdDispatch(cb, (gridW + 15) / 16, (gridH + 15) / 16, 1);
       VkBufferMemoryBarrier lkBarrier{
           VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -3395,76 +3204,6 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 2,
                          rbBarriers, 0, nullptr);
-
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, alignLkPipeline);
-    updateImageDescriptorSet(device, alignSet, uploadedFrames[0].view, sampler,
-                             0);
-    updateImageDescriptorSet(device, alignSet,
-                             uploadedFrames[frameIndex].view, sampler, 1);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            alignLkPipelineLayout, 0, 1, &alignSet, 0,
-                            nullptr);
-    vkCmdPushConstants(cb, alignLkPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                       0, sizeof(pc), &pc);
-    for (int iter = 0; iter < 2; ++iter) {
-      vkCmdDispatch(cb, (gridW + 15) / 16, (gridH + 15) / 16, 1);
-      VkBufferMemoryBarrier lkBarrier{
-          VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
-      lkBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-      lkBarrier.dstAccessMask =
-          VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-      lkBarrier.buffer = alignmentBuffer;
-      lkBarrier.size = VK_WHOLE_SIZE;
-      vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                           1, &lkBarrier, 0, nullptr);
-    }
-    vm.endSingleTimeCommands(cb);
-
-    if (downloadAlignmentField(device, alignmentMemory, (uint32_t)gridW,
-                               (uint32_t)gridH, seededFlow)) {
-      regularizeAlignmentField(seededFlow, (uint32_t)gridW, (uint32_t)gridH,
-                               (uint32_t)tileSize, uploadedFrames[0].proxy);
-      uploadAlignmentField(device, alignmentMemory, seededFlow);
-    }
-
-    cb = vm.beginSingleTimeCommands();
-    VkBufferMemoryBarrier finalAlignBarrier{
-        VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
-    finalAlignBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-    finalAlignBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    finalAlignBarrier.buffer = alignmentBuffer;
-    finalAlignBarrier.size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_HOST_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                         1, &finalAlignBarrier, 0, nullptr);
-
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, robustnessPipeline);
-    updateImageDescriptorSet(device, robustSet, uploadedFrames[0].view, sampler,
-                             0);
-    updateImageDescriptorSet(device, robustSet,
-                             uploadedFrames[frameIndex].view, sampler, 1);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            robustnessPipelineLayout, 0, 1, &robustSet, 0,
-                            nullptr);
-    vkCmdPushConstants(cb, robustnessPipelineLayout,
-                       VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vkCmdDispatch(cb, (inputW + 15) / 16, (inputH + 15) / 16, 1);
-
-    VkBufferMemoryBarrier finalRbBarriers[2]{};
-    finalRbBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    finalRbBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    finalRbBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    finalRbBarriers[0].buffer = robustnessBuffer;
-    finalRbBarriers[0].size = VK_WHOLE_SIZE;
-    finalRbBarriers[1].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    finalRbBarriers[1].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    finalRbBarriers[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    finalRbBarriers[1].buffer = flowVarianceBuffer;
-    finalRbBarriers[1].size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 2,
-                         finalRbBarriers, 0, nullptr);
     vm.endSingleTimeCommands(cb);
 
     RefinedFrameCache &refinedCache = frameRefinedCaches[frameIndex];
@@ -3475,6 +3214,29 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                          downloadFloatBuffer(device, flowVarianceMemory,
                                              (size_t)inputW * inputH,
                                              refinedCache.flowVariance);
+    if (refinedCache.valid) {
+      FlowSummary refinedFlow;
+      std::vector<float> magnitudes;
+      magnitudes.reserve(refinedCache.alignment.size());
+      double sumX = 0.0, sumY = 0.0;
+      for (const Point &point : refinedCache.alignment) {
+        sumX += point.x;
+        sumY += point.y;
+        magnitudes.push_back(std::sqrt(point.x * point.x + point.y * point.y));
+      }
+      if (!magnitudes.empty()) {
+        refinedFlow.magnitude = computeScalarStats(magnitudes.data(), magnitudes.size());
+        refinedFlow.meanX = (float)(sumX / magnitudes.size());
+        refinedFlow.meanY = (float)(sumY / magnitudes.size());
+      }
+      RobustnessSummary robustSummary = readRobustnessSummary(refinedCache.robustness, inputW, inputH);
+      LocalReliabilityMap localMap = readLocalReliabilityMap(refinedCache.robustness, inputW, inputH, uploadedFrames[0].proxy);
+      LocalReliabilitySummary localSummary = localMap.summary;
+      frameLocalMaps[frameIndex] = std::move(localMap);
+      frameLocalSummaries[frameIndex] = localSummary;
+      float robustWeight = computeRobustnessFrameWeight(refinedFlow, robustSummary, localSummary);
+      frameFusionWeights[frameIndex] *= robustWeight;
+    }
     return refinedCache.valid;
   };
 
@@ -3488,6 +3250,12 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
       frameRefinedCaches[i].valid = false;
     } else {
       ++perf.keptFrames;
+    }
+  }
+
+  for (size_t i = 1; i < pendingFrames.size(); ++i) {
+    if (!kFastPath && !skipFusionFrame[i]) {
+      ensureRefinedFrameCache(i);
     }
   }
 
