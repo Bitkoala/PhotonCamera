@@ -154,14 +154,31 @@ object RawProcessor {
         whiteLevel: Int = 65535,
         valueDomain: RawBufferValueDomain = RawBufferValueDomain.SENSOR,
     ): Boolean {
+        val orientation = when (rotation) {
+            90 -> ExifInterface.ORIENTATION_ROTATE_90
+            180 -> ExifInterface.ORIENTATION_ROTATE_180
+            270 -> ExifInterface.ORIENTATION_ROTATE_270
+            else -> ExifInterface.ORIENTATION_NORMAL
+        }
+        if (!canDngCreatorWriteBuffer(width, height, characteristics)) {
+            PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height}")
+            return SuperResolutionDngWriter.write(
+                outputStream = outputStream,
+                rawBuffer = rawBuffer,
+                width = width,
+                height = height,
+                characteristics = characteristics,
+                captureResult = captureResult,
+                orientation = orientation,
+                cfaPattern = cfaPattern,
+                blackLevel = blackLevel,
+                whiteLevel = whiteLevel,
+                valueDomain = valueDomain
+            )
+        }
+
         val dngCreator = DngCreator(characteristics, captureResult)
         return try {
-            val orientation = when (rotation) {
-                90 -> ExifInterface.ORIENTATION_ROTATE_90
-                180 -> ExifInterface.ORIENTATION_ROTATE_180
-                270 -> ExifInterface.ORIENTATION_ROTATE_270
-                else -> ExifInterface.ORIENTATION_NORMAL
-            }
             dngCreator.setOrientation(orientation)
 //            buildDngThumbnail(thumbnail)?.let {
 //                dngCreator.setThumbnail(it)
@@ -190,7 +207,7 @@ object RawProcessor {
         }
     }
 
-    private fun denormalizeNormalizedRawBufferInPlace(
+    internal fun denormalizeNormalizedRawBufferInPlace(
         rawBuffer: ByteBuffer,
         width: Int,
         height: Int,
@@ -214,6 +231,22 @@ object RawProcessor {
                 index++
             }
         }
+    }
+
+    private fun canDngCreatorWriteBuffer(
+        width: Int,
+        height: Int,
+        characteristics: CameraCharacteristics,
+    ): Boolean {
+        val pixelArraySize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        if (pixelArraySize?.width == width && pixelArraySize.height == height) {
+            return true
+        }
+        val preCorrectionSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+        if (preCorrectionSize?.width() == width && preCorrectionSize.height() == height) {
+            return true
+        }
+        return false
     }
 
     private fun getRggbChannelIndex(xParity: Int, yParity: Int, cfaPattern: Int): Int {
