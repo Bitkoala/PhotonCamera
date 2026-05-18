@@ -53,10 +53,8 @@ object BM3DShaders {
                         yuv.x - 0.3441 * cb - 0.7141 * cr,
                         yuv.x + 1.772  * cb);
         }
-        float noiseScaleForLuma(float luma) {
-            float x = max(luma, 0.001);
-            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
-            return 1.0 / snr;
+        float noiseSigmaForLuma(float luma) {
+            return sqrt(max(uNoiseModel.x * max(luma, 0.0) + uNoiseModel.y, 1e-10));
         }
 
         void main() {
@@ -69,7 +67,7 @@ object BM3DShaders {
 
             // Chroma noise is low-frequency → large spatial step scale
             float stepScale   = 6.5;
-            float localH      = uH * noiseScaleForLuma(yuv.x);
+            float localH      = uH * noiseSigmaForLuma(yuv.x);
             float invChromaH2 = 1.0 / max((localH * 1.5) * (localH * 1.5), 1e-6);
             float invLumaH2   = 1.0 / max((localH * 0.5) * (localH * 0.5), 1e-6);
 
@@ -137,10 +135,8 @@ object BM3DShaders {
             float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
             return soft * gate;
         }
-        float noiseScaleForLuma(float luma) {
-            float x = max(luma, 0.001);
-            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
-            return 1.0 / snr;
+        float noiseSigmaForLuma(float luma) {
+            return sqrt(max(uNoiseModel.x * max(luma, 0.0) + uNoiseModel.y, 1e-10));
         }
 
         void main() {
@@ -161,7 +157,7 @@ object BM3DShaders {
             float c20 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0,-1.0)*T).rgb, LW);
             float c21 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uInputTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
-            float localH = uH * noiseScaleForLuma(c11);
+            float localH = uH * noiseSigmaForLuma(c11);
 
             // BM3D hard threshold: τ = factor × σ² × patch_size
             // factor 2.7 is the standard BM3D constant, tuned here for 3×3 patches
@@ -283,10 +279,8 @@ object BM3DShaders {
             float gate = 1.0 - smoothstep(t * 0.35, t * 1.55, ssd);
             return soft * gate;
         }
-        float noiseScaleForLuma(float luma) {
-            float x = max(luma, 0.001);
-            float snr = x / sqrt(max(uNoiseModel.x * x + uNoiseModel.y, 1e-10));
-            return 1.0 / snr;
+        float noiseSigmaForLuma(float luma) {
+            return sqrt(max(uNoiseModel.x * max(luma, 0.0) + uNoiseModel.y, 1e-10));
         }
         float wideGuidedLumaBase(vec2 uv, vec2 texelSize, float centerGuideLuma, float sigma_n2) {
             float sumY = 0.0;
@@ -336,9 +330,9 @@ object BM3DShaders {
             float c21 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 0.0)*T).rgb, LW);
             float c22 = dot(texture(uBasicTexture, vTexCoord + vec2( 1.0, 1.0)*T).rgb, LW);
 
-            // Sensor noise model: variance = S * luma + O, normalized so uH keeps
-            // its existing mid-gray strength while local denoise follows brightness.
-            float localH = uH * noiseScaleForLuma(c11);
+            // Sensor noise model in this pass' linear-light domain:
+            // variance = S * luma + O. uH is a dimensionless strength multiplier.
+            float localH = uH * noiseSigmaForLuma(c11);
             float sigma_n2 = localH * localH;
             float threshold = sigma_n2 * 9.0 * 2.7; // same τ as Pass 1, adapted by luma
 

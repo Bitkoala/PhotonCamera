@@ -137,6 +137,8 @@ class RawDemosaicProcessor {
         private const val TAG = "RawDemosaicProcessor"
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
+        private const val BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE = 5.0f
+        private const val BM3D_REFERENCE_MID_GRAY_SIGMA = 0.012f
 
         init {
             // 加载 JNI 库
@@ -657,6 +659,7 @@ class RawDemosaicProcessor {
                 width = actualWidth,
                 height = actualHeight,
                 metadata = actualMetadata,
+                linearExposureGain = computeLinearExposureGain(actualMetadata, effectiveExposureCompensation, resolvedDcpRenderPlan),
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = denoiseValue,
             )
@@ -1134,6 +1137,7 @@ class RawDemosaicProcessor {
         width: Int,
         height: Int,
         metadata: RawMetadata,
+        linearExposureGain: Float,
         denoiseValue: Float?,
         chromaDenoiseValue: Float?,
     ) {
@@ -1147,26 +1151,24 @@ class RawDemosaicProcessor {
         val texelW = 1.0f / width
         val texelH = 1.0f / height
 
-        // 动态 NLM 参数计算
-        // 增益由三部分组成：传感器 ISO、ISP 数字增益、后期 Tonemap 增益
+        // Camera2 SENSOR_NOISE_PROFILE is defined in the linear RAW domain.
+        // Convert it into the linear RGB texture domain consumed by BM3D, so
+        // the user strength remains a dimensionless multiplier of measured sigma.
         val isoGain = metadata.iso / 100.0f
         val digitalGain = metadata.postRawSensitivityBoost
-        val postGain = ExposureNormalization.compute(metadata)
-        val totalGain = (isoGain * digitalGain * postGain).coerceAtLeast(0f)
-
-        var (s, o) = resolveDenoiseNoiseModel(metadata, totalGain)
-
-        if (s <= 0 || o <= 0) {
-            s = 1E-4f * totalGain
-            o = 4.5E-7f * sqrt(totalGain)
-        }
+        val fallbackGain = (isoGain * digitalGain).coerceAtLeast(1f)
+        val (s, o) = resolveDenoiseNoiseModel(metadata, linearExposureGain, fallbackGain)
 
         val denoiseValue = denoiseValue ?: 0f
         val chromaDenoiseValue = chromaDenoiseValue ?: 0f
 
-        val h = denoiseValue * denoiseValue
-        val ch = chromaDenoiseValue * chromaDenoiseValue + 0.5f
-        PLog.d(TAG, "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch iso=${metadata.iso}")
+        val noiseAdaptiveScale = computeDenoiseStrengthScale(s, o)
+        val h = denoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale
+        val ch = chromaDenoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale + 0.2f
+        PLog.d(
+            TAG,
+            "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch scale=$noiseAdaptiveScale iso=${metadata.iso} linearGain=$linearExposureGain"
+        )
 
         val identityMatrix = FloatArray(16)
         GlMatrix.setIdentityM(identityMatrix, 0)
@@ -1230,16 +1232,29 @@ class RawDemosaicProcessor {
         checkGlError("renderNLMDenoise")
     }
 
-    private fun resolveDenoiseNoiseModel(metadata: RawMetadata, totalGain: Float): Pair<Float, Float> {
+    private fun resolveDenoiseNoiseModel(
+        metadata: RawMetadata,
+        linearExposureGain: Float,
+        fallbackGain: Float
+    ): Pair<Float, Float> {
         var s = metadata.noiseProfile.getOrElse(0) { 0f }
         var o = metadata.noiseProfile.getOrElse(1) { 0f }
 
         if (s <= 0f || o <= 0f) {
-            s = 1E-4f * totalGain
-            o = 4.5E-7f * sqrt(totalGain)
+            s = 1E-4f * fallbackGain
+            o = 4.5E-7f * sqrt(fallbackGain)
         }
 
-        return s.coerceAtLeast(1e-10f) to o.coerceAtLeast(1e-10f)
+        val frameNoiseScale = 1f / metadata.frameCount.coerceAtLeast(1).toFloat()
+        val gain = linearExposureGain.coerceAtLeast(1e-6f)
+        val transformedS = s * frameNoiseScale * gain
+        val transformedO = o * frameNoiseScale * gain * gain
+        return transformedS.coerceAtLeast(1e-10f) to transformedO.coerceAtLeast(1e-10f)
+    }
+
+    private fun computeDenoiseStrengthScale(s: Float, o: Float): Float {
+        val midGraySigma = sqrt((s * 0.18f + o).coerceAtLeast(1e-10f))
+        return (midGraySigma / BM3D_REFERENCE_MID_GRAY_SIGMA).coerceIn(1f, 2.8f)
     }
 
     private fun dhtSetCommonUniforms(program: Int, metadata: RawMetadata) {
@@ -2182,7 +2197,7 @@ class RawDemosaicProcessor {
             TAG,
             "compute: normalizationGain=$normalizationGain baseline=${metadata.baselineExposure} dcpBaselineOffset=$dcpBaselineExposureOffset"
         )
-        val exposureGain = normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
+        val exposureGain = computeLinearExposureGain(metadata, rawExposureCompensation, dcpRenderPlan)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(linearProgram, "uExposureGain"), exposureGain)
         val (blackLevel, whiteLevel) = resolveLinearInputLevels(
             metadata = metadata,
@@ -2198,6 +2213,16 @@ class RawDemosaicProcessor {
             whiteLevel[0], whiteLevel[1], whiteLevel[2]
         )
         drawQuad(linearProgram)
+    }
+
+    private fun computeLinearExposureGain(
+        metadata: RawMetadata,
+        rawExposureCompensation: Float,
+        dcpRenderPlan: DcpRenderPlan?
+    ): Float {
+        val normalizationGain = ExposureNormalization.compute(metadata)
+        val dcpBaselineExposureOffset = dcpRenderPlan?.baselineExposureOffset ?: 0f
+        return normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
     }
 
     private suspend fun resolveRawAutoExposureEv(
