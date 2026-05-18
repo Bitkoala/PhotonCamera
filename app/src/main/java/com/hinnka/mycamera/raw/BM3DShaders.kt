@@ -23,6 +23,7 @@ package com.hinnka.mycamera.raw
  *   Total   ≈ 520 reads/px  (vs ≈ 122 for NLM — 4× cost, substantially higher quality)
  */
 object BM3DShaders {
+    const val SIGMA_STRENGTH_AT_SLIDER_ONE = 5.0f
 
     // ─── Pass 0 : Chroma Denoise ──────────────────────────────────────────────
     /**

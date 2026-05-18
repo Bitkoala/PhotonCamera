@@ -138,7 +138,6 @@ class RawDemosaicProcessor {
         private const val TAG = "RawDemosaicProcessor"
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
-        private const val BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE = 5.0f
         private const val BM3D_REFERENCE_MID_GRAY_SIGMA = 0.012f
 
         init {
@@ -1164,8 +1163,8 @@ class RawDemosaicProcessor {
         val chromaDenoiseValue = chromaDenoiseValue ?: 0f
 
         val noiseAdaptiveScale = computeDenoiseStrengthScale(s, o)
-        val h = denoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale
-        val ch = chromaDenoiseValue.coerceAtLeast(0f) * BM3D_SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale + 0.3f
+        val h = denoiseValue.coerceAtLeast(0f) * BM3DShaders.SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale
+        val ch = chromaDenoiseValue.coerceAtLeast(0f) * BM3DShaders.SIGMA_STRENGTH_AT_SLIDER_ONE * noiseAdaptiveScale + 0.5f
         PLog.d(
             TAG,
             "Dynamic BM3D: s=$s o=$o, h=$h ch=$ch scale=$noiseAdaptiveScale iso=${metadata.iso} linearGain=$linearExposureGain"

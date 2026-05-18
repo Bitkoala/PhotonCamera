@@ -513,7 +513,7 @@ class LutImageProcessor {
 
         val texelW = 1.0f / width
         val texelH = 1.0f / height
-        val ch = 0.001f + strength * strength * 0.2f
+        val ch = strength * strength * BM3DShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
 
         val identityMatrix = FloatArray(16)
         android.opengl.Matrix.setIdentityM(identityMatrix, 0)
@@ -534,6 +534,11 @@ class LutImageProcessor {
             0
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(nlmChromaProgram, "uH"), ch)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(nlmChromaProgram, "uNoiseModel"),
+            SRGB_DENOISE_NOISE_S,
+            SRGB_DENOISE_NOISE_O
+        )
         drawQuad(nlmChromaProgram)
 
         val pixelSize = width * height * 4
@@ -1155,12 +1160,11 @@ class LutImageProcessor {
 
         val texelW = 1.0f / width
         val texelH = 1.0f / height
-        // 将降噪强度映射到合理范围 (0.001 ~ 0.1)
-        val h = noiseReduction * noiseReduction
-        val ch = chromaNoiseReduction * chromaNoiseReduction
+        val h = noiseReduction * noiseReduction * BM3DShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
+        val ch = chromaNoiseReduction * chromaNoiseReduction * BM3DShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
 
-        val s = 0.015f
-        val o = 0.001f
+        val s = SRGB_DENOISE_NOISE_S
+        val o = SRGB_DENOISE_NOISE_O
 
         val identityMatrix = FloatArray(16)
         android.opengl.Matrix.setIdentityM(identityMatrix, 0)
@@ -1572,6 +1576,8 @@ class LutImageProcessor {
 
     companion object {
         private const val TAG = "LutImageProcessor"
+        private const val SRGB_DENOISE_NOISE_S = 0.015f
+        private const val SRGB_DENOISE_NOISE_O = 0.001f
         private const val LCH_COLOR_BAND_COUNT = 9
 
         // 2D 图片版本的顶点着色器
