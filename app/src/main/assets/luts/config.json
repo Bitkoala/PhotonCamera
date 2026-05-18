@@ -204,16 +204,6 @@
       "isVip": false
     },
     {
-      "id": "lumix_vlog",
-      "name": {
-        "en": "Lumix VLog",
-        "zh": "Lumix VLog"
-      },
-      "path": "lumix_vlog.plut",
-      "category": "Lumix",
-      "isVip": false
-    },
-    {
       "id": "lumix_portrait",
       "name": {
         "en": "Lumix Portrait",
