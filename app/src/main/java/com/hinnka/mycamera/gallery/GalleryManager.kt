@@ -1029,8 +1029,8 @@ object GalleryManager {
             // 预先准备所有文件路径
             val photoFile = File(photoDir, PHOTO_FILE)
             val tempFile = File(photoDir, "temp.jpg")
-            val hdrFile = File(photoDir, HDR_FILE)
             val yuvFile = File(photoDir, YUV_FILE)
+            val hdrFile = File(photoDir, HDR_FILE)
 
             val metadata = loadMetadata(context, photoId) ?: return@withContext
 
@@ -1574,6 +1574,7 @@ object GalleryManager {
         photoQuality: Int = 95,
         useSuperResolution: Boolean = false,
         superResolutionScale: Float = 1.0f,
+        useGpuAcceleration: Boolean = true,
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -1589,8 +1590,9 @@ object GalleryManager {
                 images,
                 rotation,
                 aspectRatio,
+                yuvFile.absolutePath,
                 currentUseSuperResolution,
-                true,
+                useGpuAcceleration,
                 ColorSpace.get(metadata.colorSpace)
             )
 
@@ -1601,8 +1603,9 @@ object GalleryManager {
                     images,
                     rotation,
                     aspectRatio,
+                    yuvFile.absolutePath,
                     false,
-                    true,
+                    useGpuAcceleration,
                     ColorSpace.get(metadata.colorSpace)
                 )
             }
@@ -1656,6 +1659,7 @@ object GalleryManager {
         photoQuality: Int = 95,
         useSuperResolution: Boolean = false,
         superResolutionScale: Float = 1.0f,
+        useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
@@ -1666,6 +1670,7 @@ object GalleryManager {
             val photoFile = File(photoDir, PHOTO_FILE)
             val dngFile = File(photoDir, DNG_FILE)
             val tempFile = File(photoDir, "temp.jpg")
+            val yuvFile = File(photoDir, YUV_FILE)
 
             val metadata = loadMetadata(context, photoId) ?: return@withContext
 
@@ -1689,7 +1694,7 @@ object GalleryManager {
                 images, rawMetadata.cfaPattern,
                 currentUseSuperResolution,
                 superResolutionScale,
-                true,
+                useGpuAcceleration,
                 masterBlackLevel = rawMetadata.blackLevel,
                 whiteLevel = rawMetadata.whiteLevel.toInt(),
                 whiteBalanceGains = rawMetadata.whiteBalanceGains,
@@ -1934,6 +1939,7 @@ object GalleryManager {
         photoQuality: Int = 95,
         useSuperResolution: Boolean = false,
         superResolutionScale: Float = 1.0f,
+        useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         exportDngWithRawExport: Boolean = false
     ) = withContext(Dispatchers.IO) {
@@ -1952,7 +1958,8 @@ object GalleryManager {
                     chromaNoiseReductionValue,
                     photoQuality,
                     useSuperResolution,
-                    superResolutionScale
+                    superResolutionScale,
+                    useGpuAcceleration
                 )
             }
 
@@ -1973,6 +1980,7 @@ object GalleryManager {
                     photoQuality,
                     useSuperResolution,
                     superResolutionScale,
+                    useGpuAcceleration,
                     exposureBias,
                     exportDngWithRawExport
                 )

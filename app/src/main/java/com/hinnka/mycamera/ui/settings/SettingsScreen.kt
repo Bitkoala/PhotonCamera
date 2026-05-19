@@ -195,7 +195,6 @@ fun SettingsScreen(
     val useRaw by viewModel.useRaw.collectAsState(initial = false)
     val exportDngWithRawExport by viewModel.exportDngWithRawExport.collectAsState(initial = true)
     val useSuperResolution by viewModel.useMFSR.collectAsState(initial = false)
-    val superResolutionScale by viewModel.superResolutionScale.collectAsState(initial = 1.2f)
     // 软件处理参数
     val sharpening by viewModel.sharpening.collectAsState(initial = 0f)
     val noiseReduction by viewModel.noiseReduction.collectAsState(initial = 0f)
@@ -208,6 +207,7 @@ fun SettingsScreen(
     val useLivePhoto by viewModel.useLivePhoto.collectAsState()
     val enableDevelopAnimation by viewModel.enableDevelopAnimation.collectAsState()
     val photoQuality by viewModel.photoQuality.collectAsState(initial = 95)
+    val useGpuAcceleration by viewModel.useGpuAcceleration.collectAsState()
     val useP010 by viewModel.useP010.collectAsState()
     val useHlg10 by viewModel.useHlg10.collectAsState()
     val hlgHardwareCompatibilityEnabled by viewModel.hlgHardwareCompatibilityEnabled.collectAsState()
@@ -249,8 +249,6 @@ fun SettingsScreen(
 
     var selectedTab by remember { mutableStateOf(SettingsTab.GENERAL) }
     var isRawSliderAdjusting by remember { mutableStateOf(false) }
-    var isSuperResolutionScaleAdjusting by remember { mutableStateOf(false) }
-    var superResolutionScaleUi by remember { mutableStateOf(superResolutionScale) }
     var rawNlmNoiseFactorUi by remember { mutableStateOf(rawNlmNoiseFactor) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
     var rawBlackPointCorrectionUi by remember { mutableStateOf(rawBlackPointCorrection) }
@@ -268,23 +266,12 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(superResolutionScale) {
-        if (!isSuperResolutionScaleAdjusting) {
-            superResolutionScaleUi = superResolutionScale
-        }
-    }
-
     fun commitRawSliderValues() {
         isRawSliderAdjusting = false
         viewModel.setRawNlmNoiseFactor(rawNlmNoiseFactorUi)
         viewModel.setRawExposureCompensation(rawExposureCompensationUi)
         viewModel.setRawBlackPointCorrection(rawBlackPointCorrectionUi)
         viewModel.setRawWhitePointCorrection(rawWhitePointCorrectionUi)
-    }
-
-    fun commitSuperResolutionScale() {
-        isSuperResolutionScaleAdjusting = false
-        viewModel.setSuperResolutionScale(superResolutionScaleUi)
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1140,6 +1127,23 @@ fun SettingsScreen(
                             onLevelSelected = { viewModel.setMultipleExposureCount(it) }
                         )
 
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_use_gpu_acceleration),
+                            description = stringResource(R.string.settings_use_gpu_acceleration_description),
+                            checked = useGpuAcceleration,
+                            onCheckedChange = { viewModel.setUseGpuAcceleration(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
                         SwitchSettingItem(
                             title = stringResource(R.string.settings_use_live_photo),
                             description = stringResource(R.string.settings_use_live_photo_description),
@@ -1337,27 +1341,6 @@ fun SettingsScreen(
                 }
 
                 SettingsTab.RAW -> {
-                    SliderSettingItem(
-                        title = stringResource(R.string.settings_super_resolution_scale),
-                        description = stringResource(R.string.settings_super_resolution_scale_description),
-                        value = superResolutionScaleUi,
-                        valueRange = 1.0f..2.0f,
-                        onValueChange = {
-                            isSuperResolutionScaleAdjusting = true
-                            superResolutionScaleUi = it.coerceIn(1.0f, 2.0f)
-                        },
-                        resetValue = 1.2f,
-                        toggleValue = useSuperResolution,
-                        onToggleChange = { viewModel.setUseMFSR(it) },
-                        onValueChangeFinished = { commitSuperResolutionScale() },
-                        valueTextFormatter = { "%.2fx".format(it) }
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = Color.White.copy(alpha = 0.1f)
-                    )
-
                     RawEditPanel(
                         selectedDcpId = rawDcpId,
                         availableDcps = availableDcps,

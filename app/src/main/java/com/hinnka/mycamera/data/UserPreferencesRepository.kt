@@ -21,6 +21,7 @@ import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.video.CaptureMode
 import com.hinnka.mycamera.video.VideoAspectRatio
 import com.hinnka.mycamera.video.VIDEO_AUDIO_INPUT_AUTO
@@ -114,11 +115,12 @@ data class UserPreferences(
     val useMultipleExposure: Boolean = false, // 是否启用多重曝光
     val multipleExposureCount: Int = 2, // 多重曝光张数
     val useMFSR: Boolean = false, // 是否启用 RAW 多帧超分
-    val superResolutionScale: Float = 1.2f, // RAW 多帧超分倍率
+    val superResolutionScale: Float = 1.5f, // RAW 多帧超分倍率
     val photoQuality: Int = 95, // 照片质量: 90, 95, 100
     val useLivePhoto: Boolean = false, // 是否启用 Live Photo (Motion Photo)
     val enableDevelopAnimation: Boolean = false, // 是否启用拍摄后的显影动画
     val backgroundImage: String = "camera_bg", // 背景图资源名或文件路径
+    val useGpuAcceleration: Boolean = DeviceUtil.defaultGpuAcceleration, // 多帧合成是否使用 GPU 加速
     val droMode: String = "OFF", // DRO 模式
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
     val colorSpace: ColorSpace = ColorSpace.SRGB,
@@ -231,6 +233,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_LIVE_PHOTO = booleanPreferencesKey("use_live_photo")
         private val ENABLE_DEVELOP_ANIMATION = booleanPreferencesKey("enable_develop_animation")
         private val BACKGROUND_IMAGE = stringPreferencesKey("background_image")
+        private val USE_GPU_ACCELERATION = booleanPreferencesKey("use_gpu_acceleration")
         private val DRO_MODE = stringPreferencesKey("dro_mode")
         private val APPLY_ULTRA_HDR = booleanPreferencesKey("apply_ultra_hdr")
         private val COLOR_SPACE = stringPreferencesKey("color_space")
@@ -347,11 +350,12 @@ class UserPreferencesRepository(private val context: Context) {
                 useMultipleExposure = preferences[USE_MULTIPLE_EXPOSURE] ?: false,
                 multipleExposureCount = preferences[MULTIPLE_EXPOSURE_COUNT] ?: 2,
                 useMFSR = preferences[USE_SUPER_RESOLUTION] ?: false,
-                superResolutionScale = preferences[RAW_SUPER_RESOLUTION_SCALE] ?: 1.2f,
+                superResolutionScale = preferences[RAW_SUPER_RESOLUTION_SCALE] ?: 1.5f,
                 photoQuality = preferences[PHOTO_QUALITY] ?: 95,
                 useLivePhoto = preferences[USE_LIVE_PHOTO] ?: false,
                 enableDevelopAnimation = preferences[ENABLE_DEVELOP_ANIMATION] ?: false,
                 backgroundImage = preferences[BACKGROUND_IMAGE] ?: "camera_bg",
+                useGpuAcceleration = preferences[USE_GPU_ACCELERATION] ?: DeviceUtil.defaultGpuAcceleration,
                 droMode = preferences[DRO_MODE] ?: if (preferences[RAW_DRO_ENABLED_KEY] == true) "DR100" else "OFF",
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
@@ -1041,6 +1045,15 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveBackgroundImage(image: String) {
         context.dataStore.edit { preferences ->
             preferences[BACKGROUND_IMAGE] = image
+        }
+    }
+
+    /**
+     * 保存是否启用 GPU 加速
+     */
+    suspend fun saveUseGpuAcceleration(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[USE_GPU_ACCELERATION] = enabled
         }
     }
 

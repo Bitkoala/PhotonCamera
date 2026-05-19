@@ -34,17 +34,6 @@ constexpr bool kFastPath = false;
 
 using PerfClock = std::chrono::steady_clock;
 
-namespace {
-
-uint32_t rawSuperResOutputSize(uint32_t inputSize, float scale) {
-  uint32_t value =
-      static_cast<uint32_t>(std::max(1L, std::lround(inputSize * scale * 0.5f))) *
-      2u;
-  return std::max(value, 2u);
-}
-
-} // namespace
-
 inline double elapsedMillis(PerfClock::time_point start,
                             PerfClock::time_point end) {
   return std::chrono::duration<double, std::milli>(end - start).count();
@@ -197,8 +186,8 @@ VulkanRawStacker::VulkanRawStacker(uint32_t w, uint32_t h, bool enableSuperRes,
   }
 
   if (mEnableSuperRes) {
-    uint32_t outW = rawSuperResOutputSize(width, mSuperResScale);
-    uint32_t outH = rawSuperResOutputSize(height, mSuperResScale);
+    uint32_t outW = (uint32_t)std::lround(width * mSuperResScale);
+    uint32_t outH = (uint32_t)std::lround(height * mSuperResScale);
     const uint32_t MAX_TILE_SIZE = 4096;
     numTilesX = (outW + MAX_TILE_SIZE - 1) / MAX_TILE_SIZE;
     numTilesY = (outH + MAX_TILE_SIZE - 1) / MAX_TILE_SIZE;
@@ -229,8 +218,8 @@ void VulkanRawStacker::initVulkanResources() {
   }
 
   float scale = mEnableSuperRes ? mSuperResScale : 1.0f;
-  uint32_t outW = rawSuperResOutputSize(width, scale);
-  uint32_t outH = rawSuperResOutputSize(height, scale);
+  uint32_t outW = (uint32_t)std::lround(width * scale);
+  uint32_t outH = (uint32_t)std::lround(height * scale);
 
   uint32_t planeW = outW;
   uint32_t planeH = outH;
@@ -2670,8 +2659,8 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   }
 
   float scale = mEnableSuperRes ? mSuperResScale : 1.0f;
-  uint32_t outputW = rawSuperResOutputSize(width, scale);
-  uint32_t outputH = rawSuperResOutputSize(height, scale);
+  uint32_t outputW = (uint32_t)std::lround(width * scale);
+  uint32_t outputH = (uint32_t)std::lround(height * scale);
   uint32_t inputW = width / 2;
   uint32_t inputH = height / 2;
   uint32_t localTilesX = (inputW + 15) / 16;

@@ -137,7 +137,7 @@
     <string name="settings_multi_frame_count_description">多幀合成所使用的幀數（幀數越多效果越好，但合成也越慢）。</string>
     <string name="settings_use_super_resolution">超解析度</string>
     <string name="settings_use_super_resolution_description">使用 2x 多幀超解析度以獲得更多細節。（需要開啟多幀合成）</string>
-    <string name="settings_super_resolution_scale_description">設定 RAW 多幀超分倍率，範圍 1.00x–2.00x，預設 1.20x。</string>
+    <string name="settings_super_resolution_scale_description">设置多帧超分倍率，默认 1.5x。</string>
     <string name="settings_raw_engine">RAW 處理引擎</string>
     <string name="settings_raw_engine_description">選擇用於處理 RAW 資料的引擎</string>
     <string name="settings_raw_engine_native">原生</string>
