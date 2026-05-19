@@ -37,6 +37,7 @@ import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.phantom.PhantomWidgetProvider
+import com.hinnka.mycamera.processor.calculateRawSuperResolutionOutputSize
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.DcpProfileParser
 import com.hinnka.mycamera.raw.DcpInfo
@@ -313,6 +314,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val useMFSR: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useMFSR }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val superResolutionScale: StateFlow<Float> = userPreferencesRepository.userPreferences
+        .map { it.superResolutionScale }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 1.2f)
     val useLivePhoto: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useLivePhoto }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -322,9 +326,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val backgroundImage: StateFlow<String> = userPreferencesRepository.userPreferences
         .map { it.backgroundImage }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "camera_bg")
-    val useGpuAcceleration: StateFlow<Boolean> = userPreferencesRepository.userPreferences
-        .map { it.useGpuAcceleration }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, DeviceUtil.defaultGpuAcceleration)
     val droMode: StateFlow<String> = userPreferencesRepository.userPreferences
         .map { it.droMode }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "OFF")
@@ -2169,8 +2170,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setSuperResolutionScale(scale: Float) {
+        val normalizedScale = scale.coerceIn(1.0f, 2.0f)
         viewModelScope.launch {
-            userPreferencesRepository.saveSuperResolutionScale(scale)
+            userPreferencesRepository.saveSuperResolutionScale(normalizedScale)
         }
     }
 
@@ -3063,7 +3065,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val rotation = (baseRotation + orientationOffset) % 360
 
             val useSuperRes = useMFSR.value
-            val superResScale = if (useSuperRes) 2f else 1.0f
+            val superResScale = if (useSuperRes) superResolutionScale.value.coerceIn(1.0f, 2.0f) else 1.0f
 
             val aperture = if (state.value.isVirtualApertureEnabled) state.value.virtualAperture else null
             val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
@@ -3098,8 +3100,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 cameraId = currentCameraId,
-                width = (images[0].width.toFloat() * superResScale).roundToInt(),
-                height = (images[0].height.toFloat() * superResScale).roundToInt(),
+                width = calculateRawSuperResolutionOutputSize(images[0].width, superResScale),
+                height = calculateRawSuperResolutionOutputSize(images[0].height, superResScale),
                 ratio = aspectRatio,
                 rotation = rotation,
                 deviceModel = captureInfo.model,
@@ -3170,7 +3172,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     photoQualityValue,
                     useSuperResolution = useSuperRes,
                     superResolutionScale = superResScale,
-                    useGpuAcceleration = useGpuAcceleration.value,
                     exposureBias = state.value.exposureBias,
                     exportDngWithRawExport = exportDngWithRawExport.value
                 )
@@ -3349,15 +3350,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setBackgroundImage(image: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveBackgroundImage(image)
-        }
-    }
-
-    /**
-     * 设置多帧合成是否使用 GPU 加速
-     */
-    fun setUseGpuAcceleration(enabled: Boolean) {
-        viewModelScope.launch {
-            userPreferencesRepository.saveUseGpuAcceleration(enabled)
         }
     }
 

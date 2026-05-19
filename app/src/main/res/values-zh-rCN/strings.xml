@@ -214,7 +214,7 @@
     <string name="settings_use_super_resolution">多帧超分</string>
     <string name="settings_use_super_resolution_description">启用多帧超分</string>
     <string name="settings_super_resolution_scale">超分倍率</string>
-    <string name="settings_super_resolution_scale_description">设置多帧超分倍率，默认 1x。</string>
+    <string name="settings_super_resolution_scale_description">设置 RAW 多帧超分倍率，范围 1.00x–2.00x，默认 1.20x。</string>
     <string name="settings_raw_engine">RAW 处理引擎</string>
     <string name="settings_raw_engine_description">选择用于处理 RAW 数据的引擎</string>
     <string name="settings_raw_engine_native">原生</string>
