@@ -179,8 +179,22 @@ void processPlaneGather(ivec2 outPos, uint planeIndex) {
     // 4. Neighborhood search in the target plane:
     ivec2 targetPlaneCenter = ivec2(round(targetPlanePos));
 
-    for (int oy = -2; oy <= 2; ++oy) {
-        for (int ox = -2; ox <= 2; ++ox) {
+    // Dynamic bounding box computation for non-zero cubic weight
+    vec2 refPos0 = vec2(targetPlaneCenter) - flow;
+    vec2 outCenter0 = sourceToOutputPlaneCenter(refPos0, sampleOffset);
+
+    float minOx = (float(outPos.x) - outCenter0.x - 2.0) / pc.scale;
+    float maxOx = (float(outPos.x) - outCenter0.x + 2.0) / pc.scale;
+    float minOy = (float(outPos.y) - outCenter0.y - 2.0) / pc.scale;
+    float maxOy = (float(outPos.y) - outCenter0.y + 2.0) / pc.scale;
+
+    int oxStart = max(-2, int(ceil(minOx)));
+    int oxEnd   = min( 2, int(floor(maxOx)));
+    int oyStart = max(-2, int(ceil(minOy)));
+    int oyEnd   = min( 2, int(floor(maxOy)));
+
+    for (int oy = oyStart; oy <= oyEnd; ++oy) {
+        for (int ox = oxStart; ox <= oxEnd; ++ox) {
             ivec2 targetPlaneNeighbor = targetPlaneCenter + ivec2(ox, oy);
 
             // Boundary checks for the target plane coordinate

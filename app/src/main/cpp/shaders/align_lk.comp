@@ -126,7 +126,7 @@ void main() {
     float sIxIt = 0.0;
     float sIyIt = 0.0;
 
-    const int windowRadius = 4;
+    const int windowRadius = 3;
     const float sigma2 = 10.0;
     vec2 dX = vec2(1.0, 0.0);
     vec2 dY = vec2(0.0, 1.0);
@@ -147,30 +147,24 @@ void main() {
              vec2 currentValPoint = basePoint + currentFlow;
              float I = sampleGreenProxy(trgImg, currentValPoint);
 
-             float I_x = (sampleGreenProxy(trgImg, currentValPoint + dX) -
-                          sampleGreenProxy(trgImg, currentValPoint - dX)) * 0.5;
-             float I_y = (sampleGreenProxy(trgImg, currentValPoint + dY) -
-                          sampleGreenProxy(trgImg, currentValPoint - dY)) * 0.5;
-
              float T_x = (sampleGreenProxy(refImg, basePoint + dX) -
                           sampleGreenProxy(refImg, basePoint - dX)) * 0.5;
              float T_y = (sampleGreenProxy(refImg, basePoint + dY) -
                           sampleGreenProxy(refImg, basePoint - dY)) * 0.5;
 
              float refDetail = max(abs(T_x), abs(T_y));
-             float trgDetail = max(abs(I_x), abs(I_y));
-             float detailGate = clamp(max(refDetail, trgDetail) * 18.0, 0.08, 1.0);
+             float detailGate = clamp(refDetail * 18.0, 0.08, 1.0);
              float spatialW = exp(-0.5 * float(ox * ox + oy * oy) / sigma2);
              float w = spatialW * detailGate;
 
              float inlierWeight = 0.25 + 0.75 * sampleInlier(basePoint);
              float It = I - T;
              float totalWeight = w * inlierWeight;
-             sIxIx += totalWeight * I_x * I_x;
-             sIyIy += totalWeight * I_y * I_y;
-             sIxIy += totalWeight * I_x * I_y;
-             sIxIt += totalWeight * I_x * It;
-             sIyIt += totalWeight * I_y * It;
+             sIxIx += totalWeight * T_x * T_x;
+             sIyIy += totalWeight * T_y * T_y;
+             sIxIy += totalWeight * T_x * T_y;
+             sIxIt += totalWeight * T_x * It;
+             sIyIt += totalWeight * T_y * It;
         }
     }
     

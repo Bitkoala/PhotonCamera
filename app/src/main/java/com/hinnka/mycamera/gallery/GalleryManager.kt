@@ -1870,7 +1870,8 @@ object GalleryManager {
                         RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE
                     } else {
                         RawProcessor.RawBufferValueDomain.SENSOR
-                    }
+                    },
+                    customWriter = true
                 )
             }
         } catch (e: Throwable) {
