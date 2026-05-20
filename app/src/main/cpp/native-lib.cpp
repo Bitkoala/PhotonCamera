@@ -1860,6 +1860,7 @@ struct ExifData {
   bool hasNoiseProfile = false;
   int subjectLocation[4] = {0, 0, 0, 0};
   int subjectLocationLen = 0;
+  int rotation = 0;
 };
 
 static int sget2(unsigned int ord, LibRaw_abstract_datastream *stream) {
@@ -1904,6 +1905,20 @@ static void exif_callback(void *datap, int tag, int type, int len,
         ed->iso = sget2(ord, stream);
       else if (type == 4)
         ed->iso = sget4(ord, stream);
+    }
+  } else if (actual_tag == 0x0112) { // Orientation
+    if (len > 0) {
+      int orientation = 0;
+      if (type == 3)
+        orientation = sget2(ord, stream);
+      else if (type == 4)
+        orientation = sget4(ord, stream);
+      
+      if (orientation == 3) ed->rotation = 180;
+      else if (orientation == 6) ed->rotation = 90;
+      else if (orientation == 8) ed->rotation = 270;
+      else ed->rotation = 0;
+      LOGI("processDngNative: EXIF orientation parsed tag 0x0112 = %d -> rotation = %d", orientation, ed->rotation);
     }
   } else if (actual_tag == 0xC635 || actual_tag == 0xC761) { // NoiseProfile
     if (len > 0) {
@@ -2058,25 +2073,32 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     LOGI("raw awb estimate: disabled, using camera wb");
   }
 
-  ret = RawProcessor.dcraw_process();
-  if (ret != LIBRAW_SUCCESS) {
-    LOGE("processDngNative: Failed to process %s, ret=%d", path, ret);
+  if (!RawProcessor.imgdata.rawdata.raw_image) {
+    LOGE("processDngNative: raw_image is null after unpack");
     env->ReleaseStringUTFChars(filePath, path);
     return nullptr;
   }
 
-  // 获取处理后的图像
-  libraw_processed_image_t *image = RawProcessor.dcraw_make_mem_image(&ret);
-  if (!image || ret != 0) {
-    LOGE("processDngNative: Failed to make mem image, ret=%d", ret);
-    env->ReleaseStringUTFChars(filePath, path);
-    return nullptr;
-  }
+  int left = RawProcessor.imgdata.sizes.left_margin;
+  int top = RawProcessor.imgdata.sizes.top_margin;
+  int width = RawProcessor.imgdata.sizes.width;
+  int height = RawProcessor.imgdata.sizes.height;
+  int rawWidth = RawProcessor.imgdata.sizes.raw_width;
 
-  // 准备返回结果
-  size_t outputSize = (size_t)image->width * image->height * 3 * 2;
+  // 准备返回结果：仅拷贝有效 Bayer 像素区域的单通道数据，以极大地减少 JNI 开销
+  size_t outputSize = (size_t)width * height * 2; // 16-bit single channel
   void *outData = malloc(outputSize);
-  memcpy(outData, image->data, outputSize);
+  if (!outData) {
+    LOGE("processDngNative: Out of memory");
+    env->ReleaseStringUTFChars(filePath, path);
+    return nullptr;
+  }
+
+  unsigned short *src = RawProcessor.imgdata.rawdata.raw_image;
+  unsigned short *dst = (unsigned short *)outData;
+  for (int y = 0; y < height; y++) {
+    memcpy(dst + y * width, src + (y + top) * rawWidth + left, width * 2);
+  }
   jobject rawDataBuffer = env->NewDirectByteBuffer(outData, outputSize);
 
   // 提取元数据
@@ -2355,14 +2377,33 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        finalCCM.m[5], finalCCM.m[6], finalCCM.m[7], finalCCM.m[8]);
 
   // 其它
-  jint width = image->width;
-  jint height = image->height;
-  jint rowStride = width * 6; // RGB16
+  jint rowStride = width * 2; // Single channel 16-bit Bayer
   jfloat whiteLevel =
       (jfloat)RawProcessor.imgdata.color.dng_levels.dng_whitelevel[0];
   if (whiteLevel <= 0)
     whiteLevel = (jfloat)RawProcessor.imgdata.color.maximum;
-  jint cfaPattern = -1; // CFA_LINEAR_RGB
+
+  // 判定 CFA 模式
+  int c00 = RawProcessor.COLOR(top, left);
+  int c01 = RawProcessor.COLOR(top, left + 1);
+  int c10 = RawProcessor.COLOR(top + 1, left);
+  int c11 = RawProcessor.COLOR(top + 1, left + 1);
+  jint cfaPattern = -1;
+  auto isG = [](int c) { return c == 1 || c == 3; };
+  if (c00 == 0 && isG(c01) && isG(c10) && c11 == 2) {
+    cfaPattern = 0; // RGGB
+  } else if (isG(c00) && c01 == 0 && c10 == 2 && isG(c11)) {
+    cfaPattern = 1; // GRBG
+  } else if (isG(c00) && c01 == 2 && c10 == 0 && isG(c11)) {
+    cfaPattern = 2; // GBRG
+  } else if (c00 == 2 && isG(c01) && isG(c10) && c11 == 0) {
+    cfaPattern = 3; // BGGR
+  }
+  if (cfaPattern == -1) {
+    LOGW("processDngNative: Unknown CFA matrix (%d,%d,%d,%d), fallback to RGGB(0) to avoid GPU out-of-bounds crash", c00, c01, c10, c11);
+    cfaPattern = 0;
+  }
+  LOGI("processDngNative: CFA pattern identified from pixel [%d,%d] color matrix: (%d,%d,%d,%d) -> %d", top, left, c00, c01, c10, c11, cfaPattern);
 
   jfloat baselineExposure =
       RawProcessor.imgdata.color.dng_levels.baseline_exposure;
@@ -2403,12 +2444,11 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jobject dngData = env->NewObject(
       dngDataClass, constructor, rawDataBuffer, width, height, rowStride,
       whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
-      cfaPattern, 0, baselineExposure, exportedLscArray, exportedLscWidth, exportedLscHeight, exposureBias, iso,
+      cfaPattern, ed.rotation, baselineExposure, exportedLscArray, exportedLscWidth, exportedLscHeight, exposureBias, iso,
       shutterSpeedLong, aperture, activeArray, noiseProfileArray,
       embeddedPreviewBitmap);
 
   // 释放资源
-  LibRaw::dcraw_clear_mem(image);
   env->ReleaseStringUTFChars(filePath, path);
 
   return dngData;

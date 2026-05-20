@@ -32,50 +32,6 @@ object RawShaders {
     """.trimIndent()
 
     /**
-     * 片元着色器 - Linear RGB 处理管线 (用于 Stacked RAW)
-     * 跳过解马赛克，但保留 CCM/Gamma/ToneMapping/Sharpening
-     */
-    val FRAGMENT_SHADER_LINEAR = """
-        #version 300 es
-
-        precision highp float;
-        precision highp int;
-        precision highp usampler2D;
-
-        in vec2 vTexCoord;
-        out vec4 fragColor;
-
-        uniform usampler2D uRawTexture; // RGB16UI
-        uniform vec2 uImageSize;
-        uniform mat3 uColorCorrectionMatrix;
-        uniform sampler2D uLensShadingMap;
-        
-        uniform float uExposureGain;       // 曝光增益
-        uniform vec3 uBlackLevel; // Sensor black level or encoded-domain black point
-        uniform vec3 uWhiteLevel; // Sensor white level or encoded-domain full scale
-
-
-        void main() {
-            ivec2 coord = ivec2(gl_FragCoord.xy);
-            
-            // 直接读取 Linear RGB (16-bit Normalized to 0..1)
-            // Stack output is 0..65535
-            uvec3 raw = texelFetch(uRawTexture, coord, 0).rgb;
-            vec3 sensor = vec3(raw);
-            vec3 safeWhiteLevel = max(uWhiteLevel, uBlackLevel + vec3(1.0));
-            vec3 rgb = clamp((sensor - uBlackLevel) / (safeWhiteLevel - uBlackLevel), 0.0, 1.0);
-
-            // 1. CCM
-            rgb = uColorCorrectionMatrix * rgb;
-            
-            rgb = rgb * uExposureGain;
-
-            // Output Linear (由下一步 ToneMap Pass 处理)
-            fragColor = vec4(rgb, 1.0);
-        }
-    """.trimIndent()
-
-    /**
      * 全屏四边形顶点坐标
      */
     val FULL_QUAD_VERTICES = floatArrayOf(
@@ -418,7 +374,7 @@ object RawShaders {
 
     /**
      * Dedicated Sharpening Shader
-     * Using a Laplacian-style mask for detail enhancement
+     * Lightweight UnSharp Mask inspired by darktable's default sharpen preset.
      */
     val SHARPEN_FRAGMENT_SHADER = """
         #version 300 es
@@ -430,6 +386,12 @@ object RawShaders {
         uniform sampler2D uInputTexture;
         uniform vec2 uTexelSize;
         uniform float uSharpening;
+        uniform float uRadius;
+        uniform float uThreshold;
+
+        float luminance(vec3 color) {
+            return dot(color, vec3(0.2126, 0.7152, 0.0722));
+        }
         
         void main() {
             vec3 center = texture(uInputTexture, vTexCoord).rgb;
@@ -437,16 +399,30 @@ object RawShaders {
                 fragColor = vec4(center, 1.0);
                 return;
             }
-            
-            // Simple Laplacian Sharpening
-            vec3 left   = texture(uInputTexture, vTexCoord + vec2(-uTexelSize.x, 0.0)).rgb;
-            vec3 right  = texture(uInputTexture, vTexCoord + vec2( uTexelSize.x, 0.0)).rgb;
-            vec3 top    = texture(uInputTexture, vTexCoord + vec2(0.0, -uTexelSize.y)).rgb;
-            vec3 bottom = texture(uInputTexture, vTexCoord + vec2(0.0,  uTexelSize.y)).rgb;
-            
-            vec3 edge = 4.0 * center - left - right - top - bottom;
-            vec3 result = center + edge * (uSharpening * 0.5);
-            
+
+            float r = max(uRadius, 0.001);
+            float sigma = max(r * 0.5, 0.001);
+            float twoSigma2 = 2.0 * sigma * sigma;
+            vec3 blur = vec3(0.0);
+            float weightSum = 0.0;
+
+            for (int y = -2; y <= 2; y++) {
+                for (int x = -2; x <= 2; x++) {
+                    vec2 offset = vec2(float(x), float(y));
+                    float dist2 = dot(offset, offset);
+                    float weight = exp(-dist2 / twoSigma2);
+                    blur += texture(uInputTexture, vTexCoord + offset * uTexelSize * r).rgb * weight;
+                    weightSum += weight;
+                }
+            }
+            blur /= max(weightSum, 1e-5);
+
+            float centerLuma = luminance(center);
+            float blurLuma = luminance(blur);
+            float delta = centerLuma - blurLuma;
+            float detail = sign(delta) * max(abs(delta) - uThreshold, 0.0);
+            vec3 result = center + center * (detail / max(centerLuma, 1e-5)) * uSharpening;
+
             fragColor = vec4(clamp(result, 0.0, 1.0), 1.0);
         }
     """.trimIndent()

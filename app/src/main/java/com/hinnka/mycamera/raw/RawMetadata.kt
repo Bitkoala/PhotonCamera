@@ -89,7 +89,6 @@ data class RawMetadata(
         const val CFA_GRBG = 1
         const val CFA_GBRG = 2
         const val CFA_BGGR = 3
-        const val CFA_LINEAR_RGB = -1
 
         /**
          * 从 CameraCharacteristics 和 CaptureResult 创建 RawMetadata

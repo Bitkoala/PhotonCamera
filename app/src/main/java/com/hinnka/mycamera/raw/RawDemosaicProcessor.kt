@@ -171,12 +171,26 @@ class RawDemosaicProcessor {
     private var passthroughProgram = 0
     private var hdrReferenceProgram = 0
 
+    // RCD Compute Shader Programs
+    private var rcdPopulateProgram = 0
+    private var rcdStep1Program = 0
+    private var rcdStep2Program = 0
+    private var rcdStep3Program = 0
+    private var rcdStep40Program = 0
+    private var rcdStep41Program = 0
+    private var rcdStep42Program = 0
+    private var rcdStep43Program = 0
+    private var rcdWriteOutputProgram = 0
+    private var linearRcdProgram = 0
+
     private var rawTextureId = 0
 
     private var demosaicFramebufferId = 0
     private var demosaicTextureId = 0
     private var demosaicWidth = 0
     private var demosaicHeight = 0
+    private var linearOutputFramebufferId = 0
+    private var linearOutputTextureId = 0
 
     private var combinedFramebufferId = 0
     private var combinedTextureId = 0
@@ -228,11 +242,12 @@ class RawDemosaicProcessor {
     private var indexBuffer: ShortBuffer? = null
     private var pboId = 0
 
-    // Linear Program (New)
-    private var linearProgram = 0
-
     private var lensShadingTextureId = 0
     private var dummyShadingTextureId = 0
+
+    private val defaultUsmRadius = 2.0f
+    private val defaultUsmAmount = 0.5f
+    private val defaultUsmThreshold = 0.005f
 
     data class SceneStats(
         val exposureGain: Float,
@@ -488,7 +503,7 @@ class RawDemosaicProcessor {
             actualHeight = dngRawData.height
             actualRowStride = dngRawData.rowStride
             actualMetadata = convertDngRawDataToMetadata(dngRawData, exposureBias, actualMetadata)
-            actualRotation = dngRawData.rotation
+            actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
             onMetadata?.invoke(actualMetadata)
         }
 
@@ -523,66 +538,13 @@ class RawDemosaicProcessor {
                 }
             }
 
-            // Check GL_MAX_TEXTURE_SIZE and downscale if needed
-            var downscaledBuffer: ByteBuffer? = null
+            // Check GL_MAX_TEXTURE_SIZE. Oversized Bayer RCD inputs are rejected.
             if (actualWidth > maxTextureSize || actualHeight > maxTextureSize) {
-                PLog.w(
+                PLog.e(
                     TAG,
-                    "Input ${actualWidth}x${actualHeight} exceeds GL_MAX_TEXTURE_SIZE=$maxTextureSize, downscaling"
+                    "Input ${actualWidth}x${actualHeight} exceeds GL_MAX_TEXTURE_SIZE=$maxTextureSize"
                 )
-                val scaleX = maxTextureSize.toFloat() / actualWidth
-                val scaleY = maxTextureSize.toFloat() / actualHeight
-                val scaleFactor = minOf(scaleX, scaleY, 1f)
-                val newWidth = (actualWidth * scaleFactor).toInt() and 0xFFFFFFFE.toInt() // align to even
-                val newHeight = (actualHeight * scaleFactor).toInt() and 0xFFFFFFFE.toInt()
-
-                val isLinearRGB = actualMetadata.cfaPattern == RawMetadata.CFA_LINEAR_RGB
-                if (isLinearRGB) {
-                    // CPU bilinear downscale for interleaved RGB16 buffer
-                    val srcBuf = actualRawData.duplicate().order(java.nio.ByteOrder.nativeOrder())
-                    srcBuf.position(0)
-                    val src = srcBuf.asShortBuffer()
-                    val dstSize = newWidth * newHeight * 3 * 2 // 3 channels * 2 bytes
-                    val dstByteBuf = com.hinnka.mycamera.utils.DirectBufferAllocator.allocateNative(dstSize.toLong())
-                        ?.order(java.nio.ByteOrder.nativeOrder())
-                        ?: throw OutOfMemoryError("Failed to allocate native direct buffer")
-                    val dst = dstByteBuf.asShortBuffer()
-
-                    val srcChannels = 3
-                    for (dy in 0 until newHeight) {
-                        val sy = dy.toFloat() / newHeight * actualHeight
-                        val sy0 = sy.toInt().coerceIn(0, actualHeight - 1)
-                        val sy1 = (sy0 + 1).coerceIn(0, actualHeight - 1)
-                        val fy = sy - sy0
-                        for (dx in 0 until newWidth) {
-                            val sx = dx.toFloat() / newWidth * actualWidth
-                            val sx0 = sx.toInt().coerceIn(0, actualWidth - 1)
-                            val sx1 = (sx0 + 1).coerceIn(0, actualWidth - 1)
-                            val fx = sx - sx0
-                            for (c in 0 until srcChannels) {
-                                val v00 =
-                                    (src.get((sy0 * actualWidth + sx0) * srcChannels + c).toInt() and 0xFFFF).toFloat()
-                                val v10 =
-                                    (src.get((sy0 * actualWidth + sx1) * srcChannels + c).toInt() and 0xFFFF).toFloat()
-                                val v01 =
-                                    (src.get((sy1 * actualWidth + sx0) * srcChannels + c).toInt() and 0xFFFF).toFloat()
-                                val v11 =
-                                    (src.get((sy1 * actualWidth + sx1) * srcChannels + c).toInt() and 0xFFFF).toFloat()
-                                val v =
-                                    v00 * (1 - fx) * (1 - fy) + v10 * fx * (1 - fy) + v01 * (1 - fx) * fy + v11 * fx * fy
-                                dst.put((dy * newWidth + dx) * srcChannels + c, v.toInt().coerceIn(0, 65535).toShort())
-                            }
-                        }
-                    }
-                    actualRawData = dstByteBuf
-                    downscaledBuffer = dstByteBuf
-                    actualRowStride = newWidth * 6
-                    PLog.d(TAG, "Downscaled to ${newWidth}x${newHeight}")
-                }
-                actualWidth = newWidth
-                actualHeight = newHeight
-                // Update metadata dimensions
-                actualMetadata = actualMetadata.copy(width = newWidth, height = newHeight)
+                return@withContext null
             }
 
             val bounds =
@@ -590,63 +552,217 @@ class RawDemosaicProcessor {
             val finalWidth = bounds.width()
             val finalHeight = bounds.height()
 
-            // 4. 第一步：全分辨率处理 (Linear CCM)
+            // 4. 第一步：全分辨率处理 (Linear CCM / RCD Compute Shader Demosaic)
             setupFullResFramebuffer(actualWidth, actualHeight)
             uploadRawTextureFromBuffer(
                 actualRawData,
                 actualWidth,
                 actualHeight,
-                actualRowStride,
-                RawMetadata.CFA_LINEAR_RGB
+                actualRowStride
             )
             // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
             actualRawData = null
-            downscaledBuffer?.let {
-                com.hinnka.mycamera.utils.DirectBufferAllocator.freeNative(it)
-            }
-            renderLinearPass(
-                metadata = actualMetadata,
-                rawExposureCompensation = rawExposureCompensation,
-                rawBlackPointCorrection = rawBlackPointCorrection,
-                rawWhitePointCorrection = rawWhitePointCorrection,
-                dcpRenderPlan = resolvedDcpRenderPlan
-            )
+
             var shadowLift = 0f
             var effectiveExposureCompensation = rawExposureCompensation
-            if (rawAutoExposure) {
-                val meteringResult = resolveRawAutoExposureEv(
-                    context = context,
-                    metadata = actualMetadata,
-                    sourceTextureId = demosaicTextureId,
-                    rawDROMode = rawDROMode,
-                    dcpRenderPlan = resolvedDcpRenderPlan
+
+            // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
+                val ssboIds = IntArray(9)
+                GLES31.glGenBuffers(9, ssboIds, 0)
+                val extraMargin = 1024 * 1024 // 1MB 额外余量，彻底防止移动端 GPU 推测性越界读取越界崩溃
+                val fullSize = actualWidth * actualHeight * 4 + extraMargin
+                val sizes = intArrayOf(
+                    fullSize, // CFA_Buf (0)
+                    fullSize, // RGB0_Buf (1)
+                    fullSize, // RGB1_Buf (2)
+                    fullSize, // RGB2_Buf (3)
+                    fullSize, // VH_Dir_Buf (4)
+                    fullSize, // LPF_Buf (5)
+                    fullSize, // P_Diff_Buf (6)
+                    fullSize, // Q_Diff_Buf (7)
+                    fullSize  // PQ_Dir_Buf (8)
                 )
-                val autoExposureEv = meteringResult.meteredEv
-                if (rawDROMode.isEnabled && autoExposureEv > 0f && meteringResult.dynamicRangeGap > 1.2f) {
-                    val maxLinearGainEv = ln(1.0f / meteringResult.p998.coerceAtLeast(0.01f)) / ln(2.0f)
-                    val linearEv = autoExposureEv.coerceAtMost(maxLinearGainEv).coerceAtLeast(0f)
-                    val remainingEv = autoExposureEv - linearEv
-                    shadowLift = ((2.0f.pow(remainingEv) - 1.0f) / 0.67f).coerceIn(0f, 5.0f)
+                for (i in 0 until 9) {
+                    GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, ssboIds[i])
+                    GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, sizes[i], null, GLES31.GL_DYNAMIC_DRAW)
+                    GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, ssboIds[i])
+                }
+                GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
 
-                    PLog.d(TAG, "Raw DRO ${rawDROMode.name} linearEv=$linearEv shadowLift=$shadowLift")
-
-                    effectiveExposureCompensation += linearEv
-                } else {
-                    effectiveExposureCompensation += autoExposureEv
+                // 2.0 Populate (黑电平扣除与通道归一化)
+                val blackLevel4 = FloatArray(4) { idx ->
+                    actualMetadata.blackLevel.getOrElse(idx) { actualMetadata.blackLevel.firstOrNull() ?: 0f }
+                        .coerceAtLeast(0f)
                 }
 
-                if (effectiveExposureCompensation != rawExposureCompensation) {
-                    PLog.d(TAG, "final auto exposure compensation = $effectiveExposureCompensation")
-                    renderLinearPass(
+                GLES31.glUseProgram(rcdPopulateProgram)
+                GLES31.glActiveTexture(GLES31.GL_TEXTURE10)
+                GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rawTextureId)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uRawTexture"), 10) // 对应 RcdShaders.POPULATE 中的 binding = 10
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glUniform4fv(GLES31.glGetUniformLocation(rcdPopulateProgram, "uBlackLevel"), 1, blackLevel4, 0)
+                GLES31.glUniform1f(GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteLevel"), actualMetadata.whiteLevel)
+                val wbGains = actualMetadata.whiteBalanceGains
+                PLog.d(
+                    TAG,
+                    "RCD populate: cfa=${actualMetadata.cfaPattern} black=${blackLevel4.contentToString()} " +
+                        "white=${actualMetadata.whiteLevel} wb=${wbGains.contentToString()} " +
+                        "linearBlackPoint=${rawBlackPointCorrection.coerceIn(0f, 0.99f)} " +
+                        "linearWhitePoint=${(1f + rawWhitePointCorrection).coerceAtLeast(rawBlackPointCorrection.coerceIn(0f, 0.99f) + 0.01f)}"
+                )
+                GLES31.glUniform4fv(GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteBalanceGains"), 1, wbGains, 0)
+                GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Populate")
+
+                // 2.1 Step 1 (共享内存垂直与水平梯度估计)
+                GLES31.glUseProgram(rcdStep1Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep1Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 1")
+
+                // 2.2 Step 2 (低通滤波 LPF 计算)
+                GLES31.glUseProgram(rcdStep2Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep2Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep2Program, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 2")
+
+                // 2.3 Step 3 (绿通道在红蓝位置的边缘自适应插值)
+                GLES31.glUseProgram(rcdStep3Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep3Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep3Program, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 3")
+
+                // 2.4 Step 4_0 (对角线高通滤波差分计算)
+                GLES31.glUseProgram(rcdStep40Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep40Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 4_0")
+
+                // 2.5 Step 4_1 (对角线方向强弱度选择)
+                GLES31.glUseProgram(rcdStep41Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep41Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep41Program, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 4_1")
+
+                // 2.6 Step 4_2 (红蓝通道在红蓝位置色差引导插值)
+                GLES31.glUseProgram(rcdStep42Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep42Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep42Program, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 4_2")
+
+                // 2.7 Step 4_3 (红蓝通道在绿色位置插值)
+                GLES31.glUseProgram(rcdStep43Program)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep43Program, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep43Program, "uCfaPattern"), actualMetadata.cfaPattern)
+                GLES31.glDispatchCompute((actualWidth / 2 + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                checkGlError("RCD Step 4_3")
+
+                // 2.8 Write Output (组合输出到 RGBA16F 纹理)
+                GLES31.glUseProgram(rcdWriteOutputProgram)
+                GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uImageSize"), actualWidth, actualHeight)
+                GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), 4)
+                GLES31.glBindImageTexture(11, demosaicTextureId, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES31.GL_RGBA16F) // 对应 RcdShaders.WRITE_OUTPUT 中的 binding = 11
+                GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
+                GLES31.glMemoryBarrier(GLES31.GL_ALL_BARRIER_BITS)
+                checkGlError("RCD Write Output")
+
+                // 解绑 Image Texture 11，避免后续与常规纹理采样单元（glBindTexture）发生绑定冲突
+                GLES31.glBindImageTexture(11, 0, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES31.GL_RGBA16F)
+
+                // 强制等待 GPU 彻底完成所有之前的渲染和计算指令，确保 SSBO 被 GPU 完全读取完毕后再进行安全删除
+                GLES30.glFinish()
+
+                // 清理 SSBO
+                GLES31.glDeleteBuffers(9, ssboIds, 0)
+                for (i in 0 until 9) {
+                    GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
+                }
+
+                // 处理自动曝光测光
+                if (rawAutoExposure) {
+                    val meteringResult = resolveRawAutoExposureEv(
+                        context = context,
                         metadata = actualMetadata,
-                        rawExposureCompensation = effectiveExposureCompensation,
-                        rawBlackPointCorrection = rawBlackPointCorrection,
-                        rawWhitePointCorrection = rawWhitePointCorrection,
+                        sourceTextureId = demosaicTextureId,
+                        rawDROMode = rawDROMode,
                         dcpRenderPlan = resolvedDcpRenderPlan
                     )
+                    val autoExposureEv = meteringResult.meteredEv
+                    if (rawDROMode.isEnabled && autoExposureEv > 0f && meteringResult.dynamicRangeGap > 1.2f) {
+                        val maxLinearGainEv = ln(1.0f / meteringResult.p998.coerceAtLeast(0.01f)) / ln(2.0f)
+                        val linearEv = autoExposureEv.coerceAtMost(maxLinearGainEv).coerceAtLeast(0f)
+                        val remainingEv = autoExposureEv - linearEv
+                        shadowLift = ((2.0f.pow(remainingEv) - 1.0f) / 0.67f).coerceIn(0f, 5.0f)
+                        effectiveExposureCompensation += linearEv
+                    } else {
+                        effectiveExposureCompensation += autoExposureEv
+                    }
                 }
-            }
-            // rawTextureId 已被 linearPass 消费，提前释放 GPU 显存
+
+                // 运行 linearRcdProgram 将 CCM & Exposure 应用在已解马赛克的浮点 RCD 图像上
+                checkGlError("Before LinearRcdPass")
+
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearOutputFramebufferId)
+                checkGlError("LinearRcdPass setup framebuffer")
+
+                GLES30.glUseProgram(linearRcdProgram)
+                GLES30.glViewport(0, 0, actualWidth, actualHeight)
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, demosaicTextureId)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(linearRcdProgram, "uDemosaickedTexture"), 0)
+
+                val transposedCCM = transposeMatrix3x3(resolvedDcpRenderPlan?.colorCorrectionMatrix ?: actualMetadata.colorCorrectionMatrix)
+                GLES30.glUniformMatrix3fv(
+                    GLES30.glGetUniformLocation(linearRcdProgram, "uColorCorrectionMatrix"),
+                    1, false, transposedCCM, 0
+                )
+                val exposureGain = computeLinearExposureGain(actualMetadata, effectiveExposureCompensation, resolvedDcpRenderPlan)
+                GLES30.glUniform1f(GLES30.glGetUniformLocation(linearRcdProgram, "uExposureGain"), exposureGain)
+                GLES30.glUniform1f(
+                    GLES30.glGetUniformLocation(linearRcdProgram, "uBlackPoint"),
+                    rawBlackPointCorrection.coerceIn(0f, 0.99f)
+                )
+                GLES30.glUniform1f(
+                    GLES30.glGetUniformLocation(linearRcdProgram, "uWhitePoint"),
+                    (1f + rawWhitePointCorrection).coerceAtLeast(rawBlackPointCorrection.coerceIn(0f, 0.99f) + 0.01f)
+                )
+
+                val identityMatrix = FloatArray(16)
+                android.opengl.Matrix.setIdentityM(identityMatrix, 0)
+                GLES30.glUniformMatrix4fv(
+                    GLES30.glGetUniformLocation(linearRcdProgram, "uTexMatrix"),
+                    1, false, identityMatrix, 0
+                )
+
+                drawQuad(linearRcdProgram)
+                checkGlError("LinearRcdPass drawQuad")
+
+                // 重点：使用双缓冲交换 (Swap)，既不销毁任何纹理，也不需要 glGenTextures/glDeleteTextures
+                val tempTex = demosaicTextureId
+                demosaicTextureId = linearOutputTextureId
+                linearOutputTextureId = tempTex
+
+                val tempFbo = demosaicFramebufferId
+                demosaicFramebufferId = linearOutputFramebufferId
+                linearOutputFramebufferId = tempFbo
+
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+                checkGlError("After LinearRcdPass Swap")
+            // rawTextureId 已被 RCD populate 消费，提前释放 GPU 显存
             if (rawTextureId != 0) {
                 GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
                 rawTextureId = 0
@@ -663,16 +779,14 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = denoiseValue,
             )
-            // demosaicTextureId / gfChromaTexId / gfTexId[0] 已被 NLM Pass 消费，提前释放
-            if (demosaicTextureId != 0) {
-                GLES30.glDeleteTextures(1, intArrayOf(demosaicTextureId), 0)
-                demosaicTextureId = 0
-            }
-            if (demosaicFramebufferId != 0) {
-                GLES30.glDeleteFramebuffers(1, intArrayOf(demosaicFramebufferId), 0)
-                demosaicFramebufferId = 0
-            }
-            demosaicWidth = 0; demosaicHeight = 0
+            val outputTexture = gfTexId[1]
+
+            // 重点：不要在此处销毁常驻双缓冲的 framebuffer，由 setupFullResFramebuffer 或 release() 统一管理其生命周期
+            // if (demosaicFramebufferId != 0) {
+            //     GLES30.glDeleteFramebuffers(1, intArrayOf(demosaicFramebufferId), 0)
+            //     demosaicFramebufferId = 0
+            // }
+            // demosaicWidth = 0; demosaicHeight = 0
             if (gfChromaTexId != 0) {
                 GLES30.glDeleteTextures(1, intArrayOf(gfChromaTexId), 0)
                 gfChromaTexId = 0
@@ -689,8 +803,6 @@ class RawDemosaicProcessor {
                 GLES30.glDeleteFramebuffers(1, intArrayOf(gfFboId[0]), 0)
                 gfFboId[0] = 0
             }
-
-            val outputTexture = gfTexId[1]
 
             val hdrReferenceBitmap = if (includeHdrReference) {
                 setupHdrReferenceFramebuffer(actualWidth, actualHeight)
@@ -736,7 +848,7 @@ class RawDemosaicProcessor {
                 shadowLift = shadowLift
             )
             PLog.d(TAG, "Combined Pass took: ${System.currentTimeMillis() - combinedStart}ms")
-            // outputTexture (gfTexId[1]) 已被 combinedPass 消费，提前释放
+            // outputTexture 已被 combinedPass 消费，提前释放
             if (gfTexId[1] != 0) {
                 GLES30.glDeleteTextures(1, intArrayOf(gfTexId[1]), 0)
                 gfTexId[1] = 0
@@ -880,6 +992,19 @@ class RawDemosaicProcessor {
 
             // 初始化着色器和缓冲区
             initShaderProgram()
+            if (combinedProgram == 0 || sharpenProgram == 0 || passthroughProgram == 0 ||
+                rcdPopulateProgram == 0 || rcdStep1Program == 0 || rcdStep2Program == 0 ||
+                rcdStep3Program == 0 || rcdStep40Program == 0 || rcdStep41Program == 0 ||
+                rcdStep42Program == 0 || rcdStep43Program == 0 || rcdWriteOutputProgram == 0 ||
+                linearRcdProgram == 0) {
+                PLog.e(TAG, "Critical shader programs failed to compile or link. " +
+                        "combined=$combinedProgram sharpen=$sharpenProgram pass=$passthroughProgram " +
+                        "populate=$rcdPopulateProgram step1=$rcdStep1Program step2=$rcdStep2Program " +
+                        "step3=$rcdStep3Program step40=$rcdStep40Program step41=$rcdStep41Program " +
+                        "step42=$rcdStep42Program step43=$rcdStep43Program write=$rcdWriteOutputProgram " +
+                        "linearRcd=$linearRcdProgram")
+                return false
+            }
             initBuffers()
 
             // 创建静默遮挡图
@@ -906,20 +1031,6 @@ class RawDemosaicProcessor {
 
         // 1. DHT Multi-Pass Programs (替代旧的单 pass AHD)
         // initDhtPrograms(vShader)
-
-        // 1.5 Linear Program (For Stacked RGB, 保留)
-        val fShaderLinear = compileShader(GLES30.GL_FRAGMENT_SHADER, RawShaders.FRAGMENT_SHADER_LINEAR)
-        if (vShader != 0 && fShaderLinear != 0) {
-            linearProgram = GLES30.glCreateProgram()
-            GLES30.glAttachShader(linearProgram, vShader)
-            GLES30.glAttachShader(linearProgram, fShaderLinear)
-            GLES30.glLinkProgram(linearProgram)
-            if (!logProgramLinkResult(linearProgram, "linearProgram")) {
-                linearProgram = 0
-            }
-
-            GLES30.glDeleteShader(fShaderLinear)
-        }
 
         // 2. Combined Processing Program
         val fShaderCombined = compileShader(GLES30.GL_FRAGMENT_SHADER, RawShaders.COMBINED_FRAGMENT_SHADER)
@@ -979,11 +1090,95 @@ class RawDemosaicProcessor {
             GLES30.glDeleteShader(fShaderPass)
         }
 
+        // 2.8 RCD Programs
+        initRcdPrograms(vShader)
+
         GLES30.glDeleteShader(vShader)
         PLog.d(
             TAG,
             "Shader programs created: combined=$combinedProgram, passthrough=$passthroughProgram"
         )
+    }
+
+    private val FRAGMENT_SHADER_LINEAR_RCD = """
+        #version 300 es
+        precision highp float;
+        
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+        
+        uniform sampler2D uDemosaickedTexture;
+        uniform mat3 uColorCorrectionMatrix;
+        uniform float uExposureGain;
+        uniform float uBlackPoint;
+        uniform float uWhitePoint;
+        
+        void main() {
+            vec3 rgb = texture(uDemosaickedTexture, vTexCoord).rgb;
+            float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
+            float whitePoint = max(uWhitePoint, blackPoint + 0.01);
+            rgb = clamp((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), 0.0, 1.0);
+            // 应用色彩转换 CCM 矩阵和曝光值增益
+            rgb = uColorCorrectionMatrix * rgb * uExposureGain;
+            fragColor = vec4(rgb, 1.0);
+        }
+    """.trimIndent()
+
+    private fun initRcdPrograms(vShader: Int) {
+        rcdPopulateProgram = compileComputeProgram(RcdShaders.POPULATE, "POPULATE")
+        rcdStep1Program = compileComputeProgram(RcdShaders.STEP_1, "STEP_1")
+        rcdStep2Program = compileComputeProgram(RcdShaders.STEP_2, "STEP_2")
+        rcdStep3Program = compileComputeProgram(RcdShaders.STEP_3, "STEP_3")
+        rcdStep40Program = compileComputeProgram(RcdShaders.STEP_4_0, "STEP_4_0")
+        rcdStep41Program = compileComputeProgram(RcdShaders.STEP_4_1, "STEP_4_1")
+        rcdStep42Program = compileComputeProgram(RcdShaders.STEP_4_2, "STEP_4_2")
+        rcdStep43Program = compileComputeProgram(RcdShaders.STEP_4_3, "STEP_4_3")
+        rcdWriteOutputProgram = compileComputeProgram(RcdShaders.WRITE_OUTPUT, "WRITE_OUTPUT")
+
+        val fShaderLinearRcd = compileShader(GLES30.GL_FRAGMENT_SHADER, FRAGMENT_SHADER_LINEAR_RCD)
+        if (vShader != 0 && fShaderLinearRcd != 0) {
+            linearRcdProgram = GLES30.glCreateProgram()
+            GLES30.glAttachShader(linearRcdProgram, vShader)
+            GLES30.glAttachShader(linearRcdProgram, fShaderLinearRcd)
+            GLES30.glLinkProgram(linearRcdProgram)
+            if (!logProgramLinkResult(linearRcdProgram, "linearRcdProgram")) {
+                linearRcdProgram = 0
+            }
+            GLES30.glDeleteShader(fShaderLinearRcd)
+        }
+    }
+
+    private fun compileComputeProgram(source: String, name: String): Int {
+        val shader = GLES31.glCreateShader(GLES31.GL_COMPUTE_SHADER)
+        GLES31.glShaderSource(shader, source)
+        GLES31.glCompileShader(shader)
+
+        val compiled = IntArray(1)
+        GLES31.glGetShaderiv(shader, GLES31.GL_COMPILE_STATUS, compiled, 0)
+        if (compiled[0] == 0) {
+            val error = GLES31.glGetShaderInfoLog(shader)
+            PLog.e(TAG, "Compute Shader $name compilation failed: $error")
+            GLES31.glDeleteShader(shader)
+            return 0
+        }
+
+        val program = GLES31.glCreateProgram()
+        GLES31.glAttachShader(program, shader)
+        GLES31.glLinkProgram(program)
+
+        val linked = IntArray(1)
+        GLES31.glGetProgramiv(program, GLES31.GL_LINK_STATUS, linked, 0)
+        if (linked[0] == 0) {
+            val error = GLES31.glGetProgramInfoLog(program)
+            PLog.e(TAG, "Compute Program $name linking failed: $error")
+            GLES31.glDeleteProgram(program)
+            GLES31.glDeleteShader(shader)
+            return 0
+        }
+
+        GLES31.glDeleteShader(shader)
+        PLog.d(TAG, "Compute Program $name created: $program")
+        return program
     }
 
     private fun compileShader(type: Int, source: String): Int {
@@ -1080,8 +1275,8 @@ class RawDemosaicProcessor {
             GLES30.GL_HALF_FLOAT,
             null
         )
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glGenFramebuffers(1, cf, 0)
@@ -1276,8 +1471,7 @@ class RawDemosaicProcessor {
         buffer: ByteBuffer,
         width: Int,
         height: Int,
-        rowStride: Int,
-        cfaPattern: Int
+        rowStride: Int
     ) {
         if (rawTextureId == 0) {
             val textures = IntArray(1)
@@ -1295,12 +1489,8 @@ class RawDemosaicProcessor {
         buffer.position(0)
 
         // 关键优化：使用 GL_UNPACK_ROW_LENGTH 处理 padding
-        val isLinearRGB = cfaPattern == RawMetadata.CFA_LINEAR_RGB
-        val bytesPerPixel = if (isLinearRGB) 6 else 2 // 16-bit (x3 for RGB)
+        val bytesPerPixel = 2 // 16-bit single-channel Bayer
         val rowLength = rowStride / bytesPerPixel
-
-        val internalFormat = if (isLinearRGB) GLES30.GL_RGB16UI else GLES30.GL_R16UI
-        val format = if (isLinearRGB) GLES30.GL_RGB_INTEGER else GLES30.GL_RED_INTEGER
 
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 2)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, rowLength)
@@ -1308,11 +1498,11 @@ class RawDemosaicProcessor {
         GLES30.glTexImage2D(
             GLES30.GL_TEXTURE_2D,
             0,
-            internalFormat,
+            GLES30.GL_R16UI,
             width,
             height,
             0,
-            format,
+            GLES30.GL_RED_INTEGER,
             GLES30.GL_UNSIGNED_SHORT,
             buffer
         )
@@ -1424,43 +1614,58 @@ class RawDemosaicProcessor {
                 return
             }
             // Size mismatch, destroy and recreate
-            GLES30.glDeleteTextures(1, intArrayOf(demosaicTextureId), 0)
-            GLES30.glDeleteFramebuffers(1, intArrayOf(demosaicFramebufferId), 0)
+            GLES30.glDeleteTextures(2, intArrayOf(demosaicTextureId, linearOutputTextureId), 0)
+            GLES30.glDeleteFramebuffers(2, intArrayOf(demosaicFramebufferId, linearOutputFramebufferId), 0)
+            demosaicTextureId = 0
+            linearOutputTextureId = 0
+            demosaicFramebufferId = 0
+            linearOutputFramebufferId = 0
         }
 
         demosaicWidth = width
         demosaicHeight = height
 
-        val textures = IntArray(1)
-        GLES30.glGenTextures(1, textures, 0)
+        val textures = IntArray(2)
+        GLES30.glGenTextures(2, textures, 0)
         demosaicTextureId = textures[0]
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, demosaicTextureId)
-        GLES30.glTexImage2D(
-            GLES30.GL_TEXTURE_2D,
-            0,
-            GLES30.GL_RGBA16F,
-            width,
-            height,
-            0,
-            GLES30.GL_RGBA,
-            GLES30.GL_HALF_FLOAT,
-            null
-        )
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        linearOutputTextureId = textures[1]
 
-        val fbos = IntArray(1)
-        GLES30.glGenFramebuffers(1, fbos, 0)
+        val fbos = IntArray(2)
+        GLES30.glGenFramebuffers(2, fbos, 0)
         demosaicFramebufferId = fbos[0]
+        linearOutputFramebufferId = fbos[1]
+
+        // 分配并配置第一个 Immutable 纹理
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, demosaicTextureId)
+        GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, width, height)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, demosaicFramebufferId)
         GLES30.glFramebufferTexture2D(
-            GLES30.GL_FRAMEBUFFER,
-            GLES30.GL_COLOR_ATTACHMENT0,
-            GLES30.GL_TEXTURE_2D,
-            demosaicTextureId,
-            0
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D, demosaicTextureId, 0
         )
-        checkGlError("setupFullResFramebuffer")
+
+        // 分配并配置第二个 Immutable 纹理
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, linearOutputTextureId)
+        GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, width, height)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearOutputFramebufferId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D, linearOutputTextureId, 0
+        )
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        checkGlError("setupFullResFramebuffer Double Buffered")
     }
 
     private fun setupCombinedFramebuffer(width: Int, height: Int) {
@@ -2184,7 +2389,15 @@ class RawDemosaicProcessor {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(sharpenProgram, "uSharpening"),
-            sharpeningValue
+            if (sharpeningValue > 0f) sharpeningValue else defaultUsmAmount
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(sharpenProgram, "uRadius"),
+            defaultUsmRadius
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(sharpenProgram, "uThreshold"),
+            defaultUsmThreshold
         )
 
         val identityMatrix = FloatArray(16)
@@ -2196,60 +2409,6 @@ class RawDemosaicProcessor {
 
         drawQuad(sharpenProgram)
         checkGlError("renderSharpenPass")
-    }
-
-    private fun renderLinearPass(
-        metadata: RawMetadata,
-        rawExposureCompensation: Float,
-        rawBlackPointCorrection: Float,
-        rawWhitePointCorrection: Float,
-        dcpRenderPlan: DcpRenderPlan? = null
-    ) {
-        GLES30.glUseProgram(linearProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, demosaicFramebufferId)
-        GLES30.glViewport(0, 0, metadata.width, metadata.height)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, rawTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(linearProgram, "uRawTexture"), 0)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(linearProgram, "uImageSize"),
-            metadata.width.toFloat(), metadata.height.toFloat()
-        )
-        val transposedCCM = transposeMatrix3x3(dcpRenderPlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix)
-
-        GLES30.glUniformMatrix3fv(
-            GLES30.glGetUniformLocation(linearProgram, "uColorCorrectionMatrix"),
-            1, false, transposedCCM, 0
-        )
-        val identity = FloatArray(16)
-        GlMatrix.setIdentityM(identity, 0)
-        GLES30.glUniformMatrix4fv(
-            GLES30.glGetUniformLocation(linearProgram, "uTexMatrix"),
-            1, false, identity, 0
-        )
-        val normalizationGain = ExposureNormalization.compute(metadata)
-        val dcpBaselineExposureOffset = dcpRenderPlan?.baselineExposureOffset ?: 0f
-        PLog.d(
-            TAG,
-            "compute: normalizationGain=$normalizationGain baseline=${metadata.baselineExposure} dcpBaselineOffset=$dcpBaselineExposureOffset"
-        )
-        val exposureGain = computeLinearExposureGain(metadata, rawExposureCompensation, dcpRenderPlan)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(linearProgram, "uExposureGain"), exposureGain)
-        val (blackLevel, whiteLevel) = resolveLinearInputLevels(
-            metadata = metadata,
-            rawBlackPointCorrection = rawBlackPointCorrection,
-            rawWhitePointCorrection = rawWhitePointCorrection
-        )
-        GLES30.glUniform3f(
-            GLES30.glGetUniformLocation(linearProgram, "uBlackLevel"),
-            blackLevel[0], blackLevel[1], blackLevel[2]
-        )
-        GLES30.glUniform3f(
-            GLES30.glGetUniformLocation(linearProgram, "uWhiteLevel"),
-            whiteLevel[0], whiteLevel[1], whiteLevel[2]
-        )
-        drawQuad(linearProgram)
     }
 
     private fun computeLinearExposureGain(
@@ -2328,43 +2487,6 @@ class RawDemosaicProcessor {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
             MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)
-        }
-    }
-
-    private fun resolveLinearInputLevels(
-        metadata: RawMetadata,
-        rawBlackPointCorrection: Float,
-        rawWhitePointCorrection: Float
-    ): Pair<FloatArray, FloatArray> {
-        val fixedRawBlackPoint = (rawBlackPointCorrection + 0.004f).coerceAtMost(1f)
-        if (metadata.cfaPattern == RawMetadata.CFA_LINEAR_RGB) {
-            val encodedMax = 65535f
-            val blackLevel = FloatArray(3) { (encodedMax * fixedRawBlackPoint).coerceAtLeast(0f) }
-            val whiteBase = encodedMax * (1f + rawWhitePointCorrection)
-            val whiteLevel = FloatArray(3) { channel -> maxOf(whiteBase, blackLevel[channel] + 1f) }
-            return blackLevel to whiteLevel
-        }
-
-        val sensorRange = metadata.whiteLevel - metadata.blackLevel.average().toFloat()
-        val blackPointOffset = sensorRange * fixedRawBlackPoint
-        val whitePointOffset = sensorRange * rawWhitePointCorrection
-        val blackLevel = FloatArray(3) { channel ->
-            val sourceIndex = channelToCfaChannelIndex(channel)
-            (metadata.blackLevel.getOrElse(sourceIndex) { metadata.blackLevel.firstOrNull() ?: 0f } + blackPointOffset)
-                .coerceAtLeast(0f)
-        }
-        val whiteLevel = FloatArray(3) { channel ->
-            val level = metadata.whiteLevel + whitePointOffset
-            maxOf(level, blackLevel[channel] + 1f)
-        }
-        return blackLevel to whiteLevel
-    }
-
-    private fun channelToCfaChannelIndex(channel: Int): Int {
-        return when (channel) {
-            0 -> 0
-            1 -> 1
-            else -> 3
         }
     }
 
@@ -2566,6 +2688,18 @@ class RawDemosaicProcessor {
         if (passthroughProgram != 0) GLES30.glDeleteProgram(passthroughProgram)
         if (hdrReferenceProgram != 0) GLES30.glDeleteProgram(hdrReferenceProgram)
 
+        // RCD Compute Programs
+        if (rcdPopulateProgram != 0) GLES31.glDeleteProgram(rcdPopulateProgram)
+        if (rcdStep1Program != 0) GLES31.glDeleteProgram(rcdStep1Program)
+        if (rcdStep2Program != 0) GLES31.glDeleteProgram(rcdStep2Program)
+        if (rcdStep3Program != 0) GLES31.glDeleteProgram(rcdStep3Program)
+        if (rcdStep40Program != 0) GLES31.glDeleteProgram(rcdStep40Program)
+        if (rcdStep41Program != 0) GLES31.glDeleteProgram(rcdStep41Program)
+        if (rcdStep42Program != 0) GLES31.glDeleteProgram(rcdStep42Program)
+        if (rcdStep43Program != 0) GLES31.glDeleteProgram(rcdStep43Program)
+        if (rcdWriteOutputProgram != 0) GLES31.glDeleteProgram(rcdWriteOutputProgram)
+        if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
+
         // Guided Filter & NLM programs
         if (nlmPassHProgram != 0) GLES30.glDeleteProgram(nlmPassHProgram)
         if (nlmPassVProgram != 0) GLES30.glDeleteProgram(nlmPassVProgram)
@@ -2577,11 +2711,9 @@ class RawDemosaicProcessor {
 
         if (rawTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
         if (demosaicTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(demosaicTextureId), 0)
-        if (demosaicFramebufferId != 0) GLES30.glDeleteFramebuffers(
-            1,
-            intArrayOf(demosaicFramebufferId),
-            0
-        )
+        if (linearOutputTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(linearOutputTextureId), 0)
+        if (demosaicFramebufferId != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(demosaicFramebufferId), 0)
+        if (linearOutputFramebufferId != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(linearOutputFramebufferId), 0)
         if (combinedTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(combinedTextureId), 0)
         if (combinedFramebufferId != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(combinedFramebufferId), 0)
         if (hdrReferenceTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(hdrReferenceTextureId), 0)
