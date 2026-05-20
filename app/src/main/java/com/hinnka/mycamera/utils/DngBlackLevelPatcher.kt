@@ -57,6 +57,37 @@ object DngBlackLevelPatcher {
                 val entryCountBytes = ByteArray(2)
                 raf.readFully(entryCountBytes)
                 val entryCount = readUnsignedShort(entryCountBytes, 0, byteOrder)
+
+                // Detect if the DNG uses a normalized WhiteLevel (65535) and skip patching to prevent dark clipping
+                var isNormalizedDng = false
+                for (entryIndex in 0 until entryCount) {
+                    val entryOffset = firstIfdOffset + 2L + entryIndex * 12L
+                    if (entryOffset + 12L > raf.length()) break
+                    raf.seek(entryOffset)
+                    val entry = ByteArray(12)
+                    raf.readFully(entry)
+                    val tag = readUnsignedShort(entry, 0, byteOrder)
+                    if (tag == 50717) { // TAG_WHITE_LEVEL
+                        val type = readUnsignedShort(entry, 2, byteOrder)
+                        val count = readUnsignedInt(entry, 4, byteOrder)
+                        if (count == 1L) {
+                            val value = if (type == 3) {
+                                readUnsignedShort(entry, 8, byteOrder).toLong()
+                            } else {
+                                readUnsignedInt(entry, 8, byteOrder)
+                            }
+                            if (value == 65535L) {
+                                isNormalizedDng = true
+                            }
+                        }
+                        break
+                    }
+                }
+                if (isNormalizedDng) {
+                    PLog.i(TAG, "DNG has normalized WhiteLevel (65535), skipping physical BlackLevel patch to prevent color clipping")
+                    return false
+                }
+
                 for (entryIndex in 0 until entryCount) {
                     val entryOffset = firstIfdOffset + 2L + entryIndex * 12L
                     if (entryOffset + 12L > raf.length()) {

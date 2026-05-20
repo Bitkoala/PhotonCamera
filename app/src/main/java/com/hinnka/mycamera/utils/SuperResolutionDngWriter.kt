@@ -84,17 +84,48 @@ object SuperResolutionDngWriter {
         blackLevel: FloatArray,
         whiteLevel: Int,
         valueDomain: RawProcessor.RawBufferValueDomain,
+        blackLevelMode: String? = null,
+        customBlackLevel: Float? = null,
     ): Boolean {
         if (width <= 0 || height <= 0) return false
 
         return runCatching {
             val input = rawBuffer.duplicate().order(ByteOrder.nativeOrder())
             input.rewind()
-            val encodedBlackLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
-                floatArrayOf(0f, 0f, 0f, 0f)
-            } else {
-                blackLevel
+
+            val resolvedUserBlackLevel = when (blackLevelMode) {
+                "0" -> 0f
+                "16" -> 16f
+                "64" -> 64f
+                "256" -> 256f
+                "512" -> 512f
+                "Custom" -> customBlackLevel ?: 0f
+                else -> null
             }
+
+            val encodedBlackLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
+                if (resolvedUserBlackLevel != null) {
+                    FloatArray(blackLevel.size) { i ->
+                        val defaultBL = blackLevel[i]
+                        val correctedBL = resolvedUserBlackLevel
+                        val defaultWL = whiteLevel.toFloat()
+                        if (defaultWL > defaultBL) {
+                            ((correctedBL - defaultBL) / (defaultWL - defaultBL) * 65535f).coerceIn(0f, 65535f)
+                        } else {
+                            0f
+                        }
+                    }
+                } else {
+                    floatArrayOf(0f, 0f, 0f, 0f)
+                }
+            } else {
+                if (resolvedUserBlackLevel != null) {
+                    FloatArray(blackLevel.size) { resolvedUserBlackLevel }
+                } else {
+                    blackLevel
+                }
+            }
+
             val encodedWhiteLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
                 65535
             } else {

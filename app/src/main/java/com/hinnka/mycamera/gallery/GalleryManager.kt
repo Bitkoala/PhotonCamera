@@ -1871,7 +1871,9 @@ object GalleryManager {
                     } else {
                         RawProcessor.RawBufferValueDomain.SENSOR
                     },
-                    customWriter = true
+                    customWriter = true,
+                    blackLevelMode = metadata.rawBlackLevelMode,
+                    customBlackLevel = metadata.rawCustomBlackLevel
                 )
             }
         } catch (e: Throwable) {

@@ -153,7 +153,9 @@ object RawProcessor {
         blackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
         whiteLevel: Int = 65535,
         valueDomain: RawBufferValueDomain = RawBufferValueDomain.SENSOR,
-        customWriter: Boolean,
+        customWriter: Boolean = false,
+        blackLevelMode: String? = null,
+        customBlackLevel: Float? = null,
     ): Boolean {
         val orientation = when (rotation) {
             90 -> ExifInterface.ORIENTATION_ROTATE_90
@@ -161,7 +163,7 @@ object RawProcessor {
             270 -> ExifInterface.ORIENTATION_ROTATE_270
             else -> ExifInterface.ORIENTATION_NORMAL
         }
-        if (customWriter) {
+        if (customWriter || !canDngCreatorWriteBuffer(width, height, characteristics)) {
             PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height}")
             return SuperResolutionDngWriter.write(
                 outputStream = outputStream,
@@ -174,7 +176,9 @@ object RawProcessor {
                 cfaPattern = cfaPattern,
                 blackLevel = blackLevel,
                 whiteLevel = whiteLevel,
-                valueDomain = valueDomain
+                valueDomain = valueDomain,
+                blackLevelMode = blackLevelMode,
+                customBlackLevel = customBlackLevel
             )
         }
 
