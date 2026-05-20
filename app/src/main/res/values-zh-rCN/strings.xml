@@ -9,6 +9,8 @@
     <string name="timer">定时器</string>
     <string name="toolbox_title">工具箱</string>
     <string name="toolbox_description">实用工具与创意功能</string>
+    <string name="film_library_title">胶卷库</string>
+    <string name="film_library_desc">探索各种经典胶卷及其特性。</string>
     <string name="color_walk_title">Color Walk</string>
     <string name="color_walk_desc">“Color Walk（色彩漫步）”是一种观察世界的正念练习。通过专注于特定的颜色，我们能够放慢脚步，在平凡的日常中发现被忽视的美。选择一个此刻最能触动你的颜色，开启一段专属于你的视觉探索之旅。</string>
     <string name="color_walk_short_desc">开启一段专注色彩的正念观察之旅</string>
@@ -20,6 +22,7 @@
     <string name="histogram">直方图</string>
     <string name="grid">网格</string>
     <string name="back">返回</string>
+    <string name="unknown">未知</string>
     <string name="take_photo">拍照</string>
     <string name="pause">暂停</string>
     <string name="resume">继续</string>
@@ -883,4 +886,19 @@
     <string name="avg">平均</string>
     <string name="spot">点测光</string>
     <string name="frame_editor_text_type_filter_name">滤镜名称</string>
+
+    <!-- 胶卷详情 -->
+    <string name="film_specs">规格参数</string>
+    <string name="film_example_photos">样片展示</string>
+    <string name="film_type">类型</string>
+    <string name="film_manufacturer">厂商</string>
+    <string name="film_formats">画幅</string>
+    <string name="film_origin">产地</string>
+    <string name="film_iso">感光度</string>
+    <string name="film_grain">颗粒感</string>
+    <string name="film_contrast">对比度</string>
+    <string name="set_as_reference">设为参考</string>
+    <string name="reference_photo_set_success">已设为编辑参考图。下次进入编辑界面时将显示该悬浮图片！</string>
+    <string name="zoom_in">放大</string>
+    <string name="zoom_out">缩小</string>
 </resources>

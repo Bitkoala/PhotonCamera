@@ -13,6 +13,12 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
@@ -117,6 +123,12 @@ fun PhotoEditScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val userPreferencesRepository = remember {
+        com.hinnka.mycamera.data.ContentRepository.getInstance(context).userPreferencesRepository
+    }
+    val userPreferences by userPreferencesRepository.userPreferences.collectAsState(
+        initial = com.hinnka.mycamera.data.UserPreferences()
+    )
     val currentPhoto = viewModel.getCurrentPhoto()
     val editLutId by viewModel.editLutId.collectAsState()
     val editLutRecipeParams by viewModel.editLutRecipeParams.collectAsState()
@@ -343,6 +355,142 @@ fun PhotoEditScreen(
                 .padding(paddingValues)
                 .animateContentSize()
         ) {
+            // Draggable Floating Reference Photo
+            val referencePhotoUrl = userPreferences.referencePhotoUrl
+            var isMinimized by remember { mutableStateOf(false) }
+            var isLarge by remember { mutableStateOf(false) }
+            
+            referencePhotoUrl?.let { url ->
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val initialOffsetX = remember(density) { with(density) { 20.dp.toPx() } }
+                val initialOffsetY = remember(density) { with(density) { 80.dp.toPx() } }
+                
+                var offsetX by remember { mutableStateOf(initialOffsetX) }
+                var offsetY by remember { mutableStateOf(initialOffsetY) }
+
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                offsetX += dragAmount.x
+                                offsetY += dragAmount.y
+                            }
+                        }
+                        .zIndex(10f)
+                ) {
+                    if (isMinimized) {
+                        Card(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable { isMinimized = false },
+                            shape = CircleShape,
+                            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.8f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                            border = BorderStroke(1.5.dp, Color.White)
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PushPin,
+                                    contentDescription = "Show Reference",
+                                    tint = Color(0xFFFFD700),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        val cardSize = if (isLarge) 240.dp else 120.dp
+                        Card(
+                            modifier = Modifier
+                                .width(cardSize),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                            border = BorderStroke(2.dp, Color.White)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    coil.compose.AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(url)
+                                            .placeholder(R.mipmap.ic_launcher)
+                                            .build(),
+                                        contentDescription = "Reference Photo",
+                                        modifier = Modifier
+                                            .fillMaxWidth(),
+                                        contentScale = ContentScale.FillWidth
+                                    )
+                                    
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.6f))
+                                                .clickable { isMinimized = true },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PushPin,
+                                                contentDescription = "Minimize",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.6f))
+                                                .clickable {
+                                                    scope.launch {
+                                                        userPreferencesRepository.saveReferencePhotoUrl(null)
+                                                    }
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Close",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.White)
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        .clickable { isLarge = !isLarge },
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isLarge) stringResource(R.string.zoom_out) else stringResource(R.string.zoom_in),
+                                        color = Color.Black,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 预览区域
             Box(
                 modifier = Modifier

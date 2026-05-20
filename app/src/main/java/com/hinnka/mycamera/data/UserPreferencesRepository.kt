@@ -157,7 +157,8 @@ data class UserPreferences(
     val defaultVirtualAperture: Float = 0f, // 默认虚化光圈，0表示关闭
     val customFocalLengths: List<Float> = emptyList(), // 自定义焦段 (35mm等效)，最多8个
     val customLensIds: List<String> = emptyList(), // 自定义镜头 ID，逗号分隔存储
-    val hiddenFocalLengths: List<Float> = emptyList() // 隐藏的焦段 (35mm等效)
+    val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
+    val referencePhotoUrl: String? = null
 )
 
 /**
@@ -273,6 +274,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val CUSTOM_LENS_IDS = stringPreferencesKey("custom_lens_ids")
         private val HIDDEN_FOCAL_LENGTHS = stringPreferencesKey("hidden_focal_lengths")
         private val USE_HDR_SCREEN_MODE = booleanPreferencesKey("use_hdr_screen_mode")
+        private val REFERENCE_PHOTO_URL = stringPreferencesKey("reference_photo_url")
     }
 
     /**
@@ -417,7 +419,8 @@ class UserPreferencesRepository(private val context: Context) {
                     ?.split(",")?.filter { it.isNotEmpty() }
                     ?.mapNotNull { it.toFloatOrNull() }
                     ?: emptyList(),
-                useHdrScreenMode = preferences[USE_HDR_SCREEN_MODE] ?: true
+                useHdrScreenMode = preferences[USE_HDR_SCREEN_MODE] ?: true,
+                referencePhotoUrl = preferences[REFERENCE_PHOTO_URL]
             )
         }
 
@@ -531,6 +534,19 @@ class UserPreferencesRepository(private val context: Context) {
                 availableByName[name] ?: AspectRatio.valueOfOrNull(name)
             }
         return AspectRatio.sanitizeTopSheetRatios(ratios)
+    }
+
+    /**
+     * 保存参考图 URL
+     */
+    suspend fun saveReferencePhotoUrl(url: String?) {
+        context.dataStore.edit { preferences ->
+            if (url != null) {
+                preferences[REFERENCE_PHOTO_URL] = url
+            } else {
+                preferences.remove(REFERENCE_PHOTO_URL)
+            }
+        }
     }
 
     /**

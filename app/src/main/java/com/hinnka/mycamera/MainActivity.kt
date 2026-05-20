@@ -69,7 +69,10 @@ import com.hinnka.mycamera.lut.creator.LutCreatorScreen
 import com.hinnka.mycamera.lut.creator.LutCreatorViewModel
 import com.hinnka.mycamera.screencapture.ScreenCaptureRenderConfigStore
 import com.hinnka.mycamera.ui.camera.CameraScreen
+import com.hinnka.mycamera.data.FilmData
 import com.hinnka.mycamera.ui.camera.ColorWalkScreen
+import com.hinnka.mycamera.ui.camera.FilmDetailScreen
+import com.hinnka.mycamera.ui.camera.FilmLibraryScreen
 import com.hinnka.mycamera.ui.camera.ToolboxScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
@@ -108,6 +111,10 @@ object Routes {
     const val TOOLBOX = "toolbox"
     const val PHANTOM_PIP_CROP = "phantom_pip_crop"
     const val COLOR_WALK = "color_walk"
+    const val FILM_LIBRARY = "film_library"
+    const val FILM_DETAIL = "film_detail/{filmId}"
+
+    fun filmDetail(filmId: String) = "film_detail/$filmId"
 
     fun photoDetail(tab: GalleryTab = GalleryTab.PHOTON, index: Int = 0, photoId: String? = null) =
         "photo_detail/$tab/$index" + (if (photoId != null) "?photoId=$photoId" else "")
@@ -204,6 +211,10 @@ class MainActivity : ComponentActivity() {
 
         handleIntent(intent)
         StartupTrace.mark("MainActivity.intent handled", "pendingRoute=$pendingRoute")
+
+        lifecycleScope.launch {
+            FilmData.init(this@MainActivity)
+        }
 
         splashScreen.setKeepOnScreenCondition {
             val cameraInitialized = cameraViewModel.isInitialized.value
@@ -700,8 +711,32 @@ fun NavigationHost(
                 ToolboxScreen(
                     onBack = { navController.popBackStack() },
                     onLutCreatorClick = { navController.navigate(Routes.LUT_CREATOR) },
-                    onColorWalkClick = { navController.navigate(Routes.COLOR_WALK) }
+                    onColorWalkClick = { navController.navigate(Routes.COLOR_WALK) },
+                    onFilmLibraryClick = { navController.navigate(Routes.FILM_LIBRARY) }
                 )
+            }
+
+            composable(Routes.FILM_LIBRARY) {
+                FilmLibraryScreen(
+                    onBack = { navController.popBackStack() },
+                    onFilmClick = { film ->
+                        navController.navigate(Routes.filmDetail(film.id ?: ""))
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.FILM_DETAIL,
+                arguments = listOf(navArgument("filmId") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val filmId = backStackEntry.arguments?.getString("filmId") ?: ""
+                val film = FilmData.getFilmById(filmId)
+                if (film != null) {
+                    FilmDetailScreen(
+                        film = film,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
             }
 
             composable(Routes.COLOR_WALK) {

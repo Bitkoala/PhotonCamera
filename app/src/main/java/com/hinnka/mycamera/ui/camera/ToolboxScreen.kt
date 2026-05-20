@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.FilterFrames
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -38,6 +39,7 @@ fun ToolboxScreen(
     onBack: () -> Unit,
     onLutCreatorClick: () -> Unit,
     onColorWalkClick: () -> Unit,
+    onFilmLibraryClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
@@ -52,6 +54,12 @@ fun ToolboxScreen(
             descriptionRes = R.string.color_walk_short_desc,
             icon = Icons.Default.DirectionsWalk,
             onClick = onColorWalkClick
+        ),
+        ToolboxItem(
+            titleRes = R.string.film_library_title,
+            descriptionRes = R.string.film_library_desc,
+            icon = Icons.Default.FilterFrames,
+            onClick = onFilmLibraryClick
         )
     )
 

@@ -9,6 +9,8 @@
     <string name="timer">Timer</string>
     <string name="toolbox_title">Toolbox</string>
     <string name="toolbox_description">Utility tools and creative features</string>
+    <string name="film_library_title">Film Library</string>
+    <string name="film_library_desc">Explore a wide range of film stocks and their characteristics.</string>
     <string name="color_walk_title">Color Walk</string>
     <string name="color_walk_desc">A Color Walk is a form of mindfulness. By focusing on a specific color, we slow down and discover the hidden beauty in our daily surroundings. Choose a color that resonates with your mood today, and let it guide your perspective.</string>
     <string name="color_walk_short_desc">Discover mindfulness through a journey of colors.</string>
@@ -20,6 +22,7 @@
     <string name="histogram">Histogram</string>
     <string name="grid">Grid</string>
     <string name="back">Back</string>
+    <string name="unknown">Unknown</string>
     <string name="take_photo">Take Photo</string>
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
@@ -883,4 +886,19 @@
     <string name="avg">AVG</string>
     <string name="spot">SPOT</string>
     <string name="frame_editor_text_type_filter_name">Filter Name</string>
+
+    <!-- Film Detail -->
+    <string name="film_specs">Specs</string>
+    <string name="film_example_photos">Example Photos</string>
+    <string name="film_type">Type</string>
+    <string name="film_manufacturer">Manufacturer</string>
+    <string name="film_formats">Formats</string>
+    <string name="film_origin">Origin</string>
+    <string name="film_iso">ISO</string>
+    <string name="film_grain">Grain</string>
+    <string name="film_contrast">Contrast</string>
+    <string name="set_as_reference">Set as Reference</string>
+    <string name="reference_photo_set_success">Set as reference photo. It will display in next edit!</string>
+    <string name="zoom_in">Enlarge</string>
+    <string name="zoom_out">Shrink</string>
 </resources>
