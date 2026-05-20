@@ -1,5 +1,8 @@
 package com.hinnka.mycamera.model
 
+import androidx.annotation.Keep
+
+@Keep
 data class Film(
     val id: String?,
     val name: String?,
