@@ -158,17 +158,14 @@ fun ColorRecipePanel(
         R.string.recipe_lch_red to listOf(
             RecipeParam.PRIMARY_RED_HUE,
             RecipeParam.PRIMARY_RED_SATURATION,
-            RecipeParam.PRIMARY_RED_LIGHTNESS,
         ),
         R.string.recipe_lch_green to listOf(
             RecipeParam.PRIMARY_GREEN_HUE,
             RecipeParam.PRIMARY_GREEN_SATURATION,
-            RecipeParam.PRIMARY_GREEN_LIGHTNESS,
         ),
         R.string.recipe_lch_blue to listOf(
             RecipeParam.PRIMARY_BLUE_HUE,
             RecipeParam.PRIMARY_BLUE_SATURATION,
-            RecipeParam.PRIMARY_BLUE_LIGHTNESS,
         ),
     )
 

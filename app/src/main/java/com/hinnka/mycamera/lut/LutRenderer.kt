@@ -69,9 +69,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         val uLchHueAdjustmentsLocation: Int,
         val uLchChromaAdjustmentsLocation: Int,
         val uLchLightnessAdjustmentsLocation: Int,
-        val uPrimaryHueLocation: Int,
-        val uPrimarySaturationLocation: Int,
-        val uPrimaryLightnessLocation: Int,
+        val uPrimaryCalibrationMatrixLocation: Int,
         val uSTMatrixFragLocation: Int,
         val uCropRectLocation: Int,
         val uApertureLocation: Int,
@@ -207,9 +205,7 @@ class LutRenderer : GLSurfaceView.Renderer {
     private var uLchHueAdjustmentsLocation: Int = 0
     private var uLchChromaAdjustmentsLocation: Int = 0
     private var uLchLightnessAdjustmentsLocation: Int = 0
-    private var uPrimaryHueLocation: Int = 0
-    private var uPrimarySaturationLocation: Int = 0
-    private var uPrimaryLightnessLocation: Int = 0
+    private var uPrimaryCalibrationMatrixLocation: Int = 0
     private var uSTMatrixFragLocation: Int = 0
     private var uCropRectLocation: Int = 0
     private var uApertureLocation: Int = 0
@@ -847,27 +843,11 @@ class LutRenderer : GLSurfaceView.Renderer {
             GLES30.glUniform1f(locations.uLowResLocation, params.lowRes)
             GLES30.glUniform1f(locations.uAspectRatioLocation, width.toFloat() / maxOf(1, height).toFloat())
             val lch = buildLchArrays(params)
+            val primaryCalibrationMatrix = CameraRawCalibrationMatrix.build(params)
             GLES30.glUniform1fv(locations.uLchHueAdjustmentsLocation, LCH_COLOR_BAND_COUNT, lch.first, 0)
             GLES30.glUniform1fv(locations.uLchChromaAdjustmentsLocation, LCH_COLOR_BAND_COUNT, lch.second, 0)
             GLES30.glUniform1fv(locations.uLchLightnessAdjustmentsLocation, LCH_COLOR_BAND_COUNT, lch.third, 0)
-            GLES30.glUniform3f(
-                locations.uPrimaryHueLocation,
-                params.primaryRedHue,
-                params.primaryGreenHue,
-                params.primaryBlueHue
-            )
-            GLES30.glUniform3f(
-                locations.uPrimarySaturationLocation,
-                params.primaryRedSaturation,
-                params.primaryGreenSaturation,
-                params.primaryBlueSaturation
-            )
-            GLES30.glUniform3f(
-                locations.uPrimaryLightnessLocation,
-                params.primaryRedLightness,
-                params.primaryGreenLightness,
-                params.primaryBlueLightness
-            )
+            GLES30.glUniformMatrix3fv(locations.uPrimaryCalibrationMatrixLocation, 1, false, primaryCalibrationMatrix, 0)
         }
 
         GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
@@ -1319,9 +1299,7 @@ class LutRenderer : GLSurfaceView.Renderer {
             uLchHueAdjustmentsLocation = GLES30.glGetUniformLocation(program, "uLchHueAdjustments"),
             uLchChromaAdjustmentsLocation = GLES30.glGetUniformLocation(program, "uLchChromaAdjustments"),
             uLchLightnessAdjustmentsLocation = GLES30.glGetUniformLocation(program, "uLchLightnessAdjustments"),
-            uPrimaryHueLocation = GLES30.glGetUniformLocation(program, "uPrimaryHue"),
-            uPrimarySaturationLocation = GLES30.glGetUniformLocation(program, "uPrimarySaturation"),
-            uPrimaryLightnessLocation = GLES30.glGetUniformLocation(program, "uPrimaryLightness"),
+            uPrimaryCalibrationMatrixLocation = GLES30.glGetUniformLocation(program, "uPrimaryCalibrationMatrix"),
             uSTMatrixFragLocation = GLES30.glGetUniformLocation(program, "uSTMatrix"),
             uCropRectLocation = GLES30.glGetUniformLocation(program, "uCropRect"),
             uApertureLocation = GLES30.glGetUniformLocation(program, "uAperture"),
@@ -1393,9 +1371,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         uLchHueAdjustmentsLocation = GLES30.glGetUniformLocation(programId, "uLchHueAdjustments")
         uLchChromaAdjustmentsLocation = GLES30.glGetUniformLocation(programId, "uLchChromaAdjustments")
         uLchLightnessAdjustmentsLocation = GLES30.glGetUniformLocation(programId, "uLchLightnessAdjustments")
-        uPrimaryHueLocation = GLES30.glGetUniformLocation(programId, "uPrimaryHue")
-        uPrimarySaturationLocation = GLES30.glGetUniformLocation(programId, "uPrimarySaturation")
-        uPrimaryLightnessLocation = GLES30.glGetUniformLocation(programId, "uPrimaryLightness")
+        uPrimaryCalibrationMatrixLocation = GLES30.glGetUniformLocation(programId, "uPrimaryCalibrationMatrix")
         uSTMatrixFragLocation = GLES30.glGetUniformLocation(programId, "uSTMatrix")
         uCropRectLocation = GLES30.glGetUniformLocation(programId, "uCropRect")
         uApertureLocation = GLES30.glGetUniformLocation(programId, "uAperture")

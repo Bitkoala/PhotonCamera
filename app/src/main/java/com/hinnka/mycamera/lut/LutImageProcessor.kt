@@ -127,9 +127,7 @@ class LutImageProcessor {
     private var uLchHueAdjustmentsLoc = 0
     private var uLchChromaAdjustmentsLoc = 0
     private var uLchLightnessAdjustmentsLoc = 0
-    private var uPrimaryHueLoc = 0
-    private var uPrimarySaturationLoc = 0
-    private var uPrimaryLightnessLoc = 0
+    private var uPrimaryCalibrationMatrixLoc = 0
 
     // 后期处理参数 Uniform 位置（仅拍摄和后期编辑时生效）
     private var uSharpeningLoc = 0
@@ -625,6 +623,7 @@ class LutImageProcessor {
         val lowRes = effectiveRecipeParams?.lowRes ?: 0f
         val intensity = effectiveRecipeParams?.lutIntensity ?: 1f
         val (lchHueAdjustments, lchChromaAdjustments, lchLightnessAdjustments) = buildLchAdjustmentArrays(effectiveRecipeParams)
+        val primaryCalibrationMatrix = CameraRawCalibrationMatrix.build(effectiveRecipeParams)
         val program = shaderProgram
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
         GLES30.glViewport(0, 0, width, height)
@@ -690,9 +689,7 @@ class LutImageProcessor {
             GLES30.glUniform1fv(uLchHueAdjustmentsLoc, LCH_COLOR_BAND_COUNT, lchHueAdjustments, 0)
             GLES30.glUniform1fv(uLchChromaAdjustmentsLoc, LCH_COLOR_BAND_COUNT, lchChromaAdjustments, 0)
             GLES30.glUniform1fv(uLchLightnessAdjustmentsLoc, LCH_COLOR_BAND_COUNT, lchLightnessAdjustments, 0)
-            GLES30.glUniform3f(uPrimaryHueLoc, effectiveRecipeParams?.primaryRedHue ?: 0f, effectiveRecipeParams?.primaryGreenHue ?: 0f, effectiveRecipeParams?.primaryBlueHue ?: 0f)
-            GLES30.glUniform3f(uPrimarySaturationLoc, effectiveRecipeParams?.primaryRedSaturation ?: 0f, effectiveRecipeParams?.primaryGreenSaturation ?: 0f, effectiveRecipeParams?.primaryBlueSaturation ?: 0f)
-            GLES30.glUniform3f(uPrimaryLightnessLoc, effectiveRecipeParams?.primaryRedLightness ?: 0f, effectiveRecipeParams?.primaryGreenLightness ?: 0f, effectiveRecipeParams?.primaryBlueLightness ?: 0f)
+            GLES30.glUniformMatrix3fv(uPrimaryCalibrationMatrixLoc, 1, false, primaryCalibrationMatrix, 0)
         }
 
         // 设置曲线纹理（Unit 3）
@@ -984,9 +981,7 @@ class LutImageProcessor {
         uLchHueAdjustmentsLoc = GLES30.glGetUniformLocation(shaderProgram, "uLchHueAdjustments")
         uLchChromaAdjustmentsLoc = GLES30.glGetUniformLocation(shaderProgram, "uLchChromaAdjustments")
         uLchLightnessAdjustmentsLoc = GLES30.glGetUniformLocation(shaderProgram, "uLchLightnessAdjustments")
-        uPrimaryHueLoc = GLES30.glGetUniformLocation(shaderProgram, "uPrimaryHue")
-        uPrimarySaturationLoc = GLES30.glGetUniformLocation(shaderProgram, "uPrimarySaturation")
-        uPrimaryLightnessLoc = GLES30.glGetUniformLocation(shaderProgram, "uPrimaryLightness")
+        uPrimaryCalibrationMatrixLoc = GLES30.glGetUniformLocation(shaderProgram, "uPrimaryCalibrationMatrix")
 
         uSharpeningLoc = GLES30.glGetUniformLocation(shaderProgram, "uSharpening")
         uTexelSizeLoc = GLES30.glGetUniformLocation(shaderProgram, "uTexelSize")
@@ -1876,9 +1871,7 @@ class LutImageProcessor {
             uniform float uAspectRatio;   // 图像长宽比
             
             // Primary Calibration
-            uniform vec3 uPrimaryHue;
-            uniform vec3 uPrimarySaturation;
-            uniform vec3 uPrimaryLightness;
+            uniform mat3 uPrimaryCalibrationMatrix;
             
             uniform float uLchHueAdjustments[9];
             uniform float uLchChromaAdjustments[9];
@@ -2148,47 +2141,9 @@ class LutImageProcessor {
             }
 
             vec3 applyPrimaryCalibration(vec3 color) {
-                if (abs(uPrimaryHue.x) < 0.0001 && abs(uPrimaryHue.y) < 0.0001 && abs(uPrimaryHue.z) < 0.0001 &&
-                    abs(uPrimarySaturation.x) < 0.0001 && abs(uPrimarySaturation.y) < 0.0001 && abs(uPrimarySaturation.z) < 0.0001 &&
-                    abs(uPrimaryLightness.x) < 0.0001 && abs(uPrimaryLightness.y) < 0.0001 && abs(uPrimaryLightness.z) < 0.0001) {
-                    return color;
-                }
-
-                // 1. Separate neutral component to protect gray balance
-                float minC = min(min(color.r, color.g), color.b);
-                vec3 rgb = color - minC;
-
-                // 2. Define transformation vectors for each primary channel (Energy Conservative)
-                
-                // --- Red Primary ---
-                float rH = uPrimaryHue.x * 0.45;
-                float rS = uPrimarySaturation.x * 0.8;
-                float rL = uPrimaryLightness.x * 0.35;
-                // Hue shift: blend towards neighbor primaries
-                vec3 r_vec = vec3(1.0 - abs(rH), max(0.0, rH), max(0.0, -rH));
-                // Saturation: boost primary while subtracting from others to maintain energy
-                r_vec += vec3(rS, -rS * 0.5, -rS * 0.5);
-                r_vec *= (1.0 + rL);
-
-                // --- Green Primary ---
-                float gH = uPrimaryHue.y * 0.45;
-                float gS = uPrimarySaturation.y * 0.8;
-                float gL = uPrimaryLightness.y * 0.35;
-                vec3 g_vec = vec3(max(0.0, -gH), 1.0 - abs(gH), max(0.0, gH));
-                g_vec += vec3(-gS * 0.5, gS, -gS * 0.5);
-                g_vec *= (1.0 + gL);
-
-                // --- Blue Primary ---
-                float bH = uPrimaryHue.z * 0.45;
-                float bS = uPrimarySaturation.z * 0.8;
-                float bL = uPrimaryLightness.z * 0.35;
-                vec3 b_vec = vec3(max(0.0, bH), max(0.0, -bH), 1.0 - abs(bH));
-                b_vec += vec3(-bS * 0.5, -bS * 0.5, bS);
-                b_vec *= (1.0 + bL);
-
-                // 3. Apply the matrix and recombine with neutral component
-                vec3 mixed = rgb.r * r_vec + rgb.g * g_vec + rgb.b * b_vec;
-                return vec3(minC) + mixed;
+                vec3 linearColor = srgbToLinear(max(color, vec3(0.0)));
+                vec3 calibratedLinear = max(uPrimaryCalibrationMatrix * linearColor, vec3(0.0));
+                return linearToSrgb(calibratedLinear);
             }
 
             vec3 applyLutCurve(vec3 l, int curveType) {

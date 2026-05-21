@@ -325,9 +325,7 @@ object Shaders {
     uniform float uLchHueAdjustments[9];
     uniform float uLchChromaAdjustments[9];
     uniform float uLchLightnessAdjustments[9];
-    uniform vec3 uPrimaryHue;
-    uniform vec3 uPrimarySaturation;
-    uniform vec3 uPrimaryLightness;
+    uniform mat3 uPrimaryCalibrationMatrix;
     uniform float uAperture;      // 计算光圈 (1.4 ~ 16.0)
     uniform vec2 uFocusPoint;     // 对焦点 (0.0 ~ 1.0)
 
@@ -580,47 +578,9 @@ object Shaders {
     }
 
     vec3 applyPrimaryCalibration(vec3 color) {
-        if (abs(uPrimaryHue.x) < 0.0001 && abs(uPrimaryHue.y) < 0.0001 && abs(uPrimaryHue.z) < 0.0001 &&
-            abs(uPrimarySaturation.x) < 0.0001 && abs(uPrimarySaturation.y) < 0.0001 && abs(uPrimarySaturation.z) < 0.0001 &&
-            abs(uPrimaryLightness.x) < 0.0001 && abs(uPrimaryLightness.y) < 0.0001 && abs(uPrimaryLightness.z) < 0.0001) {
-            return color;
-        }
-
-        // 1. Separate neutral component to protect gray balance
-        float minC = min(min(color.r, color.g), color.b);
-        vec3 rgb = color - minC;
-
-        // 2. Define transformation vectors for each primary channel (Energy Conservative)
-        
-        // --- Red Primary ---
-        float rH = uPrimaryHue.x * 0.45;
-        float rS = uPrimarySaturation.x * 0.8;
-        float rL = uPrimaryLightness.x * 0.35;
-        // Hue shift: blend towards neighbor primaries
-        vec3 r_vec = vec3(1.0 - abs(rH), max(0.0, rH), max(0.0, -rH));
-        // Saturation: boost primary while subtracting from others to maintain energy
-        r_vec += vec3(rS, -rS * 0.5, -rS * 0.5);
-        r_vec *= (1.0 + rL);
-
-        // --- Green Primary ---
-        float gH = uPrimaryHue.y * 0.45;
-        float gS = uPrimarySaturation.y * 0.8;
-        float gL = uPrimaryLightness.y * 0.35;
-        vec3 g_vec = vec3(max(0.0, -gH), 1.0 - abs(gH), max(0.0, gH));
-        g_vec += vec3(-gS * 0.5, gS, -gS * 0.5);
-        g_vec *= (1.0 + gL);
-
-        // --- Blue Primary ---
-        float bH = uPrimaryHue.z * 0.45;
-        float bS = uPrimarySaturation.z * 0.8;
-        float bL = uPrimaryLightness.z * 0.35;
-        vec3 b_vec = vec3(max(0.0, bH), max(0.0, -bH), 1.0 - abs(bH));
-        b_vec += vec3(-bS * 0.5, -bS * 0.5, bS);
-        b_vec *= (1.0 + bL);
-
-        // 3. Apply the matrix and recombine with neutral component
-        vec3 mixed = rgb.r * r_vec + rgb.g * g_vec + rgb.b * b_vec;
-        return vec3(minC) + mixed;
+        vec3 linearColor = srgbToLinear(max(color, vec3(0.0)));
+        vec3 calibratedLinear = max(uPrimaryCalibrationMatrix * linearColor, vec3(0.0));
+        return linearToSrgb(calibratedLinear);
     }
 
     vec3 applyLutCurve(vec3 l, int curveType) {
