@@ -243,6 +243,7 @@ class LutImageProcessor {
         sharpeningValue: Float = 0f,
         noiseReductionValue: Float = 0f,
         chromaNoiseReductionValue: Float = 0f,
+        lutMaskType: Int = 0,
     ): Bitmap = withContext(glDispatcher) {
         currentCoroutineContext().ensureActive()
         if (!isInitialized) {
@@ -303,6 +304,7 @@ class LutImageProcessor {
             lutConfig,
             effectiveRecipeParams,
             sharpening,
+            lutMaskType,
         )
 
         outputBitmap
@@ -387,6 +389,7 @@ class LutImageProcessor {
         sharpeningValue: Float = 0f,
         noiseReductionValue: Float = 0f,
         chromaNoiseReductionValue: Float = 0f,
+        lutMaskType: Int = 0,
     ): Bitmap = withContext(glDispatcher) {
         currentCoroutineContext().ensureActive()
         if (!isInitialized) {
@@ -449,6 +452,7 @@ class LutImageProcessor {
             lutConfig,
             effectiveRecipeParams,
             sharpening,
+            lutMaskType,
         )
 
         outputBitmap
@@ -599,6 +603,7 @@ class LutImageProcessor {
         lutConfig: LutConfig?,
         effectiveRecipeParams: ColorRecipeParams?,
         sharpening: Float,
+        lutMaskType: Int,
     ): Bitmap {
         val colorRecipeEnabled = effectiveRecipeParams != null && !effectiveRecipeParams.isDefault()
         val exposure = effectiveRecipeParams?.exposure ?: 0f
@@ -648,6 +653,7 @@ class LutImageProcessor {
             if (lutConfig != null) intensity else 0f
         )
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLutEnabled"), if (lutConfig != null) 1 else 0)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLutMaskType"), lutMaskType)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLutCurve"), lutConfig?.curve?.shaderId ?: 0)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uLutColorSpace"), lutConfig?.colorSpace?.ordinal ?: 0)
 
@@ -1841,6 +1847,7 @@ class LutImageProcessor {
             uniform float uLutSize;
             uniform float uLutIntensity;
             uniform bool uLutEnabled;
+            uniform int uLutMaskType;
             uniform int uLutCurve;
             uniform int uLutColorSpace;
             uniform int uInputColorSpace;
@@ -2102,6 +2109,27 @@ class LutImageProcessor {
                 w = max(w, rtSkinCase(l, h, c, 0.0, 10.0, -0.18, 1.00, 7.0, 40.0, extended));
                 w = max(w, rtSkinCase(l, h, c, 0.0, 10.0, -0.18, 1.60, 7.0, 50.0, transition));
                 return w;
+            }
+
+            float skyBandWeight(vec3 linearColor) {
+                vec3 lab = linearRgbToCieLab(linearColor);
+                float l = lab.x;
+                float h = atan(lab.z, lab.y);
+                float c = length(lab.yz);
+                float rtWaveletSkyHue = rtRange(h, -2.60, -1.30);
+                float chromaGate = smoothstep(7.0, 18.0, c);
+                float lightnessGate = smoothstep(18.0, 45.0, l);
+                return rtWaveletSkyHue * chromaGate * lightnessGate;
+            }
+
+            float lutMaskWeight(int maskType, vec3 linearColor) {
+                if (maskType == 1) {
+                    return skinBandWeight(linearColor);
+                }
+                if (maskType == 2) {
+                    return skyBandWeight(linearColor);
+                }
+                return 1.0;
             }
 
             vec3 applyOklchDensity(vec3 srgbColor, float density) {
@@ -2508,6 +2536,7 @@ class LutImageProcessor {
                     if (isP3) {
                          linearInput = mat3(1.22486, -0.04205, -0.01974, -0.22471, 1.04192, -0.07865, 0.00000, 0.00013, 1.09837) * linearInput;
                     }
+                    float effectiveLutIntensity = uLutIntensity * lutMaskWeight(uLutMaskType, linearInput);
 
                     vec3 colorSpaceRGB = applyLutColorSpace(linearInput, uLutColorSpace);
                     vec3 lutInColor = applyLutCurve(colorSpaceRGB, uLutCurve);
@@ -2519,7 +2548,7 @@ class LutImageProcessor {
 
                     // 在非线性 sRGB 空间进行混合
                     vec3 srgbColor = linearToSrgb(linearInput);
-                    color.rgb = mix(srgbColor, lutColor.rgb, uLutIntensity);
+                    color.rgb = mix(srgbColor, lutColor.rgb, effectiveLutIntensity);
 
                     if (isP3) {
                         // 混合完成后的 sRGB 颜色转回 P3

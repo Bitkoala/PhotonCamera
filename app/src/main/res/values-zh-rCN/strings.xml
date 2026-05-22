@@ -923,4 +923,7 @@
     <string name="lut_synthesis_compare_tip">长按预览图对比原图</string>
     <string name="lut_synthesis_category_label">分类名称</string>
     <string name="lut_synthesis_name_label">LUT 名称</string>
+    <string name="lut_synthesis_mask_all">全局</string>
+    <string name="lut_synthesis_mask_skin">肤色</string>
+    <string name="lut_synthesis_mask_sky">天空</string>
 </resources>

@@ -923,4 +923,7 @@
     <string name="lut_synthesis_compare_tip">Long press image to compare with original</string>
     <string name="lut_synthesis_category_label">Category</string>
     <string name="lut_synthesis_name_label">LUT Name</string>
+    <string name="lut_synthesis_mask_all">All</string>
+    <string name="lut_synthesis_mask_skin">Skin</string>
+    <string name="lut_synthesis_mask_sky">Sky</string>
 </resources>

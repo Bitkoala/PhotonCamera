@@ -39,6 +39,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         val uLutSizeLocation: Int,
         val uLutIntensityLocation: Int,
         val uLutEnabledLocation: Int,
+        val uLutMaskTypeLocation: Int,
         val uLutCurveLocation: Int,
         val uLutColorSpaceLocation: Int,
         val uVideoLogEnabledLocation: Int,
@@ -816,6 +817,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1f(locations.uLutSizeLocation, lutSize)
         GLES30.glUniform1f(locations.uLutIntensityLocation, params.lutIntensity)
         GLES30.glUniform1i(locations.uLutEnabledLocation, if (lutEnabled && lutTextureId != 0) 1 else 0)
+        GLES30.glUniform1i(locations.uLutMaskTypeLocation, 0)
         GLES30.glUniform1i(locations.uLutCurveLocation, mapLutCurve(lutConfig?.curve))
         GLES30.glUniform1i(locations.uLutColorSpaceLocation, mapRawColorSpace(lutConfig?.colorSpace ?: ColorSpace.SRGB))
         GLES30.glUniform1i(locations.uVideoLogEnabledLocation, if (enableVideoLog && videoLogProfile.isEnabled) 1 else 0)
@@ -1275,6 +1277,7 @@ class LutRenderer : GLSurfaceView.Renderer {
             uLutSizeLocation = GLES30.glGetUniformLocation(program, "uLutSize"),
             uLutIntensityLocation = GLES30.glGetUniformLocation(program, "uLutIntensity"),
             uLutEnabledLocation = GLES30.glGetUniformLocation(program, "uLutEnabled"),
+            uLutMaskTypeLocation = GLES30.glGetUniformLocation(program, "uLutMaskType"),
             uLutCurveLocation = GLES30.glGetUniformLocation(program, "uLutCurve"),
             uLutColorSpaceLocation = GLES30.glGetUniformLocation(program, "uLutColorSpace"),
             uVideoLogEnabledLocation = GLES30.glGetUniformLocation(program, "uVideoLogEnabled"),

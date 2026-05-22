@@ -46,8 +46,8 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
     private val imageProcessor = LutImageProcessor()
 
     // 状态流
-    private val _layers = MutableStateFlow<List<Pair<LutInfo, Float>>>(emptyList())
-    val layers: StateFlow<List<Pair<LutInfo, Float>>> = _layers.asStateFlow()
+    private val _layers = MutableStateFlow<List<LutSynthesisLayer>>(emptyList())
+    val layers: StateFlow<List<LutSynthesisLayer>> = _layers.asStateFlow()
 
     private val _colorRecipe = MutableStateFlow<ColorRecipeParams>(ColorRecipeParams.DEFAULT)
     val colorRecipe: StateFlow<ColorRecipeParams> = _colorRecipe.asStateFlow()
@@ -134,7 +134,7 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
     // 增删改 LUT 图层
     fun addLayer(lut: LutInfo, weight: Float = 1.0f) {
         val current = _layers.value.toMutableList()
-        current.add(lut to weight)
+        current.add(LutSynthesisLayer(lut = lut, weight = weight))
         _layers.value = current
     }
 
@@ -149,8 +149,15 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
     fun updateLayerWeight(index: Int, weight: Float) {
         val current = _layers.value.toMutableList()
         if (index in current.indices) {
-            val (lut, _) = current[index]
-            current[index] = lut to weight
+            current[index] = current[index].copy(weight = weight)
+            _layers.value = current
+        }
+    }
+
+    fun updateLayerMask(index: Int, mask: LutSynthesisMask) {
+        val current = _layers.value.toMutableList()
+        if (index in current.indices) {
+            current[index] = current[index].copy(mask = mask)
             _layers.value = current
         }
     }
@@ -170,7 +177,7 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
     }
 
     // 触发异步防抖预览渲染
-    private fun triggerRender(layersList: List<Pair<LutInfo, Float>>, recipe: ColorRecipeParams) {
+    private fun triggerRender(layersList: List<LutSynthesisLayer>, recipe: ColorRecipeParams) {
         val original = _originalBitmap.value ?: return
         renderJob?.cancel()
         renderJob = viewModelScope.launch(Dispatchers.Default) {
@@ -180,14 +187,15 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
                 var currentBitmap = original.copy(Bitmap.Config.ARGB_8888, true)
 
                 // 1. 逐层应用 LUT
-                for ((lutInfo, weight) in layersList) {
+                for (layer in layersList) {
                     ensureActive()
-                    val lutConfig = lutManager.loadLut(lutInfo.id) ?: continue
-                    val layerParams = ColorRecipeParams(lutIntensity = weight)
+                    val lutConfig = lutManager.loadLut(layer.lut.id) ?: continue
+                    val layerParams = ColorRecipeParams(lutIntensity = layer.weight)
                     currentBitmap = imageProcessor.applyLut(
                         bitmap = currentBitmap,
                         lutConfig = lutConfig,
-                        colorRecipeParams = layerParams
+                        colorRecipeParams = layerParams,
+                        lutMaskType = layer.mask.shaderId
                     )
                 }
 
@@ -252,13 +260,14 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
 
                 // 1. 逐层应用选择的 LUT
                 val layersList = _layers.value
-                for ((lutInfo, weight) in layersList) {
-                    val lutConfig = lutManager.loadLut(lutInfo.id) ?: continue
-                    val layerParams = ColorRecipeParams(lutIntensity = weight)
+                for (layer in layersList) {
+                    val lutConfig = lutManager.loadLut(layer.lut.id) ?: continue
+                    val layerParams = ColorRecipeParams(lutIntensity = layer.weight)
                     clutBitmap = imageProcessor.applyLut(
                         bitmap = clutBitmap,
                         lutConfig = lutConfig,
-                        colorRecipeParams = layerParams
+                        colorRecipeParams = layerParams,
+                        lutMaskType = layer.mask.shaderId
                     )
                 }
 
@@ -321,6 +330,18 @@ class LutSynthesisViewModel(application: Application) : AndroidViewModel(applica
         renderJob?.cancel()
         imageProcessor.release()
     }
+}
+
+data class LutSynthesisLayer(
+    val lut: LutInfo,
+    val weight: Float = 1f,
+    val mask: LutSynthesisMask = LutSynthesisMask.ALL
+)
+
+enum class LutSynthesisMask(val shaderId: Int) {
+    ALL(0),
+    SKIN(1),
+    SKY(2)
 }
 
 sealed class ExportState {

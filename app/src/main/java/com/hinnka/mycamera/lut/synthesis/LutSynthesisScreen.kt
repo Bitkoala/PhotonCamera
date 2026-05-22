@@ -1,19 +1,17 @@
 package com.hinnka.mycamera.lut.synthesis
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,7 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.request.ImageRequest
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.model.ColorPaletteMapper
@@ -62,6 +62,11 @@ import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.ui.components.PaymentDialog
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.SolidColor
+import kotlinx.coroutines.withTimeoutOrNull
+import me.saket.telephoto.zoomable.ZoomSpec
+import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
+import me.saket.telephoto.zoomable.rememberZoomableImageState
+import me.saket.telephoto.zoomable.rememberZoomableState
 
 @SuppressLint("LocalContextGetResourceValueCall")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -174,24 +179,63 @@ fun LutSynthesisScreen(
                     .fillMaxWidth()
                     .weight(1.2f)
                     .background(Color(0xFF121212))
-            ) {
-                if (currentBitmap != null) {
-                    Image(
-                        bitmap = currentBitmap.asImageBitmap(),
-                        contentDescription = "Preview",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(originalBitmap, processedBitmap) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        awaitFirstDown()
+                    .pointerInput(originalBitmap, processedBitmap) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val downEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                if (downEvent.type == PointerEventType.Press && downEvent.changes.size == 1) {
+                                    val touchSlop = viewConfiguration.touchSlop
+                                    val initialPosition = downEvent.changes[0].position
+                                    val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+                                    var isMultiTouch = false
+                                    var isMoved = false
+                                    var isReleased = false
+
+                                    val timedOut = withTimeoutOrNull(longPressTimeout) {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            if (event.changes.size > 1) {
+                                                isMultiTouch = true
+                                                break
+                                            }
+
+                                            val currentPosition = event.changes[0].position
+                                            if ((currentPosition - initialPosition).getDistance() > touchSlop) {
+                                                isMoved = true
+                                                break
+                                            }
+
+                                            if (event.type == PointerEventType.Release) {
+                                                isReleased = true
+                                                break
+                                            }
+                                        }
+                                        false
+                                    } ?: true
+
+                                    if (timedOut && !isMultiTouch && !isMoved && !isReleased) {
                                         isComparing = true
-                                        waitForUpOrCancellation()
-                                        isComparing = false
+                                        try {
+                                            while (true) {
+                                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                if (event.type == PointerEventType.Release || event.changes.size > 1) {
+                                                    break
+                                                }
+                                            }
+                                        } finally {
+                                            isComparing = false
+                                        }
                                     }
                                 }
                             }
+                        }
+                    }
+            ) {
+                if (currentBitmap != null) {
+                    ZoomableSynthesisPreview(
+                        bitmap = currentBitmap,
+                        contentDescription = "Preview",
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
 
@@ -262,7 +306,7 @@ fun LutSynthesisScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp)
+                        .padding(8.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -306,12 +350,12 @@ fun LutSynthesisScreen(
                         }
                     } else {
                         // 利用 LazyColumn 限制固定高度以避免顶板被无限撑大，也可设置固定 MaxHeight
-                        Box(modifier = Modifier.heightIn(max = 140.dp)) {
+                        Box(modifier = Modifier.heightIn(max = 210.dp)) {
                             LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                itemsIndexed(layers) { index, (lut, weight) ->
+                                itemsIndexed(layers) { index, layer ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -326,7 +370,7 @@ fun LutSynthesisScreen(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Text(
-                                                    text = lut.getName(),
+                                                    text = layer.lut.getName(),
                                                     color = Color.White,
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Medium,
@@ -335,14 +379,14 @@ fun LutSynthesisScreen(
                                                     modifier = Modifier.weight(1f)
                                                 )
                                                 Text(
-                                                    text = "${(weight * 100).toInt()}%",
+                                                    text = "${(layer.weight * 100).toInt()}%",
                                                     color = Color.White.copy(alpha = 0.6f),
                                                     fontSize = 10.sp
                                                 )
                                             }
                                             Spacer(modifier = Modifier.height(4.dp))
                                             CustomSliderThinThumb(
-                                                value = weight,
+                                                value = layer.weight,
                                                 onValueChange = { viewModel.updateLayerWeight(index, it) },
                                                 onDoubleTap = { viewModel.updateLayerWeight(index, 1.0f) },
                                                 valueRange = 0f..1f,
@@ -353,6 +397,11 @@ fun LutSynthesisScreen(
                                                 inactiveTrackColor = Color.Gray.copy(alpha = 0.3f),
                                                 thumbColor = Color.White,
                                                 modifier = Modifier.fillMaxWidth()
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            LutLayerMaskSelector(
+                                                selectedMask = layer.mask,
+                                                onMaskSelected = { viewModel.updateLayerMask(index, it) }
                                             )
                                         }
 
@@ -711,3 +760,81 @@ fun LutSynthesisScreen(
         )
     }
 }
+
+@Composable
+private fun ZoomableSynthesisPreview(
+    bitmap: Bitmap,
+    contentDescription: String,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val zoomableState = rememberZoomableImageState(
+        zoomableState = rememberZoomableState(zoomSpec = ZoomSpec(maxZoomFactor = 10f))
+    )
+    val model = remember(context, bitmap) {
+        ImageRequest.Builder(context)
+            .data(bitmap)
+            .crossfade(true)
+            .build()
+    }
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        ZoomableAsyncImage(
+            model = model,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Fit,
+            state = zoomableState,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Composable
+private fun LutLayerMaskSelector(
+    selectedMask: LutSynthesisMask,
+    onMaskSelected: (LutSynthesisMask) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LutSynthesisMask.entries.forEach { mask ->
+            FilterChip(
+                selected = selectedMask == mask,
+                onClick = { onMaskSelected(mask) },
+                label = {
+                    Text(
+                        text = stringResource(mask.labelRes),
+                        fontSize = 10.sp,
+                        maxLines = 1
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = Color.White.copy(alpha = 0.65f),
+                    selectedContainerColor = Color.White.copy(alpha = 0.18f),
+                    selectedLabelColor = Color.White
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = selectedMask == mask,
+                    borderColor = Color.White.copy(alpha = 0.18f),
+                    selectedBorderColor = Color.White.copy(alpha = 0.45f)
+                ),
+                modifier = Modifier.height(28.dp)
+            )
+        }
+    }
+}
+
+private val LutSynthesisMask.labelRes: Int
+    get() = when (this) {
+        LutSynthesisMask.ALL -> R.string.lut_synthesis_mask_all
+        LutSynthesisMask.SKIN -> R.string.lut_synthesis_mask_skin
+        LutSynthesisMask.SKY -> R.string.lut_synthesis_mask_sky
+    }

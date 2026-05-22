@@ -284,6 +284,7 @@ object Shaders {
     uniform float uLutSize;
     uniform float uLutIntensity;
     uniform bool uLutEnabled;
+    uniform int uLutMaskType;
     uniform int uLutCurve; // 0=sRGB, 1=Linear, 2=V-Log, 3=S-Log3, 4=F-Log2, 5=LogC4, 6=AppleLog, 7=HLG, 8=ACEScct
     uniform int uLutColorSpace; // 0=sRGB, 1=DCI-P3, 2=BT2020, 3=ARRI4, 4=AppleLog2, 5=ProPhoto, 6=ACES_AP1
     uniform bool uVideoLogEnabled;
@@ -539,6 +540,27 @@ object Shaders {
         w = max(w, rtSkinCase(l, h, c, 0.0, 10.0, -0.18, 1.00, 7.0, 40.0, extended));
         w = max(w, rtSkinCase(l, h, c, 0.0, 10.0, -0.18, 1.60, 7.0, 50.0, transition));
         return w;
+    }
+
+    float skyBandWeight(vec3 linearColor) {
+        vec3 lab = linearRgbToCieLab(linearColor);
+        float l = lab.x;
+        float h = atan(lab.z, lab.y);
+        float c = length(lab.yz);
+        float rtWaveletSkyHue = rtRange(h, -2.60, -1.30);
+        float chromaGate = smoothstep(7.0, 18.0, c);
+        float lightnessGate = smoothstep(18.0, 45.0, l);
+        return rtWaveletSkyHue * chromaGate * lightnessGate;
+    }
+
+    float lutMaskWeight(int maskType, vec3 linearColor) {
+        if (maskType == 1) {
+            return skinBandWeight(linearColor);
+        }
+        if (maskType == 2) {
+            return skyBandWeight(linearColor);
+        }
+        return 1.0;
     }
 
     vec3 applyOklchDensity(vec3 srgbColor, float density) {
@@ -900,11 +922,13 @@ object Shaders {
         // === LUT 处理（在色彩配方之后） ===
         if (uLutEnabled && uLutIntensity > 0.0) {
             vec3 lutInColor;
+            float effectiveLutIntensity = uLutIntensity;
             if (uVideoLogEnabled) {
                 // Video Log 模式：color.rgb 已经是 Log 编码，直接作为 LUT 坐标
                 lutInColor = color.rgb;
             } else {
                 vec3 linearRGB = srgbToLinear(max(color.rgb, vec3(0.0)));
+                effectiveLutIntensity *= lutMaskWeight(uLutMaskType, linearRGB);
                 vec3 colorSpaceRGB = applyLutColorSpace(linearRGB, uLutColorSpace);
                 lutInColor = applyLutCurve(colorSpaceRGB, uLutCurve);
             }
@@ -912,7 +936,7 @@ object Shaders {
             float offset = 1.0 / (2.0 * uLutSize);
             vec3 lutCoord = lutInColor * scale + offset;
             vec4 lutColor = texture(uLutTexture, lutCoord);
-            color.rgb = mix(color.rgb, lutColor.rgb, uLutIntensity);
+            color.rgb = mix(color.rgb, lutColor.rgb, effectiveLutIntensity);
             color.rgb = sanitizeColor(color.rgb);
         }
 
