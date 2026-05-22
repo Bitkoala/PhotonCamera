@@ -72,6 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.recyclerview.widget.DiffUtil
 import android.os.Parcelable
+import kotlin.math.abs
 
 /**
  * 相册浏览界面
@@ -1168,6 +1169,11 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
 
     fun bindThumbnail(photoId: String, bitmap: Bitmap?) {
         if (boundPhotoId != photoId || bitmap == null || bitmap.isRecycled) return
+        val bitmapAspectRatio = bitmap.galleryBitmapAspectRatio()
+        if (abs(aspectRatio - bitmapAspectRatio) > 0.01f) {
+            aspectRatio = bitmapAspectRatio
+            requestLayout()
+        }
         imageView.setImageBitmap(bitmap)
     }
 
@@ -1220,6 +1226,16 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
                 child.layout(childLeft, childTop, childLeft + childWidth, childTop + childHeight)
             }
         }
+    }
+}
+
+private fun Bitmap.galleryBitmapAspectRatio(): Float {
+    val resolvedWidth = width.takeIf { it > 0 } ?: return 1f
+    val resolvedHeight = height.takeIf { it > 0 } ?: return 1f
+    return if (OrientationObserver.isLandscape) {
+        resolvedHeight.toFloat() / resolvedWidth.toFloat()
+    } else {
+        resolvedWidth.toFloat() / resolvedHeight.toFloat()
     }
 }
 
