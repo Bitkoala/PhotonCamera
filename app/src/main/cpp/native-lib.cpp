@@ -5,6 +5,7 @@
  */
 #include <algorithm>
 #include <android/bitmap.h>
+#include <array>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -756,6 +757,178 @@ static float illuminantToTemp(int illuminant) {
   default:
     return 0.0f;
   }
+}
+
+static bool hasMatrixSignal(const Matrix3x3 &matrix) {
+  float sum = 0.0f;
+  for (float value : matrix.m) {
+    sum += std::abs(value);
+  }
+  return sum > 0.01f;
+}
+
+static std::array<float, 3> multiplyMatrixVector(const Matrix3x3 &matrix,
+                                                 const std::array<float, 3> &v) {
+  return {matrix.m[0] * v[0] + matrix.m[1] * v[1] + matrix.m[2] * v[2],
+          matrix.m[3] * v[0] + matrix.m[4] * v[1] + matrix.m[5] * v[2],
+          matrix.m[6] * v[0] + matrix.m[7] * v[1] + matrix.m[8] * v[2]};
+}
+
+static bool xyzToXy(const std::array<float, 3> &xyz,
+                    std::array<float, 2> &xy) {
+  const float sum = xyz[0] + xyz[1] + xyz[2];
+  if (sum <= 1e-6f || !std::isfinite(sum)) {
+    return false;
+  }
+  xy = {xyz[0] / sum, xyz[1] / sum};
+  return std::isfinite(xy[0]) && std::isfinite(xy[1]);
+}
+
+static float xyCoordToTemperature(const std::array<float, 2> &xy) {
+  float denominator = xy[1] - 0.1858f;
+  if (std::abs(denominator) < 1e-6f) {
+    denominator = denominator < 0.0f ? -1e-6f : 1e-6f;
+  }
+  const float n = (xy[0] - 0.3320f) / denominator;
+  const float temp = -449.0f * n * n * n + 3525.0f * n * n -
+                     6823.3f * n + 5520.33f;
+  return std::clamp(temp, 2000.0f, 50000.0f);
+}
+
+static float calculateTemperatureInterpolationWeight(
+    int illuminant1, int illuminant2, const std::array<float, 2> &whiteXy) {
+  const float t1 = illuminantToTemp(illuminant1);
+  const float t2 = illuminantToTemp(illuminant2);
+  if (t1 <= 0.0f || t2 <= 0.0f || std::abs(t1 - t2) < 1.0f) {
+    return 1.0f;
+  }
+
+  const float whiteTemp = xyCoordToTemperature(whiteXy);
+  const float low = std::min(t1, t2);
+  const float high = std::max(t1, t2);
+  float mix;
+  if (whiteTemp <= low) {
+    mix = 1.0f;
+  } else if (whiteTemp >= high) {
+    mix = 0.0f;
+  } else {
+    const float invT = 1.0f / whiteTemp;
+    mix = (invT - (1.0f / high)) / ((1.0f / low) - (1.0f / high));
+  }
+  mix = std::clamp(mix, 0.0f, 1.0f);
+  return t1 > t2 ? 1.0f - mix : mix;
+}
+
+static Matrix3x3 interpolateMatrix(const Matrix3x3 &m1, const Matrix3x3 &m2,
+                                   float weight) {
+  Matrix3x3 result;
+  for (int i = 0; i < 9; ++i) {
+    result.m[i] = m1.m[i] * weight + m2.m[i] * (1.0f - weight);
+  }
+  return result;
+}
+
+static bool findXyzToCamera(const std::array<float, 2> &whiteXy,
+                            const Matrix3x3 &colorMatrix1, bool hasColor1,
+                            const Matrix3x3 &colorMatrix2, bool hasColor2,
+                            int illuminant1, int illuminant2,
+                            Matrix3x3 &xyzToCamera) {
+  if (hasColor1 && hasColor2) {
+    const float weight =
+        calculateTemperatureInterpolationWeight(illuminant1, illuminant2, whiteXy);
+    xyzToCamera = interpolateMatrix(colorMatrix1, colorMatrix2, weight);
+    return true;
+  }
+  if (hasColor1) {
+    xyzToCamera = colorMatrix1;
+    return true;
+  }
+  if (hasColor2) {
+    xyzToCamera = colorMatrix2;
+    return true;
+  }
+  return false;
+}
+
+static bool neutralToXy(const std::array<float, 3> &neutral,
+                        const Matrix3x3 &colorMatrix1, bool hasColor1,
+                        const Matrix3x3 &colorMatrix2, bool hasColor2,
+                        int illuminant1, int illuminant2,
+                        std::array<float, 2> &whiteXy) {
+  std::array<float, 2> lastXy = {0.3457f, 0.3585f};
+  for (int pass = 0; pass < 30; ++pass) {
+    Matrix3x3 xyzToCamera;
+    if (!findXyzToCamera(lastXy, colorMatrix1, hasColor1, colorMatrix2,
+                         hasColor2, illuminant1, illuminant2, xyzToCamera)) {
+      return false;
+    }
+    const Matrix3x3 cameraToXyz = xyzToCamera.invert();
+    const std::array<float, 3> nextXyz =
+        multiplyMatrixVector(cameraToXyz, neutral);
+    std::array<float, 2> nextXy;
+    if (!xyzToXy(nextXyz, nextXy)) {
+      return false;
+    }
+
+    if (std::abs(nextXy[0] - lastXy[0]) + std::abs(nextXy[1] - lastXy[1]) <
+        1e-7f) {
+      whiteXy = nextXy;
+      return true;
+    }
+    if (pass == 29) {
+      whiteXy = {(lastXy[0] + nextXy[0]) * 0.5f,
+                 (lastXy[1] + nextXy[1]) * 0.5f};
+      return true;
+    }
+    lastXy = nextXy;
+  }
+  whiteXy = lastXy;
+  return true;
+}
+
+static float calculateRatioInterpolationWeight(int illuminant1, int illuminant2,
+                                               const float wb[4]) {
+  const float t1 = illuminantToTemp(illuminant1);
+  const float t2 = illuminantToTemp(illuminant2);
+  const float currentRatio = wb[0] / std::max(wb[2], 1e-4f);
+  constexpr float rWarm = 0.5f;
+  constexpr float rCool = 1.6f;
+  auto getTargetRatio = [&](float temp) {
+    if (temp <= 2856.0f)
+      return rWarm;
+    if (temp >= 6504.0f)
+      return rCool;
+    return rWarm + (rCool - rWarm) * (temp - 2856.0f) / (6504.0f - 2856.0f);
+  };
+  const float r1 = getTargetRatio(t1);
+  const float r2 = getTargetRatio(t2);
+  if (std::abs(r1 - r2) <= 0.01f) {
+    return 0.5f;
+  }
+  return std::clamp((currentRatio - r2) / (r1 - r2), 0.0f, 1.0f);
+}
+
+static float calculateDngReferenceInterpolationWeight(
+    int illuminant1, int illuminant2, const float wb[4],
+    const Matrix3x3 &colorMatrix1, bool hasColor1,
+    const Matrix3x3 &colorMatrix2, bool hasColor2) {
+  if (illuminant1 == 0 || illuminant2 == 0) {
+    return 0.5f;
+  }
+
+  const float green = std::max(wb[1], 1e-6f);
+  const std::array<float, 3> neutral = {
+      green / std::max(wb[0], 1e-6f),
+      1.0f,
+      green / std::max(wb[2], 1e-6f),
+  };
+  std::array<float, 2> whiteXy;
+  if (neutralToXy(neutral, colorMatrix1, hasColor1, colorMatrix2, hasColor2,
+                  illuminant1, illuminant2, whiteXy)) {
+    return calculateTemperatureInterpolationWeight(illuminant1, illuminant2,
+                                                   whiteXy);
+  }
+  return calculateRatioInterpolationWeight(illuminant1, illuminant2, wb);
 }
 
 static Matrix3x3 computeXYZD50ToGamut(float xr, float yr, float xg, float yg,
@@ -2234,24 +2407,22 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   float weight = 0.5f;
   if (hasM1 && hasM2) {
-    float t1 =
-        illuminantToTemp(RawProcessor.imgdata.color.dng_color[0].illuminant);
-    float t2 =
-        illuminantToTemp(RawProcessor.imgdata.color.dng_color[1].illuminant);
-    float currentRatio = wb[0] / wb[2]; // R/B
-    float rWarm = 0.5f, rCool = 1.6f;
-    auto getTargetRatio = [&](float temp) {
-      if (temp <= 2856.0f)
-        return rWarm;
-      if (temp >= 6504.0f)
-        return rCool;
-      return rWarm + (rCool - rWarm) * (temp - 2856.0f) / (6504.0f - 2856.0f);
-    };
-    float r1 = getTargetRatio(t1), r2 = getTargetRatio(t2);
-    if (std::abs(r1 - r2) > 0.01f) {
-      weight = (currentRatio - r2) / (r1 - r2);
-      weight = std::max(0.0f, std::min(1.0f, weight));
+    Matrix3x3 colorMatrix1;
+    Matrix3x3 colorMatrix2;
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        colorMatrix1.m[i * 3 + j] =
+            RawProcessor.imgdata.color.dng_color[0].colormatrix[i][j];
+        colorMatrix2.m[i * 3 + j] =
+            RawProcessor.imgdata.color.dng_color[1].colormatrix[i][j];
+      }
     }
+    const bool hasColor1 = hasMatrixSignal(colorMatrix1);
+    const bool hasColor2 = hasMatrixSignal(colorMatrix2);
+    weight = calculateDngReferenceInterpolationWeight(
+        RawProcessor.imgdata.color.dng_color[0].illuminant,
+        RawProcessor.imgdata.color.dng_color[1].illuminant, wb, colorMatrix1,
+        hasColor1, colorMatrix2, hasColor2);
   }
 
   Matrix3x3 camToXYZ;

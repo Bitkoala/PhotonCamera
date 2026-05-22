@@ -338,8 +338,8 @@ data class RawMetadata(
                 ?: XYZ_D50_TO_SRGB // 如果计算失败则回退到 sRGB
 
             // 获取参考光源
-            val illuminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1)?.toInt()
-            val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
+            val illuminant1: Int? = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1)
+            val illuminant2: Int? = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
 
             // 获取矩阵（两组）
             val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
@@ -351,7 +351,13 @@ data class RawMetadata(
             val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
 
             // 1. 计算双光源插值权重
-            val weight = calculateInterpolationWeight(illuminant1, illuminant2, wbGains)
+            val weight = calculateInterpolationWeight(
+                illuminant1,
+                illuminant2,
+                wbGains,
+                colorMatrix1,
+                colorMatrix2
+            )
 
             // 2. 获取两个光源下的 Camera -> XYZ(D50) 矩阵
             val m1: FloatArray? = computeCamToXYZ(forwardMatrix1, colorMatrix1, illuminant1)
@@ -387,12 +393,33 @@ data class RawMetadata(
         private fun calculateInterpolationWeight(
             illuminant1: Int?,
             illuminant2: Int?,
-            wbGains: RggbChannelVector?
+            wbGains: RggbChannelVector?,
+            colorMatrix1: ColorSpaceTransform?,
+            colorMatrix2: ColorSpaceTransform?
         ): Float {
             if (illuminant1 == null || illuminant2 == null || illuminant1 == 0 || illuminant2 == 0 || wbGains == null) {
-                return 0.0f // 默认使用第二个矩阵 (通常是 D65)
+                return 0.0f
             }
 
+            val dngReferenceWeight = calculateDngReferenceInterpolationWeight(
+                illuminant1 = illuminant1,
+                illuminant2 = illuminant2,
+                wbGains = wbGains,
+                colorMatrix1 = colorMatrix1,
+                colorMatrix2 = colorMatrix2
+            )
+            if (dngReferenceWeight != null) {
+                return dngReferenceWeight
+            }
+
+            return calculateRatioInterpolationWeight(illuminant1, illuminant2, wbGains)
+        }
+
+        private fun calculateRatioInterpolationWeight(
+            illuminant1: Int,
+            illuminant2: Int,
+            wbGains: RggbChannelVector
+        ): Float {
             val t1 = illuminantToTemp(illuminant1)
             val t2 = illuminantToTemp(illuminant2)
             if (kotlin.math.abs(t1 - t2) < 100f) return 1.0f
@@ -424,6 +451,118 @@ data class RawMetadata(
 
             val weight = (currentRatio - r2) / diff
             return weight.coerceIn(0.0f, 1.0f)
+        }
+
+        private fun calculateDngReferenceInterpolationWeight(
+            illuminant1: Int,
+            illuminant2: Int,
+            wbGains: RggbChannelVector,
+            colorMatrix1: ColorSpaceTransform?,
+            colorMatrix2: ColorSpaceTransform?
+        ): Float? {
+            val matrix1 = colorMatrix1?.let { extractCCM(it) }
+            val matrix2 = colorMatrix2?.let { extractCCM(it) }
+            if (matrix1 == null && matrix2 == null) return null
+
+            val green = ((wbGains.greenEven + wbGains.greenOdd) * 0.5f).takeIf { it > 1e-6f } ?: 1f
+            val neutral = floatArrayOf(
+                green / wbGains.red.coerceAtLeast(1e-6f),
+                1f,
+                green / wbGains.blue.coerceAtLeast(1e-6f)
+            )
+            val whiteXy = neutralToXy(neutral, matrix1, matrix2, illuminant1, illuminant2) ?: return null
+            return calculateTemperatureInterpolationWeight(illuminant1, illuminant2, whiteXy)
+        }
+
+        private fun neutralToXy(
+            neutral: FloatArray,
+            colorMatrix1: FloatArray?,
+            colorMatrix2: FloatArray?,
+            illuminant1: Int,
+            illuminant2: Int
+        ): FloatArray? {
+            var lastXy = floatArrayOf(0.3457f, 0.3585f)
+            repeat(30) { pass ->
+                val xyzToCamera = findXyzToCamera(lastXy, colorMatrix1, colorMatrix2, illuminant1, illuminant2)
+                    ?: return null
+                val cameraToXyz = invertMatrix3x3(xyzToCamera) ?: return null
+                val nextXyz = multiplyMatrixVector(cameraToXyz, neutral)
+                val nextXy = xyzToXy(nextXyz) ?: return null
+
+                if (kotlin.math.abs(nextXy[0] - lastXy[0]) + kotlin.math.abs(nextXy[1] - lastXy[1]) < 1e-7f) {
+                    return nextXy
+                }
+                if (pass == 29) {
+                    nextXy[0] = (lastXy[0] + nextXy[0]) * 0.5f
+                    nextXy[1] = (lastXy[1] + nextXy[1]) * 0.5f
+                    return nextXy
+                }
+                lastXy = nextXy
+            }
+            return lastXy
+        }
+
+        private fun findXyzToCamera(
+            whiteXy: FloatArray,
+            colorMatrix1: FloatArray?,
+            colorMatrix2: FloatArray?,
+            illuminant1: Int,
+            illuminant2: Int
+        ): FloatArray? {
+            if (colorMatrix1 != null && colorMatrix2 != null) {
+                val weight = calculateTemperatureInterpolationWeight(illuminant1, illuminant2, whiteXy)
+                return FloatArray(9) { index -> colorMatrix1[index] * weight + colorMatrix2[index] * (1f - weight) }
+            }
+            return colorMatrix1 ?: colorMatrix2
+        }
+
+        private fun calculateTemperatureInterpolationWeight(
+            illuminant1: Int,
+            illuminant2: Int,
+            whiteXy: FloatArray
+        ): Float {
+            val t1 = illuminantToTemp(illuminant1)
+            val t2 = illuminantToTemp(illuminant2)
+            if (t1 <= 0f || t2 <= 0f || kotlin.math.abs(t1 - t2) < 1f) return 1f
+
+            val whiteTemp = xyCoordToTemperature(whiteXy)
+            val low = kotlin.math.min(t1, t2)
+            val high = kotlin.math.max(t1, t2)
+            val mix = when {
+                whiteTemp <= low -> 1f
+                whiteTemp >= high -> 0f
+                else -> {
+                    val invT = 1f / whiteTemp
+                    (invT - (1f / high)) / ((1f / low) - (1f / high))
+                }
+            }.coerceIn(0f, 1f)
+            return if (t1 > t2) 1f - mix else mix
+        }
+
+        private fun xyCoordToTemperature(xy: FloatArray): Float {
+            val denominator = xy[1] - 0.1858f
+            val safeDenominator = if (kotlin.math.abs(denominator) < 1e-6f) {
+                if (denominator < 0f) -1e-6f else 1e-6f
+            } else {
+                denominator
+            }
+            val n = (xy[0] - 0.3320f) / safeDenominator
+            return (-449f * n * n * n + 3525f * n * n - 6823.3f * n + 5520.33f)
+                .coerceIn(2000f, 50000f)
+        }
+
+        private fun xyzToXy(xyz: FloatArray): FloatArray? {
+            val sum = xyz[0] + xyz[1] + xyz[2]
+            if (sum <= 1e-6f || xyz.any { !it.isFinite() }) return null
+            return floatArrayOf(xyz[0] / sum, xyz[1] / sum)
+        }
+
+        private fun multiplyMatrixVector(matrix: FloatArray, vector: FloatArray): FloatArray {
+            return floatArrayOf(
+                matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2],
+                matrix[3] * vector[0] + matrix[4] * vector[1] + matrix[5] * vector[2],
+                matrix[6] * vector[0] + matrix[7] * vector[1] + matrix[8] * vector[2]
+            )
         }
 
         /**
