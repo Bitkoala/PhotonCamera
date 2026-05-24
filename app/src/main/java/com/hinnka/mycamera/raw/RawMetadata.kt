@@ -703,15 +703,19 @@ data class RawMetadata(
                 mS[6] * sR, mS[7] * sG, mS[8] * sB
             )
 
-            // 2. 色彩适应：从 XYZ(D65) 转换到 XYZ(D50) 基准
-            // 使用标准 Bradford 矩阵
-            val BRADFORD_D65_TO_D50 = floatArrayOf(
-                1.0478112f, 0.0228866f, -0.0501270f,
-                0.0295424f, 0.9904844f, -0.0170491f,
-                -0.0092345f, 0.0150436f, 0.7521316f
-            )
+            val isD50WhitePoint = kotlin.math.abs(xw - 0.3457f) < 0.002f &&
+                    kotlin.math.abs(yw - 0.3585f) < 0.002f
 
-            val gamutToXYZD50 = multiplyMatrix3x3(BRADFORD_D65_TO_D50, gamutToXYZD65)
+            val gamutToXYZD50 = if (isD50WhitePoint) {
+                gamutToXYZD65
+            } else {
+                val bradfordD65ToD50 = floatArrayOf(
+                    1.0478112f, 0.0228866f, -0.0501270f,
+                    0.0295424f, 0.9904844f, -0.0170491f,
+                    -0.0092345f, 0.0150436f, 0.7521316f
+                )
+                multiplyMatrix3x3(bradfordD65ToD50, gamutToXYZD65)
+            }
 
             // 3. 求逆：得到最终的 XYZ(D50) -> Gamut 转换矩阵
             return invertMatrix3x3(gamutToXYZD50)

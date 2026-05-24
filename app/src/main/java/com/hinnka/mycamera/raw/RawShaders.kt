@@ -90,12 +90,15 @@ object RawShaders {
         
         uniform sampler2D uInputTexture;
         uniform sampler2D uCurveTexture;
+        uniform sampler2D uHighlightBaseTexture;
         uniform sampler2D uLensShadingMap;
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
+        uniform float uHighlightWhitePoint;
+        uniform bool uHighlightBaseEnabled;
         uniform bool uLensShadingEnabled;
         uniform float uLensShadingPower;
         uniform bool uDcpHueSatEnabled;
@@ -376,28 +379,69 @@ object RawShaders {
         const float HALO_THRESHOLD_MAX = 0.4;
         const float RADIUS_SMALL = 1.5;
         const float RADIUS_LARGE = 8.0;
+
+        float highlightRolloffLuma(float luma) {
+            if (uHighlightWhitePoint <= 1.0) return luma;
+
+            float start = 0.4;
+            if (luma <= start) return luma;
+
+            float x = (luma - start) / max(uHighlightWhitePoint - start, 1e-6);
+
+            float y = x *
+                (1.0 + x / uHighlightWhitePoint) /
+                (1.0 + x);
+
+            return mix(luma, start + y * (uHighlightWhitePoint - start),
+                       smoothstep(start, uHighlightWhitePoint, luma));
+        }
         
-        vec3 reinhardLocalTonemapping(vec3 sceneLinear) {
+        float localAdaptationLuma() {
             vec2 texelSize = 1.0 / vec2(textureSize(uInputTexture, 0));
-            float sceneLuma = luminance(sceneLinear);
-        
+
             // 1. 获取两个尺度的局部亮度
             float localSmall = localAverageLuma(vTexCoord, texelSize, RADIUS_SMALL);
             float localLarge = localAverageLuma(vTexCoord, texelSize, RADIUS_LARGE);
             
             // 2. 计算边缘对比度，决定混合权重
             float scaleContrast = abs(log2(localSmall + 1e-4) - log2(localLarge + 1e-4));
-            float localAdaptation = mix(localLarge, localSmall, smoothstep(HALO_THRESHOLD_MIN, HALO_THRESHOLD_MAX, scaleContrast));
+            return mix(localLarge, localSmall, smoothstep(HALO_THRESHOLD_MIN, HALO_THRESHOLD_MAX, scaleContrast));
+        }
         
-            // 3. 执行单次 Reinhard 局部映射
-            // 标准局部 Reinhard: L / (1 + V_local)
-            float mappedLuma = sceneLuma / (1.0 + localAdaptation);
-            
-            // 4. 恢复颜色
-            // 为了防止除以 0，加一个小偏移
-            float chromaScale = mappedLuma / (sceneLuma + 1e-5); 
-            
-            return clamp(sceneLinear * chromaScale, 0.0, 1.0);
+        
+        vec3 highlightRolloff(vec3 color) {
+            if (uHighlightWhitePoint <= 1.0) return color;
+        
+            float luma = luminance(color);
+            float newLuma = highlightRolloffLuma(luma);
+        
+            return color * (newLuma / max(luma, 1e-6));
+        }
+
+        vec3 combinedLocalToneMapping(vec3 sceneLinear, float originalLuma) {
+            float toneInputLuma = luminance(sceneLinear);
+            float localAdaptation = localAdaptationLuma();
+
+            // Local Reinhard-equivalent floor: this preserves the current acceptable baseline.
+            float compressionFloor = toneInputLuma / (1.0 + localAdaptation);
+
+            float baseLuma = uHighlightBaseEnabled
+                ? max(texture(uHighlightBaseTexture, vTexCoord).r, 1e-4)
+                : max(localAdaptation, 1e-4);
+            float localContrast = originalLuma / baseLuma;
+            float highlightMask = smoothstep(0.4, 0.95, max(originalLuma, toneInputLuma));
+
+            // 独立 tone map: 局部适应量负责压缩，高光里亮于低频 base 的结构减少压缩。
+            // 暗于 base 的像素不参与负向恢复，避免窗景整体发灰。
+            float brightContrast = max(localContrast - 1.0, 0.0);
+            float compressionRelease = min(brightContrast, 0.85) * 0.8 * highlightMask;
+            float mappedLuma = compressionFloor * (1.0 + compressionRelease);
+
+            // 保证不会比原始局部 Reinhard 更暗，也不会超过 tone 输入亮度或 SDR 白。
+            mappedLuma = max(mappedLuma, compressionFloor);
+            mappedLuma = min(mappedLuma, min(toneInputLuma, 1.0));
+
+            return clamp(sceneLinear * (mappedLuma / max(toneInputLuma, 1e-5)), 0.0, 1.0);
         }
 
         void main() {
@@ -411,7 +455,9 @@ object RawShaders {
                 color = applyDcpHsvMap(color, uDcpLookTableTexture, uDcpLookTableDivisions, uDcpLookTableEncoding);
             }
 
-            color = reinhardLocalTonemapping(color);
+            float originalLuma = luminance(color);
+            color = highlightRolloff(color);
+            color = combinedLocalToneMapping(color, originalLuma);
             
             color = applyAdobeCurve(color);
 
@@ -419,6 +465,66 @@ object RawShaders {
             color = linearToSrgb(color);
 
             fragColor = vec4(color, 1.0);
+        }
+    """.trimIndent()
+
+    /**
+     * Low-resolution highlight base shader.
+     *
+     * R stores a broad luma base used to restore local contrast after SDR tone mapping.
+     */
+    val HIGHLIGHT_BASE_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+
+        uniform sampler2D uInputTexture;
+        uniform sampler2D uLensShadingMap;
+        uniform vec2 uSourceTexelSize;
+        uniform float uBlurRadius;
+        uniform bool uLensShadingEnabled;
+        uniform float uLensShadingPower;
+
+        float luminance(vec3 color) {
+            return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+        }
+
+        vec3 applyLensShadingAt(vec3 color, vec2 uv) {
+            if (!uLensShadingEnabled) {
+                return color;
+            }
+            vec4 gain = texture(uLensShadingMap, uv);
+            vec4 centerGain = texture(uLensShadingMap, vec2(0.5));
+            float lumaGain = dot(vec3(gain.r, 0.5 * (gain.g + gain.b), gain.a), vec3(0.2126, 0.7152, 0.0722));
+            float centerLumaGain = dot(vec3(centerGain.r, 0.5 * (centerGain.g + centerGain.b), centerGain.a), vec3(0.2126, 0.7152, 0.0722));
+            lumaGain /= max(centerLumaGain, 1e-4);
+            lumaGain = pow(max(lumaGain, 1e-4), clamp(uLensShadingPower, 0.0, 1.0));
+            return color * max(lumaGain, 0.0);
+        }
+
+        float sampleLuma(vec2 uv) {
+            uv = clamp(uv, vec2(0.0), vec2(1.0));
+            return luminance(applyLensShadingAt(texture(uInputTexture, uv).rgb, uv));
+        }
+
+        void main() {
+            vec2 stepSize = uSourceTexelSize * uBlurRadius;
+            float sum = 0.0;
+            float weightSum = 0.0;
+
+            for (int y = -2; y <= 2; y++) {
+                for (int x = -2; x <= 2; x++) {
+                    vec2 offset = vec2(float(x), float(y));
+                    float weight = exp(-dot(offset, offset) * 0.5);
+                    sum += sampleLuma(vTexCoord + offset * stepSize) * weight;
+                    weightSum += weight;
+                }
+            }
+
+            float baseLuma = sum / max(weightSum, 1e-5);
+            fragColor = vec4(baseLuma, baseLuma, baseLuma, 1.0);
         }
     """.trimIndent()
 

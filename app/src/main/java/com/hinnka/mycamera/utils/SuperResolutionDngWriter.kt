@@ -65,6 +65,8 @@ object SuperResolutionDngWriter {
     private const val TAG_DEFAULT_CROP_SIZE = 50720
     private const val TAG_COLOR_MATRIX_1 = 50721
     private const val TAG_COLOR_MATRIX_2 = 50722
+    private const val TAG_FORWARD_MATRIX_1 = 50964
+    private const val TAG_FORWARD_MATRIX_2 = 50965
     private const val TAG_AS_SHOT_NEUTRAL = 50728
     private const val TAG_BASELINE_EXPOSURE = 50730
     private const val TAG_CALIBRATION_ILLUMINANT_1 = 50778
@@ -177,6 +179,8 @@ object SuperResolutionDngWriter {
         val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
         val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
         val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
+        val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
+        val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
         val opcodeList2 = buildOpcodeList2(
             captureResult = captureResult,
             cfaPattern = cfaPattern,
@@ -216,6 +220,8 @@ object SuperResolutionDngWriter {
             add(rationalArray(TAG_DEFAULT_CROP_SIZE, listOf(width.toDouble(), height.toDouble())))
             colorMatrix1?.let { add(sRationalArray(TAG_COLOR_MATRIX_1, colorTransformToDngMatrix(it))) }
             colorMatrix2?.let { add(sRationalArray(TAG_COLOR_MATRIX_2, colorTransformToDngMatrix(it))) }
+            forwardMatrix1?.let { add(sRationalArray(TAG_FORWARD_MATRIX_1, colorTransformToDngMatrix(it))) }
+            forwardMatrix2?.let { add(sRationalArray(TAG_FORWARD_MATRIX_2, colorTransformToDngMatrix(it))) }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
             add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(0.0)))
             add(short(TAG_CALIBRATION_ILLUMINANT_1, illuminant1))
