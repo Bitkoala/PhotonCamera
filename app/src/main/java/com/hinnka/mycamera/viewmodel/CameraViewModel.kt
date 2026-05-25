@@ -1860,6 +1860,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun refreshLocationOnResume() {
+        if (userPreferences.value.saveLocation) {
+            locationManager.requestCurrentLocation()
+        }
+    }
+
     fun setOpenAIApiKey(key: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveOpenAIApiKey(key)
