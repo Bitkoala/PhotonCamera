@@ -39,6 +39,7 @@ set(SHADER_SOURCES
     shaders/align_lk.comp
     shaders/raw_structure_tensor.comp
     shaders/robustness_raw.comp
+    shaders/robustness_summary.comp
     shaders/green_gather_raw.comp
     shaders/reference_preprocess_raw.comp
     shaders/reference_prior_raw.comp

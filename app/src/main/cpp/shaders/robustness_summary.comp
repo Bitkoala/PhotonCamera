@@ -1,0 +1,90 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : require
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, scalar) readonly buffer RobustnessBuffer {
+    float data[];
+} robustness;
+
+// [0..255] histogram bins, [256] weak<0.15, [257] weak<0.5, [258] count.
+layout(binding = 1, scalar) buffer SummaryBuffer {
+    uint data[];
+} summary;
+
+layout(push_constant, scalar) uniform PushConstants {
+    uint width;
+    uint height;
+    uint planeWidth;
+    uint planeHeight;
+    uint sensorWidth;
+    uint sensorHeight;
+
+    float scale;
+
+    float blackLevel[4];
+    float whiteLevel;
+    float wbGains[4];
+
+    uint isFirstFrame;
+    uint outputChannel;
+    uint cfaPattern;
+    uint planeIndex;
+
+    uint tileX;
+    uint tileY;
+    uint tileW;
+    uint tileH;
+    uint bufferStride;
+    uint gridW;
+    uint gridH;
+    uint tileSize;
+
+    float noiseAlpha;
+    float noiseBeta;
+    float baseNoise;
+    float frameWeight;
+} pc;
+
+shared uint localBins[256];
+shared uint localWeak015;
+shared uint localWeak05;
+shared uint localCount;
+
+void main() {
+    uint localIndex = gl_LocalInvocationIndex;
+    if (localIndex < 256u) {
+        localBins[localIndex] = 0u;
+    }
+    if (localIndex == 0u) {
+        localWeak015 = 0u;
+        localWeak05 = 0u;
+        localCount = 0u;
+    }
+    barrier();
+
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    if (x < pc.planeWidth && y < pc.planeHeight) {
+        float r = clamp(robustness.data[y * pc.planeWidth + x], 0.0, 1.0);
+        uint bin = min(uint(r * 255.0 + 0.5), 255u);
+        atomicAdd(localBins[bin], 1u);
+        if (r < 0.15) {
+            atomicAdd(localWeak015, 1u);
+        }
+        if (r < 0.5) {
+            atomicAdd(localWeak05, 1u);
+        }
+        atomicAdd(localCount, 1u);
+    }
+    barrier();
+
+    if (localIndex < 256u && localBins[localIndex] > 0u) {
+        atomicAdd(summary.data[localIndex], localBins[localIndex]);
+    }
+    if (localIndex == 0u) {
+        atomicAdd(summary.data[256], localWeak015);
+        atomicAdd(summary.data[257], localWeak05);
+        atomicAdd(summary.data[258], localCount);
+    }
+}

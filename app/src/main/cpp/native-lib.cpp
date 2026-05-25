@@ -1387,6 +1387,15 @@ Java_com_hinnka_mycamera_processor_MultiFrameStacker_releaseVulkanRawStackerNati
   delete stacker;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_hinnka_mycamera_processor_MultiFrameStacker_resetVulkanRawStackerNative(
+    JNIEnv *env, jobject, jlong stackerPtr) {
+  auto *stacker = reinterpret_cast<VulkanRawStacker *>(stackerPtr);
+  if (!stacker)
+    return JNI_FALSE;
+  return stacker->resetForReuse() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_com_hinnka_mycamera_processor_MultiFrameStacker_releaseRawStackerNative(
     JNIEnv *env, jobject /* this */, jlong stackerPtr) {

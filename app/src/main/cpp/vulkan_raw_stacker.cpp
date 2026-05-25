@@ -9,6 +9,7 @@
 #include "reference_prior_raw.comp.h"
 #include "raw_structure_tensor.comp.h"
 #include "robustness_raw.comp.h"
+#include "robustness_summary.comp.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -26,6 +27,7 @@
   } while (0)
 
 constexpr uint32_t kDenseAlignmentGridSpacing = 8;
+constexpr uint32_t kCoarseAlignmentTileSize = 16;
 constexpr int kAlignmentRegularizationPasses = 2;
 constexpr float kAlignmentOutlierThreshold = 0.65f;
 constexpr bool kEnableRawSuperResPerfLogs = false;
@@ -63,6 +65,7 @@ inline void logRawSuperResStage(const char *stage, double elapsedMs) {
 struct RawSuperResPerfStats {
   double totalMs = 0.0;
   double scoreCalculationMs = 0.0;
+  double pipelineSetupMs = 0.0;
   double descriptorSetupMs = 0.0;
 
   double phase1UploadAndPyramidMs = 0.0;
@@ -87,6 +90,22 @@ struct RawSuperResPerfStats {
   double globalReliabilityRobustness2Ms = 0.0;
   double globalReliabilityReadbackMs = 0.0;
 
+  double refinedCachePrecomputeMs = 0.0;
+  double refinedCacheSeedUploadMs = 0.0;
+  double refinedCacheLkMs = 0.0;
+  double refinedCacheAlignmentDownloadMs = 0.0;
+  double refinedCacheAlignmentRegularizeMs = 0.0;
+  double refinedCacheAlignmentUploadMs = 0.0;
+  double refinedCacheRobustnessDispatchMs = 0.0;
+  double refinedCacheRobustnessDownloadMs = 0.0;
+  double refinedCacheFlowVarianceDownloadMs = 0.0;
+  double refinedCacheCpuSummaryMs = 0.0;
+  double refinedCacheFlowSummaryMs = 0.0;
+  double refinedCacheRobustnessSummaryMs = 0.0;
+  double refinedCacheLocalReliabilityMapMs = 0.0;
+  double refinedCacheWeightMs = 0.0;
+  double frameMaskBufferSetupMs = 0.0;
+
   double tileProcessingMs = 0.0;
   double outputClearMs = 0.0;
   double tileClearMs = 0.0;
@@ -103,6 +122,7 @@ struct RawSuperResPerfStats {
   double normalizeMs = 0.0;
 
   double outputReadbackMs = 0.0;
+  double fusionStatsMs = 0.0;
   double cleanupMs = 0.0;
 
   size_t totalFrames = 0;
@@ -121,18 +141,32 @@ struct RawSuperResPerfStats {
   void logSummary(uint32_t outputW, uint32_t outputH, float scale) const {
     if (!kEnableRawSuperResPerfLogs)
       return;
+    const double accountedMs =
+        scoreCalculationMs + pipelineSetupMs + descriptorSetupMs +
+        phase1UploadAndPyramidMs + referencePriorMs + structureTensorMs +
+        coarseAlignmentMs + globalReliabilityMs + refinedCachePrecomputeMs +
+        frameMaskBufferSetupMs + tileProcessingMs + fusionStatsMs +
+        outputReadbackMs + cleanupMs;
+    const double unaccountedMs = totalMs - accountedMs;
     LOGI(
         "RawSuperResPerf summary: total=%.3f ms output=%ux%u scale=%.2f "
         "frames=%zu kept=%zu skipped=%zu tiles=%zu robustEffFrames=%.2f avgR=%.3f weakF=%.3f",
         totalMs, outputW, outputH, scale, totalFrames, keptFrames,
         skippedFrames, tilesProcessed, totalEffectiveFrames, avgRobustness, avgWeakFraction);
     LOGI(
-        "RawSuperResPerf phases: score=%.3f setup=%.3f upload=%.3f prior=%.3f "
-        "tensor=%.3f coarse=%.3f reliability=%.3f tile=%.3f readback=%.3f "
-        "cleanup=%.3f",
-        scoreCalculationMs, descriptorSetupMs, phase1UploadAndPyramidMs,
+        "RawSuperResPerf phases: score=%.3f pipeline=%.3f setup=%.3f "
+        "upload=%.3f prior=%.3f tensor=%.3f coarse=%.3f reliability=%.3f "
+        "refineCache=%.3f maskSetup=%.3f tile=%.3f fusionStats=%.3f "
+        "readback=%.3f cleanup=%.3f",
+        scoreCalculationMs, pipelineSetupMs, descriptorSetupMs, phase1UploadAndPyramidMs,
         referencePriorMs, structureTensorMs, coarseAlignmentMs,
-        globalReliabilityMs, tileProcessingMs, outputReadbackMs, cleanupMs);
+        globalReliabilityMs, refinedCachePrecomputeMs, frameMaskBufferSetupMs,
+        tileProcessingMs, fusionStatsMs, outputReadbackMs, cleanupMs);
+    LOGI(
+        "RawSuperResPerf accounting: accounted=%.3f unaccounted=%.3f "
+        "unaccountedPct=%.2f%%",
+        accountedMs, unaccountedMs,
+        totalMs > 0.0 ? 100.0 * unaccountedMs / totalMs : 0.0);
     LOGI(
         "RawSuperResPerf upload-detail: proxy=%.3f pyramid=%.3f gpuUpload=%.3f "
         "avgFrame=%.3f",
@@ -147,6 +181,23 @@ struct RawSuperResPerfStats {
           globalReliabilitySeedMs,
           globalReliabilityReadbackMs,
           averageMillis(globalReliabilityMs, globalReliabilityFrames));
+    }
+    if (refinedCachePrecomputeMs > 0.0) {
+      LOGI(
+          "RawSuperResPerf refine-detail: seed=%.3f lk=%.3f "
+          "alignDownload=%.3f regularize=%.3f alignUpload=%.3f "
+          "robustDispatch=%.3f robustDownload=%.3f flowVarDownload=%.3f "
+          "cpuSummary=%.3f",
+          refinedCacheSeedUploadMs, refinedCacheLkMs,
+          refinedCacheAlignmentDownloadMs, refinedCacheAlignmentRegularizeMs,
+          refinedCacheAlignmentUploadMs, refinedCacheRobustnessDispatchMs,
+          refinedCacheRobustnessDownloadMs, refinedCacheFlowVarianceDownloadMs,
+          refinedCacheCpuSummaryMs);
+      LOGI(
+          "RawSuperResPerf refine-cpu-detail: flowSummary=%.3f "
+          "robustSummary=%.3f localMap=%.3f weight=%.3f",
+          refinedCacheFlowSummaryMs, refinedCacheRobustnessSummaryMs,
+          refinedCacheLocalReliabilityMapMs, refinedCacheWeightMs);
     }
     if (tilesProcessed > 0) {
       LOGI(
@@ -208,6 +259,36 @@ VulkanRawStacker::VulkanRawStacker(uint32_t w, uint32_t h, bool enableSuperRes,
 VulkanRawStacker::~VulkanRawStacker() {
   pendingFrames.clear();
   releaseVulkanResources();
+}
+
+bool VulkanRawStacker::resetForReuse() {
+  VulkanManager &vm = VulkanManager::getInstance();
+  VkDevice device = vm.getDevice();
+  if (device == VK_NULL_HANDLE) {
+    LOGE("VulkanRawStacker resetForReuse: Vulkan device is NULL");
+    return false;
+  }
+
+  vkQueueWaitIdle(vm.getComputeQueue());
+  pendingFrames.clear();
+  isFirstFrame = true;
+
+  if (descriptorPool != VK_NULL_HANDLE) {
+    vkResetDescriptorPool(device, descriptorPool, 0);
+  }
+  structureTensorSet = VK_NULL_HANDLE;
+  std::fill(alignLkSets.begin(), alignLkSets.end(), VK_NULL_HANDLE);
+  std::fill(robustnessSets.begin(), robustnessSets.end(), VK_NULL_HANDLE);
+  robustnessSummarySet = VK_NULL_HANDLE;
+  greenGatherSet = VK_NULL_HANDLE;
+  std::fill(std::begin(colorGatherSets), std::end(colorGatherSets),
+            VK_NULL_HANDLE);
+  referenceNormalizeSet = VK_NULL_HANDLE;
+  referencePriorSet = VK_NULL_HANDLE;
+  greenNormalizeSet = VK_NULL_HANDLE;
+  std::fill(std::begin(colorNormalizeSets), std::end(colorNormalizeSets),
+            VK_NULL_HANDLE);
+  return true;
 }
 
 void VulkanRawStacker::initVulkanResources() {
@@ -358,6 +439,26 @@ void VulkanRawStacker::initVulkanResources() {
                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   VK_CHECK(vkAllocateMemory(device, &fvAlloc, nullptr, &flowVarianceMemory));
   vkBindBufferMemory(device, flowVarianceBuffer, flowVarianceMemory, 0);
+
+  VkDeviceSize robustnessSummarySize = 259 * sizeof(uint32_t);
+  VkBufferCreateInfo rsInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+  rsInfo.size = robustnessSummarySize;
+  rsInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  rsInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  VK_CHECK(vkCreateBuffer(device, &rsInfo, nullptr, &robustnessSummaryBuffer));
+
+  VkMemoryRequirements rsReqs;
+  vkGetBufferMemoryRequirements(device, robustnessSummaryBuffer, &rsReqs);
+  VkMemoryAllocateInfo rsAlloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  rsAlloc.allocationSize = rsReqs.size;
+  rsAlloc.memoryTypeIndex = vm.findMemoryType(
+      rsReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  VK_CHECK(
+      vkAllocateMemory(device, &rsAlloc, nullptr, &robustnessSummaryMemory));
+  vkBindBufferMemory(device, robustnessSummaryBuffer,
+                     robustnessSummaryMemory, 0);
 
   // 2B. Local tile reliability mask (float per 16x16 plane tile)
   uint32_t localTilesX = (inputW + 15) / 16;
@@ -761,6 +862,33 @@ void VulkanRawStacker::createPipelines() {
                                              robustness_raw_comp_spv,
                                              robustness_raw_comp_spv_size);
 
+  // --- 3B. Robustness Summary Pipeline ---
+  VkDescriptorSetLayoutBinding rsBindings[2] = {};
+  rsBindings[0] = {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                   VK_SHADER_STAGE_COMPUTE_BIT, nullptr}; // Robustness map
+  rsBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                   VK_SHADER_STAGE_COMPUTE_BIT, nullptr}; // Histogram summary
+
+  VkDescriptorSetLayoutCreateInfo rsLayoutInfo{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  rsLayoutInfo.bindingCount = 2;
+  rsLayoutInfo.pBindings = rsBindings;
+  vkCreateDescriptorSetLayout(device, &rsLayoutInfo, nullptr,
+                              &robustnessSummarySetLayout);
+
+  VkPipelineLayoutCreateInfo rsPLInfo{
+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  rsPLInfo.setLayoutCount = 1;
+  rsPLInfo.pSetLayouts = &robustnessSummarySetLayout;
+  rsPLInfo.pushConstantRangeCount = 1;
+  rsPLInfo.pPushConstantRanges = &pushConstantRange;
+  vkCreatePipelineLayout(device, &rsPLInfo, nullptr,
+                         &robustnessSummaryPipelineLayout);
+
+  robustnessSummaryPipeline = createComputePipeline(
+      device, robustnessSummaryPipelineLayout, robustness_summary_comp_spv,
+      robustness_summary_comp_spv_size);
+
   // --- 4. Green HR Gather Pipeline ---
   VkDescriptorSetLayoutBinding gsBindings[9] = {};
   gsBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
@@ -1128,6 +1256,8 @@ struct RefinedFrameCache {
   std::vector<Point> alignment;
   std::vector<float> robustness;
   std::vector<float> flowVariance;
+  RobustnessSummary robustSummary;
+  bool hasRobustSummary = false;
   bool valid = false;
 };
 
@@ -1531,6 +1661,52 @@ inline RobustnessSummary readRobustnessSummary(const std::vector<float> &robustn
     if (robustness[i] < 0.5f)
       ++weak05;
   }
+  summary.weak015Fraction = (float)weak015 / (float)count;
+  summary.weak05Fraction = (float)weak05 / (float)count;
+  return summary;
+}
+
+inline RobustnessSummary robustnessSummaryFromHistogram(
+    const uint32_t *histogram, size_t histogramBins, uint32_t weak015,
+    uint32_t weak05, uint32_t count) {
+  RobustnessSummary summary;
+  if (histogram == nullptr || histogramBins == 0 || count == 0)
+    return summary;
+
+  auto binValue = [](size_t bin) -> float {
+    return std::clamp((float)bin / 255.0f, 0.0f, 1.0f);
+  };
+  auto percentile = [&](float q) -> float {
+    uint64_t target =
+        (uint64_t)std::floor(q * (float)std::max<uint32_t>(count - 1, 0));
+    uint64_t cumulative = 0;
+    for (size_t i = 0; i < histogramBins; ++i) {
+      cumulative += histogram[i];
+      if (cumulative > target)
+        return binValue(i);
+    }
+    return binValue(histogramBins - 1);
+  };
+
+  uint64_t weightedSum = 0;
+  bool foundMin = false;
+  for (size_t i = 0; i < histogramBins; ++i) {
+    uint32_t binCount = histogram[i];
+    weightedSum += (uint64_t)i * binCount;
+    if (!foundMin && binCount > 0) {
+      summary.values.minValue = binValue(i);
+      foundMin = true;
+    }
+    if (binCount > 0) {
+      summary.values.maxValue = binValue(i);
+    }
+  }
+
+  summary.values.meanValue =
+      (float)((double)weightedSum / (double)count / 255.0);
+  summary.values.p50 = percentile(0.50f);
+  summary.values.p90 = percentile(0.90f);
+  summary.values.p99 = percentile(0.99f);
   summary.weak015Fraction = (float)weak015 / (float)count;
   summary.weak05Fraction = (float)weak05 / (float)count;
   return summary;
@@ -2565,38 +2741,72 @@ GrayImage VulkanRawStacker::buildAlignmentProxy(const FrameData &frame) const {
   float blackAvg = 0.25f * (mBlackLevel[0] + mBlackLevel[1] + mBlackLevel[2] +
                             mBlackLevel[3]);
   float invRange = 255.0f / std::max(1.0f, mWhiteLevel - blackAvg);
-  std::vector<float> linearProxy(proxy.data.size(), 0.0f);
+  std::vector<uint8_t> linearProxy(proxy.data.size(), 0);
+  const bool diagonalGreen = (frame.cfaPattern == 1 || frame.cfaPattern == 2);
+  const uint32_t sensorWidth = width;
 
   for (int py = 0; py < proxy.height; ++py) {
+    const size_t srcRow0 = (size_t)(py * 2) * sensorWidth;
+    const size_t srcRow1 = srcRow0 + sensorWidth;
+    const size_t dstRow = (size_t)py * proxy.width;
     for (int px = 0; px < proxy.width; ++px) {
-      float green =
-          fetchGreenProxySample(frame.rawData, width, height, frame.cfaPattern,
-                                px, py);
+      const size_t sx = (size_t)px * 2u;
+      float green = diagonalGreen
+                        ? 0.5f * ((float)frame.rawData[srcRow0 + sx] +
+                                  (float)frame.rawData[srcRow1 + sx + 1u])
+                        : 0.5f * ((float)frame.rawData[srcRow0 + sx + 1u] +
+                                  (float)frame.rawData[srcRow1 + sx]);
       float normalized = std::max(0.0f, green - blackAvg) * invRange;
-      linearProxy[(size_t)py * proxy.width + px] = normalized;
+      linearProxy[dstRow + px] = (uint8_t)std::clamp(normalized, 0.0f, 255.0f);
     }
   }
 
   // Mild local-contrast enhancement keeps fine text edges visible for
   // alignment, without changing the external output pipeline.
-  for (int py = 0; py < proxy.height; ++py) {
-    for (int px = 0; px < proxy.width; ++px) {
-      float mean = 0.0f;
-      int count = 0;
-      for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
-          int nx = std::max(0, std::min(px + dx, proxy.width - 1));
-          int ny = std::max(0, std::min(py + dy, proxy.height - 1));
-          mean += linearProxy[(size_t)ny * proxy.width + nx];
-          ++count;
-        }
+  const int proxyW = proxy.width;
+  const int proxyH = proxy.height;
+  if (proxyW <= 2 || proxyH <= 2) {
+    proxy.data = std::move(linearProxy);
+    return proxy;
+  }
+
+  auto sharpenSample = [&](int px, int py) -> uint8_t {
+    int sum = 0;
+    for (int dy = -1; dy <= 1; ++dy) {
+      int ny = std::clamp(py + dy, 0, proxyH - 1);
+      for (int dx = -1; dx <= 1; ++dx) {
+        int nx = std::clamp(px + dx, 0, proxyW - 1);
+        sum += linearProxy[(size_t)ny * proxyW + nx];
       }
-      mean /= (float)count;
-      float center = linearProxy[(size_t)py * proxy.width + px];
-      float boosted = center + 0.35f * (center - mean);
-      proxy.data[(size_t)py * proxy.width + px] =
-          (uint8_t)std::clamp(boosted, 0.0f, 255.0f);
     }
+    float center = (float)linearProxy[(size_t)py * proxyW + px];
+    float mean = (float)sum / 9.0f;
+    return (uint8_t)std::clamp(center + 0.35f * (center - mean), 0.0f, 255.0f);
+  };
+
+  for (int py = 0; py < proxyH; ++py) {
+    if (py == 0 || py == proxyH - 1) {
+      for (int px = 0; px < proxyW; ++px) {
+        proxy.data[(size_t)py * proxyW + px] = sharpenSample(px, py);
+      }
+      continue;
+    }
+
+    proxy.data[(size_t)py * proxyW] = sharpenSample(0, py);
+    for (int px = 1; px < proxyW - 1; ++px) {
+      const size_t idx = (size_t)py * proxyW + px;
+      const uint8_t *prev = linearProxy.data() + idx - proxyW;
+      const uint8_t *curr = linearProxy.data() + idx;
+      const uint8_t *next = linearProxy.data() + idx + proxyW;
+      int sum = prev[-1] + prev[0] + prev[1] + curr[-1] + curr[0] + curr[1] +
+                next[-1] + next[0] + next[1];
+      float center = (float)curr[0];
+      float mean = (float)sum / 9.0f;
+      proxy.data[idx] =
+          (uint8_t)std::clamp(center + 0.35f * (center - mean), 0.0f, 255.0f);
+    }
+    proxy.data[(size_t)py * proxyW + (proxyW - 1)] =
+        sharpenSample(proxyW - 1, py);
   }
 
   return proxy;
@@ -2623,15 +2833,8 @@ float VulkanRawStacker::calculateFrameScore(const FrameData &frame) const {
 
 void VulkanRawStacker::selectReferenceFrame() {
   for (auto &frame : pendingFrames) {
-    if (frame.score == 0.0f) {
-      frame.score = calculateFrameScore(frame);
-    }
+    frame.score = 1.0f;
   }
-
-  std::sort(
-      pendingFrames.begin(), pendingFrames.end(),
-      [](const FrameData &a, const FrameData &b) { return a.score > b.score; });
-
   if (!pendingFrames.empty()) {
     mCfaPattern = pendingFrames.front().cfaPattern;
   }
@@ -2645,7 +2848,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   perf.totalFrames = pendingFrames.size();
   const auto processStackStart = PerfClock::now();
 
-  // 1. Calculate scores and sort (Highest score first = Reference)
+  // 1. Keep the first frame as the reference frame.
   TIME_START(scoreCalculation);
   selectReferenceFrame();
   TIME_END(scoreCalculation);
@@ -2655,10 +2858,14 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   VkDevice device = vm.getDevice();
 
   if (structureTensorPipeline == VK_NULL_HANDLE) {
+    TIME_START(pipelineSetup);
     createPipelines();
+    TIME_END(pipelineSetup);
+    perf.pipelineSetupMs = elapsed_pipelineSetup;
   }
 
   float scale = mEnableSuperRes ? mSuperResScale : 1.0f;
+  const bool useReferenceFallbackOnly = scale <= 1.0001f;
   uint32_t outputW = (uint32_t)std::lround(width * scale);
   uint32_t outputH = (uint32_t)std::lround(height * scale);
   uint32_t inputW = width / 2;
@@ -2700,6 +2907,10 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &robustnessSets[0]));
   VkDescriptorSet robustSet = robustnessSets[0];
 
+  allocInfo.pSetLayouts = &robustnessSummarySetLayout;
+  VK_CHECK(
+      vkAllocateDescriptorSets(device, &allocInfo, &robustnessSummarySet));
+
   allocInfo.pSetLayouts = &greenGatherSetLayout;
   VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &greenGatherSet));
 
@@ -2734,6 +2945,10 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                             3);
   updateBufferDescriptorSet(device, robustSet, flowVarianceBuffer,
                             VK_WHOLE_SIZE, 4);
+  updateBufferDescriptorSet(device, robustnessSummarySet, robustnessBuffer,
+                            VK_WHOLE_SIZE, 0);
+  updateBufferDescriptorSet(device, robustnessSummarySet,
+                            robustnessSummaryBuffer, VK_WHOLE_SIZE, 1);
   updateBufferDescriptorSet(device, greenGatherSet, alignmentBuffer,
                             VK_WHOLE_SIZE, 1);
   updateBufferDescriptorSet(device, greenGatherSet, kernelBuffer,
@@ -2930,6 +3145,21 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
     perf.referencePriorMs = elapsed_phase1b_ReferencePrior;
   }
 
+  if (useReferenceFallbackOnly) {
+    VkCommandBuffer cb = vm.beginSingleTimeCommands();
+    vkCmdFillBuffer(cb, priorWeightBuffer, 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);
+    VkBufferMemoryBarrier priorWeightBarrier{
+        VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    priorWeightBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    priorWeightBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    priorWeightBarrier.buffer = priorWeightBuffer;
+    priorWeightBarrier.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                         1, &priorWeightBarrier, 0, nullptr);
+    vm.endSingleTimeCommands(cb);
+  }
+
   // Phase 2: Structure tensor pass on reference frame (global, once)
   // =====================================================================
   TIME_START(phase2_StructureTensor);
@@ -3009,7 +3239,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
     const auto coarseAlignStart = PerfClock::now();
     frameAlignments[i].coarseAlign =
         computeTileAlignment(referencePyramid, uploadedFrames[i].pyramid, 64,
-                             tileSize);
+                             (int)kCoarseAlignmentTileSize);
     frameAlignments[i].seededFlow = buildDenseAlignmentSeed(
         frameAlignments[i].coarseAlign, (uint32_t)gridW, (uint32_t)gridH,
         (uint32_t)tileSize);
@@ -3115,9 +3345,14 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
 
     const auto &coarseAlign = frameAlignments[frameIndex].coarseAlign;
     std::vector<Point> seededFlow = frameAlignments[frameIndex].seededFlow;
-    uploadAlignmentField(device, alignmentMemory, seededFlow);
-    fillFloatBuffer(device, robustnessMemory, (size_t)inputW * inputH, 1.0f);
+    {
+      const auto refinedSeedUploadStart = PerfClock::now();
+      uploadAlignmentField(device, alignmentMemory, seededFlow);
+      fillFloatBuffer(device, robustnessMemory, (size_t)inputW * inputH, 1.0f);
+      perf.refinedCacheSeedUploadMs += elapsedMillis(refinedSeedUploadStart);
+    }
 
+    const auto refinedLkStart = PerfClock::now();
     VkCommandBuffer cb = vm.beginSingleTimeCommands();
     VkBufferMemoryBarrier hostBarriers[2]{};
     hostBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -3159,14 +3394,30 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                            1, &lkBarrier, 0, nullptr);
     }
     vm.endSingleTimeCommands(cb);
+    perf.refinedCacheLkMs += elapsedMillis(refinedLkStart);
 
-    if (downloadAlignmentField(device, alignmentMemory, (uint32_t)gridW,
-                               (uint32_t)gridH, seededFlow)) {
-      regularizeAlignmentField(seededFlow, (uint32_t)gridW, (uint32_t)gridH,
-                               (uint32_t)tileSize, uploadedFrames[0].proxy);
-      uploadAlignmentField(device, alignmentMemory, seededFlow);
+    {
+      const auto refinedAlignmentDownloadStart = PerfClock::now();
+      bool alignmentDownloaded =
+          downloadAlignmentField(device, alignmentMemory, (uint32_t)gridW,
+                                 (uint32_t)gridH, seededFlow);
+      perf.refinedCacheAlignmentDownloadMs +=
+          elapsedMillis(refinedAlignmentDownloadStart);
+      if (alignmentDownloaded) {
+        const auto refinedRegularizeStart = PerfClock::now();
+        regularizeAlignmentField(seededFlow, (uint32_t)gridW, (uint32_t)gridH,
+                                 (uint32_t)tileSize, uploadedFrames[0].proxy);
+        perf.refinedCacheAlignmentRegularizeMs +=
+            elapsedMillis(refinedRegularizeStart);
+
+        const auto refinedAlignmentUploadStart = PerfClock::now();
+        uploadAlignmentField(device, alignmentMemory, seededFlow);
+        perf.refinedCacheAlignmentUploadMs +=
+            elapsedMillis(refinedAlignmentUploadStart);
+      }
     }
 
+    const auto refinedRobustDispatchStart = PerfClock::now();
     cb = vm.beginSingleTimeCommands();
     VkBufferMemoryBarrier refinedHostBarrier{
         VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -3205,37 +3456,131 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 2,
                          rbBarriers, 0, nullptr);
     vm.endSingleTimeCommands(cb);
+    perf.refinedCacheRobustnessDispatchMs +=
+        elapsedMillis(refinedRobustDispatchStart);
 
     RefinedFrameCache &refinedCache = frameRefinedCaches[frameIndex];
     refinedCache.alignment = seededFlow;
-    refinedCache.valid = downloadFloatBuffer(device, robustnessMemory,
-                                             (size_t)inputW * inputH,
-                                             refinedCache.robustness) &&
-                         downloadFloatBuffer(device, flowVarianceMemory,
-                                             (size_t)inputW * inputH,
-                                             refinedCache.flowVariance);
+    bool robustnessDownloaded = false;
+    {
+      const auto refinedRobustDownloadStart = PerfClock::now();
+      robustnessDownloaded =
+          downloadFloatBuffer(device, robustnessMemory, (size_t)inputW * inputH,
+                              refinedCache.robustness);
+      perf.refinedCacheRobustnessDownloadMs +=
+          elapsedMillis(refinedRobustDownloadStart);
+    }
+    bool flowVarianceDownloaded = false;
+    if (robustnessDownloaded) {
+      const auto refinedFlowVarianceDownloadStart = PerfClock::now();
+      flowVarianceDownloaded =
+          downloadFloatBuffer(device, flowVarianceMemory,
+                              (size_t)inputW * inputH,
+                              refinedCache.flowVariance);
+      perf.refinedCacheFlowVarianceDownloadMs +=
+          elapsedMillis(refinedFlowVarianceDownloadStart);
+    }
+    refinedCache.valid = robustnessDownloaded && flowVarianceDownloaded;
     if (refinedCache.valid) {
+      const auto refinedCpuSummaryStart = PerfClock::now();
       FlowSummary refinedFlow;
-      std::vector<float> magnitudes;
-      magnitudes.reserve(refinedCache.alignment.size());
-      double sumX = 0.0, sumY = 0.0;
-      for (const Point &point : refinedCache.alignment) {
-        sumX += point.x;
-        sumY += point.y;
-        magnitudes.push_back(std::sqrt(point.x * point.x + point.y * point.y));
+      {
+        const auto refinedFlowSummaryStart = PerfClock::now();
+        std::vector<float> magnitudes;
+        magnitudes.reserve(refinedCache.alignment.size());
+        double sumX = 0.0, sumY = 0.0;
+        for (const Point &point : refinedCache.alignment) {
+          sumX += point.x;
+          sumY += point.y;
+          magnitudes.push_back(std::sqrt(point.x * point.x + point.y * point.y));
+        }
+        if (!magnitudes.empty()) {
+          refinedFlow.magnitude =
+              computeScalarStats(magnitudes.data(), magnitudes.size());
+          refinedFlow.meanX = (float)(sumX / magnitudes.size());
+          refinedFlow.meanY = (float)(sumY / magnitudes.size());
+        }
+        perf.refinedCacheFlowSummaryMs +=
+            elapsedMillis(refinedFlowSummaryStart);
       }
-      if (!magnitudes.empty()) {
-        refinedFlow.magnitude = computeScalarStats(magnitudes.data(), magnitudes.size());
-        refinedFlow.meanX = (float)(sumX / magnitudes.size());
-        refinedFlow.meanY = (float)(sumY / magnitudes.size());
+      RobustnessSummary robustSummary;
+      {
+        const auto refinedRobustnessSummaryStart = PerfClock::now();
+        constexpr VkDeviceSize kRobustnessSummarySize = 259 * sizeof(uint32_t);
+        VkCommandBuffer summaryCb = vm.beginSingleTimeCommands();
+        vkCmdFillBuffer(summaryCb, robustnessSummaryBuffer, 0,
+                        kRobustnessSummarySize, 0);
+        VkBufferMemoryBarrier clearBarrier{
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        clearBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        clearBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                                     VK_ACCESS_SHADER_WRITE_BIT;
+        clearBarrier.buffer = robustnessSummaryBuffer;
+        clearBarrier.size = kRobustnessSummarySize;
+        vkCmdPipelineBarrier(summaryCb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                             nullptr, 1, &clearBarrier, 0, nullptr);
+
+        vkCmdBindPipeline(summaryCb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          robustnessSummaryPipeline);
+        vkCmdBindDescriptorSets(
+            summaryCb, VK_PIPELINE_BIND_POINT_COMPUTE,
+            robustnessSummaryPipelineLayout, 0, 1, &robustnessSummarySet, 0,
+            nullptr);
+        vkCmdPushConstants(summaryCb, robustnessSummaryPipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(summaryCb, (inputW + 15) / 16, (inputH + 15) / 16, 1);
+
+        VkBufferMemoryBarrier summaryReadBarrier{
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        summaryReadBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        summaryReadBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        summaryReadBarrier.buffer = robustnessSummaryBuffer;
+        summaryReadBarrier.size = kRobustnessSummarySize;
+        vkCmdPipelineBarrier(summaryCb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+                             &summaryReadBarrier, 0, nullptr);
+        vm.endSingleTimeCommands(summaryCb);
+
+        void *summaryPtr = nullptr;
+        if (vkMapMemory(device, robustnessSummaryMemory, 0,
+                        kRobustnessSummarySize, 0,
+                        &summaryPtr) == VK_SUCCESS &&
+            summaryPtr != nullptr) {
+          const uint32_t *summaryData =
+              static_cast<const uint32_t *>(summaryPtr);
+          robustSummary = robustnessSummaryFromHistogram(
+              summaryData, 256, summaryData[256], summaryData[257],
+              summaryData[258]);
+          vkUnmapMemory(device, robustnessSummaryMemory);
+        } else {
+          robustSummary =
+              readRobustnessSummary(refinedCache.robustness, inputW, inputH);
+        }
+        perf.refinedCacheRobustnessSummaryMs +=
+            elapsedMillis(refinedRobustnessSummaryStart);
       }
-      RobustnessSummary robustSummary = readRobustnessSummary(refinedCache.robustness, inputW, inputH);
-      LocalReliabilityMap localMap = readLocalReliabilityMap(refinedCache.robustness, inputW, inputH, uploadedFrames[0].proxy);
+      refinedCache.robustSummary = robustSummary;
+      refinedCache.hasRobustSummary = true;
+      LocalReliabilityMap localMap;
+      {
+        const auto refinedLocalReliabilityMapStart = PerfClock::now();
+        localMap = readLocalReliabilityMap(refinedCache.robustness, inputW,
+                                           inputH, uploadedFrames[0].proxy);
+        perf.refinedCacheLocalReliabilityMapMs +=
+            elapsedMillis(refinedLocalReliabilityMapStart);
+      }
       LocalReliabilitySummary localSummary = localMap.summary;
       frameLocalMaps[frameIndex] = std::move(localMap);
       frameLocalSummaries[frameIndex] = localSummary;
-      float robustWeight = computeRobustnessFrameWeight(refinedFlow, robustSummary, localSummary);
-      frameFusionWeights[frameIndex] *= robustWeight;
+      {
+        const auto refinedWeightStart = PerfClock::now();
+        float robustWeight = computeRobustnessFrameWeight(
+            refinedFlow, robustSummary, localSummary);
+        frameFusionWeights[frameIndex] *= robustWeight;
+        perf.refinedCacheWeightMs += elapsedMillis(refinedWeightStart);
+      }
+      perf.refinedCacheCpuSummaryMs += elapsedMillis(refinedCpuSummaryStart);
     }
     return refinedCache.valid;
   };
@@ -3247,16 +3592,22 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
       std::vector<Point>().swap(frameRefinedCaches[i].alignment);
       std::vector<float>().swap(frameRefinedCaches[i].robustness);
       std::vector<float>().swap(frameRefinedCaches[i].flowVariance);
+      frameRefinedCaches[i].hasRobustSummary = false;
       frameRefinedCaches[i].valid = false;
     } else {
       ++perf.keptFrames;
     }
   }
 
-  for (size_t i = 1; i < pendingFrames.size(); ++i) {
-    if (!kFastPath && !skipFusionFrame[i]) {
-      ensureRefinedFrameCache(i);
+  {
+    TIME_START(refinedCachePrecompute);
+    for (size_t i = 1; i < pendingFrames.size(); ++i) {
+      if (!kFastPath && !skipFusionFrame[i]) {
+        ensureRefinedFrameCache(i);
+      }
     }
+    TIME_END(refinedCachePrecompute);
+    perf.refinedCachePrecomputeMs = elapsed_refinedCachePrecompute;
   }
 
   struct FrameMaskBuffer {
@@ -3266,44 +3617,50 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   std::vector<FrameMaskBuffer> frameMaskBuffers(pendingFrames.size());
   const VkDeviceSize frameMaskBufferSize =
       (VkDeviceSize)localTilesX * localTilesY * sizeof(float);
-  for (size_t i = 0; i < pendingFrames.size(); ++i) {
-    const std::vector<float> &localTileMask =
-        (i > 0 && !frameLocalMaps[i].tileWeights.empty())
-            ? frameLocalMaps[i].tileWeights
-            : defaultLocalTileMask;
+  {
+    TIME_START(frameMaskBufferSetup);
+    for (size_t i = 0; i < pendingFrames.size(); ++i) {
+      const std::vector<float> &localTileMask =
+          (i > 0 && !frameLocalMaps[i].tileWeights.empty())
+              ? frameLocalMaps[i].tileWeights
+              : defaultLocalTileMask;
 
-    VkBufferCreateInfo maskInfo{};
-    maskInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    maskInfo.size = frameMaskBufferSize;
-    maskInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    maskInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK_CHECK(vkCreateBuffer(device, &maskInfo, nullptr,
-                            &frameMaskBuffers[i].buffer));
+      VkBufferCreateInfo maskInfo{};
+      maskInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      maskInfo.size = frameMaskBufferSize;
+      maskInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+      maskInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      VK_CHECK(vkCreateBuffer(device, &maskInfo, nullptr,
+                              &frameMaskBuffers[i].buffer));
 
-    VkMemoryRequirements maskReqs;
-    vkGetBufferMemoryRequirements(device, frameMaskBuffers[i].buffer, &maskReqs);
-    VkMemoryAllocateInfo maskAlloc{};
-    maskAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    maskAlloc.allocationSize = maskReqs.size;
-    maskAlloc.memoryTypeIndex = vm.findMemoryType(
-        maskReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(
-        vkAllocateMemory(device, &maskAlloc, nullptr, &frameMaskBuffers[i].memory));
-    vkBindBufferMemory(device, frameMaskBuffers[i].buffer,
-                       frameMaskBuffers[i].memory, 0);
+      VkMemoryRequirements maskReqs;
+      vkGetBufferMemoryRequirements(device, frameMaskBuffers[i].buffer,
+                                    &maskReqs);
+      VkMemoryAllocateInfo maskAlloc{};
+      maskAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      maskAlloc.allocationSize = maskReqs.size;
+      maskAlloc.memoryTypeIndex = vm.findMemoryType(
+          maskReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      VK_CHECK(vkAllocateMemory(device, &maskAlloc, nullptr,
+                                &frameMaskBuffers[i].memory));
+      vkBindBufferMemory(device, frameMaskBuffers[i].buffer,
+                         frameMaskBuffers[i].memory, 0);
 
-    void *maskPtr = nullptr;
-    VkResult maskMapRes = vkMapMemory(device, frameMaskBuffers[i].memory, 0,
-                                      frameMaskBufferSize, 0, &maskPtr);
-    if (maskMapRes == VK_SUCCESS && maskPtr != nullptr) {
-      float *dst = static_cast<float *>(maskPtr);
-      std::fill(dst, dst + (size_t)localTilesX * (size_t)localTilesY, 1.0f);
-      size_t localMaskCount = std::min(
-          localTileMask.size(), (size_t)localTilesX * (size_t)localTilesY);
-      std::memcpy(dst, localTileMask.data(), localMaskCount * sizeof(float));
-      vkUnmapMemory(device, frameMaskBuffers[i].memory);
+      void *maskPtr = nullptr;
+      VkResult maskMapRes = vkMapMemory(device, frameMaskBuffers[i].memory, 0,
+                                        frameMaskBufferSize, 0, &maskPtr);
+      if (maskMapRes == VK_SUCCESS && maskPtr != nullptr) {
+        float *dst = static_cast<float *>(maskPtr);
+        std::fill(dst, dst + (size_t)localTilesX * (size_t)localTilesY, 1.0f);
+        size_t localMaskCount = std::min(
+            localTileMask.size(), (size_t)localTilesX * (size_t)localTilesY);
+        std::memcpy(dst, localTileMask.data(), localMaskCount * sizeof(float));
+        vkUnmapMemory(device, frameMaskBuffers[i].memory);
+      }
     }
+    TIME_END(frameMaskBufferSetup);
+    perf.frameMaskBufferSetupMs = elapsed_frameMaskBufferSetup;
   }
 
   // Phase 4: Sequential tile processing
@@ -3737,19 +4094,6 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
             vkCmdDispatch(cb, (pc.tileW + 15) / 16, (pc.tileH + 15) / 16, 1);
           }
 
-          VkBufferMemoryBarrier greenBarriers[2]{};
-          for (int phase = 0; phase < 2; ++phase) {
-            greenBarriers[phase].sType =
-                VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-            greenBarriers[phase].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            greenBarriers[phase].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            greenBarriers[phase].buffer = greenPhaseAccumBuffers[phase];
-            greenBarriers[phase].size = VK_WHOLE_SIZE;
-          }
-          vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
-                               nullptr, 2, greenBarriers, 0, nullptr);
-
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
                             colorGatherPipeline);
           updateImageDescriptorSet(device, colorGatherSets[0],
@@ -3790,17 +4134,25 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
             vkCmdDispatch(cb, (pc.tileW + 15) / 16, (pc.tileH + 15) / 16, 1);
           }
 
-          VkBufferMemoryBarrier colorBarriers[2]{};
+          VkBufferMemoryBarrier gatherBarriers[4]{};
+          for (int phase = 0; phase < 2; ++phase) {
+            gatherBarriers[phase].sType =
+                VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            gatherBarriers[phase].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            gatherBarriers[phase].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            gatherBarriers[phase].buffer = greenPhaseAccumBuffers[phase];
+            gatherBarriers[phase].size = VK_WHOLE_SIZE;
+          }
           for (int c = 0; c < 2; ++c) {
-            colorBarriers[c].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-            colorBarriers[c].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            colorBarriers[c].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            colorBarriers[c].buffer = rbGatherAccumBuffers[c];
-            colorBarriers[c].size = VK_WHOLE_SIZE;
+            gatherBarriers[c + 2].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            gatherBarriers[c + 2].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            gatherBarriers[c + 2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            gatherBarriers[c + 2].buffer = rbGatherAccumBuffers[c];
+            gatherBarriers[c + 2].size = VK_WHOLE_SIZE;
           }
           vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
-                               nullptr, 2, colorBarriers, 0, nullptr);
+                               nullptr, 4, gatherBarriers, 0, nullptr);
 
           vm.endSingleTimeCommands(cb);
           perf.gatherMs += elapsedMillis(gatherStart);
@@ -3817,46 +4169,50 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
         const auto normalizeStart = PerfClock::now();
         VkCommandBuffer cb = vm.beginSingleTimeCommands();
 
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          referencePriorPipeline);
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                referencePriorPipelineLayout, 0, 1,
-                                &referencePriorSet, 0, nullptr);
+        VkBuffer priorValueBuffer =
+            useReferenceFallbackOnly ? normalizedReferenceBuffer : priorBayerBuffer;
+        if (!useReferenceFallbackOnly) {
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            referencePriorPipeline);
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                  referencePriorPipelineLayout, 0, 1,
+                                  &referencePriorSet, 0, nullptr);
 
-        PushConstants priorPc{};
-        priorPc.width = outputW;
-        priorPc.height = outputH;
-        priorPc.planeWidth = inputW;
-        priorPc.planeHeight = inputH;
-        priorPc.sensorWidth = width;
-        priorPc.sensorHeight = height;
-        priorPc.scale = scale;
-        priorPc.cfaPattern = (uint32_t)mCfaPattern;
-        priorPc.whiteLevel = mWhiteLevel;
-        memcpy(priorPc.blackLevel, mBlackLevel, 4 * sizeof(float));
-        memcpy(priorPc.wbGains, mWbGains, 4 * sizeof(float));
-        priorPc.tileX = tileOriginX;
-        priorPc.tileY = tileOriginY;
-        priorPc.tileW = currentTileW;
-        priorPc.tileH = currentTileH;
-        vkCmdPushConstants(cb, referencePriorPipelineLayout,
-                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(priorPc),
-                           &priorPc);
-        vkCmdDispatch(cb, (currentTileW + 15) / 16,
-                      (currentTileH + 15) / 16, 1);
+          PushConstants priorPc{};
+          priorPc.width = outputW;
+          priorPc.height = outputH;
+          priorPc.planeWidth = inputW;
+          priorPc.planeHeight = inputH;
+          priorPc.sensorWidth = width;
+          priorPc.sensorHeight = height;
+          priorPc.scale = scale;
+          priorPc.cfaPattern = (uint32_t)mCfaPattern;
+          priorPc.whiteLevel = mWhiteLevel;
+          memcpy(priorPc.blackLevel, mBlackLevel, 4 * sizeof(float));
+          memcpy(priorPc.wbGains, mWbGains, 4 * sizeof(float));
+          priorPc.tileX = tileOriginX;
+          priorPc.tileY = tileOriginY;
+          priorPc.tileW = currentTileW;
+          priorPc.tileH = currentTileH;
+          vkCmdPushConstants(cb, referencePriorPipelineLayout,
+                             VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(priorPc),
+                             &priorPc);
+          vkCmdDispatch(cb, (currentTileW + 15) / 16,
+                        (currentTileH + 15) / 16, 1);
 
-        VkBufferMemoryBarrier priorBarriers[2]{};
-        for (int i = 0; i < 2; ++i) {
-          priorBarriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-          priorBarriers[i].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-          priorBarriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-          priorBarriers[i].buffer =
-              (i == 0) ? priorBayerBuffer : priorWeightBuffer;
-          priorBarriers[i].size = VK_WHOLE_SIZE;
+          VkBufferMemoryBarrier priorBarriers[2]{};
+          for (int i = 0; i < 2; ++i) {
+            priorBarriers[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            priorBarriers[i].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            priorBarriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            priorBarriers[i].buffer =
+                (i == 0) ? priorBayerBuffer : priorWeightBuffer;
+            priorBarriers[i].size = VK_WHOLE_SIZE;
+          }
+          vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                               nullptr, 2, priorBarriers, 0, nullptr);
         }
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
-                             nullptr, 2, priorBarriers, 0, nullptr);
 
         PlaneTileRange greenRange0 = computePlaneTileRange(
             mCfaPattern, 1, tileOriginX, tileOriginY, currentTileW, currentTileH,
@@ -3871,7 +4227,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                                   greenPhaseAccumBuffers[0], VK_WHOLE_SIZE, 1);
         updateBufferDescriptorSet(device, greenNormalizeSet,
                                   greenPhaseAccumBuffers[1], VK_WHOLE_SIZE, 2);
-        updateBufferDescriptorSet(device, greenNormalizeSet, priorBayerBuffer,
+        updateBufferDescriptorSet(device, greenNormalizeSet, priorValueBuffer,
                                   VK_WHOLE_SIZE, 3);
         updateBufferDescriptorSet(device, greenNormalizeSet, priorWeightBuffer,
                                   VK_WHOLE_SIZE, 4);
@@ -3944,7 +4300,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
                                     rbGatherAccumBuffers[colorIdx],
                                     VK_WHOLE_SIZE, 1);
           updateBufferDescriptorSet(device, colorNormalizeSets[colorIdx],
-                                    priorBayerBuffer, VK_WHOLE_SIZE, 2);
+                                    priorValueBuffer, VK_WHOLE_SIZE, 2);
           updateBufferDescriptorSet(device, colorNormalizeSets[colorIdx],
                                     priorWeightBuffer, VK_WHOLE_SIZE, 3);
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -3990,6 +4346,7 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
   // Phase 4B: Aggregate fusion statistics
   // =====================================================================
   if (kEnableRawSuperResPerfLogs) {
+    TIME_START(phase4b_FusionStats);
     perf.totalEffectiveFrames = 1.0; // Reference frame
     double sumRobustness = 1.0;
     double sumWeakFraction = 0.0;
@@ -4007,8 +4364,11 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
 
     for (size_t i = 1; i < pendingFrames.size(); ++i) {
       if (!skipFusionFrame[i] && frameRefinedCaches[i].valid) {
-        RobustnessSummary rs = readRobustnessSummary(
-            frameRefinedCaches[i].robustness, inputW, inputH);
+        RobustnessSummary rs = frameRefinedCaches[i].hasRobustSummary
+                                   ? frameRefinedCaches[i].robustSummary
+                                   : readRobustnessSummary(
+                                         frameRefinedCaches[i].robustness,
+                                         inputW, inputH);
         float contr = frameFusionWeights[i] * rs.values.meanValue;
         perf.totalEffectiveFrames += contr;
         sumRobustness += rs.values.meanValue;
@@ -4060,6 +4420,8 @@ bool VulkanRawStacker::processStack(uint16_t *outBuffer, size_t bufferSize) {
       perf.avgRobustness = (double)sumRobustness / (double)perf.keptFrames;
       perf.avgWeakFraction = (double)sumWeakFraction / (double)perf.keptFrames;
     }
+    TIME_END(phase4b_FusionStats);
+    perf.fusionStatsMs = elapsed_phase4b_FusionStats;
   }
 
   // =====================================================================
@@ -4140,6 +4502,12 @@ void VulkanRawStacker::releaseVulkanResources() {
     vkDestroyPipelineLayout(device, robustnessPipelineLayout, nullptr);
   if (robustnessPipeline)
     vkDestroyPipeline(device, robustnessPipeline, nullptr);
+  if (robustnessSummarySetLayout)
+    vkDestroyDescriptorSetLayout(device, robustnessSummarySetLayout, nullptr);
+  if (robustnessSummaryPipelineLayout)
+    vkDestroyPipelineLayout(device, robustnessSummaryPipelineLayout, nullptr);
+  if (robustnessSummaryPipeline)
+    vkDestroyPipeline(device, robustnessSummaryPipeline, nullptr);
 
   if (greenGatherSetLayout)
     vkDestroyDescriptorSetLayout(device, greenGatherSetLayout, nullptr);
@@ -4206,6 +4574,10 @@ void VulkanRawStacker::releaseVulkanResources() {
     vkDestroyBuffer(device, flowVarianceBuffer, nullptr);
   if (flowVarianceMemory)
     vkFreeMemory(device, flowVarianceMemory, nullptr);
+  if (robustnessSummaryBuffer)
+    vkDestroyBuffer(device, robustnessSummaryBuffer, nullptr);
+  if (robustnessSummaryMemory)
+    vkFreeMemory(device, robustnessSummaryMemory, nullptr);
   if (localTileMaskBuffer)
     vkDestroyBuffer(device, localTileMaskBuffer, nullptr);
   if (localTileMaskMemory)

@@ -208,7 +208,14 @@ void main() {
         observationNorm = computeObservationNorm(val, bayerIndex);
     }
 
-    if (hasEstimate && priorSupport > 0.0) {
+    bool referenceFallbackOnly = pc.scale <= 1.0001;
+    if (referenceFallbackOnly) {
+        if (hasEstimate) {
+            normalizedRaw = observationNorm;
+        } else if (priorSupport > 0.0) {
+            normalizedRaw = priorNorm;
+        }
+    } else if (hasEstimate && priorSupport > 0.0) {
         float obsBlend = observationSupport /
                          max(observationSupport + priorSupport, 1e-5);
         normalizedRaw = mix(priorNorm, observationNorm, obsBlend);

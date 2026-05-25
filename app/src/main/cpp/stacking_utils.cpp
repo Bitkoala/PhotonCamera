@@ -367,7 +367,6 @@ long long computeBlockSAD(const GrayImage &ref, const GrayImage &target,
 
   uint32_t totalSad = 0;
 
-#pragma omp parallel for reduction(+ : totalSad) num_threads(4)
   for (int y = 0; y < h; ++y) {
     const uint8_t *pRef = &ref.data[(refY + y) * ref.width + refX];
     const uint8_t *pTgt =

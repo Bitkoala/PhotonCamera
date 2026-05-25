@@ -29,6 +29,8 @@ public:
   // Process all queued frames and output the result
   bool processStack(uint16_t *outBuffer, size_t bufferSize);
 
+  bool resetForReuse();
+
 private:
   uint32_t width, height;
   bool mEnableSuperRes = false;
@@ -57,6 +59,11 @@ private:
   VkPipeline robustnessPipeline = VK_NULL_HANDLE;
   VkDescriptorSetLayout robustnessSetLayout = VK_NULL_HANDLE;
   std::vector<VkDescriptorSet> robustnessSets; // Per-frame sets
+
+  VkPipelineLayout robustnessSummaryPipelineLayout = VK_NULL_HANDLE;
+  VkPipeline robustnessSummaryPipeline = VK_NULL_HANDLE;
+  VkDescriptorSetLayout robustnessSummarySetLayout = VK_NULL_HANDLE;
+  VkDescriptorSet robustnessSummarySet = VK_NULL_HANDLE;
 
   // Green HR gather/splat path
   VkPipelineLayout greenGatherPipelineLayout = VK_NULL_HANDLE;
@@ -101,6 +108,9 @@ private:
 
   VkBuffer flowVarianceBuffer = VK_NULL_HANDLE;
   VkDeviceMemory flowVarianceMemory = VK_NULL_HANDLE;
+
+  VkBuffer robustnessSummaryBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory robustnessSummaryMemory = VK_NULL_HANDLE;
 
   VkBuffer localTileMaskBuffer = VK_NULL_HANDLE;
   VkDeviceMemory localTileMaskMemory = VK_NULL_HANDLE;

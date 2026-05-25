@@ -152,13 +152,6 @@ void main() {
     // we do one 3x3 pass to collect all necessary neighborhood statistics.
     float neighborSum = 0.0;
     float neighborWeight = 0.0;
-    float btvGrad = 0.0;
-    float denoiseSum = primaryVal;
-    float denoiseWeight = 1.0;
-    
-    const float alpha = 0.7; // BTV decay
-    const float sigmaRangeSq = mix(0.00008, 0.00030, smoothstep(0.85, 0.10, primaryConfidence));
-
     for (int oy = -1; oy <= 1; ++oy) {
         for (int ox = -1; ox <= 1; ++ox) {
             if (ox == 0 && oy == 0) continue;
@@ -172,19 +165,6 @@ void main() {
             float spatialW = 1.0 / (1.0 + float(ox * ox + oy * oy));
             neighborSum += val * spatialW * conf;
             neighborWeight += spatialW * conf;
-            
-            // 2. BTV Gradient (L1 sign)
-            float btvW = pow(alpha, float(abs(ox) + abs(oy)));
-            btvGrad += btvW * sign(primaryVal - val);
-            
-            // 3. Denoise (Bilateral)
-            if (primaryConfidence < 0.85) {
-                float d = val - primaryVal;
-                float rangeW = exp(-(d * d) / max(2.0 * sigmaRangeSq, 1e-8));
-                float dw = spatialW * conf * rangeW;
-                denoiseSum += val * dw;
-                denoiseWeight += dw;
-            }
         }
     }
 
@@ -203,8 +183,13 @@ void main() {
         observationNorm = computeObservationNorm(val, bayerIndex);
     }
 
+    bool referenceFallbackOnly = pc.scale <= 1.0001;
     float normalizedRaw = observationNorm;
-    if (observationSupport > 0.0 && priorSupport > 0.0) {
+    if (referenceFallbackOnly) {
+        if (observationSupport <= 0.0 && priorSupport > 0.0) {
+            normalizedRaw = priorNorm;
+        }
+    } else if (observationSupport > 0.0 && priorSupport > 0.0) {
         float obsBlend = observationSupport / max(observationSupport + priorSupport, 1e-5);
         normalizedRaw = mix(priorNorm, observationNorm, obsBlend);
     } else if (priorSupport > 0.0) {

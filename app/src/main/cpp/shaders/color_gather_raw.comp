@@ -281,12 +281,47 @@ void processPlaneGather(ivec2 outPos, uint planeIndex) {
     }
 }
 
+void processReferencePlaneDirect(ivec2 outPos, uint planeIndex) {
+    ivec2 sampleOffset = getBayerOffset(int(pc.cfaPattern), int(planeIndex));
+    ivec2 samplePos = sampleOffset + outPos * 2;
+    if (samplePos.x < 0 || samplePos.y < 0 ||
+        samplePos.x >= int(pc.sensorWidth) || samplePos.y >= int(pc.sensorHeight)) {
+        return;
+    }
+
+    float raw = texelFetch(inputRawSampler, samplePos, 0).r;
+    int bayerIndex = getBayerIndex(int(pc.cfaPattern), samplePos);
+    float val = max(0.0, raw * 65535.0 - pc.blackLevel[bayerIndex]);
+
+    vec2 lscUV = (vec2(samplePos) + 0.5) / vec2(pc.sensorWidth, pc.sensorHeight);
+    vec4 lscGains = texture(uLensShadingMap, lscUV);
+    float lscGain = (planeIndex == 0u) ? lscGains.r : lscGains.a;
+    val = (val * lscGain) / 65535.0;
+
+    float w = sensorPrecisionWeight(val);
+    uint weightFixed = max(1u, uint(clamp(w * kAccumScale, 0.0, 4294967040.0)));
+    uint sumFixed = uint(clamp(val * w * 65535.0 * kAccumScale, 0.0, 4294967040.0));
+    uint idx = uint(outPos.y - int(pc.tileY)) * pc.bufferStride + uint(outPos.x - int(pc.tileX));
+    if (planeIndex == 0u) {
+        atomicAdd(colorAccum0.data[idx].x, sumFixed);
+        atomicAdd(colorAccum0.data[idx].y, weightFixed);
+    } else {
+        atomicAdd(colorAccum1.data[idx].x, sumFixed);
+        atomicAdd(colorAccum1.data[idx].y, weightFixed);
+    }
+}
+
 void main() {
     uint localX = gl_GlobalInvocationID.x;
     uint localY = gl_GlobalInvocationID.y;
     if (localX >= pc.tileW || localY >= pc.tileH) return;
 
     ivec2 outPos = ivec2(int(pc.tileX + localX), int(pc.tileY + localY));
-    processPlaneGather(outPos, 0u);
-    processPlaneGather(outPos, 3u);
+    if (pc.isFirstFrame == 1u && pc.scale <= 1.0001) {
+        processReferencePlaneDirect(outPos, 0u);
+        processReferencePlaneDirect(outPos, 3u);
+    } else {
+        processPlaneGather(outPos, 0u);
+        processPlaneGather(outPos, 3u);
+    }
 }

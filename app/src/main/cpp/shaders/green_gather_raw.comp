@@ -299,12 +299,51 @@ void processGreenPlaneGather(ivec2 outPos, int planeIndex) {
     }
 }
 
+void processReferenceGreenPlaneDirect(ivec2 outPos, int planeIndex) {
+    int familyIndex = planeIndex - 1; // 1 -> 0 (Gr), 2 -> 1 (Gb)
+    ivec2 sampleOffset = getBayerOffset(int(pc.cfaPattern), planeIndex);
+    ivec2 samplePos = sampleOffset + outPos * 2;
+    if (samplePos.x < 0 || samplePos.y < 0 ||
+        samplePos.x >= int(pc.sensorWidth) || samplePos.y >= int(pc.sensorHeight)) {
+        return;
+    }
+
+    float raw = texelFetch(inputRawSampler, samplePos, 0).r;
+    int bayerIndex = getBayerIndex(int(pc.cfaPattern), samplePos);
+    float val = max(0.0, raw * 65535.0 - pc.blackLevel[bayerIndex]);
+
+    vec2 lscUV = (vec2(samplePos) + 0.5) / vec2(pc.sensorWidth, pc.sensorHeight);
+    vec4 lscGains = texture(uLensShadingMap, lscUV);
+    float lscGain = (planeIndex == 1) ? lscGains.g : lscGains.b;
+    val = (val * lscGain) / 65535.0;
+
+    float w = sensorPrecisionWeight(val);
+    uint weightFixed = max(1u, uint(clamp(w * kAccumScale, 0.0, 4294967040.0)));
+    uint sumFixed = uint(clamp(val * w * 65535.0 * kAccumScale, 0.0, 4294967040.0));
+    uint localX = uint(outPos.x - int(pc.tileX));
+    uint localY = uint(outPos.y - int(pc.tileY));
+    uint idx = localY * pc.bufferStride + localX;
+
+    if (familyIndex == 0) {
+        atomicAdd(greenPhase0.data[idx].x, sumFixed);
+        atomicAdd(greenPhase0.data[idx].y, weightFixed);
+    } else {
+        atomicAdd(greenPhase1.data[idx].x, sumFixed);
+        atomicAdd(greenPhase1.data[idx].y, weightFixed);
+    }
+}
+
 void main() {
     uint localX = gl_GlobalInvocationID.x;
     uint localY = gl_GlobalInvocationID.y;
     if (localX >= pc.tileW || localY >= pc.tileH) return;
 
     ivec2 outPos = ivec2(int(pc.tileX + localX), int(pc.tileY + localY));
-    processGreenPlaneGather(outPos, 1);
-    processGreenPlaneGather(outPos, 2);
+    if (pc.isFirstFrame == 1u && pc.scale <= 1.0001) {
+        processReferenceGreenPlaneDirect(outPos, 1);
+        processReferenceGreenPlaneDirect(outPos, 2);
+    } else {
+        processGreenPlaneGather(outPos, 1);
+        processGreenPlaneGather(outPos, 2);
+    }
 }
