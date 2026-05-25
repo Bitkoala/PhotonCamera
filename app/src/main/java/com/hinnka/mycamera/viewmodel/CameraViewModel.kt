@@ -242,6 +242,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val customFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.customFocalLengths }
     val hiddenFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.hiddenFocalLengths }
     val customLensIds: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.customLensIds }
+    val lensIdBlacklist: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.lensIdBlacklist }
     val userPreferences: StateFlow<com.hinnka.mycamera.data.UserPreferences> = userPreferencesRepository.userPreferences
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.data.UserPreferences())
     val jpgBaselineLutId: StateFlow<String?> = userPreferencesRepository.userPreferences
@@ -2540,6 +2541,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             stops.addAll(lensZoomStops)
         }
 
+        addDefaultMinimumZoomStop(stops, lensZoomStops, mainCamera, hiddenFocalLengths)
+
         // 2. 添加自定义焦段 (不参与隐藏过滤)
         if (mainCamera.focalLength35mmEquivalent > 0) {
             customFocalLengths.forEach { fl ->
@@ -2551,6 +2554,30 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         return stops.sorted()
+    }
+
+    private fun addDefaultMinimumZoomStop(
+        stops: MutableList<Float>,
+        lensZoomStops: List<Float>,
+        mainCamera: CameraInfo,
+        hiddenFocalLengths: List<Float>
+    ) {
+        val mainZoom = mainCamera.intrinsicZoomRatio
+        val hasSmallerLens = lensZoomStops.any { it < mainZoom - 0.01f }
+        val minimumZoom = mainCamera.minZoom * mainZoom
+
+        if (hasSmallerLens || minimumZoom >= mainZoom - 0.01f) return
+
+        val isHidden = if (mainCamera.focalLength35mmEquivalent > 0) {
+            val minimumFocalLength = minimumZoom * mainCamera.focalLength35mmEquivalent
+            hiddenFocalLengths.any { abs(it - minimumFocalLength) < 0.5f }
+        } else {
+            false
+        }
+
+        if (!isHidden && stops.none { abs(it - minimumZoom) <= 0.01f }) {
+            stops.add(minimumZoom)
+        }
     }
 
     /**
@@ -2567,8 +2594,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (zoomableCameras.isEmpty()) return null
         val candidates = zoomableCameras
             .filter { it.intrinsicZoomRatio <= targetZoom + 0.01f }
-        val bestZoom = candidates.maxOfOrNull { it.intrinsicZoomRatio } ?: return null
+        val bestZoom = candidates.maxOfOrNull { it.intrinsicZoomRatio }
+            ?: zoomableCameras.minOfOrNull { it.intrinsicZoomRatio }
+            ?: return null
         val tiedCandidates = candidates.filter { abs(it.intrinsicZoomRatio - bestZoom) <= 0.01f }
+            .ifEmpty { zoomableCameras.filter { abs(it.intrinsicZoomRatio - bestZoom) <= 0.01f } }
         return tiedCandidates.firstOrNull { it.cameraId == currentCameraId }
             ?: tiedCandidates.firstOrNull()
     }
@@ -2750,6 +2780,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 .filter { it.isNotEmpty() }
                 .distinct()
             userPreferencesRepository.saveCustomLensIds(lensIds)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun setLensIdBlacklist(value: String) {
+        viewModelScope.launch {
+            val lensIds = value.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+            userPreferencesRepository.saveLensIdBlacklist(lensIds)
             cameraController.refreshCameraList()
         }
     }

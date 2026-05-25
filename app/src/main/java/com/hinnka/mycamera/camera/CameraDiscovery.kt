@@ -142,7 +142,8 @@ class CameraDiscovery(private val context: Context) {
         PLog.d(TAG, "System camera IDs: $systemCameraIds")
 
         // 探测隐藏的摄像头
-        val probedIds = probeCameraIds(systemCameraIds)
+        val lensIdBlacklist = loadLensIdBlacklist().toSet()
+        val probedIds = probeCameraIds(systemCameraIds, lensIdBlacklist)
         val allIds = (systemCameraIds + probedIds).distinct()
 
         PLog.d(TAG, "After probing: $allIds (probed: $probedIds)")
@@ -223,7 +224,18 @@ class CameraDiscovery(private val context: Context) {
      * 暴力探测摄像头 ID 0-5
      * 某些设备的广角/长焦摄像头不会出现在系统 API 返回的列表中
      */
-    private fun probeCameraIds(existingIds: List<String>): List<String> {
+    private fun loadLensIdBlacklist(): List<String> {
+        return try {
+            runBlocking {
+                userPreferencesRepository.userPreferences.firstOrNull()?.lensIdBlacklist ?: emptyList()
+            }
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to load lens ID blacklist", e)
+            emptyList()
+        }
+    }
+
+    private fun probeCameraIds(existingIds: List<String>, lensIdBlacklist: Set<String>): List<String> {
         val existingSet = existingIds.toSet()
         val foundIds = mutableListOf<String>()
         val foundMap = mutableMapOf<String, Float>()
@@ -239,6 +251,11 @@ class CameraDiscovery(private val context: Context) {
 
             if (existingSet.contains(cameraId)) {
                 foundMap[cameraId] = loadZoomRation(cameraId) ?: 1f
+                continue
+            }
+
+            if (lensIdBlacklist.contains(cameraId)) {
+                PLog.d(TAG, "Probe camera $cameraId skipped: lens ID blacklist")
                 continue
             }
 
@@ -393,8 +410,8 @@ class CameraDiscovery(private val context: Context) {
         if (cameras.isEmpty()) return emptyList()
 
         // 分离微距镜头和普通镜头
-        val macroCameras = cameras.filter { it.isMacro }
-        val normalCameras = cameras.filter { !it.isMacro }
+        val macroCameras = preferCustomCameraForSameFocalLength(cameras.filter { it.isMacro })
+        val normalCameras = preferCustomCameraForSameFocalLength(cameras.filter { !it.isMacro })
 
         if (normalCameras.isEmpty()) {
             // 如果全部被识别为微距（不常见），则按 intrinsicZoomRatio 排序并返回
@@ -430,6 +447,43 @@ class CameraDiscovery(private val context: Context) {
         return result
     }
 
+    private fun preferCustomCameraForSameFocalLength(cameras: List<CameraInfoWithZoom>): List<CameraInfoWithZoom> {
+        val selectedCameras = mutableListOf<CameraInfoWithZoom>()
+
+        for (camera in cameras) {
+            val sameFocalIndex = selectedCameras.indexOfFirst {
+                isSameFocalLength(it.intrinsicZoomRatio, camera.intrinsicZoomRatio)
+            }
+
+            if (sameFocalIndex < 0) {
+                selectedCameras.add(camera)
+                continue
+            }
+
+            val existing = selectedCameras[sameFocalIndex]
+            if (!existing.info.isCustomLensId && camera.info.isCustomLensId) {
+                PLog.d(
+                    TAG,
+                    "Custom lens ID ${camera.info.cameraId} overrides same focal ID ${existing.info.cameraId} " +
+                        "(intrinsicZoom=${camera.intrinsicZoomRatio})"
+                )
+                selectedCameras[sameFocalIndex] = camera
+            } else {
+                PLog.d(
+                    TAG,
+                    "Skip duplicate focal ID ${camera.info.cameraId}; using ${existing.info.cameraId} " +
+                        "(intrinsicZoom=${camera.intrinsicZoomRatio})"
+                )
+            }
+        }
+
+        return selectedCameras
+    }
+
+    private fun isSameFocalLength(firstZoomRatio: Float, secondZoomRatio: Float): Boolean {
+        return abs(firstZoomRatio - secondZoomRatio) <= 0.01f
+    }
+
     /**
      * 创建 CameraInfo
      */
@@ -461,8 +515,12 @@ class CameraDiscovery(private val context: Context) {
         val exposureCompensationStep =
             characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: 0f
 
-        // 最大数字变焦
-        val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
+        // Camera2 zoom ratio range 可以表达逻辑多摄的 <1x 超广角范围
+        val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+        val maxZoom = zoomRatioRange?.upper
+            ?: characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)
+            ?: 1f
+        val minZoom = zoomRatioRange?.lower ?: 1f
 
         // 传感器方向
         val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
@@ -483,7 +541,7 @@ class CameraDiscovery(private val context: Context) {
             exposureCompensationRange = exposureCompensationRange,
             exposureCompensationStep = exposureCompensationStep,
             maxZoom = maxZoom,
-            minZoom = 1f,
+            minZoom = minZoom,
             sensorOrientation = sensorOrientation,
             activeArraySize = activeArraySize,
             focalLength = focalLength,

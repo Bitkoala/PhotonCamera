@@ -157,6 +157,7 @@ data class UserPreferences(
     val defaultVirtualAperture: Float = 0f, // 默认虚化光圈，0表示关闭
     val customFocalLengths: List<Float> = emptyList(), // 自定义焦段 (35mm等效)，最多8个
     val customLensIds: List<String> = emptyList(), // 自定义镜头 ID，逗号分隔存储
+    val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
     val referencePhotoUrl: String? = null
 )
@@ -272,6 +273,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val DEFAULT_VIRTUAL_APERTURE = floatPreferencesKey("default_virtual_aperture")
         private val CUSTOM_FOCAL_LENGTHS = stringPreferencesKey("custom_focal_lengths")
         private val CUSTOM_LENS_IDS = stringPreferencesKey("custom_lens_ids")
+        private val LENS_ID_BLACKLIST = stringPreferencesKey("lens_id_blacklist")
         private val HIDDEN_FOCAL_LENGTHS = stringPreferencesKey("hidden_focal_lengths")
         private val USE_HDR_SCREEN_MODE = booleanPreferencesKey("use_hdr_screen_mode")
         private val REFERENCE_PHOTO_URL = stringPreferencesKey("reference_photo_url")
@@ -414,7 +416,8 @@ class UserPreferencesRepository(private val context: Context) {
                     ?.split(",")?.filter { it.isNotEmpty() }
                     ?.mapNotNull { it.toFloatOrNull() }
                     ?: listOf(35f, 50f, 85f, 200f),
-                customLensIds = parseCustomLensIds(preferences[CUSTOM_LENS_IDS]),
+                customLensIds = parseLensIds(preferences[CUSTOM_LENS_IDS]),
+                lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
                 hiddenFocalLengths = preferences[HIDDEN_FOCAL_LENGTHS]
                     ?.split(",")?.filter { it.isNotEmpty() }
                     ?.mapNotNull { it.toFloatOrNull() }
@@ -488,7 +491,7 @@ class UserPreferencesRepository(private val context: Context) {
         return map.entries.joinToString(",") { "${it.key}:${it.value}" }
     }
 
-    private fun parseCustomLensIds(value: String?): List<String> {
+    private fun parseLensIds(value: String?): List<String> {
         if (value.isNullOrBlank()) return emptyList()
         return value.split(",")
             .map { it.trim() }
@@ -967,6 +970,16 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveCustomLensIds(lensIds: List<String>) {
         context.dataStore.edit { preferences ->
             preferences[CUSTOM_LENS_IDS] = lensIds
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .joinToString(",")
+        }
+    }
+
+    suspend fun saveLensIdBlacklist(lensIds: List<String>) {
+        context.dataStore.edit { preferences ->
+            preferences[LENS_ID_BLACKLIST] = lensIds
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
