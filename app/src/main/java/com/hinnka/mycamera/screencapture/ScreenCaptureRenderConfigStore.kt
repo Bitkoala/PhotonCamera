@@ -58,7 +58,7 @@ object ScreenCaptureRenderConfigStore {
             if (lutIdOverride == null) {
                 it
             } else {
-                it.copy(phantomLutId = lutIdOverride)
+                it.copy(lutId = lutIdOverride)
             }
         }
         val colorCorrection = effectivePreferences?.let {

@@ -299,9 +299,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     var availableDcps: List<com.hinnka.mycamera.raw.DcpInfo> by mutableStateOf(emptyList())
         private set
-    val phantomLutId: StateFlow<String?> = userPreferencesRepository.userPreferences
-        .map { it.phantomLutId }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val useMFNR: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useMFNR }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -666,7 +663,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     // 如果没有保存的 LUT，使用配置文件中的默认 LUT（第一个）
                     val defaultLut = availableLutList.firstOrNull { it.isDefault }
-                    defaultLut?.let { setLut(it.id) }
+                    defaultLut?.let { setLut(it.id, persist = false) }
                 }
 
                 // 应用保存的边框配置
@@ -693,7 +690,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 // 如果没有任何偏好设置，使用配置文件中的默认 LUT（第一个）
                 val defaultLut = availableLutList.firstOrNull { it.isDefault }
-                defaultLut?.let { setLut(it.id) }
+                defaultLut?.let { setLut(it.id, persist = false) }
             }
 
             _isInitialized.value = true
@@ -1759,7 +1756,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 设置当前 LUT
      */
-    fun setLut(lutId: String?) {
+    fun setLut(lutId: String?, persist: Boolean = true) {
         currentLutId.value = lutId ?: currentLutId.value
         if (lutId == null) {
             currentLutConfig = null
@@ -1790,9 +1787,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // 保存到用户偏好设置
-        viewModelScope.launch {
-            userPreferencesRepository.saveLutConfig(lutId)
+        if (persist) {
+            viewModelScope.launch {
+                userPreferencesRepository.saveLutConfig(lutId)
+            }
         }
     }
 
@@ -2691,12 +2689,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     suspend fun recommendLutsForColor(color: Int): List<LutInfo> = withContext(Dispatchers.IO) {
         contentRepository.lutManager.recommendLutsForColor(color)
-    }
-
-    fun setPhantomLut(lutId: String?) {
-        viewModelScope.launch {
-            userPreferencesRepository.savePhantomLutConfig(lutId)
-        }
     }
 
     /**

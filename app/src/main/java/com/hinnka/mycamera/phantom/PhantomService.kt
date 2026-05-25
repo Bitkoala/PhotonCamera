@@ -377,7 +377,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         val photoProcessor = ContentRepository.getInstance(context).photoProcessor
         val preferences = userPreferencesRepository.userPreferences.firstOrNull()
         val lutId = preferences?.lutId
-            ?: preferences?.phantomLutId
             ?: availableLutList.firstOrNull { it.isDefault }?.id
         val saveAsNew = preferences?.phantomSaveAsNew ?: false
         val computationalAperture = preferences?.defaultVirtualAperture?.let { if (it > 0f) it else null }
@@ -746,7 +745,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                             val categoryOrder = sortedLutData.second
                             val currentLutIdFlow = remember {
                                 userPreferencesRepository.userPreferences.map {
-                                    it.lutId ?: it.phantomLutId
+                                    it.lutId
                                 }
                             }
                             val currentLutId by currentLutIdFlow.collectAsState(initial = null)
@@ -882,7 +881,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                                         .clickable {
                                                             scope.launch {
                                                                 userPreferencesRepository.saveLutConfig(lut.id)
-                                                                userPreferencesRepository.savePhantomLutConfig(lut.id)
                                                                 syncScreenCaptureRenderConfig(lut.id)
                                                                 showFilterPicker = false
                                                                 updateWindowParams(false)

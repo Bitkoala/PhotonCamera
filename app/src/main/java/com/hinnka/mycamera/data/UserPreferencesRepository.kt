@@ -68,7 +68,6 @@ data class UserPreferences(
     val topSheetAspectRatios: List<AspectRatio> = AspectRatio.defaultTopSheetRatios,
     val customAspectRatios: List<AspectRatio> = emptyList(),
     val lutId: String? = null,  // 默认为 null，由 CameraViewModel 根据配置文件设置
-    val phantomLutId: String? = null,
     val jpgBaselineLutId: String? = null,
     val rawBaselineLutId: String? = null,
     val rawBaselineLutConfigured: Boolean = false,
@@ -175,7 +174,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val TOP_SHEET_ASPECT_RATIOS = stringPreferencesKey("top_sheet_aspect_ratios")
         private val CUSTOM_ASPECT_RATIOS = stringPreferencesKey("custom_aspect_ratios")
         private val LUT_ID_KEY = stringPreferencesKey("lut_id")
-        private val PHANTOM_LUT_ID_KEY = stringPreferencesKey("phantom_lut_id")
+        private val LEGACY_PHANTOM_LUT_ID_KEY = stringPreferencesKey("phantom_lut_id")
         private val JPG_BASELINE_LUT_ID_KEY = stringPreferencesKey("jpg_baseline_lut_id")
         private val RAW_BASELINE_LUT_ID_KEY = stringPreferencesKey("raw_baseline_lut_id")
         private val RAW_BASELINE_LUT_CONFIGURED_KEY = booleanPreferencesKey("raw_baseline_lut_configured")
@@ -296,8 +295,8 @@ class UserPreferencesRepository(private val context: Context) {
                     availableAspectRatios
                 ),
                 customAspectRatios = customAspectRatios,
-                lutId = preferences[LUT_ID_KEY],  // 不提供默认值，由 CameraViewModel 处理
-                phantomLutId = preferences[PHANTOM_LUT_ID_KEY],
+                lutId = preferences[LUT_ID_KEY]
+                    ?: preferences[LEGACY_PHANTOM_LUT_ID_KEY],  // 不提供默认值，由 CameraViewModel 处理
                 jpgBaselineLutId = preferences[JPG_BASELINE_LUT_ID_KEY],
                 rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY]
                     ?: if (!rawBaselineLutConfigured) DEFAULT_RAW_BASELINE_LUT_ID else null,
@@ -594,16 +593,7 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 preferences.remove(LUT_ID_KEY)
             }
-        }
-    }
-
-    suspend fun savePhantomLutConfig(lutId: String?) {
-        context.dataStore.edit { preferences ->
-            if (lutId != null) {
-                preferences[PHANTOM_LUT_ID_KEY] = lutId
-            } else {
-                preferences.remove(PHANTOM_LUT_ID_KEY)
-            }
+            preferences.remove(LEGACY_PHANTOM_LUT_ID_KEY)
         }
     }
 
