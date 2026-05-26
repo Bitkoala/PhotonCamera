@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.media.Image
 import android.opengl.*
+import android.util.Half
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
@@ -3068,35 +3069,26 @@ class RawDemosaicProcessor {
                 dcpRenderPlan = dcpRenderPlan,
                 label = "LinearMeteringPass"
             )
-            setupCombinedFramebuffer(meteringWidth, meteringHeight)
-            renderCombinedPass(
-                metadata = metadata,
-                inputTextureId = linearMeteringTextureId,
-                dcpRenderPlan = dcpRenderPlan,
-                viewportWidth = meteringWidth,
-                viewportHeight = meteringHeight
-            )
             val buffer = ByteBuffer
-                .allocateDirect(meteringWidth * meteringHeight * 4)
+                .allocateDirect(meteringWidth * meteringHeight * 4 * 2)
                 .order(ByteOrder.nativeOrder())
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, combinedFramebufferId)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearMeteringFramebufferId)
             GLES30.glReadPixels(
                 0,
                 0,
                 meteringWidth,
                 meteringHeight,
                 GLES30.GL_RGBA,
-                GLES30.GL_UNSIGNED_BYTE,
+                GLES30.GL_HALF_FLOAT,
                 buffer
             )
             checkGlError("resolveRawAutoExposureEv")
             buffer.position(0)
 
-            // Calculate depth weighting
-            val bitmap = Bitmap.createBitmap(meteringWidth, meteringHeight, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-            buffer.position(0) // Reset for MeteringSystem
+            val linearPixels = buffer.asShortBuffer()
 
+            // Calculate depth weighting from a display-encoded preview, while AE uses linear RAW luma.
+            val bitmap = createLinearMeteringPreviewBitmap(linearPixels, meteringWidth, meteringHeight)
             val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
             val weightBuffer = depthMap?.let {
                 val wb = ByteBuffer.allocateDirect(it.byteCount)
@@ -3105,8 +3097,8 @@ class RawDemosaicProcessor {
                 wb
             }
 
-            val meteringResult = MeteringSystem.analyzeRenderedExposureEv(
-                byteBuffer = buffer,
+            val meteringResult = MeteringSystem.analyzeLinearHalfFloatExposureEv(
+                pixelBuffer = linearPixels,
                 width = meteringWidth,
                 height = meteringHeight,
                 weightBuffer = weightBuffer,
@@ -3125,6 +3117,32 @@ class RawDemosaicProcessor {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
             MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)
         }
+    }
+
+    private fun createLinearMeteringPreviewBitmap(
+        linearPixels: ShortBuffer,
+        width: Int,
+        height: Int
+    ): Bitmap {
+        val argbPixels = IntArray(width * height)
+        for (i in argbPixels.indices) {
+            val base = i * 4
+            val r = linearToSrgb8(Half.toFloat(linearPixels.get(base)))
+            val g = linearToSrgb8(Half.toFloat(linearPixels.get(base + 1)))
+            val b = linearToSrgb8(Half.toFloat(linearPixels.get(base + 2)))
+            argbPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+        return Bitmap.createBitmap(argbPixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun linearToSrgb8(value: Float): Int {
+        val linear = value.coerceIn(0f, 1f)
+        val srgb = if (linear <= 0.0031308f) {
+            linear * 12.92f
+        } else {
+            1.055f * linear.pow(1f / 2.4f) - 0.055f
+        }
+        return (srgb * 255f + 0.5f).toInt().coerceIn(0, 255)
     }
 
     private fun renderOutputPass(rotation: Int, width: Int, height: Int, bounds: Rect, sourceTextureId: Int) {
