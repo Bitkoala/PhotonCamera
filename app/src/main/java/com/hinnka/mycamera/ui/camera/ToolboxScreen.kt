@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.FilterFrames
 import androidx.compose.material.icons.filled.Layers
@@ -42,6 +43,7 @@ fun ToolboxScreen(
     onLutSynthesisClick: () -> Unit,
     onColorWalkClick: () -> Unit,
     onFilmLibraryClick: () -> Unit,
+    onPuzzleClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val items = listOf(
@@ -56,6 +58,12 @@ fun ToolboxScreen(
             descriptionRes = R.string.lut_synthesis_desc,
             icon = Icons.Default.Layers,
             onClick = onLutSynthesisClick
+        ),
+        ToolboxItem(
+            titleRes = R.string.toolbox_puzzle_title,
+            descriptionRes = R.string.toolbox_puzzle_desc,
+            icon = Icons.Default.AddPhotoAlternate,
+            onClick = onPuzzleClick
         ),
         ToolboxItem(
             titleRes = R.string.color_walk_title,

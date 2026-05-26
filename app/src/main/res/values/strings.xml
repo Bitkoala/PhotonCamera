@@ -929,4 +929,23 @@
     <string name="lut_synthesis_mask_all">All</string>
     <string name="lut_synthesis_mask_skin">Skin</string>
     <string name="lut_synthesis_mask_sky">Sky</string>
+
+    <!-- Puzzle/Collage -->
+    <string name="toolbox_puzzle_title">Collage</string>
+    <string name="toolbox_puzzle_desc">Smart staggered collage, one-click layout</string>
+    <string name="puzzle_select_photos">Select Photos</string>
+    <string name="puzzle_columns">Columns</string>
+    <string name="puzzle_aspect_ratio">Template Ratio</string>
+    <string name="puzzle_corner_radius">Corner Radius</string>
+    <string name="puzzle_padding">Spacing</string>
+    <string name="puzzle_frame_watermark">Frame Watermark</string>
+    <string name="puzzle_save">Save</string>
+    <string name="puzzle_saving">Saving...</string>
+    <string name="puzzle_save_success">Collage saved to gallery</string>
+    <string name="puzzle_save_fail">Save failed</string>
+    <string name="puzzle_no_photos">Please select photos first</string>
+    <string name="puzzle_ratio_adaptive">Adaptive</string>
+    <string name="puzzle_background">Background Color</string>
+    <string name="puzzle_background_white">White</string>
+    <string name="puzzle_background_black">Black</string>
 </resources>

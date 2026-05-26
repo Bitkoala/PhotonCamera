@@ -74,6 +74,7 @@ import com.hinnka.mycamera.ui.camera.ColorWalkScreen
 import com.hinnka.mycamera.ui.camera.FilmDetailScreen
 import com.hinnka.mycamera.ui.camera.FilmLibraryScreen
 import com.hinnka.mycamera.ui.camera.ToolboxScreen
+import com.hinnka.mycamera.ui.camera.PuzzleScreen
 import com.hinnka.mycamera.ui.gallery.BurstDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryDetailScreen
 import com.hinnka.mycamera.ui.gallery.GalleryScreen
@@ -110,6 +111,7 @@ object Routes {
     const val LUT_CREATOR = "lut_creator"
     const val LUT_SYNTHESIS = "lut_synthesis"
     const val TOOLBOX = "toolbox"
+    const val PUZZLE = "puzzle"
     const val PHANTOM_PIP_CROP = "phantom_pip_crop"
     const val COLOR_WALK = "color_walk"
     const val FILM_LIBRARY = "film_library"
@@ -723,7 +725,14 @@ fun NavigationHost(
                     onLutCreatorClick = { navController.navigate(Routes.LUT_CREATOR) },
                     onLutSynthesisClick = { navController.navigate(Routes.LUT_SYNTHESIS) },
                     onColorWalkClick = { navController.navigate(Routes.COLOR_WALK) },
-                    onFilmLibraryClick = { navController.navigate(Routes.FILM_LIBRARY) }
+                    onFilmLibraryClick = { navController.navigate(Routes.FILM_LIBRARY) },
+                    onPuzzleClick = { navController.navigate(Routes.PUZZLE) }
+                )
+            }
+
+            composable(Routes.PUZZLE) {
+                PuzzleScreen(
+                    onBack = { navController.popBackStack() }
                 )
             }
 

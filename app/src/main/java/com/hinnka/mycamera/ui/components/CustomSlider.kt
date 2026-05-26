@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -69,11 +70,13 @@ fun CustomSlider(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(thumbRadius * 2 + 8.dp) // 额外空间用于触摸区域
+            .height(thumbRadius * 2 + 8.dp), // 额外空间用于触摸区域
+        contentAlignment = Alignment.Center
     ) {
         Canvas(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .height(thumbRadius * 2)
                 .horizontalSliderDragInput(
                     enabled = enabled,
                     key1 = valueRange,
@@ -186,11 +189,11 @@ private fun DrawScope.drawThumb(
         center = center
     )
 
-    // 内圈高光（增加立体感）
+    // 同心内圈小圆点（完美几何居中）
     drawCircle(
-        color = Color.White.copy(alpha = if (enabled) 0.3f else 0.15f),
-        radius = radius * 0.4f,
-        center = center.copy(x = center.x - radius * 0.2f, y = center.y - radius * 0.2f)
+        color = Color.White.copy(alpha = if (enabled) 0.7f else 0.35f),
+        radius = radius * 0.35f,
+        center = center
     )
 }
 
@@ -234,11 +237,13 @@ fun CustomSliderThinThumb(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(thumbHeight + 4.dp)
+            .height(thumbHeight + 4.dp),
+        contentAlignment = Alignment.Center
     ) {
         Canvas(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .height(thumbHeight)
                 .horizontalSliderDragInput(
                     enabled = enabled,
                     key1 = valueRange,

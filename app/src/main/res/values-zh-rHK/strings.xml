@@ -625,4 +625,23 @@
     <string name="metering_average">平均測光</string>
     <string name="metering_highlight_priority">高光優先</string>
     <string name="frame_editor_text_type_filter_name">滤镜名称</string>
+
+    <!-- Puzzle/Collage -->
+    <string name="toolbox_puzzle_title">拼圖</string>
+    <string name="toolbox_puzzle_desc">智能瀑布流排版，一鍵拼接照片</string>
+    <string name="puzzle_select_photos">選擇照片</string>
+    <string name="puzzle_columns">列數</string>
+    <string name="puzzle_aspect_ratio">模版比例</string>
+    <string name="puzzle_corner_radius">照片圓角</string>
+    <string name="puzzle_padding">照片間距</string>
+    <string name="puzzle_frame_watermark">邊框水印</string>
+    <string name="puzzle_save">保存</string>
+    <string name="puzzle_saving">保存中...</string>
+    <string name="puzzle_save_success">已保存至系統相冊</string>
+    <string name="puzzle_save_fail">保存失敗</string>
+    <string name="puzzle_no_photos">請先選擇照片</string>
+    <string name="puzzle_ratio_adaptive">自適應</string>
+    <string name="puzzle_background">背景顏色</string>
+    <string name="puzzle_background_white">純白</string>
+    <string name="puzzle_background_black">純黑</string>
 </resources>
