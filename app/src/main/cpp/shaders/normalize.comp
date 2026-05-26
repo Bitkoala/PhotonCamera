@@ -54,6 +54,16 @@ vec3 normalizeYCC(vec4 acc) {
     return clamp(ycc, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));
 }
 
+void addValidSample(inout vec3 yccSum, inout float weightSum,
+                    inout float accumWeightSum, vec4 acc, float sampleWeight) {
+    if (!hasValidAccum(acc) || sampleWeight <= 0.0) {
+        return;
+    }
+    yccSum += normalizeYCC(acc) * sampleWeight;
+    weightSum += sampleWeight;
+    accumWeightSum += acc.a * sampleWeight;
+}
+
 // YCbCr to Linear RGB (BT.709 inverse, matches accumulate.comp)
 vec3 ycbcr2rgb(vec3 ycc) {
     float Y  = ycc.x;
@@ -96,14 +106,27 @@ void main() {
         vec4 a01 = readAccum(x0,     y0 + 1);
         vec4 a11 = readAccum(x0 + 1, y0 + 1);
 
-        vec3 c00 = normalizeYCC(a00);
-        vec3 c10 = normalizeYCC(a10);
-        vec3 c01 = normalizeYCC(a01);
-        vec3 c11 = normalizeYCC(a11);
+        float w00 = (1.0 - fracX) * (1.0 - fracY);
+        float w10 = fracX * (1.0 - fracY);
+        float w01 = (1.0 - fracX) * fracY;
+        float w11 = fracX * fracY;
 
-        // Bilinear interpolation in YCbCr space
-        vec3 ycc = mix(mix(c00, c10, fracX), mix(c01, c11, fracX), fracY);
-        float accumWeight = mix(mix(a00.a, a10.a, fracX), mix(a01.a, a11.a, fracX), fracY);
+        vec3 yccSum = vec3(0.0);
+        float validWeightSum = 0.0;
+        float accumWeight = 0.0;
+        addValidSample(yccSum, validWeightSum, accumWeight, a00, w00);
+        addValidSample(yccSum, validWeightSum, accumWeight, a10, w10);
+        addValidSample(yccSum, validWeightSum, accumWeight, a01, w01);
+        addValidSample(yccSum, validWeightSum, accumWeight, a11, w11);
+
+        if (validWeightSum <= 0.0) {
+            return;
+        }
+
+        // Bilinear interpolation in YCbCr space, ignoring invalid accumulator
+        // texels so sparse zero-weight samples cannot turn into black dots.
+        vec3 ycc = yccSum / validWeightSum;
+        accumWeight /= validWeightSum;
 
         if (any(isnan(ycc)) || any(isinf(ycc))) {
             ycc = vec3(0.0, 0.5, 0.5);

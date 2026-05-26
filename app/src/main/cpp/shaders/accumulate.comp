@@ -238,7 +238,7 @@ void main() {
 
     float localTileWeight = sampleLocalTileWeight(referenceUV);
     float fusionMask = localTileWeight;
-    int supportRadius = 0;
+    int supportRadius = 1;
 
     if (pc.isFirstFrame == 0) {
         supportRadius = 2;
