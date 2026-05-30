@@ -687,6 +687,13 @@ class Camera2Controller(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun openCamera(surfaceTexture: SurfaceTexture, preserveVideoRecording: Boolean = false) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                openCamera(surfaceTexture, preserveVideoRecording)
+            }
+            return
+        }
         // 先关闭旧的相机和资源，防止资源泄漏
         closeCamera(preserveVideoRecording = preserveVideoRecording)
         resetAiFocusForCameraOpen()
@@ -3266,6 +3273,13 @@ class Camera2Controller(private val context: Context) {
      * 拍照
      */
     fun capture() {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                capture()
+            }
+            return
+        }
         if (_state.value.captureMode != CaptureMode.PHOTO) return
         val device = cameraDevice ?: return
         val reader = imageReader ?: return
@@ -3667,6 +3681,13 @@ class Camera2Controller(private val context: Context) {
      * 关闭相机
      */
     fun closeCamera(preserveVideoRecording: Boolean = false) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                closeCamera(preserveVideoRecording)
+            }
+            return
+        }
         try {
             cameraOpenGeneration++
             val keepVideoRecording = preserveVideoRecording && _state.value.videoRecordingState.isRecording
@@ -3821,7 +3842,24 @@ class Camera2Controller(private val context: Context) {
      * 释放资源
      */
     fun release() {
-        closeCamera()
+        val handler = cameraHandler
+        if (handler != null) {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            handler.post {
+                try {
+                    closeCamera()
+                } finally {
+                    latch.countDown()
+                }
+            }
+            try {
+                latch.await(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                PLog.e(TAG, "Interrupted while waiting for camera close during release", e)
+            }
+        } else {
+            closeCamera()
+        }
         previewDepthProcessor.release()
         previewAiFocusProcessor.release()
         videoRecorder.release()
@@ -3882,6 +3920,13 @@ class Camera2Controller(private val context: Context) {
      * 启动连拍
      */
     fun startBurstCapture() {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                startBurstCapture()
+            }
+            return
+        }
         val device = cameraDevice ?: return
         val session = captureSession ?: return
         val builder = previewRequestBuilder ?: return
@@ -3958,6 +4003,13 @@ class Camera2Controller(private val context: Context) {
      * 停止连拍
      */
     fun stopBurstCapture() {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                stopBurstCapture()
+            }
+            return
+        }
         PLog.d(TAG, "Stop Burst Capture")
         captureSession?.abortCaptures()
         resetPreviewAfterCapture()
