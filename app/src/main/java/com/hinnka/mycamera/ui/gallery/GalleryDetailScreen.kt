@@ -1624,6 +1624,48 @@ fun MotionPhotoPlayer(
     if (!photo.isMotionPhoto) return
     val context = LocalContext.current
 
+    val contentRepository = remember {
+        com.hinnka.mycamera.data.ContentRepository.getInstance(context)
+    }
+
+    var lutConfig by remember { mutableStateOf<com.hinnka.mycamera.lut.LutConfig?>(null) }
+    var recipeParams by remember { mutableStateOf<com.hinnka.mycamera.model.ColorRecipeParams?>(null) }
+    val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
+
+    LaunchedEffect(photo.id, refreshKey) {
+        withContext(Dispatchers.IO) {
+            PLog.d("MotionPhotoPlayer", "Loading video metadata from DB.")
+            val metadata = com.hinnka.mycamera.gallery.GalleryManager.loadMetadata(context, photo.id) ?: photo.metadata
+            val applyEffects = metadata?.applyEffectsToVideo == true
+            val lutId = if (applyEffects) metadata?.lutId else null
+            val params = if (applyEffects) metadata?.colorRecipeParams else null
+            PLog.d("MotionPhotoPlayer", "Metadata loaded. applyEffects: $applyEffects, lutId: $lutId, recipeEnabled: ${params != null}")
+
+            val config = if (lutId != null) {
+                contentRepository.lutManager.loadLut(lutId)
+            } else {
+                null
+            }
+
+            withContext(Dispatchers.Main) {
+                lutConfig = config
+                recipeParams = params
+            }
+        }
+    }
+
+    // Maintain the video LUT effect
+    val videoLutEffect = remember {
+        PLog.d("MotionPhotoPlayer", "Instantiating new VideoLutEffect.")
+        VideoLutEffect(lutConfig, recipeParams)
+    }
+
+    // Update effect parameters dynamically on the GL pipeline without reconstruction
+    LaunchedEffect(lutConfig, recipeParams) {
+        PLog.d("MotionPhotoPlayer", "Updating VideoLutEffect params. lut: ${lutConfig?.title}, recipe: ${recipeParams != null}")
+        videoLutEffect.update(lutConfig, recipeParams)
+    }
+
     var isReadyToShow by remember(photo.id, isPlaying) { mutableStateOf(false) }
 
     val exoPlayer = remember(photo.id, isPlaying) {
@@ -1634,6 +1676,7 @@ fun MotionPhotoPlayer(
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(Uri.fromFile(videoFile)))
             repeatMode = Player.REPEAT_MODE_ONE
+            setVideoEffects(listOf(videoLutEffect))
             addListener(object : Player.Listener {
                 override fun onRenderedFirstFrame() {
                     isReadyToShow = true

@@ -104,6 +104,7 @@ data class MediaMetadata(
     val rawBlackLevelMode: String? = null,
     val rawCustomBlackLevel: Float? = null,
     val cameraId: String? = null,
+    val applyEffectsToVideo: Boolean = false,
 ) {
     /**
      * 将元数据转换为 CaptureInfo，用于写入 EXIF
@@ -334,6 +335,7 @@ data class MediaMetadata(
                     multipleExposureFrameCount = if (obj.isNull("multipleExposureFrameCount")) null else obj.optInt("multipleExposureFrameCount"),
                     hasAiDenoisedBase = obj.optBoolean("hasAiDenoisedBase", false),
                     aiDenoiseStrength = if (obj.isNull("aiDenoiseStrength")) null else obj.optDouble("aiDenoiseStrength").toFloat(),
+                    applyEffectsToVideo = obj.optBoolean("applyEffectsToVideo", false),
                 )
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to parse JSON", e)

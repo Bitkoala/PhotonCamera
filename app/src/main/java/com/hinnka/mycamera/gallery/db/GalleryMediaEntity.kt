@@ -106,5 +106,6 @@ data class GalleryMediaEntity(
     val rawBlackLevelMode: String?,
     val rawCustomBlackLevel: Float?,
     val rawDROEnabled: Boolean?,
-    val cameraId: String?
+    val cameraId: String?,
+    val applyEffectsToVideo: Boolean
 )

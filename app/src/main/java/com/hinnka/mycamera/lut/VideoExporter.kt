@@ -122,6 +122,76 @@ suspend fun exportVideoWithEffects(
 }
 
 /**
+ * Applies LUT and recipe effects to a video and writes the result directly to a local file.
+ *
+ * @param context Application context
+ * @param inputUri Source video Uri
+ * @param outputFile Target file to write the processed video to
+ * @param lutConfig LUT configuration to apply
+ * @param recipeParams Recipe parameters to apply
+ * @return True if successful, false otherwise
+ */
+@UnstableApi
+suspend fun applyEffectsToVideoFile(
+    context: Context,
+    inputUri: Uri,
+    outputFile: File,
+    lutConfig: LutConfig?,
+    recipeParams: ColorRecipeParams?,
+): Boolean = withContext(Dispatchers.Main) {
+    val originalMime = detectVideoMime(context, inputUri)
+    PLog.d(TAG, "applyEffectsToVideoFile: Input video MIME: $originalMime")
+
+    outputFile.parentFile?.mkdirs()
+
+    try {
+        val effect = VideoLutEffect(lutConfig, recipeParams)
+
+        val mediaItem = MediaItem.fromUri(inputUri)
+        val editedMediaItem = EditedMediaItem.Builder(mediaItem)
+            .setEffects(
+                Effects(
+                    /* audioProcessors= */ emptyList(),
+                    /* videoEffects= */ listOf(effect)
+                )
+            )
+            .build()
+
+        val transformer = Transformer.Builder(context)
+            .also { builder ->
+                val targetMime = when {
+                    originalMime == MimeTypes.VIDEO_H265 -> MimeTypes.VIDEO_H265
+                    else -> MimeTypes.VIDEO_H264
+                }
+                PLog.d(TAG, "applyEffectsToVideoFile: Target video MIME: $targetMime")
+                builder.setVideoMimeType(targetMime)
+            }
+            .build()
+
+        val exportResult = runTransformer(
+            transformer = transformer,
+            editedMediaItem = editedMediaItem,
+            outputPath = outputFile.absolutePath,
+            onProgress = null
+        )
+
+        if (exportResult == null) {
+            PLog.e(TAG, "applyEffectsToVideoFile: Transformer returned null result")
+            false
+        } else {
+            PLog.d(TAG, "applyEffectsToVideoFile: Succeeded, size: ${outputFile.length()} bytes")
+            true
+        }
+    } catch (e: CancellationException) {
+        PLog.d(TAG, "applyEffectsToVideoFile: Cancelled")
+        throw e
+    } catch (e: Exception) {
+        PLog.e(TAG, "applyEffectsToVideoFile: Failed", e)
+        false
+    }
+}
+
+/**
  * 在协程中运行 Transformer，通过 listener 回调转为 suspend 函数。
  * 同时轮询进度并上报给 [onProgress]。
  * 返回 ExportResult（成功）或 null（失败/取消）。

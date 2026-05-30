@@ -841,6 +841,32 @@ fun GalleryEditScreen(
                                     val currentLut = availableLuts.find { it.id == editLutId }
                                     val lutTitle = currentLut?.getName() ?: ""
 
+                                    if (currentPhoto.isMotionPhoto) {
+                                        val applyEffectsToVideo by viewModel.editApplyEffectsToVideo.collectAsState()
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 12.dp, bottom = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = applyEffectsToVideo,
+                                                onCheckedChange = { viewModel.setApplyEffectsToVideo(it) },
+                                                colors = CheckboxDefaults.colors(
+                                                    checkedColor = AccentOrange,
+                                                    uncheckedColor = Color.White.copy(alpha = 0.6f),
+                                                    checkmarkColor = Color.Black
+                                                )
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = stringResource(R.string.edit_embedded_video_simultaneously),
+                                                color = Color.White,
+                                                fontSize = 14.sp
+                                            )
+                                        }
+                                    }
+
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),

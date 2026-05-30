@@ -955,4 +955,5 @@
     <string name="puzzle_background">背景颜色</string>
     <string name="puzzle_background_white">纯白</string>
     <string name="puzzle_background_black">纯黑</string>
+    <string name="edit_embedded_video_simultaneously">同时编辑内嵌视频</string>
 </resources>

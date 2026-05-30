@@ -260,7 +260,8 @@ object GalleryMediaStore {
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawDROEnabled = false,
-            cameraId = metadata.cameraId
+            cameraId = metadata.cameraId,
+            applyEffectsToVideo = metadata.applyEffectsToVideo
         )
     }
 
@@ -383,9 +384,9 @@ object GalleryMediaStore {
             multipleExposureFrameCount = multipleExposureFrameCount,
             hasAiDenoisedBase = hasAiDenoisedBase,
             aiDenoiseStrength = aiDenoiseStrength,
-            rawBlackLevelMode = rawBlackLevelMode,
             rawCustomBlackLevel = rawCustomBlackLevel,
-            cameraId = cameraId
+            cameraId = cameraId,
+            applyEffectsToVideo = applyEffectsToVideo
         )
     }
 

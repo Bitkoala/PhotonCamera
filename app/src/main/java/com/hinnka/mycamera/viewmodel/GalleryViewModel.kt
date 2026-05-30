@@ -205,6 +205,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     var editLutId = MutableStateFlow<String?>(null)
         private set
 
+    var editApplyEffectsToVideo = MutableStateFlow(false)
+        private set
+
+    fun setApplyEffectsToVideo(apply: Boolean) {
+        editApplyEffectsToVideo.value = apply
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     var editLutRecipeParams = editLutId.flatMapLatest { id ->
         if (id == null) {
@@ -1588,6 +1595,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editLutId.value = metadata.lutId
             editFrameId.value = metadata.frameId
             editPhotoRecipeParams.value = metadata.colorRecipeParams
+            editApplyEffectsToVideo.value = metadata.applyEffectsToVideo
             
             if (!targetPhoto.isVideo) {
                 editRawDcpId.value = metadata.rawDcpId
@@ -1614,6 +1622,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         } ?: run {
             editLutId.value = null
             editFrameId.value = null
+            editApplyEffectsToVideo.value = false
             
             if (!targetPhoto.isVideo) {
                 // 这里一般是本 App 预览或拍摄进入，保持跟随全局
@@ -1654,6 +1663,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editLutConfig = null
         editFrameId.value = null
         editPhotoRecipeParams.value = null
+        editApplyEffectsToVideo.value = false
         editCropRect.value = null
         editCropAspectOption.value = CropAspectOption.Free
         editRawDenoise.value = 0.2f
@@ -2390,7 +2400,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         computationalAperture = editComputationalAperture.value,
                         focusPointX = editFocusPointX.value,
                         focusPointY = editFocusPointY.value,
-                        postCropRegion = finalCropRegion
+                        postCropRegion = finalCropRegion,
+                        applyEffectsToVideo = editApplyEffectsToVideo.value
                     )
                 }
 

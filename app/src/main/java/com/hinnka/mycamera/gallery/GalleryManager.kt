@@ -23,6 +23,7 @@ import com.hinnka.mycamera.hdr.SourceKind
 import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
+import com.hinnka.mycamera.lut.applyEffectsToVideoFile
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
@@ -518,6 +519,7 @@ object GalleryManager {
         detailHdrBuildJobs[photoId] = job
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     suspend fun exportPhoto(
         context: Context,
         id: String,
@@ -651,6 +653,7 @@ object GalleryManager {
 
                     if (isLivePhoto) {
                         val tempMotionPhotoFile = File(context.cacheDir, "temp_motion_${System.nanoTime()}.jpg")
+                        var tempProcessedVideoFile: File? = null
                         try {
                             PLog.d(
                                 TAG,
@@ -659,9 +662,40 @@ object GalleryManager {
 
                             // 重新从磁盘加载最新元数据，以获取可能刚写回的 presentationTimestampUs
                             val latestMetadata = loadMetadata(context, id) ?: metadata
+                            
+                            var finalVideoPath = videoFile.absolutePath
+                            if (latestMetadata.applyEffectsToVideo) {
+                                val lutId = latestMetadata.lutId
+                                val colorRecipeParams = latestMetadata.colorRecipeParams
+                                PLog.d(TAG, "exportPhoto: applyEffectsToVideo is true. lutId: $lutId, colorRecipe: ${colorRecipeParams != null}")
+                                
+                                val lutConfig = if (lutId != null) {
+                                    ContentRepository.getInstance(context).lutManager.loadLut(lutId)
+                                } else {
+                                    null
+                                }
+                                
+                                val processedFile = File(context.cacheDir, "temp_processed_video_${System.nanoTime()}.mp4")
+                                val success = applyEffectsToVideoFile(
+                                    context = context,
+                                    inputUri = Uri.fromFile(videoFile),
+                                    outputFile = processedFile,
+                                    lutConfig = lutConfig,
+                                    recipeParams = colorRecipeParams
+                                )
+                                if (success && processedFile.exists() && processedFile.length() > 0) {
+                                    tempProcessedVideoFile = processedFile
+                                    finalVideoPath = processedFile.absolutePath
+                                    PLog.d(TAG, "exportPhoto: Successfully processed video effects. Size: ${processedFile.length()}")
+                                } else {
+                                    processedFile.delete()
+                                    PLog.e(TAG, "exportPhoto: Failed to apply video effects, falling back to original video")
+                                }
+                            }
+
                             val success = MotionPhotoWriter.write(
                                 tempExportFile.absolutePath,
-                                videoFile.absolutePath,
+                                finalVideoPath,
                                 tempMotionPhotoFile.absolutePath,
                                 latestMetadata.presentationTimestampUs ?: 0L,
                                 context
@@ -715,6 +749,7 @@ object GalleryManager {
                             }
                         } finally {
                             tempMotionPhotoFile.delete()
+                            tempProcessedVideoFile?.delete()
                         }
                     } else {
                         // 3b. Normal Export: Copy Temp File (with EXIF) to MediaStore
