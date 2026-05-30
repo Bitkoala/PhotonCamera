@@ -2,6 +2,7 @@ package com.hinnka.mycamera.ui.camera
 
 import android.graphics.Bitmap
 import android.graphics.SweepGradient
+import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.*
@@ -36,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.*
 import kotlin.random.Random
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +46,7 @@ fun ColorWalkScreen(
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val animatableHue = remember { Animatable(Random.nextFloat() * 360f) }
     val currentHue = animatableHue.value % 360f
     
@@ -253,7 +256,14 @@ fun ColorWalkScreen(
             }
 
             RecommendedFrameSection(
-                previewBitmap = framePreviewBitmap
+                previewBitmap = framePreviewBitmap,
+                onClick = {
+                    scope.launch {
+                        val id = viewModel.saveFrameEditorDraft(frameDraft)
+                        viewModel.setFrame(id)
+                        Toast.makeText(context, R.string.apply_frame_success, Toast.LENGTH_SHORT).show()
+                    }
+                }
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -349,7 +359,8 @@ fun ColorWheel(
 
 @Composable
 private fun RecommendedFrameSection(
-    previewBitmap: Bitmap?
+    previewBitmap: Bitmap?,
+    onClick: () -> Unit
 ) {
     Column(modifier = Modifier) {
         Row(
@@ -365,6 +376,7 @@ private fun RecommendedFrameSection(
             )
 
             Surface(
+                modifier = Modifier.clickable(onClick = onClick),
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(8.dp)
             ) {
