@@ -1542,6 +1542,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             userPreferencesRepository.saveVideoLogProfile(logProfile)
         }
+        validateAndCancelNonMatchingVideoLut(logProfile, currentLutConfig)
+    }
+
+    /**
+     * 验证并取消选择非匹配的视频 LUT
+     * 如果当前处于视频模式且启用了 Log，若当前选中的 LUT 与 Log 格式不匹配，则取消该 LUT
+     */
+    private fun validateAndCancelNonMatchingVideoLut(logProfile: VideoLogProfile, lutConfig: LutConfig?) {
+        if (logProfile != VideoLogProfile.OFF && lutConfig != null) {
+            if (lutConfig.curve != logProfile.logCurve || lutConfig.colorSpace != logProfile.colorSpace) {
+                PLog.d(TAG, "Cancelling selected LUT [${lutConfig.title}] because it does not match video log profile [${logProfile.name}] colorSpace/curve")
+                setLut(null)
+            }
+        }
     }
 
     fun setVideoBitrate(bitrate: VideoBitratePreset) {
@@ -1759,8 +1773,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 设置当前 LUT
      */
     fun setLut(lutId: String?, persist: Boolean = true) {
-        currentLutId.value = lutId ?: currentLutId.value
-        if (lutId == null) {
+        currentLutId.value = lutId ?: "none"
+        if (lutId == null || lutId == "none") {
             currentLutConfig = null
             // LUT 已禁用，通知相机控制器
             cameraController.setLogLutActive(false)
@@ -1774,6 +1788,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             viewModelScope.launch {
                 val loadedLut = withContext(Dispatchers.IO) {
                     contentRepository.lutManager.loadLut(lutId)
+                }
+                if (state.value.captureMode == CaptureMode.VIDEO) {
+                    val logProfile = state.value.videoConfig.logProfile
+                    if (logProfile != VideoLogProfile.OFF && loadedLut != null) {
+                        if (loadedLut.curve != logProfile.logCurve || loadedLut.colorSpace != logProfile.colorSpace) {
+                            PLog.d(TAG, "Deselecting newly selected LUT [${loadedLut.title}] because it does not match video log profile [${logProfile.name}] colorSpace/curve")
+                            setLut(null)
+                            return@launch
+                        }
+                    }
                 }
                 currentLutConfig = loadedLut
                 currentRecipeParams = contentRepository.lutManager.getColorRecipeParams(lutId).stateIn(
