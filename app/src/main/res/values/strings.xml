@@ -188,6 +188,22 @@
     <string name="settings_title">Settings</string>
     <string name="settings_section_capture">Capture</string>
     <string name="settings_section_display">Display</string>
+
+    <!-- Settings Restructuring Tabs -->
+    <string name="settings_tab_camera">Capture</string>
+    <string name="settings_tab_system">System</string>
+
+    <!-- Settings Restructuring Sections -->
+    <string name="settings_section_assist">Assistive Tools</string>
+    <string name="settings_section_focus_lens">Focus &amp; Lens</string>
+    <string name="settings_section_capture_storage">Capture &amp; Storage</string>
+    <string name="settings_section_quality_perf">Quality &amp; Performance</string>
+    <string name="settings_section_color_hdr">Color &amp; HDR</string>
+    <string name="settings_section_multiframe_exposure">Multi-frame &amp; Exposure</string>
+    <string name="settings_section_interface">Interface Styles</string>
+    <string name="settings_section_system_control">System &amp; Controls</string>
+    <string name="settings_section_data_maintenance">Data Maintenance</string>
+    <string name="settings_section_help_about">Help &amp; About</string>
     <string name="settings_use_raw">RAW Capture</string>
     <string name="settings_use_raw_description">Capture photos in RAW format (DNG) for higher quality. Turn off to use YUV format.</string>
     <string name="settings_level_indicator">Horizontal Level</string>

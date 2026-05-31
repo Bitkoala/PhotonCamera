@@ -114,6 +114,22 @@
     <string name="settings_title">設定</string>
     <string name="settings_section_capture">拍攝設定</string>
     <string name="settings_section_display">顯示設定</string>
+
+    <!-- Settings Restructuring Tabs -->
+    <string name="settings_tab_camera">拍攝</string>
+    <string name="settings_tab_system">系統</string>
+
+    <!-- Settings Restructuring Sections -->
+    <string name="settings_section_assist">輔助工具</string>
+    <string name="settings_section_focus_lens">對焦與鏡頭</string>
+    <string name="settings_section_capture_storage">拍攝與儲存</string>
+    <string name="settings_section_quality_perf">畫質與性能</string>
+    <string name="settings_section_color_hdr">色彩與 HDR</string>
+    <string name="settings_section_multiframe_exposure">多幀與曝光</string>
+    <string name="settings_section_interface">介面樣式</string>
+    <string name="settings_section_system_control">系統與控制</string>
+    <string name="settings_section_data_maintenance">資料維護</string>
+    <string name="settings_section_help_about">幫助與關於</string>
     <string name="settings_use_raw">RAW 拍攝</string>
     <string name="settings_use_raw_description">使用 RAW 格式 (DNG) 拍攝。關閉後將使用 YCBCR_P010/YUV_420 格式。</string>
     <string name="settings_level_indicator">水平儀</string>

@@ -122,7 +122,7 @@ import java.io.File
 import kotlin.math.roundToInt
 
 enum class SettingsTab {
-    GENERAL, IMAGING, RAW, PHANTOM, ABOUT
+    CAMERA, IMAGING, RAW, PHANTOM, SYSTEM
 }
 
 private enum class BackupOperation {
@@ -248,7 +248,7 @@ fun SettingsScreen(
     val availableLuts = viewModel.availableLutList
     val previewThumbnail = viewModel.previewThumbnail
 
-    var selectedTab by remember { mutableStateOf(SettingsTab.GENERAL) }
+    var selectedTab by remember { mutableStateOf(SettingsTab.CAMERA) }
     var isRawSliderAdjusting by remember { mutableStateOf(false) }
     var rawNlmNoiseFactorUi by remember { mutableStateOf(rawNlmNoiseFactor) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
@@ -584,21 +584,21 @@ fun SettingsScreen(
             )
         )
 
-        val general = stringResource(R.string.general)
+        val camera = stringResource(R.string.settings_tab_camera)
         val imaging = stringResource(R.string.imaging)
         val phantom = stringResource(R.string.phantom)
-        val about = stringResource(R.string.about)
+        val system = stringResource(R.string.settings_tab_system)
 
         // Tab 选择器
         val tabs = remember {
             mutableStateListOf<Pair<SettingsTab, String>>().apply {
-                add(SettingsTab.GENERAL to general)
+                add(SettingsTab.CAMERA to camera)
                 add(SettingsTab.IMAGING to imaging)
                 add(SettingsTab.RAW to "RAW")
                 if (DeviceUtil.canShowPhantom) {
                     add(SettingsTab.PHANTOM to phantom)
                 }
-                add(SettingsTab.ABOUT to about)
+                add(SettingsTab.SYSTEM to system)
             }
         }
         val selectedTabIndex = tabs.indexOfFirst { it.first == selectedTab }.coerceAtLeast(0)
@@ -624,7 +624,7 @@ fun SettingsScreen(
                     text = {
                         Text(
                             text = label,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Normal
                         )
                     }
@@ -642,117 +642,14 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             when (selectedTab) {
-                SettingsTab.GENERAL -> {
-                    if (!isPurchased) {
-                        PremiumCard(
-                            onClick = {
-                                val activity = context.findActivity()
-                                if (activity != null) {
-                                    viewModel.purchase(activity)
-                                }
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                    }
-
-                    // 内容管理设置
-                    SettingsSection(title = stringResource(R.string.settings_section_management)) {
-                        // 背景设置
-                        BackgroundSetting(
-                            viewModel = viewModel,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        NavigationSettingItem(
-                            title = stringResource(R.string.settings_filter_management),
-                            description = stringResource(R.string.settings_filter_management_description),
-                            onClick = onFilterManagementClick
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        NavigationSettingItem(
-                            title = stringResource(R.string.settings_frame_management),
-                            description = stringResource(R.string.settings_frame_management_description),
-                            onClick = onFrameManagementClick
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        NavigationSettingItem(
-                            title = stringResource(R.string.settings_backup_settings),
-                            description = if (backupOperation == BackupOperation.BACKUP) {
-                                stringResource(R.string.backup_in_progress)
-                            } else {
-                                stringResource(R.string.settings_backup_settings_description)
-                            },
-                            enabled = backupOperation == null,
-                            showProgress = backupOperation == BackupOperation.BACKUP,
-                            onClick = { backupLauncher.launch("photon_camera_backup_${System.currentTimeMillis()}.zip") }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        NavigationSettingItem(
-                            title = stringResource(R.string.settings_restore_settings),
-                            description = if (backupOperation == BackupOperation.RESTORE) {
-                                stringResource(R.string.restore_in_progress)
-                            } else {
-                                stringResource(R.string.settings_restore_settings_description)
-                            },
-                            enabled = backupOperation == null,
-                            showProgress = backupOperation == BackupOperation.RESTORE,
-                            onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // 拍摄操作设置
-                    SettingsSection(title = stringResource(R.string.settings_section_operation)) {
+                SettingsTab.CAMERA -> {
+                    // 辅助工具
+                    SettingsSection(title = stringResource(R.string.settings_section_assist)) {
                         SwitchSettingItem(
-                            title = stringResource(R.string.settings_shutter_sound),
-                            description = stringResource(R.string.settings_shutter_sound_description),
-                            checked = shutterSoundEnabled,
-                            onCheckedChange = { viewModel.setShutterSoundEnabled(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_mirror_front_camera),
-                            description = stringResource(R.string.settings_mirror_front_camera_description),
-                            checked = mirrorFrontCamera,
-                            onCheckedChange = { viewModel.setMirrorFrontCamera(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_vibration),
-                            description = stringResource(R.string.settings_vibration_description),
-                            checked = vibrationEnabled,
-                            onCheckedChange = { viewModel.setVibrationEnabled(it) }
+                            title = stringResource(R.string.settings_grid_lines),
+                            description = stringResource(R.string.settings_grid_description),
+                            checked = showGrid,
+                            onCheckedChange = { viewModel.setShowGrid(it) }
                         )
 
                         HorizontalDivider(
@@ -778,12 +675,12 @@ fun SettingsScreen(
                             checked = focusPeakingEnabled,
                             onCheckedChange = { viewModel.setFocusPeakingEnabled(it) }
                         )
+                    }
 
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
+                    Spacer(modifier = Modifier.height(24.dp))
 
+                    // 对焦与镜头
+                    SettingsSection(title = stringResource(R.string.settings_section_focus_lens)) {
                         val aiFocusModeOptions = AiFocusTargetMode.entries.map { it to it.displayName() }
                         val aiFocusModeLabels = aiFocusModeOptions.map { it.second }
                         DropdownSettingItem(
@@ -798,6 +695,11 @@ fun SettingsScreen(
                                     viewModel.setAiFocusTargetMode(it)
                                 }
                             }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
 
                         SliderSettingItem(
@@ -818,11 +720,10 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_grid_lines),
-                            description = stringResource(R.string.settings_grid_description),
-                            checked = showGrid,
-                            onCheckedChange = { viewModel.setShowGrid(it) }
+                        DefaultFocalLengthSetting(
+                            viewModel = viewModel,
+                            currentFocalLength = defaultFocalLength,
+                            onFocalLengthSelected = { viewModel.setDefaultFocalLength(it) }
                         )
 
                         HorizontalDivider(
@@ -830,6 +731,40 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
+                        QualityLevelSetting(
+                            title = stringResource(R.string.settings_default_virtual_aperture),
+                            description = stringResource(R.string.settings_default_virtual_aperture_description),
+                            levels = listOf(0f to stringResource(R.string.settings_nr_level_off)) + listOf(
+                                1.0f, 1.2f, 1.4f, 1.8f, 2.0f, 2.8f, 4.0f, 5.6f, 8.0f, 11f, 16f
+                            ).map { it to "f/${if (it % 1f == 0f) it.toInt() else it}" },
+                            currentLevel = defaultVirtualAperture,
+                            onLevelSelected = { viewModel.setDefaultVirtualAperture(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_custom_lens_ids),
+                            description = stringResource(R.string.settings_custom_lens_ids_description),
+                            value = customLensIds.joinToString(","),
+                            onValueChange = { viewModel.setCustomLensIds(it) }
+                        )
+
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_lens_id_blacklist),
+                            description = stringResource(R.string.settings_lens_id_blacklist_description),
+                            value = lensIdBlacklist.joinToString(","),
+                            onValueChange = { viewModel.setLensIdBlacklist(it) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 拍摄行为
+                    SettingsSection(title = stringResource(R.string.settings_section_capture_storage)) {
                         NavigationSettingItem(
                             title = stringResource(R.string.settings_top_sheet_aspect_ratios),
                             description = stringResource(
@@ -858,9 +793,11 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
-                        VolumeKeyActionSetting(
-                            action = volumeKeyAction,
-                            onActionSelected = { viewModel.setVolumeKeyAction(it) }
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_mirror_front_camera),
+                            description = stringResource(R.string.settings_mirror_front_camera_description),
+                            checked = mirrorFrontCamera,
+                            onCheckedChange = { viewModel.setMirrorFrontCamera(it) }
                         )
 
                         HorizontalDivider(
@@ -910,132 +847,12 @@ fun SettingsScreen(
                                 }
                             }
                         )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        DefaultFocalLengthSetting(
-                            viewModel = viewModel,
-                            currentFocalLength = defaultFocalLength,
-                            onFocalLengthSelected = { viewModel.setDefaultFocalLength(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        TextInputSettingItem(
-                            title = stringResource(R.string.settings_custom_lens_ids),
-                            description = stringResource(R.string.settings_custom_lens_ids_description),
-                            value = customLensIds.joinToString(","),
-                            onValueChange = { viewModel.setCustomLensIds(it) }
-                        )
-
-                        TextInputSettingItem(
-                            title = stringResource(R.string.settings_lens_id_blacklist),
-                            description = stringResource(R.string.settings_lens_id_blacklist_description),
-                            value = lensIdBlacklist.joinToString(","),
-                            onValueChange = { viewModel.setLensIdBlacklist(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        QualityLevelSetting(
-                            title = stringResource(R.string.settings_default_virtual_aperture),
-                            description = stringResource(R.string.settings_default_virtual_aperture_description),
-                            levels = listOf(0f to stringResource(R.string.settings_nr_level_off)) + listOf(
-                                1.0f, 1.2f, 1.4f, 1.8f, 2.0f, 2.8f, 4.0f, 5.6f, 8.0f, 11f, 16f
-                            ).map { it to "f/${if (it % 1f == 0f) it.toInt() else it}" },
-                            currentLevel = defaultVirtualAperture,
-                            onLevelSelected = { viewModel.setDefaultVirtualAperture(it) }
-                        )
                     }
                 }
 
                 SettingsTab.IMAGING -> {
-                    // AI 服务设置
-                    SettingsSection(title = stringResource(R.string.ai_service)) {
-                        TextInputSettingItem(
-                            title = stringResource(R.string.settings_openai_api_key),
-                            description = stringResource(R.string.settings_openai_api_key_desc),
-                            value = openAIApiKey ?: "",
-                            onValueChange = { viewModel.setOpenAIApiKey(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        TextInputSettingItem(
-                            title = stringResource(R.string.settings_openai_base_url),
-                            description = stringResource(R.string.settings_openai_base_url_desc),
-                            value = openAIUrl ?: OpenAIApiClient.DEFAULT_API_URL,
-                            onValueChange = { viewModel.setOpenAIUrl(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        val customModelLabel = stringResource(R.string.settings_ai_model_custom)
-                        DropdownSettingItem(
-                            title = stringResource(R.string.settings_ai_model),
-                            description = stringResource(R.string.settings_ai_model_desc),
-                            value = openAIModel ?: OpenAIApiClient.DEFAULT_MODEL,
-                            options = availableOpenAIModels + customModelLabel,
-                            isLoading = isFetchingAIModels,
-                            enabled = !openAIApiKey.isNullOrBlank(),
-                            onExpanded = { viewModel.fetchAvailableAIModels() },
-                            onOptionSelected = {
-                                if (it == customModelLabel) {
-                                    customAIModelValue = openAIModel ?: ""
-                                    showCustomAIModelDialog = true
-                                } else {
-                                    viewModel.setOpenAIModel(it)
-                                }
-                            }
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    SettingsSection(title = stringResource(R.string.settings_section_baseline_color_correction)) {
-                        BaselineColorCorrectionSettingItem(
-                            title = stringResource(R.string.settings_baseline_jpg_title),
-                            description = stringResource(R.string.settings_baseline_jpg_description),
-                            selectedLut = availableLuts.find { it.id == jpgBaselineLutId },
-                            onClick = { baselinePickerTarget = BaselineColorCorrectionTarget.JPG }
-                        )
-
-
-
-                        if (DeviceUtil.canShowPhantom) {
-                            HorizontalDivider(
-                                color = Color.White.copy(alpha = 0.1f),
-                                modifier = Modifier.padding(vertical = 12.dp)
-                            )
-
-                            BaselineColorCorrectionSettingItem(
-                                title = stringResource(R.string.settings_baseline_phantom_title),
-                                description = stringResource(R.string.settings_baseline_phantom_description),
-                                selectedLut = availableLuts.find { it.id == phantomBaselineLutId },
-                                onClick = { baselinePickerTarget = BaselineColorCorrectionTarget.PHANTOM }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // 影像处理设置
-                    SettingsSection(title = stringResource(R.string.settings_section_image_processing)) {
+                    // 画质与性能
+                    SettingsSection(title = stringResource(R.string.settings_section_quality_perf)) {
                         QualityLevelSetting(
                             title = stringResource(R.string.settings_nr_level),
                             description = stringResource(R.string.settings_nr_level_description),
@@ -1088,55 +905,6 @@ fun SettingsScreen(
 
                         HorizontalDivider(
                             color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        SliderSettingItem(
-                            title = stringResource(R.string.settings_multi_frame_count),
-                            description = stringResource(R.string.settings_multi_frame_count_description),
-                            value = multiFrameCountSliderValue,
-                            valueRange = MultiFrameConfig.MIN_FRAME_COUNT.toFloat()..MultiFrameConfig.MAX_FRAME_COUNT.toFloat(),
-                            onValueChange = { multiFrameCountSliderValue = it.roundToInt().toFloat() },
-                            resetValue = MultiFrameConfig.DEFAULT_FRAME_COUNT.toFloat(),
-                            onValueChangeFinished = {
-                                viewModel.setMultiFrameCount(multiFrameCountSliderValue.roundToInt())
-                            },
-                            valueTextFormatter = { it.roundToInt().toString() }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_use_multiple_exposure),
-                            description = stringResource(R.string.settings_use_multiple_exposure_description),
-                            checked = useMultipleExposure,
-                            onCheckedChange = { viewModel.setUseMultipleExposure(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        QualityLevelSetting(
-                            title = stringResource(R.string.settings_multiple_exposure_count),
-                            description = stringResource(R.string.settings_multiple_exposure_count_description),
-                            levels = listOf(
-                                2 to "2",
-                                3 to "3",
-                                4 to "4",
-                                5 to "5",
-                                6 to "6"
-                            ),
-                            currentLevel = multipleExposureCount,
-                            onLevelSelected = { viewModel.setMultipleExposureCount(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
@@ -1170,18 +938,20 @@ fun SettingsScreen(
                             checked = enableDevelopAnimation,
                             onCheckedChange = { viewModel.setEnableDevelopAnimation(it) }
                         )
+                    }
 
-                        /*HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 色彩与 HDR
+                    SettingsSection(title = stringResource(R.string.settings_section_color_hdr)) {
+                        BaselineColorCorrectionSettingItem(
+                            title = stringResource(R.string.settings_baseline_jpg_title),
+                            description = stringResource(R.string.settings_baseline_jpg_description),
+                            selectedLut = availableLuts.find { it.id == jpgBaselineLutId },
+                            onClick = { baselinePickerTarget = BaselineColorCorrectionTarget.JPG }
                         )
 
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_apply_ultra_hdr),
-                            description = stringResource(R.string.settings_apply_ultra_hdr_description),
-                            checked = applyUltraHDR,
-                            onCheckedChange = { viewModel.setApplyUltraHDR(it) }
-                        )*/
+
 
                         if (state.isP010Supported) {
                             HorizontalDivider(
@@ -1212,37 +982,6 @@ fun SettingsScreen(
                         }
 
                         if (isHdrSettingsSupported) {
-                            /*if (state.isHlg10Supported) {
-                                HorizontalDivider(
-                                    color = Color.White.copy(alpha = 0.1f),
-                                    modifier = Modifier.padding(vertical = 12.dp)
-                                )
-
-                                SwitchSettingItem(
-                                    title = stringResource(R.string.settings_use_hlg10),
-                                    description = stringResource(R.string.settings_use_hlg10_description),
-                                    checked = useHlg10,
-                                    onCheckedChange = {
-                                        viewModel.setUseHlg10(it)
-                                        if (it) {
-                                            viewModel.setUseP010(true)
-                                        }
-                                    }
-                                )
-
-                                HorizontalDivider(
-                                    color = Color.White.copy(alpha = 0.1f),
-                                    modifier = Modifier.padding(vertical = 12.dp)
-                                )
-
-                                SwitchSettingItem(
-                                    title = stringResource(R.string.settings_hlg_hardware_compatibility),
-                                    description = stringResource(R.string.settings_hlg_hardware_compatibility_description),
-                                    checked = hlgHardwareCompatibilityEnabled,
-                                    onCheckedChange = { viewModel.setHlgHardwareCompatibilityEnabled(it) }
-                                )
-                            }*/
-
                             HorizontalDivider(
                                 color = Color.White.copy(alpha = 0.1f),
                                 modifier = Modifier.padding(vertical = 12.dp)
@@ -1267,12 +1006,96 @@ fun SettingsScreen(
                                 onCheckedChange = { viewModel.setUseHdrScreenMode(it) }
                             )
                         }
-
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // 软件细节微调
+                    // 多帧与曝光
+                    SettingsSection(title = stringResource(R.string.settings_section_multiframe_exposure)) {
+                        SliderSettingItem(
+                            title = stringResource(R.string.settings_multi_frame_count),
+                            description = stringResource(R.string.settings_multi_frame_count_description),
+                            value = multiFrameCountSliderValue,
+                            valueRange = MultiFrameConfig.MIN_FRAME_COUNT.toFloat()..MultiFrameConfig.MAX_FRAME_COUNT.toFloat(),
+                            onValueChange = { multiFrameCountSliderValue = it.roundToInt().toFloat() },
+                            resetValue = MultiFrameConfig.DEFAULT_FRAME_COUNT.toFloat(),
+                            onValueChangeFinished = {
+                                viewModel.setMultiFrameCount(multiFrameCountSliderValue.roundToInt())
+                            },
+                            valueTextFormatter = { it.roundToInt().toString() }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        QualityLevelSetting(
+                            title = stringResource(R.string.settings_multiple_exposure_count),
+                            description = stringResource(R.string.settings_multiple_exposure_count_description),
+                            levels = listOf(
+                                2 to "2",
+                                3 to "3",
+                                4 to "4",
+                                5 to "5",
+                                6 to "6"
+                            ),
+                            currentLevel = multipleExposureCount,
+                            onLevelSelected = { viewModel.setMultipleExposureCount(it) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // AI 服务设置
+                    SettingsSection(title = stringResource(R.string.ai_service)) {
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_openai_api_key),
+                            description = stringResource(R.string.settings_openai_api_key_desc),
+                            value = openAIApiKey ?: "",
+                            onValueChange = { viewModel.setOpenAIApiKey(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_openai_base_url),
+                            description = stringResource(R.string.settings_openai_base_url_desc),
+                            value = openAIUrl ?: OpenAIApiClient.DEFAULT_API_URL,
+                            onValueChange = { viewModel.setOpenAIUrl(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        val customModelLabel = stringResource(R.string.settings_ai_model_custom)
+                        DropdownSettingItem(
+                            title = stringResource(R.string.settings_ai_model),
+                            description = stringResource(R.string.settings_ai_model_desc),
+                            value = openAIModel ?: OpenAIApiClient.DEFAULT_MODEL,
+                            options = availableOpenAIModels + customModelLabel,
+                            isLoading = isFetchingAIModels,
+                            enabled = !openAIApiKey.isNullOrBlank(),
+                            onExpanded = { viewModel.fetchAvailableAIModels() },
+                            onOptionSelected = {
+                                if (it == customModelLabel) {
+                                    customAIModelValue = openAIModel ?: ""
+                                    showCustomAIModelDialog = true
+                                } else {
+                                    viewModel.setOpenAIModel(it)
+                                }
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 细节微调
                     SettingsSection(
                         title = stringResource(R.string.settings_section_software_processing),
                         description = stringResource(R.string.settings_detail_enhancement_description),
@@ -1415,18 +1238,6 @@ fun SettingsScreen(
                         onCheckedChange = { viewModel.setExportDngWithRawExport(it) }
                     )
 
-                    /*HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = Color.White.copy(alpha = 0.1f)
-                    )
-
-                    SwitchSettingItem(
-                        title = stringResource(R.string.settings_raw_auto_white_balance_estimate),
-                        description = stringResource(R.string.settings_raw_auto_white_balance_estimate_description),
-                        checked = rawAutoWhiteBalanceEstimate,
-                        onCheckedChange = { viewModel.setRawAutoWhiteBalanceEstimate(it) }
-                    )*/
-
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
                         color = Color.White.copy(alpha = 0.1f)
@@ -1473,24 +1284,6 @@ fun SettingsScreen(
                     if (DeviceUtil.canShowPhantom) {
                         // 幻影模式设置
                         SettingsSection(title = stringResource(R.string.ghost_mode)) {
-                            SwitchSettingItem(
-                                title = stringResource(R.string.ghost_mode),
-                                description = stringResource(R.string.ghost_mode_dialog_description),
-                                checked = phantomMode,
-                                onCheckedChange = {
-                                    if (it && (!Settings.canDrawOverlays(context) || !Environment.isExternalStorageManager())) {
-                                        showGhostPermissionDialog = true
-                                    } else {
-                                        viewModel.togglePhantomMode()
-                                    }
-                                }
-                            )
-
-                            HorizontalDivider(
-                                color = Color.White.copy(alpha = 0.1f),
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
-
                             SwitchSettingItem(
                                 title = stringResource(R.string.settings_phantom_button_hidden),
                                 description = stringResource(R.string.settings_phantom_button_hidden_description),
@@ -1544,23 +1337,47 @@ fun SettingsScreen(
                                 checked = phantomSaveAsNew,
                                 onCheckedChange = { viewModel.setPhantomSaveAsNew(it) }
                             )
+
+                            HorizontalDivider(
+                                color = Color.White.copy(alpha = 0.1f),
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+
+                            BaselineColorCorrectionSettingItem(
+                                title = stringResource(R.string.settings_baseline_phantom_title),
+                                description = stringResource(R.string.settings_baseline_phantom_description),
+                                selectedLut = availableLuts.find { it.id == phantomBaselineLutId },
+                                onClick = { baselinePickerTarget = BaselineColorCorrectionTarget.PHANTOM }
+                            )
                         }
                     }
                 }
 
-                SettingsTab.ABOUT -> {
-                    val isGoogleFlavor = BuildConfig.FLAVOR == "google"
-                    val communityGroupUrl = if (isGoogleFlavor) TELEGRAM_GROUP_URL else QQ_GROUP_URL
-                    val communityGroupDescription = stringResource(
-                        if (isGoogleFlavor) {
-                            R.string.settings_community_group_telegram_description
-                        } else {
-                            R.string.settings_community_group_qq_description
-                        }
-                    )
+                SettingsTab.SYSTEM -> {
+                    if (!isPurchased) {
+                        PremiumCard(
+                            onClick = {
+                                val activity = context.findActivity()
+                                if (activity != null) {
+                                    viewModel.purchase(activity)
+                                }
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
 
-                    // Widget 设置
-                    SettingsSection(title = stringResource(R.string.settings_widget_theme)) {
+                    // 界面样式
+                    SettingsSection(title = stringResource(R.string.settings_section_interface)) {
+                        BackgroundSetting(
+                            viewModel = viewModel,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
                         QualityLevelSetting(
                             title = stringResource(R.string.settings_widget_theme),
                             description = stringResource(R.string.settings_widget_theme_description),
@@ -1576,9 +1393,108 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // 开发者选项
-                    SettingsSection(title = stringResource(R.string.settings_section_developer)) {
-                        // 日志收集按钮
+                    // 内容管理
+                    SettingsSection(title = stringResource(R.string.settings_section_management)) {
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_filter_management),
+                            description = stringResource(R.string.settings_filter_management_description),
+                            onClick = onFilterManagementClick
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_frame_management),
+                            description = stringResource(R.string.settings_frame_management_description),
+                            onClick = onFrameManagementClick
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 系统与控制
+                    SettingsSection(title = stringResource(R.string.settings_section_system_control)) {
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_shutter_sound),
+                            description = stringResource(R.string.settings_shutter_sound_description),
+                            checked = shutterSoundEnabled,
+                            onCheckedChange = { viewModel.setShutterSoundEnabled(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_vibration),
+                            description = stringResource(R.string.settings_vibration_description),
+                            checked = vibrationEnabled,
+                            onCheckedChange = { viewModel.setVibrationEnabled(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        VolumeKeyActionSetting(
+                            action = volumeKeyAction,
+                            onActionSelected = { viewModel.setVolumeKeyAction(it) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 数据维护
+                    SettingsSection(title = stringResource(R.string.settings_section_data_maintenance)) {
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_backup_settings),
+                            description = if (backupOperation == BackupOperation.BACKUP) {
+                                stringResource(R.string.backup_in_progress)
+                            } else {
+                                stringResource(R.string.settings_backup_settings_description)
+                            },
+                            enabled = backupOperation == null,
+                            showProgress = backupOperation == BackupOperation.BACKUP,
+                            onClick = { backupLauncher.launch("photon_camera_backup_${System.currentTimeMillis()}.zip") }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_restore_settings),
+                            description = if (backupOperation == BackupOperation.RESTORE) {
+                                stringResource(R.string.restore_in_progress)
+                            } else {
+                                stringResource(R.string.settings_restore_settings_description)
+                            },
+                            enabled = backupOperation == null,
+                            showProgress = backupOperation == BackupOperation.RESTORE,
+                            onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 帮助与关于
+                    val isGoogleFlavor = BuildConfig.FLAVOR == "google"
+                    val communityGroupUrl = if (isGoogleFlavor) TELEGRAM_GROUP_URL else QQ_GROUP_URL
+                    val communityGroupDescription = stringResource(
+                        if (isGoogleFlavor) {
+                            R.string.settings_community_group_telegram_description
+                        } else {
+                            R.string.settings_community_group_qq_description
+                        }
+                    )
+
+                    SettingsSection(title = stringResource(R.string.settings_section_help_about)) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1594,7 +1510,7 @@ fun SettingsScreen(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Normal
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = stringResource(R.string.settings_log_viewer_description),
                                     color = Color.White.copy(alpha = 0.6f),
@@ -1611,13 +1527,13 @@ fun SettingsScreen(
                                 tint = Color.White.copy(alpha = 0.6f)
                             )
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // 关于
-                    SettingsSection(title = stringResource(R.string.settings_section_about)) {
                         if (!isGoogleFlavor) {
+                            HorizontalDivider(
+                                color = Color.White.copy(alpha = 0.1f),
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
                             NavigationSettingItem(
                                 title = stringResource(R.string.settings_check_update),
                                 description = if (isCheckingUpdate) {
@@ -1668,17 +1584,22 @@ fun SettingsScreen(
                                     }
                                 }
                             )
-
-                            HorizontalDivider(
-                                color = Color.White.copy(alpha = 0.1f),
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
                         }
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
 
                         NavigationSettingItem(
                             title = stringResource(R.string.settings_community_group),
                             description = communityGroupDescription,
                             onClick = { openExternalUrl(context, communityGroupUrl) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
 
                         NavigationSettingItem(
@@ -1698,13 +1619,11 @@ fun SettingsScreen(
                                 try {
                                     context.startActivity(intent)
                                 } catch (e: Exception) {
-                                    // 如果没安装支付宝，则尝试用浏览器打开
                                     val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(qrCodeUrl))
                                     webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     try {
                                         context.startActivity(webIntent)
                                     } catch (e2: Exception) {
-                                        // 处理浏览器也没有的情况（极少见）
                                     }
                                 }
                             }
