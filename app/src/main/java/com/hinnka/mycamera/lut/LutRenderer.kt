@@ -1583,7 +1583,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         if (halationExtractBlurHProgram == 0 || halationBlurVProgram == 0) return
         val dsW = width / 4; val dsH = height / 4
         val texelW = 1.0f / dsW; val texelH = 1.0f / dsH
-        val threshold = 0.75f // 恒定高光提取阈值
+        val threshold = 0.72f - redHalation.coerceIn(0f, 1f) * 0.22f
         
         GLES30.glUseProgram(halationExtractBlurHProgram)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, halationFboId[0])

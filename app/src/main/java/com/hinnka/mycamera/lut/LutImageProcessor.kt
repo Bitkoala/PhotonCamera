@@ -1615,7 +1615,7 @@ class LutImageProcessor {
         val texelW = 1.0f / dsW
         val texelH = 1.0f / dsH
         
-        val threshold = 0.75f // 恒定高光提取阈值，只让强度随滑块变化
+        val threshold = 0.72f - halation.coerceIn(0f, 1f) * 0.22f
 
         val identityMatrix = FloatArray(16)
         android.opengl.Matrix.setIdentityM(identityMatrix, 0)
@@ -2061,6 +2061,47 @@ class LutImageProcessor {
                     sanitizeFloat(color.g),
                     sanitizeFloat(color.b)
                 );
+            }
+
+            float hash12(vec2 p) {
+                vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+                p3 += dot(p3, p3.yzx + 33.33);
+                return fract((p3.x + p3.y) * p3.z);
+            }
+
+            float gaussianNoise(vec2 p) {
+                return (hash12(p) + hash12(p + 17.17) + hash12(p + 43.31) + hash12(p + 91.73) - 2.0) * 0.5;
+            }
+
+            vec3 applyDensityParticleGrain(vec3 srgbColor, vec2 uv, float amount) {
+                float grainAmount = pow(clamp(amount, 0.0, 1.0), 0.58);
+                vec3 linearColor = max(srgbToLinear(max(srgbColor, vec3(0.0))), vec3(1e-4));
+                vec3 density = -log10(linearColor);
+                vec3 densityMin = vec3(0.03);
+                vec3 densityMax = vec3(2.2) + densityMin;
+                vec3 development = clamp((density + densityMin) / densityMax, vec3(0.02), vec3(0.98));
+                float effectivePixelSizeUm = mix(5.2, 1.8, grainAmount);
+                float agxParticleAreaUm2 = 0.2;
+                vec3 particleScale = vec3(1.6, 1.6, 3.2);
+                vec3 particles = (effectivePixelSizeUm * effectivePixelSizeUm) / (agxParticleAreaUm2 * particleScale);
+                vec3 uniformity = vec3(0.97, 0.99, 0.97);
+                vec2 grainCoord = uv * mix(820.0, 1380.0, grainAmount);
+                float lumaGrain = gaussianNoise(grainCoord + vec2(11.0, 7.0));
+                vec2 dyeCoord = uv * mix(260.0, 420.0, grainAmount);
+                vec3 dyeCloud = vec3(
+                    gaussianNoise(dyeCoord + vec2(31.0, 53.0)),
+                    gaussianNoise(dyeCoord + vec2(71.0, 23.0)),
+                    gaussianNoise(dyeCoord + vec2(19.0, 97.0))
+                );
+                float clump = gaussianNoise(floor(uv * 180.0) + vec2(5.0, 19.0));
+                vec3 saturation = 1.0 - development * uniformity;
+                vec3 densityStd = densityMax * sqrt(max(development * (1.0 - development) * saturation, vec3(0.001)) / max(particles, vec3(1.0)));
+                float lumaDensityStd = dot(densityStd, vec3(0.333333));
+                vec3 densityNoise = vec3(lumaGrain * lumaDensityStd * 2.7);
+                densityNoise += dyeCloud * densityStd * 0.28;
+                densityNoise += clump * grainAmount * vec3(0.013, 0.012, 0.016);
+                density = max(density + densityNoise * grainAmount * 1.8, vec3(0.0));
+                return linearToSrgb(pow(vec3(10.0), -density));
             }
 
             float applyToneCurveToLuma(float luma, float toe, float shoulder, float pivot) {
@@ -2551,20 +2592,7 @@ class LutImageProcessor {
 
                     // 10. 颗粒（Film Grain - 胶片颗粒感）
                     if (uFilmGrain > 0.0) {
-                        // 使用纹理坐标生成伪随机噪声
-                        float grainNoise = fract(sin(dot(uvCoord * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
-                        
-                        // 将噪声从 [0,1] 映射到 [-1,1]
-                        grainNoise = (grainNoise - 0.5) * 2.0;
-                        
-                        // 根据亮度自适应调整颗粒强度
-                        float luma = getLuma(color.rgb);
-                        float grainMask = 1.0 - abs(luma - 0.5) * 2.0;
-                        grainMask = grainMask * 0.5 + 0.5;
-                        
-                        // 应用颗粒（增强强度）
-                        float grainStrength = uFilmGrain * 0.1 * grainMask;
-                        color.rgb += grainNoise * grainStrength;
+                        color.rgb = applyDensityParticleGrain(color.rgb, uvCoord, uFilmGrain);
                     }
 
                     // 11. 随机噪点 (增强的亮度和彩色噪点，动态刷新)
@@ -2625,9 +2653,10 @@ class LutImageProcessor {
                 }
                 
                 if (uRedHalation > 0.0) {
-                    vec3 redBloom = texture(uRedHalationTexture, uvCoord).rgb;
-                    vec3 redBloomEffect = redBloom * uRedHalation * 3.5;
-                    color.rgb = vec3(1.0) - (vec3(1.0) - color.rgb) * (vec3(1.0) - redBloomEffect);
+                    vec3 halationBlur = texture(uRedHalationTexture, uvCoord).rgb;
+                    float halationMask = smoothstep(0.001, 0.06, dot(halationBlur, vec3(0.2126, 0.7152, 0.0722)));
+                    vec3 halationStrength = vec3(0.42, 0.14, 0.02) * uRedHalation;
+                    color.rgb += halationBlur * halationStrength * halationMask;
                 }
 
                 // === LUT 处理（在色彩配方之后） ===
@@ -2701,10 +2730,10 @@ class LutImageProcessor {
             uniform float uStrength;
             
             void main() {
-                vec3 tint = vec3(1.0, 0.15, 0.0);
+                vec3 tint = vec3(1.0, 0.28, 0.04);
                 
                 #define EXTRACT(sampleColor) \
-                    (sampleColor * tint * smoothstep(uThreshold, uThreshold + 0.15, mix(dot(sampleColor, vec3(0.2126, 0.7152, 0.0722)), max(sampleColor.r, max(sampleColor.g, sampleColor.b)), 0.6)))
+                    (max(sampleColor - vec3(uThreshold), vec3(0.0)) * tint * (1.5 + uStrength * 3.0) * smoothstep(uThreshold - 0.24, uThreshold + 0.36, max(sampleColor.r, max(sampleColor.g, sampleColor.b))))
                 
                 vec3 color = texture(uInputTexture, vTexCoord).rgb;
                 vec3 sum = EXTRACT(color) * 0.204164;
