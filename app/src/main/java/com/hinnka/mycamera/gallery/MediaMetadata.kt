@@ -44,6 +44,7 @@ data class MediaMetadata(
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
     val rawDcpId: String? = null,
+    val cameraId: String? = null,
     // 边框水印配置
     val frameId: String? = null,
     // 图片尺寸
@@ -103,8 +104,10 @@ data class MediaMetadata(
     val aiDenoiseStrength: Float? = null,
     val rawBlackLevelMode: String? = null,
     val rawCustomBlackLevel: Float? = null,
-    val cameraId: String? = null,
     val applyEffectsToVideo: Boolean = false,
+    val spectralFilmEnabled: Boolean = false,
+    val spectralFilmStock: String? = null,
+    val spectralFilmPrint: String? = null,
 ) {
     /**
      * 将元数据转换为 CaptureInfo，用于写入 EXIF
@@ -336,6 +339,9 @@ data class MediaMetadata(
                     hasAiDenoisedBase = obj.optBoolean("hasAiDenoisedBase", false),
                     aiDenoiseStrength = if (obj.isNull("aiDenoiseStrength")) null else obj.optDouble("aiDenoiseStrength").toFloat(),
                     applyEffectsToVideo = obj.optBoolean("applyEffectsToVideo", false),
+                    spectralFilmEnabled = obj.optBoolean("spectralFilmEnabled", false),
+                    spectralFilmStock = if (obj.isNull("spectralFilmStock")) null else obj.optString("spectralFilmStock"),
+                    spectralFilmPrint = if (obj.isNull("spectralFilmPrint")) null else obj.optString("spectralFilmPrint"),
                 )
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to parse JSON", e)

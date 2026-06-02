@@ -238,6 +238,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val edgeLevel: StateFlow<Int> = userPreferencesRepository.userPreferences
         .map { it.edgeLevel }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
+    val rawSpectralFilmEnabled: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.rawSpectralFilmEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val rawSpectralFilmStock: StateFlow<String?> = userPreferencesRepository.userPreferences
+        .map { it.rawSpectralFilmStock }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val rawSpectralFilmPrint: StateFlow<String?> = userPreferencesRepository.userPreferences
+        .map { it.rawSpectralFilmPrint }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val photoQuality: Flow<Int> = userPreferencesRepository.userPreferences.map { it.photoQuality }
 
     val defaultFocalLength: Flow<Float> = userPreferencesRepository.userPreferences.map { it.defaultFocalLength }
@@ -782,6 +791,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPreferencesRepository.saveBaselineLutConfig(com.hinnka.mycamera.lut.BaselineColorCorrectionTarget.RAW, lutId)
         }
     }
+    fun setRawSpectralFilmEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveRawSpectralFilmEnabled(enabled)
+        }
+    }
+    fun setRawSpectralFilmStock(stock: String?) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveRawSpectralFilmStock(stock)
+        }
+    }
+    fun setRawSpectralFilmPrint(print: String?) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveRawSpectralFilmPrint(print)
+        }
+    }
     fun setRawNlmNoiseFactor(value: Float) {
         viewModelScope.launch { userPreferencesRepository.saveRawNlmNoiseFactor(value) }
     }
@@ -976,6 +1000,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPrefs = userPrefs,
         )
 
+        val spectralFilmEnabled = userPrefs?.rawSpectralFilmEnabled ?: false
+        val spectralFilmStock = userPrefs?.rawSpectralFilmStock ?: "kodak_portra_400"
+        val spectralFilmPrint = userPrefs?.rawSpectralFilmPrint ?: "kodak_portra_endura"
+
         return MediaMetadata(
             lutId = lutIdToSave,
             frameId = frameIdToSave,
@@ -996,6 +1024,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
             cameraId = currentCameraId,
+            spectralFilmEnabled = spectralFilmEnabled,
+            spectralFilmStock = spectralFilmStock,
+            spectralFilmPrint = spectralFilmPrint,
             width = width,
             height = height,
             ratio = aspectRatio,

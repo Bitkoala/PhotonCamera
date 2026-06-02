@@ -168,7 +168,10 @@ data class UserPreferences(
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
     val referencePhotoUrl: String? = null,
-    val deleteExported: Boolean = true
+    val deleteExported: Boolean = true,
+    val rawSpectralFilmEnabled: Boolean = false,
+    val rawSpectralFilmStock: String? = null,
+    val rawSpectralFilmPrint: String? = null
 )
 
 /**
@@ -289,6 +292,9 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_HDR_SCREEN_MODE = booleanPreferencesKey("use_hdr_screen_mode")
         private val REFERENCE_PHOTO_URL = stringPreferencesKey("reference_photo_url")
         private val DELETE_EXPORTED = booleanPreferencesKey("delete_exported")
+        private val RAW_SPECTRAL_FILM_ENABLED_KEY = booleanPreferencesKey("raw_spectral_film_enabled")
+        private val RAW_SPECTRAL_FILM_STOCK_KEY = stringPreferencesKey("raw_spectral_film_stock")
+        private val RAW_SPECTRAL_FILM_PRINT_KEY = stringPreferencesKey("raw_spectral_film_print")
     }
 
     /**
@@ -438,7 +444,10 @@ class UserPreferencesRepository(private val context: Context) {
                     ?: emptyList(),
                 useHdrScreenMode = preferences[USE_HDR_SCREEN_MODE] ?: true,
                 referencePhotoUrl = preferences[REFERENCE_PHOTO_URL],
-                deleteExported = preferences[DELETE_EXPORTED] ?: true
+                deleteExported = preferences[DELETE_EXPORTED] ?: true,
+                rawSpectralFilmEnabled = preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] ?: false,
+                rawSpectralFilmStock = preferences[RAW_SPECTRAL_FILM_STOCK_KEY],
+                rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY]
             )
         }
 
@@ -1379,6 +1388,32 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveDefaultVirtualAperture(aperture: Float) {
         context.dataStore.edit { preferences ->
             preferences[DEFAULT_VIRTUAL_APERTURE] = aperture
+        }
+    }
+
+    suspend fun saveRawSpectralFilmEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] = enabled
+        }
+    }
+
+    suspend fun saveRawSpectralFilmStock(stock: String?) {
+        context.dataStore.edit { preferences ->
+            if (stock != null) {
+                preferences[RAW_SPECTRAL_FILM_STOCK_KEY] = stock
+            } else {
+                preferences.remove(RAW_SPECTRAL_FILM_STOCK_KEY)
+            }
+        }
+    }
+
+    suspend fun saveRawSpectralFilmPrint(print: String?) {
+        context.dataStore.edit { preferences ->
+            if (print != null) {
+                preferences[RAW_SPECTRAL_FILM_PRINT_KEY] = print
+            } else {
+                preferences.remove(RAW_SPECTRAL_FILM_PRINT_KEY)
+            }
         }
     }
 }

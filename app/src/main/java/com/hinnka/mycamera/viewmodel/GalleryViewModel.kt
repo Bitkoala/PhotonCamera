@@ -321,6 +321,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         private set
     var editRawBaselineLutId = MutableStateFlow<String?>(null)
         private set
+    var editRawSpectralFilmEnabled = MutableStateFlow(false)
+        private set
+    var editRawSpectralFilmStock = MutableStateFlow<String?>(null)
+        private set
+    var editRawSpectralFilmPrint = MutableStateFlow<String?>(null)
+        private set
 
     @OptIn(ExperimentalCoroutinesApi::class)
     var editRawBaselineRecipeParams = editRawBaselineLutId.flatMapLatest { id ->
@@ -1038,6 +1044,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawBlackPointCorrection.value = m.rawBlackPointCorrection ?: 0f
             editRawWhitePointCorrection.value = m.rawWhitePointCorrection ?: 0f
             editRawDcpId.value = m.rawDcpId
+            editRawSpectralFilmEnabled.value = m.spectralFilmEnabled
+            editRawSpectralFilmStock.value = m.spectralFilmStock ?: "kodak_portra_400"
+            editRawSpectralFilmPrint.value = m.spectralFilmPrint ?: "kodak_portra_endura"
             _editAiDenoiseStrength.value = if (m.hasAiDenoisedBase) m.aiDenoiseStrength ?: 1.0f else 0.0f
             restoreCropEditState(photo, m)
 
@@ -1609,6 +1618,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             if (!targetPhoto.isVideo) {
                 editRawDcpId.value = metadata.rawDcpId
                 editRawBaselineLutId.value = metadata.baselineLutId
+                editRawSpectralFilmEnabled.value = metadata.spectralFilmEnabled
+                editRawSpectralFilmStock.value = metadata.spectralFilmStock ?: "kodak_portra_400"
+                editRawSpectralFilmPrint.value = metadata.spectralFilmPrint ?: "kodak_portra_endura"
                 restoreCropEditState(targetPhoto, metadata)
                 // 智能初始化：导入的照片默认值为 0，App 拍摄的则回退到当前全局配置
                 editSharpening.value =
@@ -1646,6 +1658,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawDROMode.value = "OFF"
                 editRawDcpId.value = null
                 editRawBaselineLutId.value = null
+                editRawSpectralFilmEnabled.value = false
+                editRawSpectralFilmStock.value = "kodak_portra_400"
+                editRawSpectralFilmPrint.value = "kodak_portra_endura"
                 editComputationalAperture.value = null
                 editFocusPointX.value = null
                 editFocusPointY.value = null
@@ -1683,6 +1698,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawDROMode.value = "OFF"
         editRawDcpId.value = null
         editRawBaselineLutId.value = null
+        editRawSpectralFilmEnabled.value = false
+        editRawSpectralFilmStock.value = null
+        editRawSpectralFilmPrint.value = null
     }
 
     /**
@@ -1799,6 +1817,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val droMode = editRawDROMode.value
         val dcpId = editRawDcpId.value
         val baselineLutId = editRawBaselineLutId.value
+        val spectralFilmEnabled = editRawSpectralFilmEnabled.value
+        val spectralFilmStock = editRawSpectralFilmStock.value
+        val spectralFilmPrint = editRawSpectralFilmPrint.value
 
         viewModelScope.launch {
             val context = getApplication<Application>()
@@ -1818,7 +1839,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     rawDcpId = dcpId,
                     baselineTarget = baselineLutId?.let { BaselineColorCorrectionTarget.RAW },
                     baselineLutId = baselineLutId,
-                    baselineColorRecipeParams = baselineRecipeParams
+                    baselineColorRecipeParams = baselineRecipeParams,
+                    spectralFilmEnabled = spectralFilmEnabled,
+                    spectralFilmStock = spectralFilmStock,
+                    spectralFilmPrint = spectralFilmPrint
                 )
             }
             withContext(Dispatchers.Main) {
@@ -1883,6 +1907,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawBaselineLutSelection(mediaData: MediaData, lutId: String?, onComplete: ((Boolean) -> Unit)? = null) {
         editRawBaselineLutId.value = lutId
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawSpectralFilmEnabled(mediaData: MediaData, enabled: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawSpectralFilmEnabled.value = enabled
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawSpectralFilmStock(mediaData: MediaData, stock: String?, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawSpectralFilmStock.value = stock
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawSpectralFilmPrint(mediaData: MediaData, print: String?, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawSpectralFilmPrint.value = print
         persistRawEditMetadata(mediaData, onComplete)
     }
 

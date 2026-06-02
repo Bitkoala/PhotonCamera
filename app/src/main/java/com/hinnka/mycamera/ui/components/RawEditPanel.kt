@@ -29,6 +29,7 @@ import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
+import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 
 @Composable
 fun RawEditPanel(
@@ -45,6 +46,9 @@ fun RawEditPanel(
     rawDROMode: String,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
+    spectralFilmEnabled: Boolean,
+    spectralFilmStock: String?,
+    spectralFilmPrint: String?,
     onSelectDcp: (String?) -> Unit,
     onImportDcp: () -> Unit,
     onDeleteDcp: (DcpInfo) -> Unit,
@@ -54,6 +58,9 @@ fun RawEditPanel(
     onRawDROModeChange: (String) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
+    onSpectralFilmEnabledChange: (Boolean) -> Unit,
+    onSpectralFilmStockChange: (String?) -> Unit,
+    onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
     onAdjustmentEnd: () -> Unit,
     onOpenBaselineLutSheet: (() -> Unit)? = null,
@@ -65,23 +72,44 @@ fun RawEditPanel(
             .padding(vertical = 16.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        RawDcpSelector(
-            selectedDcpId = selectedDcpId,
-            availableDcps = availableDcps,
-            onSelectDcp = onSelectDcp,
-            onImportDcp = onImportDcp,
-            onDeleteDcp = onDeleteDcp
+        RawSwitchSettingItem(
+            title = stringResource(R.string.settings_spectral_film),
+            description = stringResource(R.string.settings_spectral_film_description),
+            checked = spectralFilmEnabled,
+            onCheckedChange = onSpectralFilmEnabledChange
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        RawBaselineColorCorrectionSelector(
-            selectedLutId = selectedBaselineLutId,
-            availableLuts = availableLuts,
-            thumbnail = thumbnail,
-            onSelectLut = onSelectBaselineLut,
-            onEditRecipe = onEditBaselineRecipe,
-            onOpenSheet = onOpenBaselineLutSheet
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (spectralFilmEnabled) {
+            RawSpectralFilmSelector(
+                selectedFilm = spectralFilmStock,
+                onSelectFilm = onSpectralFilmStockChange
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            RawSpectralPrintSelector(
+                selectedPrint = spectralFilmPrint,
+                onSelectPrint = onSpectralFilmPrintChange
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        } else {
+            RawDcpSelector(
+                selectedDcpId = selectedDcpId,
+                availableDcps = availableDcps,
+                onSelectDcp = onSelectDcp,
+                onImportDcp = onImportDcp,
+                onDeleteDcp = onDeleteDcp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            RawBaselineColorCorrectionSelector(
+                selectedLutId = selectedBaselineLutId,
+                availableLuts = availableLuts,
+                thumbnail = thumbnail,
+                onSelectLut = onSelectBaselineLut,
+                onEditRecipe = onEditBaselineRecipe,
+                onOpenSheet = onOpenBaselineLutSheet
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         RawSwitchSettingItem(
             title = stringResource(R.string.settings_raw_auto_exposure),
             description = stringResource(R.string.settings_raw_auto_exposure_description),
@@ -593,6 +621,226 @@ fun RawBaselineColorCorrectionBottomSheet(
                     enabled = selectedLutId != null
                 ) {
                     Text(stringResource(R.string.settings_baseline_edit_recipe))
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RawSpectralFilmSelector(
+    selectedFilm: String?,
+    onSelectFilm: (String?) -> Unit
+) {
+    var showSheet by remember { mutableStateOf(false) }
+    val displayFilm = selectedFilm?.let { SpectralFilmUiInfo.getFilmDisplayName(it) }
+        ?: stringResource(R.string.none)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showSheet = true }
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_negative_film),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = displayFilm,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.6f)
+        )
+    }
+
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            containerColor = Color(0xFF1E1E1E),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.2f)) }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_negative_film),
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(SpectralFilmUiInfo.availableFilms.size, key = { SpectralFilmUiInfo.availableFilms[it] }) { index ->
+                        val film = SpectralFilmUiInfo.availableFilms[index]
+                        val isSelected = selectedFilm == film
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable {
+                                    onSelectFilm(film)
+                                    showSheet = false
+                                }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = SpectralFilmUiInfo.getFilmDisplayName(film),
+                                color = if (isSelected) Color(0xFFFF6B35) else Color.White,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFF6B35),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RawSpectralPrintSelector(
+    selectedPrint: String?,
+    onSelectPrint: (String?) -> Unit
+) {
+    var showSheet by remember { mutableStateOf(false) }
+    val displayPrint = selectedPrint?.let { SpectralFilmUiInfo.getPrintDisplayName(it) }
+        ?: stringResource(R.string.none)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showSheet = true }
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_print_paper),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = displayPrint,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.6f)
+        )
+    }
+
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            containerColor = Color(0xFF1E1E1E),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.2f)) }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_print_paper),
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(SpectralFilmUiInfo.availablePrints.size, key = { SpectralFilmUiInfo.availablePrints[it] }) { index ->
+                        val print = SpectralFilmUiInfo.availablePrints[index]
+                        val isSelected = selectedPrint == print
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable {
+                                    onSelectPrint(print)
+                                    showSheet = false
+                                }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = SpectralFilmUiInfo.getPrintDisplayName(print),
+                                color = if (isSelected) Color(0xFFFF6B35) else Color.White,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFF6B35),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

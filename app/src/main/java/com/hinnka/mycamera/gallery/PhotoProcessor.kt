@@ -453,7 +453,10 @@ class PhotoProcessor(
             ),
             sharpeningValue = 0.4f,
             denoiseValue = metadata.rawDenoiseValue,
-            rawDcpId = metadata.rawDcpId
+            rawDcpId = metadata.rawDcpId,
+            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            spectralFilmStock = metadata.spectralFilmStock,
+            spectralFilmPrint = metadata.spectralFilmPrint
         ) ?: return@withContext null
         prepareUltraHdrSourceFromRawResult(
             context = context,
@@ -516,7 +519,10 @@ class PhotoProcessor(
                 metadata.droMode
             ),
             denoiseValue = metadata.rawDenoiseValue,
-            rawDcpId = metadata.rawDcpId
+            rawDcpId = metadata.rawDcpId,
+            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            spectralFilmStock = metadata.spectralFilmStock,
+            spectralFilmPrint = metadata.spectralFilmPrint
         )
 
         result = bitmap?.let {

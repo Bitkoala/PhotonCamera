@@ -94,6 +94,7 @@ object RawShaders {
         uniform sampler2D uLensShadingMap;
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
+        uniform sampler3D uSpectralFilmTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
@@ -104,10 +105,12 @@ object RawShaders {
         uniform float uLensShadingPower;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
+        uniform bool uSpectralFilmEnabled;
         uniform ivec3 uDcpHueSatDivisions;
         uniform ivec3 uDcpLookTableDivisions;
         uniform int uDcpHueSatEncoding;
         uniform int uDcpLookTableEncoding;
+        uniform int uSpectralFilmSize;
         
         float luminance(vec3 color) {
             return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
@@ -378,6 +381,33 @@ object RawShaders {
             return color * (newLuma / max(luma, 1e-6));
         }
 
+        vec3 linearToProPhoto(vec3 color) {
+            vec3 clamped = max(color, vec3(0.0));
+            vec3 isHigh = step(vec3(0.001953125), clamped);
+            vec3 lowPart = 16.0 * clamped;
+            vec3 highPart = pow(clamped, vec3(1.0 / 1.8));
+            return mix(lowPart, highPart, isHigh);
+        }
+
+        vec3 proPhotoToLinear(vec3 color) {
+            vec3 clamped = clamp(color, 0.0, 1.0);
+            vec3 isHigh = step(vec3(0.03125), clamped);
+            vec3 lowPart = clamped / 16.0;
+            vec3 highPart = pow(clamped, vec3(1.8));
+            return mix(lowPart, highPart, isHigh);
+        }
+
+        vec3 applySpectralFilm(vec3 color) {
+            if (!uSpectralFilmEnabled || uSpectralFilmSize <= 1) {
+                return color;
+            }
+            vec3 normalizedColor = color / 2.88;
+            vec3 encodedColor = linearToProPhoto(normalizedColor);
+            vec3 lutCoord = clamp(encodedColor, 0.0, 1.0);
+            vec3 lutResult = texture(uSpectralFilmTexture, lutCoord).rgb;
+            return proPhotoToLinear(lutResult);
+        }
+
         vec3 combinedLocalToneMapping(vec3 sceneLinear, float originalLuma) {
             float toneInputLuma = luminance(sceneLinear);
             float baseLuma = uHighlightBaseEnabled
@@ -426,11 +456,15 @@ object RawShaders {
                 color = applyDcpHsvMap(color, uDcpLookTableTexture, uDcpLookTableDivisions, uDcpLookTableEncoding);
             }
 
-            float originalLuma = luminance(color);
-            color = highlightRolloff(color);
-            color = combinedLocalToneMapping(color, originalLuma);
-            
-            color = applyAdobeCurve(color);
+            if (uSpectralFilmEnabled) {
+                color *= 2.0;
+                color = applySpectralFilm(color);
+            } else {
+                float originalLuma = luminance(color);
+                color = highlightRolloff(color);
+                color = combinedLocalToneMapping(color, originalLuma);
+                color = applyAdobeCurve(color);
+            }
 
             color = uOutputTransform * color;
             color = linearToSrgb(color);

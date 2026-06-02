@@ -759,6 +759,10 @@
     <string name="settings_raw_nlm_gain_factor">RAW NLM 增益响应</string>
     <string name="settings_raw_nlm_noise_factor">降噪</string>
     <string name="settings_raw_exposure_compensation">曝光补偿</string>
+    <string name="settings_spectral_film">光谱胶片模拟</string>
+    <string name="settings_spectral_film_description">模拟经典底片和相纸的色彩响应与物理特征曲线。</string>
+    <string name="settings_negative_film">底片胶卷</string>
+    <string name="settings_print_paper">印相纸张</string>
     <string name="settings_raw_auto_exposure">自动曝光</string>
     <string name="settings_raw_auto_exposure_description">显影时对 RAW 线性数据自动测光并应用曝光补偿。</string>
     <string name="settings_raw_min_shutter_speed">最低快门速度</string>

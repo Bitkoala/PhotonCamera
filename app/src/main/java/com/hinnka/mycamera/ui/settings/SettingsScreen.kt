@@ -246,6 +246,9 @@ fun SettingsScreen(
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
+    val rawSpectralFilmEnabled by viewModel.rawSpectralFilmEnabled.collectAsState()
+    val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
+    val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
     val availableDcps = viewModel.availableDcps
     val availableLuts = viewModel.availableLutList
     val previewThumbnail = viewModel.previewThumbnail
@@ -1250,6 +1253,9 @@ fun SettingsScreen(
                         rawDROMode = droMode,
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
+                        spectralFilmEnabled = rawSpectralFilmEnabled,
+                        spectralFilmStock = rawSpectralFilmStock ?: "kodak_portra_400",
+                        spectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
                         onSelectDcp = { viewModel.setRawDcpId(it) },
                         onImportDcp = { importDcpLauncher.launch(arrayOf("*/*")) },
                         onDeleteDcp = { dcp ->
@@ -1267,6 +1273,15 @@ fun SettingsScreen(
                         onRawDROModeChange = { viewModel.setDroMode(it) },
                         onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
+                        onSpectralFilmEnabledChange = { enabled ->
+                            if (enabled) {
+                                if (rawSpectralFilmStock == null) viewModel.setRawSpectralFilmStock("kodak_portra_400")
+                                if (rawSpectralFilmPrint == null) viewModel.setRawSpectralFilmPrint("kodak_portra_endura")
+                            }
+                            viewModel.setRawSpectralFilmEnabled(enabled)
+                        },
+                        onSpectralFilmStockChange = { viewModel.setRawSpectralFilmStock(it) },
+                        onSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
                         onAdjustmentStart = { isRawSliderAdjusting = true },
                         onAdjustmentEnd = { commitRawSliderValues() }
                     )

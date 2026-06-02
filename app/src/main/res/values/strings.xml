@@ -744,6 +744,10 @@
     <string name="settings_raw_nlm_gain_factor">RAW NLM Gain Response</string>
     <string name="settings_raw_nlm_noise_factor">Denoise</string>
     <string name="settings_raw_exposure_compensation">Exposure Compensation</string>
+    <string name="settings_spectral_film">Spectral Film Simulation</string>
+    <string name="settings_spectral_film_description">Simulate classic negative film and print paper color curves.</string>
+    <string name="settings_negative_film">Negative Film</string>
+    <string name="settings_print_paper">Print Paper</string>
     <string name="settings_raw_auto_exposure">Auto Exposure</string>
     <string name="settings_raw_auto_exposure_description">Automatically meters RAW linear data during development and applies exposure compensation.</string>
     <string name="settings_raw_min_shutter_speed">Minimum Shutter Speed</string>

@@ -1209,7 +1209,10 @@ object GalleryManager {
                 rawDROMode = droMode,
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
-                rawDcpId = metadata.rawDcpId
+                rawDcpId = metadata.rawDcpId,
+                spectralFilmEnabled = metadata.spectralFilmEnabled,
+                spectralFilmStock = metadata.spectralFilmStock,
+                spectralFilmPrint = metadata.spectralFilmPrint
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
@@ -1783,7 +1786,10 @@ object GalleryManager {
                 ),
                 sharpeningValue = 0.4f,
                 denoiseValue = metadata.rawDenoiseValue,
-                rawDcpId = metadata.rawDcpId
+                rawDcpId = metadata.rawDcpId,
+                spectralFilmEnabled = metadata.spectralFilmEnabled,
+                spectralFilmStock = metadata.spectralFilmStock,
+                spectralFilmPrint = metadata.spectralFilmPrint
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
@@ -2749,6 +2755,9 @@ object GalleryManager {
                         sharpeningValue = 0.4f,
                         denoiseValue = updatedMetadata.rawDenoiseValue,
                         rawDcpId = updatedMetadata.rawDcpId,
+                        spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                        spectralFilmStock = updatedMetadata.spectralFilmStock,
+                        spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                         onMetadata = { raw ->
                             updatedMetadata = updatedMetadata.merge(raw)
                         }
@@ -2886,6 +2895,9 @@ object GalleryManager {
                     sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
                     denoiseValue = (updatedMetadata ?: MediaMetadata()).rawDenoiseValue,
                     rawDcpId = updatedMetadata?.rawDcpId,
+                    spectralFilmEnabled = updatedMetadata?.spectralFilmEnabled ?: false,
+                    spectralFilmStock = updatedMetadata?.spectralFilmStock,
+                    spectralFilmPrint = updatedMetadata?.spectralFilmPrint,
                     onMetadata = { raw ->
                         updatedMetadata = updatedMetadata?.merge(raw) ?: MediaMetadata().merge(raw)
                     }

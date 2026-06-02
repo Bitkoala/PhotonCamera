@@ -230,6 +230,8 @@ class RawDemosaicProcessor {
     private var dcpToneCurveTextureId = 0
     private var dcpHueSatTextureId = 0
     private var dcpLookTableTextureId = 0
+    private var spectralFilmTextureId = 0
+    private var spectralFilmTextureKey: String? = null
     private var dummyDcp3DTextureId = 0
     private var dummyDcpToneCurveTextureId = 0
 
@@ -323,6 +325,9 @@ class RawDemosaicProcessor {
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
+        spectralFilmEnabled: Boolean = false,
+        spectralFilmStock: String? = null,
+        spectralFilmPrint: String? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -348,6 +353,9 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan,
+                spectralFilmEnabled = spectralFilmEnabled,
+                spectralFilmStock = spectralFilmStock,
+                spectralFilmPrint = spectralFilmPrint,
                 dngFile = dngFile,
                 onMetadata = onMetadata
             )?.sdrBitmap
@@ -381,6 +389,9 @@ class RawDemosaicProcessor {
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
+        spectralFilmEnabled: Boolean = false,
+        spectralFilmStock: String? = null,
+        spectralFilmPrint: String? = null,
     ): Bitmap? = withContext(glDispatcher) {
         try {
             if (!isInitialized) {
@@ -410,7 +421,10 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
-                dcpRenderPlan = dcpRenderPlan
+                dcpRenderPlan = dcpRenderPlan,
+                spectralFilmEnabled = spectralFilmEnabled,
+                spectralFilmStock = spectralFilmStock,
+                spectralFilmPrint = spectralFilmPrint
             )?.sdrBitmap
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to process RAW buffer", e)
@@ -435,6 +449,9 @@ class RawDemosaicProcessor {
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
+        spectralFilmEnabled: Boolean = false,
+        spectralFilmStock: String? = null,
+        spectralFilmPrint: String? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -460,6 +477,9 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan,
+                spectralFilmEnabled = spectralFilmEnabled,
+                spectralFilmStock = spectralFilmStock,
+                spectralFilmPrint = spectralFilmPrint,
                 dngFile = dngFile,
                 onMetadata = onMetadata,
                 includeHdrReference = true
@@ -495,6 +515,9 @@ class RawDemosaicProcessor {
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
+        spectralFilmEnabled: Boolean = false,
+        spectralFilmStock: String? = null,
+        spectralFilmPrint: String? = null,
         dngFile: File? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
         includeHdrReference: Boolean = false
@@ -553,6 +576,11 @@ class RawDemosaicProcessor {
                     }
                 }
             }
+        }
+        val spectralFilmLut = if (spectralFilmEnabled && spectralFilmStock != null && spectralFilmPrint != null) {
+            SpectralFilmProfile.loadCombinedLut(context, spectralFilmStock, spectralFilmPrint)
+        } else {
+            null
         }
 
         PLog.d(TAG, "Processing RAW image: ${actualWidth}x${actualHeight}")
@@ -863,6 +891,7 @@ class RawDemosaicProcessor {
                 metadata = actualMetadata,
                 inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
+                spectralFilmLut = spectralFilmLut,
                 highlightWhitePoint = highlightWhitePoint,
                 highlightExposureGain = if (highlightWhitePoint > 1f) 2.0f.pow(effectiveExposureCompensation) else 1f,
                 highlightBaseTextureId = highlightBaseTextureId
@@ -2593,6 +2622,70 @@ class RawDemosaicProcessor {
         checkGlError("bindDcpCombinedResources")
     }
 
+    private fun uploadSpectralFilmTexture(lut: SpectralFilmLut): Int {
+        val key = "${lut.sourceKey}:${lut.size}:${lut.values.size}"
+        if (spectralFilmTextureId == 0) {
+            val textures = IntArray(1)
+            GLES30.glGenTextures(1, textures, 0)
+            spectralFilmTextureId = textures[0]
+            spectralFilmTextureKey = null
+        }
+        if (spectralFilmTextureKey == key) {
+            return spectralFilmTextureId
+        }
+
+        val buffer = ByteBuffer.allocateDirect(lut.values.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+        buffer.put(lut.values)
+        buffer.position(0)
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, spectralFilmTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_R, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexImage3D(
+            GLES30.GL_TEXTURE_3D,
+            0,
+            GLES30.GL_RGBA16F,
+            lut.size,
+            lut.size,
+            lut.size,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_FLOAT,
+            buffer
+        )
+        spectralFilmTextureKey = key
+        PLog.d(
+            TAG,
+            "Uploaded spectral film LUT: ${lut.name}, type=${lut.type}, refLight=${lut.referenceIlluminant}, viewLight=${lut.viewingIlluminant}"
+        )
+        checkGlError("uploadSpectralFilmTexture")
+        return spectralFilmTextureId
+    }
+
+    private fun bindSpectralFilmCombinedResource(lut: SpectralFilmLut?) {
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmTexture"), 6)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmEnabled"),
+            if (lut != null) 1 else 0
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmSize"),
+            lut?.size ?: 1
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE6)
+        if (lut != null) {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, uploadSpectralFilmTexture(lut))
+        } else {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, ensureDummyDcp3DTexture())
+        }
+        checkGlError("bindSpectralFilmCombinedResource")
+    }
+
     /**
      * Combined Processing Pass: ToneMap + LUT + Sharpening
      */
@@ -2600,6 +2693,7 @@ class RawDemosaicProcessor {
         metadata: RawMetadata,
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
+        spectralFilmLut: SpectralFilmLut? = null,
         viewportWidth: Int = metadata.width,
         viewportHeight: Int = metadata.height,
         highlightWhitePoint: Float = 0f,
@@ -2672,6 +2766,7 @@ class RawDemosaicProcessor {
         )
 
         bindDcpCombinedResources(dcpRenderPlan)
+        bindSpectralFilmCombinedResource(spectralFilmLut)
 
         GLES30.glUniformMatrix3fv(
             GLES30.glGetUniformLocation(combinedProgram, "uOutputTransform"),
@@ -3417,6 +3512,11 @@ class RawDemosaicProcessor {
         if (dcpToneCurveTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dcpToneCurveTextureId), 0)
         if (dcpHueSatTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dcpHueSatTextureId), 0)
         if (dcpLookTableTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dcpLookTableTextureId), 0)
+        if (spectralFilmTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(spectralFilmTextureId), 0)
+            spectralFilmTextureId = 0
+            spectralFilmTextureKey = null
+        }
         if (dummyDcp3DTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dummyDcp3DTextureId), 0)
         if (dummyDcpToneCurveTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dummyDcpToneCurveTextureId), 0)
         if (outputTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(outputTextureId), 0)

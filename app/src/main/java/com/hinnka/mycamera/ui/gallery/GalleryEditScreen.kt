@@ -185,6 +185,9 @@ fun GalleryEditScreen(
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
     val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
     val editRawBaselineRecipeParams by viewModel.editRawBaselineRecipeParams.collectAsState()
+    val editRawSpectralFilmEnabled by viewModel.editRawSpectralFilmEnabled.collectAsState()
+    val editRawSpectralFilmStock by viewModel.editRawSpectralFilmStock.collectAsState()
+    val editRawSpectralFilmPrint by viewModel.editRawSpectralFilmPrint.collectAsState()
     val availableDcps = viewModel.availableDcps
     
     val editComputationalAperture by viewModel.editComputationalAperture.collectAsState()
@@ -1123,6 +1126,9 @@ fun GalleryEditScreen(
                                         rawDROMode = editRawDROMode,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
+                                        spectralFilmEnabled = editRawSpectralFilmEnabled,
+                                        spectralFilmStock = editRawSpectralFilmStock,
+                                        spectralFilmPrint = editRawSpectralFilmPrint,
                                         onSelectDcp = { dcpId ->
                                             viewModel.saveRawDcpSelection(currentPhoto, dcpId) {
                                                 requestRawPreviewRefresh()
@@ -1165,6 +1171,21 @@ fun GalleryEditScreen(
                                         },
                                         onRawWhitePointCorrectionChange = {
                                             viewModel.saveRawWhitePointCorrectionValue(currentPhoto, it)
+                                        },
+                                        onSpectralFilmEnabledChange = {
+                                            viewModel.saveRawSpectralFilmEnabled(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
+                                        onSpectralFilmStockChange = {
+                                            viewModel.saveRawSpectralFilmStock(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
+                                        onSpectralFilmPrintChange = {
+                                            viewModel.saveRawSpectralFilmPrint(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
                                         },
                                         onAdjustmentStart = { },
                                         onAdjustmentEnd = {

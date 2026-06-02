@@ -261,7 +261,10 @@ object GalleryMediaStore {
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawDROEnabled = false,
             cameraId = metadata.cameraId,
-            applyEffectsToVideo = metadata.applyEffectsToVideo
+            applyEffectsToVideo = metadata.applyEffectsToVideo,
+            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            spectralFilmStock = metadata.spectralFilmStock,
+            spectralFilmPrint = metadata.spectralFilmPrint
         )
     }
 
@@ -387,7 +390,10 @@ object GalleryMediaStore {
             rawBlackLevelMode = rawBlackLevelMode,
             rawCustomBlackLevel = rawCustomBlackLevel,
             cameraId = cameraId,
-            applyEffectsToVideo = applyEffectsToVideo
+            applyEffectsToVideo = applyEffectsToVideo,
+            spectralFilmEnabled = spectralFilmEnabled,
+            spectralFilmStock = spectralFilmStock,
+            spectralFilmPrint = spectralFilmPrint
         )
     }
 
