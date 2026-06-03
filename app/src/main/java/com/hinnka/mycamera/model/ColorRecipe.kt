@@ -17,7 +17,7 @@ data class ColorRecipeParams(
     val temperature: Float = 0f,    // -1.0 ~ +1.0 (色温，负值偏冷，正值偏暖)
     val tint: Float = 0f,           // -1.0 ~ +1.0 (色调，负值偏绿，正值偏品红)
     val fade: Float = 0f,           // 0.0 ~ 1.0 (褪色效果，0为无褪色)
-    val color: Float = 0f,       // -1.0 ~ 1.0 (蓝色增强，0为无调整)
+    val color: Float = 0f,       // -1.0 ~ 1.0 (色彩密度，0为无调整)
     val highlights: Float = 0f,     // -1.0 ~ +1.0 (高光调整，0为无调整)
     val shadows: Float = 0f,        // -1.0 ~ +1.0 (阴影调整，0为无调整)
     val toneToe: Float = 0f,        // -1.0 ~ +1.0 (影调曲线暗部塑形)

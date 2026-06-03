@@ -36,6 +36,7 @@ import com.hinnka.mycamera.lut.getBaselineColorCorrectionConfig
 import com.hinnka.mycamera.lut.creator.LutGenerator
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.LutSelectorMode
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.phantom.PhantomWidgetProvider
 import com.hinnka.mycamera.raw.ColorSpace
@@ -57,6 +58,7 @@ import com.hinnka.mycamera.video.VideoFpsPreset
 import com.hinnka.mycamera.video.VideoLogProfile
 import com.hinnka.mycamera.video.VideoResolutionPreset
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.*
 import java.io.File
@@ -162,6 +164,289 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         initialValue = ColorRecipeParams.DEFAULT
     )
 
+    private fun recipeFlowFor(lutId: String): StateFlow<ColorRecipeParams> {
+        return contentRepository.lutManager.getColorRecipeParams(lutId).stateIn(
+            viewModelScope,
+            started = SharingStarted.Lazily,
+            initialValue = ColorRecipeParams.DEFAULT,
+        )
+    }
+
+    val currentEffectParams: StateFlow<com.hinnka.mycamera.model.EffectParams> = userPreferencesRepository.userPreferences
+        .map { it.activeEffectParams }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.model.EffectParams.DEFAULT)
+
+    val customPresets: StateFlow<List<com.hinnka.mycamera.model.CameraPreset>> = userPreferencesRepository.userPreferences
+        .map { it.customPresets }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // 合并内置预设与用户自定义预设
+    val allPresets: StateFlow<List<com.hinnka.mycamera.model.CameraPreset>> = userPreferencesRepository.userPreferences
+        .map { prefs ->
+            val deletedIds = prefs.deletedBuiltInIds.split(",").filter { it.isNotEmpty() }.toSet()
+            val builtInsById = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS.associateBy { it.id }
+            val orderedPresets = prefs.customPresets
+                .filter { it.id !in deletedIds }
+                .map { saved ->
+                    builtInsById[saved.id]?.let { builtin ->
+                        builtin.copy(
+                            name = saved.name,
+                            lutId = saved.lutId,
+                            colorRecipe = saved.colorRecipe,
+                            effects = saved.effects,
+                            aspectRatio = saved.aspectRatio,
+                            useRaw = saved.useRaw,
+                            useMFNR = saved.useMFNR,
+                            useMFSR = saved.useMFSR,
+                            frameId = saved.frameId,
+                            rawDcpId = saved.rawDcpId,
+                            rawSpectralFilmEnabled = saved.rawSpectralFilmEnabled,
+                            rawSpectralFilmStock = saved.rawSpectralFilmStock,
+                            rawSpectralFilmPrint = saved.rawSpectralFilmPrint,
+                            rawDROMode = saved.rawDROMode,
+                            jpgBaselineLutId = saved.jpgBaselineLutId,
+                            rawBaselineLutId = saved.rawBaselineLutId,
+                            phantomBaselineLutId = saved.phantomBaselineLutId
+                        )
+                    } ?: saved
+                }
+            val orderedIds = orderedPresets.map { it.id }.toSet()
+            val missingBuiltIns = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS
+                .filter { it.id !in deletedIds && it.id !in orderedIds }
+            val visibleBuiltInIds = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS
+                .filter { it.id !in deletedIds }
+                .map { it.id }
+                .toSet()
+            val hasCompleteSavedBuiltInOrder = visibleBuiltInIds.isNotEmpty() &&
+                visibleBuiltInIds.all { builtInId -> orderedPresets.any { it.id == builtInId } }
+
+            if (hasCompleteSavedBuiltInOrder) {
+                orderedPresets + missingBuiltIns
+            } else {
+                val overridesById = orderedPresets.associateBy { it.id }
+                val builtInsWithOverrides = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS
+                    .filter { it.id !in deletedIds }
+                    .map { builtin -> overridesById[builtin.id] ?: builtin }
+                val customs = orderedPresets.filter { it.id !in visibleBuiltInIds }
+                builtInsWithOverrides + customs
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS)
+
+    val activePresetId: StateFlow<String?> = userPreferencesRepository.userPreferences
+        .map { it.activePresetId }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    var draftPreset: com.hinnka.mycamera.model.CameraPreset? = null
+
+    fun prepareCurrentSettingsPresetDraft(name: String): com.hinnka.mycamera.model.CameraPreset {
+        return com.hinnka.mycamera.model.CameraPreset(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            lutId = currentLutId.value,
+            colorRecipe = currentRecipeParams.value,
+            effects = currentEffectParams.value,
+            aspectRatio = state.value.aspectRatio.name,
+            useRaw = useRaw.value,
+            useMFNR = useMFNR.value,
+            useMFSR = useMFSR.value,
+            frameId = currentFrameId,
+            rawDcpId = rawDcpId.value,
+            rawSpectralFilmEnabled = rawSpectralFilmEnabled.value,
+            rawSpectralFilmStock = rawSpectralFilmStock.value,
+            rawSpectralFilmPrint = rawSpectralFilmPrint.value,
+            rawDROMode = droMode.value,
+            jpgBaselineLutId = jpgBaselineLutId.value,
+            rawBaselineLutId = rawBaselineLutId.value,
+            phantomBaselineLutId = phantomBaselineLutId.value,
+            isBuiltIn = false
+        ).also {
+            draftPreset = it
+        }
+    }
+
+    fun getMergedRecipeParams(recipe: ColorRecipeParams = currentRecipeParams.value): ColorRecipeParams {
+        return currentEffectParams.value.applyTo(recipe)
+    }
+
+    fun setEffectParams(effects: com.hinnka.mycamera.model.EffectParams) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveActiveEffectParams(effects)
+        }
+    }
+
+    fun applyPreset(preset: com.hinnka.mycamera.model.CameraPreset?) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveActivePresetId(preset?.id)
+            if (preset == null) {
+                // 恢复默认状态
+                setLut(null)
+                userPreferencesRepository.saveRawDcpId(null)
+                userPreferencesRepository.saveRawSpectralFilmEnabled(false)
+                userPreferencesRepository.saveDroMode("OFF")
+                userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.JPG, null)
+                userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.RAW, null)
+                userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.PHANTOM, null)
+                return@launch
+            }
+
+            // 1. 保存色彩配方
+            val recipeLutId = preset.lutId ?: "none"
+            contentRepository.lutManager.saveColorRecipeParams(recipeLutId, preset.colorRecipe)
+            // 2. 应用 Lut
+            setLut(preset.lutId)
+
+            // 3. 应用独立物理效果
+            userPreferencesRepository.saveActiveEffectParams(preset.effects)
+
+            // 4. 应用拍摄参数 (全量覆盖以消除上一个预设残留)
+            val ratioStr = preset.aspectRatio
+            try {
+                val ratio = AspectRatio.valueOf(ratioStr)
+                cameraController.setAspectRatio(ratio)
+                reopenCamera()
+                userPreferencesRepository.saveAspectRatio(ratio.name)
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to apply preset aspectRatio: $ratioStr", e)
+            }
+
+            userPreferencesRepository.saveUseRaw(preset.useRaw)
+            userPreferencesRepository.setUseMFNR(preset.useMFNR)
+            userPreferencesRepository.saveUseMFSR(preset.useMFSR)
+            currentFrameId = preset.frameId
+            userPreferencesRepository.saveFrameConfig(preset.frameId)
+
+            // 5. 应用 Quick RAW 状态
+            userPreferencesRepository.saveRawDcpId(preset.rawDcpId)
+            userPreferencesRepository.saveRawSpectralFilmEnabled(preset.rawSpectralFilmEnabled)
+            userPreferencesRepository.saveRawSpectralFilmStock(preset.rawSpectralFilmStock)
+            userPreferencesRepository.saveRawSpectralFilmPrint(preset.rawSpectralFilmPrint)
+            userPreferencesRepository.saveDroMode(preset.rawDROMode)
+
+            // 6. 应用基准色彩校正
+            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.JPG, preset.jpgBaselineLutId)
+            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.RAW, preset.rawBaselineLutId)
+            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.PHANTOM, preset.phantomBaselineLutId)
+        }
+    }
+
+    fun createOrUpdatePreset(
+        name: String,
+        lutId: String?,
+        recipe: ColorRecipeParams,
+        effects: com.hinnka.mycamera.model.EffectParams,
+        aspectRatio: String = AspectRatio.RATIO_4_3.name,
+        useRaw: Boolean = false,
+        useMFNR: Boolean = false,
+        useMFSR: Boolean = false,
+        frameId: String? = currentFrameId,
+        existingId: String? = null
+    ) {
+        viewModelScope.launch {
+            val currentList = customPresets.value.toMutableList()
+            val presetId = existingId ?: UUID.randomUUID().toString()
+            val newPreset = com.hinnka.mycamera.model.CameraPreset(
+                id = presetId,
+                name = name,
+                lutId = lutId,
+                colorRecipe = recipe,
+                effects = effects,
+                aspectRatio = aspectRatio,
+                useRaw = useRaw,
+                useMFNR = useMFNR,
+                useMFSR = useMFSR,
+                frameId = frameId,
+                rawDcpId = rawDcpId.value,
+                rawSpectralFilmEnabled = rawSpectralFilmEnabled.value,
+                rawSpectralFilmStock = rawSpectralFilmStock.value,
+                rawSpectralFilmPrint = rawSpectralFilmPrint.value,
+                rawDROMode = droMode.value,
+                jpgBaselineLutId = jpgBaselineLutId.value,
+                rawBaselineLutId = rawBaselineLutId.value,
+                phantomBaselineLutId = phantomBaselineLutId.value,
+                isBuiltIn = false
+            )
+
+            val index = currentList.indexOfFirst { it.id == presetId }
+            if (index >= 0) {
+                currentList[index] = newPreset
+            } else {
+                currentList.add(newPreset)
+            }
+            userPreferencesRepository.saveCustomPresets(currentList)
+            userPreferencesRepository.saveActivePresetId(presetId)
+        }
+    }
+
+    fun savePreset(preset: com.hinnka.mycamera.model.CameraPreset) {
+        viewModelScope.launch {
+            val currentList = customPresets.value.toMutableList()
+            val index = currentList.indexOfFirst { it.id == preset.id }
+            if (index >= 0) {
+                currentList[index] = preset
+            } else {
+                currentList.add(preset)
+            }
+            userPreferencesRepository.saveCustomPresets(currentList)
+            userPreferencesRepository.saveActivePresetId(preset.id)
+        }
+    }
+
+    fun deletePreset(presetId: String) {
+        viewModelScope.launch {
+            val currentList = customPresets.value.toMutableList()
+            currentList.removeAll { it.id == presetId }
+            userPreferencesRepository.saveCustomPresets(currentList)
+
+            // 如果删除的是内置预设，将其加入 deletedBuiltInIds
+            val isBuiltIn = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS.any { it.id == presetId }
+            if (isBuiltIn) {
+                val currentDeleted = userPreferencesRepository.userPreferences.first().deletedBuiltInIds
+                val deletedList = currentDeleted.split(",").filter { it.isNotEmpty() }.toMutableList()
+                if (presetId !in deletedList) {
+                    deletedList.add(presetId)
+                    userPreferencesRepository.saveDeletedBuiltInIds(deletedList.joinToString(","))
+                }
+            }
+
+            if (activePresetId.value == presetId) {
+                userPreferencesRepository.saveActivePresetId(null)
+            }
+        }
+    }
+
+    fun renamePreset(presetId: String, newName: String) {
+        viewModelScope.launch {
+            val currentList = customPresets.value.toMutableList()
+            val index = currentList.indexOfFirst { it.id == presetId }
+            if (index >= 0) {
+                currentList[index] = currentList[index].copy(name = newName)
+            } else {
+                // 它是内置预设，克隆并保存到 customPresets 中
+                val builtin = com.hinnka.mycamera.model.CameraPreset.BUILT_IN_PRESETS.find { it.id == presetId }
+                if (builtin != null) {
+                    currentList.add(builtin.copy(name = newName))
+                }
+            }
+            userPreferencesRepository.saveCustomPresets(currentList)
+        }
+    }
+
+    fun resetToDefaultPresets() {
+        viewModelScope.launch {
+            userPreferencesRepository.saveDeletedBuiltInIds("")
+            val currentList = customPresets.value.toMutableList()
+            currentList.removeAll { it.isBuiltIn || it.id.startsWith("builtin_") }
+            userPreferencesRepository.saveCustomPresets(currentList)
+        }
+    }
+
+    fun savePresetOrder(presets: List<com.hinnka.mycamera.model.CameraPreset>) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveCustomPresets(presets)
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val currentBaselineRecipeParams: StateFlow<ColorRecipeParams> =
         userPreferencesRepository.userPreferences.flatMapLatest { prefs ->
@@ -264,8 +549,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val hiddenFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.hiddenFocalLengths }
     val customLensIds: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.customLensIds }
     val lensIdBlacklist: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.lensIdBlacklist }
-    val userPreferences: StateFlow<com.hinnka.mycamera.data.UserPreferences> = userPreferencesRepository.userPreferences
-        .stateIn(viewModelScope, SharingStarted.Eagerly, com.hinnka.mycamera.data.UserPreferences())
+    val userPreferences: StateFlow<UserPreferences> = userPreferencesRepository.userPreferences
+        .stateIn(viewModelScope, SharingStarted.Eagerly, UserPreferences())
     val jpgBaselineLutId: StateFlow<String?> = userPreferencesRepository.userPreferences
         .map { it.jpgBaselineLutId }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -317,7 +602,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val exportDngWithRawExport: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.exportDngWithRawExport }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    var availableDcps: List<com.hinnka.mycamera.raw.DcpInfo> by mutableStateOf(emptyList())
+    var availableDcps: List<DcpInfo> by mutableStateOf(emptyList())
         private set
     val useMFNR: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useMFNR }
@@ -797,7 +1082,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun setRawBaselineLutId(lutId: String?) {
         viewModelScope.launch {
-            userPreferencesRepository.saveBaselineLutConfig(com.hinnka.mycamera.lut.BaselineColorCorrectionTarget.RAW, lutId)
+            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.RAW, lutId)
         }
     }
     fun setRawSpectralFilmEnabled(enabled: Boolean) {
@@ -849,7 +1134,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPreferencesRepository.saveRawCustomBlackLevel(state.value.currentCameraId, value)
         }
     }
-    fun importRawDcp(uri: android.net.Uri, onComplete: (Boolean) -> Unit) {
+    fun importRawDcp(uri: Uri, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
             val success = contentRepository.getCustomImportManager().importDcp(uri) != null
             if (success) {
@@ -1014,7 +1299,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return MediaMetadata(
             lutId = lutIdToSave,
             frameId = frameIdToSave,
-            colorRecipeParams = currentRecipeParams.value,
+            colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,
             baselineLutId = baselineMetadata?.second,
             baselineColorRecipeParams = baselineMetadata?.third,
@@ -1101,7 +1386,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun resolveBaselineMetadata(
         target: BaselineColorCorrectionTarget,
-        userPrefs: com.hinnka.mycamera.data.UserPreferences? = null
+        userPrefs: UserPreferences? = null
     ): Triple<BaselineColorCorrectionTarget, String, ColorRecipeParams>? {
         val preferences = userPrefs ?: userPreferencesRepository.userPreferences.firstOrNull() ?: return null
         val baselineLutId = when (target) {
@@ -1124,7 +1409,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun defaultHdrEffectEnabled(
         hasEmbeddedGainmap: Boolean,
-        userPrefs: com.hinnka.mycamera.data.UserPreferences?
+        userPrefs: UserPreferences?
     ): Boolean {
         if (hasEmbeddedGainmap) return true
         return userPrefs?.autoEnableHdr ?: false
@@ -1724,7 +2009,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraController.setAwbTemperature(kelvin)
     }
 
-    fun setMeteringMode(mode: com.hinnka.mycamera.camera.MeteringMode) {
+    fun setMeteringMode(mode: MeteringMode) {
         cameraController.setMeteringMode(mode)
         viewModelScope.launch {
             userPreferencesRepository.saveMeteringMode(mode)
@@ -1820,6 +2105,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     val categoryOrder: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.categoryOrder }
 
+    val lutSelectorMode: StateFlow<LutSelectorMode> = userPreferencesRepository.userPreferences
+        .map { it.lutSelectorMode }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, LutSelectorMode.Style)
+
     /**
      * 保存滤镜排序顺序
      */
@@ -1847,13 +2136,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setLutSelectorMode(mode: LutSelectorMode) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveLutSelectorMode(mode)
+        }
+    }
+
     // ==================== LUT 相关方法 ====================
 
     /**
      * 设置当前 LUT
      */
     fun setLut(lutId: String?, persist: Boolean = true) {
-        currentLutId.value = lutId ?: "none"
+        val normalizedLutId = lutId ?: "none"
+        currentLutId.value = normalizedLutId
+        currentRecipeParams = recipeFlowFor(normalizedLutId)
         if (lutId == null || lutId == "none") {
             currentLutConfig = null
             // LUT 已禁用，通知相机控制器
@@ -1880,11 +2177,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 currentLutConfig = loadedLut
-                currentRecipeParams = contentRepository.lutManager.getColorRecipeParams(lutId).stateIn(
-                    viewModelScope,
-                    started = SharingStarted.Lazily,
-                    initialValue = ColorRecipeParams.DEFAULT,
-                )
                 cameraController.setLogLutActive(loadedLut?.curve?.isLog == true)
                 cameraController.setLutEnabled(loadedLut != null)
             }
@@ -1916,7 +2208,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return userHlg || logLutHlg || videoLogHlg
     }
 
-    private fun shouldTreatPreviewAsHlgInput(currentState: com.hinnka.mycamera.camera.CameraState): Boolean {
+    private fun shouldTreatPreviewAsHlgInput(currentState: CameraState): Boolean {
         return hlgHardwareCompatibilityEnabled.value && currentState.isHLG
     }
 
@@ -2150,11 +2442,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraController.updateHighlightPoint(x, y)
     }
 
-    fun handleDepthMapUpdate(bitmap: android.graphics.Bitmap) {
+    fun handleDepthMapUpdate(bitmap: Bitmap) {
         cameraController.previewDepthProcessor.processBitmap(bitmap)
     }
 
-    fun handleAiFocusInputUpdate(bitmap: android.graphics.Bitmap) {
+    fun handleAiFocusInputUpdate(bitmap: Bitmap) {
         if (isAiFocusBusy) return
         if (!state.value.isAutoFocus || state.value.isFocusing) return
         cameraController.previewAiFocusProcessor.targetMode = aiFocusTargetMode.value
@@ -2163,7 +2455,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             viewModelScope.launch(Dispatchers.Main) {
                 val currentState = state.value
                 if (currentState.focusPoint != null &&
-                    currentState.focusPointSource == com.hinnka.mycamera.camera.FocusPointSource.MANUAL
+                    currentState.focusPointSource == FocusPointSource.MANUAL
                 ) {
                     return@launch
                 }
@@ -2999,7 +3291,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
                 frameId = frameIdToSave,
-                colorRecipeParams = currentRecipeParams.value,
+                colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
                 baselineLutId = baselineMetadata?.second,
                 baselineColorRecipeParams = baselineMetadata?.third,
@@ -3149,8 +3441,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 height = bitmap.height,
                 ratio = mapVideoAspectRatioToPhotoAspectRatio(currentState.videoConfig.aspectRatio),
                 rotation = 0,
-                deviceModel = android.os.Build.MODEL,
-                brand = android.os.Build.MANUFACTURER,
+                deviceModel = Build.MODEL,
+                brand = Build.MANUFACTURER,
                 dateTaken = System.currentTimeMillis(),
                 latitude = currentState.latitude,
                 longitude = currentState.longitude,
@@ -3715,7 +4007,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     .getAppWidgetIds(
                         android.content.ComponentName(
                             getApplication(),
-                            com.hinnka.mycamera.phantom.PhantomWidgetProvider::class.java
+                            PhantomWidgetProvider::class.java
                         )
                     )
                 putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
@@ -3799,7 +4091,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 从导入的 .plut URI 中提取嵌入的色彩配方并保存到指定 LUT（仅 v4 文件含有配方）
      */
-    suspend fun extractAndSaveColorRecipeFromPlut(lutId: String, uri: android.net.Uri) = withContext(Dispatchers.IO) {
+    suspend fun extractAndSaveColorRecipeFromPlut(lutId: String, uri: Uri) = withContext(Dispatchers.IO) {
         try {
             val recipeJson = getApplication<Application>().contentResolver
                 .openInputStream(uri)?.use { LutConverter.extractRecipeJsonFromPlut(it) }

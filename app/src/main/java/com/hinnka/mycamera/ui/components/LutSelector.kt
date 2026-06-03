@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -22,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -39,12 +37,104 @@ import com.hinnka.mycamera.R
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutInfo
-import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.CameraPreset
+import com.hinnka.mycamera.model.LutSelectorMode
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
-import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+@Composable
+fun LutSelectorWithRecipeAction(
+    availableLuts: List<LutInfo>,
+    currentLutId: String?,
+    thumbnail: Bitmap?,
+    onLutSelected: (String?) -> Unit,
+    onEditRecipeClick: (() -> Unit)?,
+    onEditEffectClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    recipeIsCustomized: Boolean = false,
+    onManageClick: ((String) -> Unit)? = null,
+    categoryOrder: List<String> = emptyList()
+) {
+    val selectedLutName = availableLuts.find { it.id == currentLutId }?.getName().orEmpty()
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = stringResource(R.string.filter).uppercase(),
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = if (selectedLutName.isEmpty()) stringResource(R.string.none) else selectedLutName,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (onEditRecipeClick != null) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (recipeIsCustomized) Color(0xFFFF9800).copy(alpha = 0.15f)
+                                else Color.White.copy(alpha = 0.1f)
+                            )
+                            .clickable { onEditRecipeClick() }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = if (recipeIsCustomized) Color(0xFFFF9800) else Color(0xFFFFD700),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.color_recipe),
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                if (onEditEffectClick != null) {
+                    EffectsActionChip(
+                        onClick = { onEditEffectClick() }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        LutSelector(
+            availableLuts = availableLuts,
+            currentLutId = currentLutId,
+            thumbnail = thumbnail,
+            onLutSelected = onLutSelected,
+            onEditClick = onEditRecipeClick,
+            onManageClick = onManageClick,
+            categoryOrder = categoryOrder
+        )
+    }
+}
 
 private sealed class LutCategoryTab {
     data object Favorite : LutCategoryTab()
@@ -53,10 +143,7 @@ private sealed class LutCategoryTab {
     data class Category(val name: String) : LutCategoryTab()
 }
 
-private enum class LutSelectorMode {
-    Style,
-    Baseline
-}
+private const val NONE_LUT_ITEM_KEY = "__photon_lut_selector_none__"
 
 /**
  * LUT 选择器组件
@@ -69,10 +156,14 @@ fun LutSelector(
     currentLutId: String?,
     thumbnail: Bitmap?,
     onLutSelected: (String?) -> Unit,
-    currentBaselineLutId: String? = null,
-    baselineTarget: BaselineColorCorrectionTarget = BaselineColorCorrectionTarget.JPG,
-    onBaselineLutSelected: ((String?) -> Unit)? = null,
-    onBaselineEditClick: ((String) -> Unit)? = null,
+    // 预设相关参数 (添加默认值以支持向后兼容)
+    allPresets: List<CameraPreset> = emptyList(),
+    activePresetId: String? = null,
+    selectedMode: LutSelectorMode = LutSelectorMode.Style,
+    onModeSelected: (LutSelectorMode) -> Unit = {},
+    onPresetSelected: (CameraPreset?) -> Unit = {},
+    onCreatePresetClick: () -> Unit = {},
+    onPresetManagementClick: () -> Unit = {},
     onEditClick: (() -> Unit)? = null,
     onManageClick: ((String) -> Unit)? = null,
     categoryOrder: List<String> = emptyList(),
@@ -84,14 +175,9 @@ fun LutSelector(
     val favoriteText = stringResource(R.string.favorite)
     val builtInText = stringResource(R.string.built_in)
     val uncategorizedText = stringResource(R.string.uncategorized)
-    val clearBaselineText = stringResource(R.string.settings_baseline_clear)
-    val styleText = stringResource(R.string.lut_selector_style_tab)
-    val baselineText = stringResource(R.string.lut_selector_baseline_tab)
-    val baselineModeText = when (baselineTarget) {
-        BaselineColorCorrectionTarget.JPG -> stringResource(R.string.baseline_target_jpg)
-        BaselineColorCorrectionTarget.RAW -> stringResource(R.string.baseline_target_raw)
-        BaselineColorCorrectionTarget.PHANTOM -> stringResource(R.string.baseline_target_phantom)
-    }
+    val styleText = stringResource(R.string.filter)
+    val presetText = stringResource(R.string.preset_title)
+    val noneText = stringResource(R.string.none)
 
     // 分类逻辑
     val categoryTabs = remember(availableLuts, categoryOrder, favoriteText, builtInText, uncategorizedText) {
@@ -139,15 +225,8 @@ fun LutSelector(
     }
 
     var selectedCategory by remember { mutableStateOf<LutCategoryTab>(LutCategoryTab.BuiltIn) }
-    var selectedMode by remember { mutableStateOf(LutSelectorMode.Style) }
-    val showModeTabs = onBaselineLutSelected != null
-    val activeLutId = if (selectedMode == LutSelectorMode.Baseline) currentBaselineLutId else currentLutId
-
-    LaunchedEffect(showModeTabs) {
-        if (!showModeTabs) {
-            selectedMode = LutSelectorMode.Style
-        }
-    }
+    val activeLutId = currentLutId
+    val actualMode = if (allPresets.isEmpty()) LutSelectorMode.Style else selectedMode
 
     LaunchedEffect(activeLutId, availableLuts, categoryTabs) {
         val selectedLut = availableLuts.find { it.id == activeLutId }
@@ -175,18 +254,18 @@ fun LutSelector(
     val actualShowLutEditDialog = onEditClick == null && showLutEditDialogState
 
     // 在组件首次加载时滚动到当前选中的 LUT
-    LaunchedEffect(activeLutId, selectedMode, filteredLuts) {
-        activeLutId?.let { lutId ->
-            val selectedIndex = filteredLuts.indexOfFirst { it.id == lutId }
-            if (selectedIndex >= 2) {
-                coroutineScope.launch {
-                    scrollState.scrollToItem(selectedIndex - 2)
+    LaunchedEffect(activeLutId, actualMode, filteredLuts) {
+        if (actualMode == LutSelectorMode.Style) {
+            activeLutId?.let { lutId ->
+                val selectedIndex = filteredLuts.indexOfFirst { it.id == lutId }
+                if (selectedIndex >= 2) {
+                    coroutineScope.launch {
+                        scrollState.scrollToItem(selectedIndex - 2)
+                    }
                 }
             }
         }
     }
-
-    // 如果选中的 LUT 不在当前分类中，可选：不自动切换分类，或者在切换分类时如果是“全部”则保持选中
 
     // 全局 LUT 编辑底部弹窗
     if (actualShowLutEditDialog && currentLutId != null) {
@@ -199,7 +278,7 @@ fun LutSelector(
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        if (showModeTabs) {
+        if (allPresets.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -209,120 +288,94 @@ fun LutSelector(
             ) {
                 LutSelectorModeTab(
                     text = styleText,
-                    isSelected = selectedMode == LutSelectorMode.Style,
-                    onClick = { selectedMode = LutSelectorMode.Style }
+                    isSelected = actualMode == LutSelectorMode.Style,
+                    onClick = { onModeSelected(LutSelectorMode.Style) }
                 )
                 LutSelectorModeTab(
-                    text = baselineText,
-                    isSelected = selectedMode == LutSelectorMode.Baseline,
-                    badgeText = baselineModeText,
-                    onClick = { selectedMode = LutSelectorMode.Baseline }
+                    text = presetText,
+                    isSelected = actualMode == LutSelectorMode.Presets,
+                    onClick = { onModeSelected(LutSelectorMode.Presets) }
                 )
-                if (selectedMode == LutSelectorMode.Baseline && currentBaselineLutId != null) {
+            }
+        }
+
+        if (actualMode == LutSelectorMode.Style) {
+            // 分类选择器 (小芯片样式)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    items(categoryTabs) { category ->
+                        val isSelected = selectedCategory == category
+                        val categoryName = when (category) {
+                            LutCategoryTab.Favorite -> favoriteText
+                            LutCategoryTab.BuiltIn -> builtInText
+                            LutCategoryTab.Uncategorized -> uncategorizedText
+                            is LutCategoryTab.Category -> category.name
+                        }
+
+                        Text(
+                            text = categoryName,
+                            color = if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    selectedCategory = category
+                                }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                }
+
+                if (onManageClick != null) {
+                    var lastClickTime by remember { mutableLongStateOf(0L) }
                     Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = clearBaselineText,
-                        tint = Color.White.copy(alpha = 0.72f),
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Manage Filters",
+                        tint = Color.White.copy(alpha = 0.6f),
                         modifier = Modifier
+                            .padding(end = 12.dp)
                             .size(24.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onBaselineLutSelected(null)
+                            .clickable {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastClickTime > 1000) {
+                                    lastClickTime = currentTime
+                                    onManageClick(currentLutId ?: "")
+                                }
                             }
-                            .padding(5.dp)
+                            .padding(4.dp)
                     )
                 }
             }
-        }
 
-        // 分类选择器 (小芯片样式)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
             LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                state = scrollState
             ) {
-                items(categoryTabs) { category ->
-                    val isSelected = selectedCategory == category
-                    val categoryName = when (category) {
-                        LutCategoryTab.Favorite -> favoriteText
-                        LutCategoryTab.BuiltIn -> builtInText
-                        LutCategoryTab.Uncategorized -> uncategorizedText
-                        is LutCategoryTab.Category -> category.name
-                    }
-
-                    Text(
-                        text = categoryName,
-                        color = if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.5f),
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        modifier = Modifier
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                selectedCategory = category
-                            }
-                            .padding(vertical = 4.dp)
-                    )
-                }
-            }
-
-            if (onManageClick != null) {
-                var lastClickTime by remember { mutableLongStateOf(0L) }
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Manage Filters",
-                    tint = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .padding(end = 12.dp)
-                        .size(24.dp)
-                        .clip(CircleShape)
-                        .clickable {
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastClickTime > 1000) {
-                                lastClickTime = currentTime
-                                onManageClick(currentLutId ?: "")
-                            }
-                        }
-                        .padding(4.dp)
-                )
-            }
-        }
-
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            state = scrollState
-        ) {
-            // LUT 列表
-            items(filteredLuts, key = { it.id }) { lut ->
-                var lastManageClickTime by remember { mutableLongStateOf(0L) }
-                LutItem(
-                    id = lut.id,
-                    name = lut.getName(),
-                    previewBitmap = thumbnail,
-                    isSelected = activeLutId == lut.id,
-                    isVip = lut.isVip,
-                    isCustom = !lut.isBuiltIn,
-                    recipeTarget = if (selectedMode == LutSelectorMode.Baseline) baselineTarget else null,
-                    onClick = {
-                        if (selectedMode == LutSelectorMode.Baseline) {
-                            if (currentBaselineLutId == lut.id) {
-                                onBaselineEditClick?.invoke(lut.id)
-                            } else {
-                                onBaselineLutSelected?.invoke(lut.id)
-                            }
-                        } else {
+                // LUT 列表
+                items(filteredLuts, key = { it.id }) { lut ->
+                    var lastManageClickTime by remember { mutableLongStateOf(0L) }
+                    LutItem(
+                        id = lut.id,
+                        name = lut.getName(),
+                        previewBitmap = thumbnail,
+                        isSelected = activeLutId == lut.id,
+                        isVip = lut.isVip,
+                        isCustom = !lut.isBuiltIn,
+                        onClick = {
                             if (currentLutId == lut.id) {
                                 if (onEditClick != null) {
                                     onEditClick()
@@ -332,19 +385,29 @@ fun LutSelector(
                             } else {
                                 onLutSelected(lut.id)
                             }
-                        }
-                    },
-                    onManageClick = if (onManageClick != null) {
-                        {
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastManageClickTime > 1000) {
-                                lastManageClickTime = currentTime
-                                onManageClick(lut.id)
+                        },
+                        onManageClick = if (onManageClick != null) {
+                            {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastManageClickTime > 1000) {
+                                    lastManageClickTime = currentTime
+                                    onManageClick(lut.id)
+                                }
                             }
-                        }
-                    } else null
-                )
+                        } else null
+                    )
+                }
             }
+        } else {
+            // 预设列表
+            PresetsPanel(
+                activePresetId = activePresetId,
+                allPresets = allPresets,
+                onPresetSelected = onPresetSelected,
+                onCreatePreset = onCreatePresetClick,
+                onManagePresets = onPresetManagementClick,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

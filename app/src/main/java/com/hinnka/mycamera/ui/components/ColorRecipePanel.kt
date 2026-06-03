@@ -50,7 +50,7 @@ fun ColorRecipePanel(
     onParamsChange: (ColorRecipeParams) -> Unit,
     onRemarksChange: (String) -> Unit,
     onCurveChange: (CurveChannel, FloatArray?) -> Unit = { _, _ -> },
-    hideNonBakeable: Boolean = false,
+    hideNonBakeable: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isBakeable: (RecipeParam) -> Boolean = { param ->

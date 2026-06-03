@@ -46,6 +46,9 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.FilterNone
@@ -176,6 +179,7 @@ fun SettingsScreen(
     onFilterManagementClick: () -> Unit,
     onFrameManagementClick: () -> Unit,
     onPhantomPipCropClick: () -> Unit,
+    onPresetManagementClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.state.collectAsState()
@@ -1491,6 +1495,17 @@ fun SettingsScreen(
                             title = stringResource(R.string.settings_frame_management),
                             description = stringResource(R.string.settings_frame_management_description),
                             onClick = onFrameManagementClick
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_preset_management),
+                            description = stringResource(R.string.settings_preset_management_description),
+                            onClick = onPresetManagementClick
                         )
                     }
 

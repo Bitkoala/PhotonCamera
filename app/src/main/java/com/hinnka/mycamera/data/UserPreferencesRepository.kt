@@ -29,6 +29,9 @@ import com.hinnka.mycamera.video.VideoBitratePreset
 import com.hinnka.mycamera.video.VideoFpsPreset
 import com.hinnka.mycamera.video.VideoLogProfile
 import com.hinnka.mycamera.video.VideoResolutionPreset
+import com.hinnka.mycamera.model.EffectParams
+import com.hinnka.mycamera.model.CameraPreset
+import com.hinnka.mycamera.model.LutSelectorMode
 
 /**
  * DataStore 扩展属性
@@ -115,6 +118,7 @@ data class UserPreferences(
     val filterOrder: List<String> = emptyList(),  // 滤镜排序（ID列表）
     val frameOrder: List<String> = emptyList(),    // 边框排序（ID列表）
     val categoryOrder: List<String> = emptyList(), // 分类排序
+    val lutSelectorMode: LutSelectorMode = LutSelectorMode.Style,
     val defaultFocalLength: Float = 0f, // 默认焦段 (mm)，0表示不设置
     val useMFNR: Boolean = false, // 是否使用多帧降噪
     val multiFrameCount: Int = MultiFrameConfig.DEFAULT_FRAME_COUNT, // 多帧降噪帧数
@@ -171,8 +175,18 @@ data class UserPreferences(
     val deleteExported: Boolean = true,
     val rawSpectralFilmEnabled: Boolean = false,
     val rawSpectralFilmStock: String? = null,
-    val rawSpectralFilmPrint: String? = null
-)
+    val rawSpectralFilmPrint: String? = null,
+    val activeEffectParamsJson: String = "",
+    val customPresetsJson: String = "",
+    val activePresetId: String? = null,
+    val deletedBuiltInIds: String = ""
+) {
+    val activeEffectParams: EffectParams
+        get() = EffectParams.fromJson(activeEffectParamsJson)
+
+    val customPresets: List<CameraPreset>
+        get() = CameraPreset.listFromJson(customPresetsJson)
+}
 
 /**
  * 用户偏好设置仓库
@@ -229,6 +243,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val FILTER_ORDER = stringPreferencesKey("filter_order")
         private val FRAME_ORDER = stringPreferencesKey("frame_order")
         private val CATEGORY_ORDER = stringPreferencesKey("category_order")
+        private val LUT_SELECTOR_MODE = stringPreferencesKey("lut_selector_mode")
 
         // 摄像头方向偏移 Key
         private val CAMERA_ORIENTATION_OFFSETS = stringPreferencesKey("camera_orientation_offsets")
@@ -295,6 +310,10 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_SPECTRAL_FILM_ENABLED_KEY = booleanPreferencesKey("raw_spectral_film_enabled")
         private val RAW_SPECTRAL_FILM_STOCK_KEY = stringPreferencesKey("raw_spectral_film_stock")
         private val RAW_SPECTRAL_FILM_PRINT_KEY = stringPreferencesKey("raw_spectral_film_print")
+        private val ACTIVE_EFFECT_PARAMS_JSON = stringPreferencesKey("active_effect_params_json")
+        private val CUSTOM_PRESETS_JSON = stringPreferencesKey("custom_presets_json")
+        private val ACTIVE_PRESET_ID = stringPreferencesKey("active_preset_id")
+        private val DELETED_BUILT_IN_IDS = stringPreferencesKey("deleted_built_in_ids")
     }
 
     /**
@@ -364,6 +383,9 @@ class UserPreferencesRepository(private val context: Context) {
                 filterOrder = preferences[FILTER_ORDER]?.split(",")?.filter { it.isNotEmpty() } ?: emptyList(),
                 frameOrder = preferences[FRAME_ORDER]?.split(",")?.filter { it.isNotEmpty() } ?: emptyList(),
                 categoryOrder = preferences[CATEGORY_ORDER]?.split(",")?.filter { it.isNotEmpty() } ?: emptyList(),
+                lutSelectorMode = runCatching {
+                    LutSelectorMode.valueOf(preferences[LUT_SELECTOR_MODE] ?: LutSelectorMode.Style.name)
+                }.getOrDefault(LutSelectorMode.Style),
                 defaultFocalLength = preferences[DEFAULT_FOCAL_LENGTH] ?: 0f,
                 useMFNR = preferences[USE_MULTI_FRAME] ?: false,
                 multiFrameCount = preferences[MULTI_FRAME_COUNT]
@@ -447,7 +469,11 @@ class UserPreferencesRepository(private val context: Context) {
                 deleteExported = preferences[DELETE_EXPORTED] ?: true,
                 rawSpectralFilmEnabled = preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] ?: false,
                 rawSpectralFilmStock = preferences[RAW_SPECTRAL_FILM_STOCK_KEY],
-                rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY]
+                rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY],
+                activeEffectParamsJson = preferences[ACTIVE_EFFECT_PARAMS_JSON] ?: "",
+                customPresetsJson = preferences[CUSTOM_PRESETS_JSON] ?: "",
+                activePresetId = preferences[ACTIVE_PRESET_ID],
+                deletedBuiltInIds = preferences[DELETED_BUILT_IN_IDS] ?: ""
             )
         }
 
@@ -938,6 +964,12 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveLutSelectorMode(mode: LutSelectorMode) {
+        context.dataStore.edit { preferences ->
+            preferences[LUT_SELECTOR_MODE] = mode.name
+        }
+    }
+
     /**
      * 保存摄像头方向偏移
      * @param cameraId 摄像头 ID
@@ -1414,6 +1446,34 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 preferences.remove(RAW_SPECTRAL_FILM_PRINT_KEY)
             }
+        }
+    }
+
+    suspend fun saveActiveEffectParams(effects: EffectParams) {
+        context.dataStore.edit { preferences ->
+            preferences[ACTIVE_EFFECT_PARAMS_JSON] = effects.toJson()
+        }
+    }
+
+    suspend fun saveCustomPresets(presets: List<CameraPreset>) {
+        context.dataStore.edit { preferences ->
+            preferences[CUSTOM_PRESETS_JSON] = CameraPreset.listToJson(presets)
+        }
+    }
+
+    suspend fun saveActivePresetId(presetId: String?) {
+        context.dataStore.edit { preferences ->
+            if (presetId != null) {
+                preferences[ACTIVE_PRESET_ID] = presetId
+            } else {
+                preferences.remove(ACTIVE_PRESET_ID)
+            }
+        }
+    }
+
+    suspend fun saveDeletedBuiltInIds(ids: String) {
+        context.dataStore.edit { preferences ->
+            preferences[DELETED_BUILT_IN_IDS] = ids
         }
     }
 }

@@ -366,6 +366,7 @@
 
     <!-- Color Recipe -->
     <string name="color_recipe">色彩配方</string>
+    <string name="effects_title">效果</string>
     <string name="recipe_scope_lut">LUT 默认</string>
     <string name="recipe_scope_photo">仅此照片</string>
     <string name="recipe_scope_photo_reset">恢复 LUT 默认</string>
@@ -467,6 +468,8 @@
     <string name="settings_filter_management_description">管理滤镜，设置默认，排序</string>
     <string name="settings_frame_management">边框管理</string>
     <string name="settings_frame_management_description">管理边框，设置默认，排序</string>
+    <string name="settings_preset_management">预设管理</string>
+    <string name="settings_preset_management_description">管理自定义预设参数</string>
     <string name="settings_openai_api_key">OpenAI API Key</string>
     <string name="settings_openai_api_key_desc">用于 AI 分析的 API 秘钥</string>
     <string name="settings_openai_base_url">OpenAI API 域名</string>
@@ -762,7 +765,7 @@
     <string name="settings_spectral_film">光谱胶片模拟</string>
     <string name="settings_spectral_film_description">模拟经典底片和打印介质的色彩响应与物理特征曲线。</string>
     <string name="settings_negative_film">底片胶卷</string>
-    <string name="settings_print_paper">打印介质</string>
+    <string name="settings_print_paper">印相介质</string>
     <string name="settings_raw_auto_exposure">自动曝光</string>
     <string name="settings_raw_auto_exposure_description">显影时对 RAW 线性数据自动测光并应用曝光补偿。</string>
     <string name="settings_raw_min_shutter_speed">最低快门速度</string>
@@ -987,4 +990,31 @@
     <string name="puzzle_background_black">纯黑</string>
     <string name="edit_embedded_video_simultaneously">同时编辑内嵌视频</string>
     <string name="apply_frame_success">应用边框成功</string>
+
+    <!-- Presets Panel -->
+    <string name="preset_title">预设</string>
+    <string name="preset_new">新建预设</string>
+    <string name="preset_builtin">内置</string>
+    <string name="preset_save_current">保存当前参数为新预设</string>
+    <string name="preset_delete_confirm">确定要删除该预设吗？</string>
+    <string name="preset_name_hint">预设名称</string>
+    <string name="preset_builtin_portrait">日系肖像</string>
+    <string name="preset_builtin_classic_film">经典胶片</string>
+    <string name="preset_builtin_monochrome">黑白纪实</string>
+    <string name="preset_builtin_cinematic">电影宽幅</string>
+    <string name="preset_builtin_leica_m9_moment">徕卡一瞬</string>
+    <string name="preset_delete">删除</string>
+    <string name="preset_rename">重命名</string>
+    <string name="preset_save">保存</string>
+    <string name="preset_cancel">取消</string>
+    <string name="preset_auto">标准</string>
+    <string name="preset_editor_title">编辑拍摄预设</string>
+    <string name="preset_custom_suffix">%1$s（自定义）</string>
+    <string name="preset_new_preset_default">新预设</string>
+    <string name="preset_name_label">预设名称</string>
+    <string name="preset_restore_defaults">恢复默认预设</string>
+    <string name="preset_restore_defaults_confirm">恢复默认预设将清除所有自定义覆盖，是否继续？</string>
+    <string name="preset_custom_badge">自定义</string>
+    <string name="preset_builtin_badge">内置</string>
+    <string name="preset_none_default">无 / 默认</string>
 </resources>

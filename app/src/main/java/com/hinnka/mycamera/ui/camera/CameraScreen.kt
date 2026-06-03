@@ -33,7 +33,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.draw.scale
@@ -78,7 +77,6 @@ import com.hinnka.mycamera.utils.OrientationObserver
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import com.hinnka.mycamera.viewmodel.GalleryViewModel
 import com.hinnka.mycamera.video.CaptureMode
-import com.hinnka.mycamera.video.VideoAudioInputOption
 import com.hinnka.mycamera.video.VideoAspectRatio
 import com.hinnka.mycamera.video.VideoFpsPreset
 import com.hinnka.mycamera.video.VideoLogProfile
@@ -94,7 +92,8 @@ enum class ActivePanel {
     NONE,
     SETTINGS,
     FILTERS,
-    LUT_EDIT
+    LUT_EDIT,
+    PRESETS
 }
 
 private const val InitialPreviewTransitionDelayMillis = 150L
@@ -124,6 +123,8 @@ fun CameraScreen(
     onFilterManagementClick: (String?) -> Unit,
     onFrameManagementClick: () -> Unit,
     onToolboxClick: () -> Unit,
+    onPresetEditClick: (String?) -> Unit,
+    onPresetManagementClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -134,6 +135,13 @@ fun CameraScreen(
     val focusPeakingEnabled by viewModel.focusPeakingEnabled.collectAsState(initial = true)
     val currentLutId by viewModel.currentLutId.collectAsState()
     val currentRecipeParams by viewModel.currentRecipeParams.collectAsState()
+    val lutSelectorMode by viewModel.lutSelectorMode.collectAsState()
+    val currentEffectParams by viewModel.currentEffectParams.collectAsState()
+    val activePresetId by viewModel.activePresetId.collectAsState()
+    val customPresets by viewModel.customPresets.collectAsState()
+    val mergedRecipeParams = remember(currentRecipeParams, currentEffectParams) {
+        currentEffectParams.applyTo(currentRecipeParams)
+    }
     val currentBaselineRecipeParams by viewModel.currentBaselineRecipeParams.collectAsState()
     val categoryOrder by viewModel.categoryOrder.collectAsState(emptyList())
     val useRaw by viewModel.useRaw.collectAsState()
@@ -185,6 +193,7 @@ fun CameraScreen(
 
     // UI State
     var activePanel by remember { mutableStateOf(ActivePanel.NONE) }
+    var showEffectsSheet by remember { mutableStateOf(false) }
     var selectedParameter by remember { mutableStateOf(CameraParameter.EXPOSURE_COMPENSATION) }
     var showVideoParameterRuler by remember { mutableStateOf(false) }
     val isXpan = state.aspectRatio == AspectRatio.XPAN
@@ -786,7 +795,7 @@ fun CameraScreen(
                         baselineLut = viewModel.currentBaselineLutConfig,
                         currentLut = viewModel.currentLutConfig,
                         baselineColorRecipeParams = currentBaselineRecipeParams,
-                        colorRecipeParams = previewRecipeParamsOverride ?: currentRecipeParams,
+                        colorRecipeParams = previewRecipeParamsOverride ?: mergedRecipeParams,
                         focusPoint = state.focusPoint,
                         focusPointSource = state.focusPointSource,
                         isFocusing = state.isFocusing,
@@ -1338,44 +1347,60 @@ fun CameraScreen(
                         )
 
                         Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color.White.copy(alpha = 0.15f))
-                                .clickable {
-                                    activePanel = ActivePanel.LUT_EDIT
-                                }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = stringResource(R.string.color_recipe),
-                                tint = Color(0xFFFFD700), // Gold color to match VIP/Premium feel
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = stringResource(R.string.color_recipe),
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White.copy(alpha = 0.15f))
+                                    .clickable {
+                                        activePanel = ActivePanel.LUT_EDIT
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = stringResource(R.string.color_recipe),
+                                    tint = Color(0xFFFFD700), // Gold color to match VIP/Premium feel
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.color_recipe),
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            EffectsActionChip(
+                                onClick = { showEffectsSheet = true }
                             )
                         }
                     }
 
-                    // LUT 选择器
+                    val allPresets by viewModel.allPresets.collectAsState()
+                    val activePresetId by viewModel.activePresetId.collectAsState()
+                    val defaultPresetName = stringResource(R.string.preset_new_preset_default)
+
+                    // LUT 选择器 (内嵌 Presets 列表)
                     LutSelector(
                         availableLuts = viewModel.availableLutList,
                         currentLutId = currentLutId,
                         thumbnail = viewModel.previewThumbnail,
                         onLutSelected = { viewModel.setLut(it) },
-                        currentBaselineLutId = activeBaselineLutId,
-                        baselineTarget = activeBaselineTarget,
-                        onBaselineLutSelected = { viewModel.setBaselineLut(activeBaselineTarget, it) },
-                        onBaselineEditClick = { lutId ->
-                            baselineEditLutId = lutId
-                            baselineEditTarget = activeBaselineTarget
+                        allPresets = allPresets,
+                        activePresetId = activePresetId,
+                        selectedMode = lutSelectorMode,
+                        onModeSelected = { viewModel.setLutSelectorMode(it) },
+                        onPresetSelected = { viewModel.applyPreset(it) },
+                        onCreatePresetClick = {
+                            viewModel.prepareCurrentSettingsPresetDraft(defaultPresetName)
+                            onPresetEditClick(null)
                         },
+                        onPresetManagementClick = onPresetManagementClick,
                         onEditClick = {
                             activePanel = ActivePanel.LUT_EDIT
                         },
@@ -1397,6 +1422,14 @@ fun CameraScreen(
                     previewRecipeParamsOverride = null
                     activePanel = ActivePanel.FILTERS
                 }
+            )
+        }
+
+        if (showEffectsSheet) {
+            EffectsBottomSheet(
+                currentParams = currentEffectParams,
+                onParamsChange = { viewModel.setEffectParams(it) },
+                onDismiss = { showEffectsSheet = false }
             )
         }
 

@@ -57,6 +57,7 @@ import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
 import com.hinnka.mycamera.ui.camera.RecipeScope
@@ -159,6 +160,7 @@ fun GalleryEditScreen(
     var baselineLutEditId by remember { mutableStateOf<String?>(null) }
     var showRawBaselineLutSelectorSheet by remember { mutableStateOf(false) }
     var previewRecipeParamsOverride by remember(editLutId) { mutableStateOf<ColorRecipeParams?>(null) }
+    var showEffectsSheet by remember { mutableStateOf(false) }
 
     BackHandler {
         viewModel.exitEditMode()
@@ -211,7 +213,7 @@ fun GalleryEditScreen(
     val scope = rememberCoroutineScope()
     val refreshKey = currentPhoto?.id?.let { viewModel.photoRefreshKeys[it] } ?: 0L
     val isBaselineLutEditSheetVisible = showBaselineLutEditSheet && baselineLutEditId != null
-    val isLutEditSheetVisible = showLutEditDialog && editLutId != null
+    val isLutEditSheetVisible = (showLutEditDialog || showEffectsSheet) && editLutId != null
     val shouldShowEditControls = showControls &&
         !isLutEditSheetVisible &&
         !isBaselineLutEditSheetVisible &&
@@ -842,9 +844,6 @@ fun GalleryEditScreen(
                         Column(modifier = Modifier.heightIn(max = 550.dp).verticalScroll(rememberScrollState())) {
                             when (editTab) {
                                 0 -> {
-                                    val currentLut = availableLuts.find { it.id == editLutId }
-                                    val lutTitle = currentLut?.getName() ?: ""
-
                                     if (currentPhoto.isMotionPhoto) {
                                         val applyEffectsToVideo by viewModel.editApplyEffectsToVideo.collectAsState()
                                         Row(
@@ -872,65 +871,18 @@ fun GalleryEditScreen(
                                     }
 
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                text = stringResource(R.string.filter).uppercase(),
-                                                color = Color.White.copy(alpha = 0.4f),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 1.sp
-                                            )
-                                            Text(
-                                                text = if (lutTitle.isEmpty()) stringResource(R.string.none) else lutTitle,
-                                                color = Color.White,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        if (editLutId != null) {
-                                            val hasPhotoOverride = editPhotoRecipeParams != null
-                                            Row(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .background(
-                                                        if (hasPhotoOverride) Color(0xFFFF9800).copy(alpha = 0.15f)
-                                                        else Color.White.copy(alpha = 0.1f)
-                                                    )
-                                                    .clickable { showLutEditDialog = true }
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Tune,
-                                                    contentDescription = null,
-                                                    tint = if (hasPhotoOverride) Color(0xFFFF9800) else Color(0xFFFFD700),
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                                Text(
-                                                    text = stringResource(R.string.color_recipe),
-                                                    color = Color.White,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    LutSelector(
+                                    LutSelectorWithRecipeAction(
                                         availableLuts = viewModel.availableLuts,
                                         currentLutId = editLutId,
                                         thumbnail = thumbnailBitmap,
                                         onLutSelected = { viewModel.setEditLut(it) },
-                                        onEditClick = { showLutEditDialog = true },
+                                        onEditRecipeClick = if (editLutId != null) {
+                                            { showLutEditDialog = true }
+                                        } else null,
+                                        onEditEffectClick = if (editLutId != null) {
+                                            { showEffectsSheet = true }
+                                        } else null,
+                                        recipeIsCustomized = editPhotoRecipeParams != null,
                                         onManageClick = { onFilterManagementClick(it) },
                                         categoryOrder = categoryOrder
                                     )
@@ -1220,6 +1172,28 @@ fun GalleryEditScreen(
                 }
             }
         }
+    }
+
+    if (showEffectsSheet) {
+        val currentRecipe = editPhotoRecipeParams ?: editLutRecipeParams
+        val currentEffectParams = EffectParams(
+            vignette = currentRecipe.vignette,
+            filmGrain = currentRecipe.filmGrain,
+            hdf = currentRecipe.halation,
+            halation = currentRecipe.redHalation,
+            chromaticAberration = currentRecipe.chromaticAberration,
+            noise = currentRecipe.noise,
+            lowRes = currentRecipe.lowRes
+        )
+        EffectsBottomSheet(
+            currentParams = currentEffectParams,
+            onParamsChange = { newParams ->
+                val updatedRecipe = newParams.applyTo(currentRecipe)
+                viewModel.setPhotoRecipeParams(updatedRecipe)
+            },
+            onDismiss = { showEffectsSheet = false },
+            containerColor = Color(0x151A1A1A)
+        )
     }
 
     if (showLutEditDialog && editLutId != null) {

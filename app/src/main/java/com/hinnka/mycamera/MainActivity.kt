@@ -85,6 +85,8 @@ import com.hinnka.mycamera.ui.settings.FrameEditorScreen
 import com.hinnka.mycamera.ui.settings.FrameManagementScreen
 import com.hinnka.mycamera.ui.settings.PhantomPipCropScreen
 import com.hinnka.mycamera.ui.settings.SettingsScreen
+import com.hinnka.mycamera.ui.settings.PresetEditorScreen
+import com.hinnka.mycamera.ui.settings.PresetManagementScreen
 import com.hinnka.mycamera.ui.theme.PhotonCameraTheme
 import com.hinnka.mycamera.update.AppUpdateManager
 import com.hinnka.mycamera.utils.BuglyHelper
@@ -113,6 +115,12 @@ object Routes {
     const val LUT_SYNTHESIS = "lut_synthesis"
     const val TOOLBOX = "toolbox"
     const val PUZZLE = "puzzle"
+    const val PRESET_EDITOR = "preset_editor?presetId={presetId}"
+    const val PRESET_MANAGEMENT = "preset_management"
+
+    fun presetEditor(presetId: String? = null): String {
+        return if (presetId != null) "preset_editor?presetId=$presetId" else "preset_editor"
+    }
     const val PHANTOM_PIP_CROP = "phantom_pip_crop"
     const val COLOR_WALK = "color_walk"
     const val FILM_LIBRARY = "film_library"
@@ -541,6 +549,12 @@ fun NavigationHost(
                             onToolboxClick = {
                                 navController.navigate(Routes.TOOLBOX)
                             },
+                            onPresetEditClick = { id ->
+                                navController.navigate(Routes.presetEditor(id))
+                            },
+                            onPresetManagementClick = {
+                                navController.navigate(Routes.PRESET_MANAGEMENT)
+                            },
                             modifier = Modifier.weight(1f)
                         )
                         GalleryDetailScreen(
@@ -578,6 +592,12 @@ fun NavigationHost(
                         },
                         onToolboxClick = {
                             navController.navigate(Routes.TOOLBOX)
+                        },
+                        onPresetEditClick = { id ->
+                            navController.navigate(Routes.presetEditor(id))
+                        },
+                        onPresetManagementClick = {
+                            navController.navigate(Routes.PRESET_MANAGEMENT)
                         },
                     )
                 }
@@ -680,6 +700,41 @@ fun NavigationHost(
                     },
                     onPhantomPipCropClick = {
                         navController.navigate(Routes.PHANTOM_PIP_CROP)
+                    },
+                    onPresetManagementClick = {
+                        navController.navigate(Routes.PRESET_MANAGEMENT)
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.PRESET_EDITOR,
+                arguments = listOf(
+                    navArgument("presetId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                )
+            ) { backStackEntry ->
+                val presetId = backStackEntry.arguments?.getString("presetId")
+                PresetEditorScreen(
+                    viewModel = cameraViewModel,
+                    presetId = presetId,
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            composable(Routes.PRESET_MANAGEMENT) {
+                PresetManagementScreen(
+                    viewModel = cameraViewModel,
+                    onBack = {
+                        navController.popBackStack()
+                    },
+                    onPresetEditClick = { id ->
+                        navController.navigate(Routes.presetEditor(id))
                     }
                 )
             }
