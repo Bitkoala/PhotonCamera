@@ -2,6 +2,7 @@ package com.hinnka.mycamera.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
 import org.tensorflow.lite.DataType
@@ -16,7 +17,6 @@ import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class DepthEstimator(
     context: Context,
@@ -158,7 +158,8 @@ class DepthEstimator(
             val outputDataType = outputTensor.dataType()
 
             // 2. Preprocess the input image
-            val inputBuffer = if (modelAssetName == MODEL_DEPTH_ANYTHING) {
+            val inputUsesLargeDirectAllocator = modelAssetName == MODEL_DEPTH_ANYTHING
+            val inputBuffer = if (inputUsesLargeDirectAllocator) {
                 createDepthAnythingInputBuffer(inputBitmap, inputDataType)
             } else {
                 val imageProcessor = buildImageProcessor()
@@ -171,29 +172,35 @@ class DepthEstimator(
             // 3. Prepare the output buffer
             val outputBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
 
-            // 4. Run inference
-            interpreter?.run(inputBuffer, outputBuffer.buffer)
+            try {
+                // 4. Run inference
+                interpreter?.run(inputBuffer, outputBuffer.buffer)
 
-            // 5. Post-process to Bitmap (Grayscale)
-            return if (outputDataType == DataType.FLOAT32) {
-                convertOutputToBitmap(outputBuffer.floatArray, outputWidth, outputHeight)
-            } else {
-                // If quantized output, convert to float first or handle UINT8 directly
-                val floatArray = FloatArray(outputBuffer.flatSize)
-                if (outputDataType == DataType.UINT8 || outputDataType == DataType.INT8) {
-                    val byteBuffer = outputBuffer.buffer
-                    byteBuffer.rewind()
-                    val bytes = ByteArray(outputBuffer.flatSize)
-                    byteBuffer.get(bytes)
-                    for (i in bytes.indices) {
-                        floatArray[i] = if (outputDataType == DataType.UINT8) {
-                            (bytes[i].toInt() and 0xFF).toFloat()
-                        } else {
-                            bytes[i].toFloat()
+                // 5. Post-process to Bitmap (Grayscale)
+                return if (outputDataType == DataType.FLOAT32) {
+                    convertOutputToBitmap(outputBuffer.floatArray, outputWidth, outputHeight)
+                } else {
+                    // If quantized output, convert to float first or handle UINT8 directly
+                    val floatArray = FloatArray(outputBuffer.flatSize)
+                    if (outputDataType == DataType.UINT8 || outputDataType == DataType.INT8) {
+                        val byteBuffer = outputBuffer.buffer
+                        byteBuffer.rewind()
+                        val bytes = ByteArray(outputBuffer.flatSize)
+                        byteBuffer.get(bytes)
+                        for (i in bytes.indices) {
+                            floatArray[i] = if (outputDataType == DataType.UINT8) {
+                                (bytes[i].toInt() and 0xFF).toFloat()
+                            } else {
+                                bytes[i].toFloat()
+                            }
                         }
                     }
+                    convertOutputToBitmap(floatArray, outputWidth, outputHeight)
                 }
-                convertOutputToBitmap(floatArray, outputWidth, outputHeight)
+            } finally {
+                if (inputUsesLargeDirectAllocator) {
+                    LargeDirectBuffer.free(inputBuffer)
+                }
             }
             
         } catch (e: Exception) {
@@ -236,8 +243,10 @@ class DepthEstimator(
             resized.recycle()
         }
 
-        val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3 * 4)
-            .order(ByteOrder.nativeOrder())
+        val buffer = LargeDirectBuffer.allocate(
+            inputWidth.toLong() * inputHeight.toLong() * 3L * 4L,
+            "Depth Anything input"
+        ) ?: throw OutOfMemoryError("Failed to allocate Depth Anything input buffer")
         val mean = floatArrayOf(0.485f, 0.456f, 0.406f)
         val std = floatArrayOf(0.229f, 0.224f, 0.225f)
         val skipNormalization = modelAssetName == MODEL_DEPTH_ANYTHING

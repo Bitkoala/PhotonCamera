@@ -10,7 +10,7 @@ import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.utils.BitmapUtils
-import java.nio.ByteOrder
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import kotlin.math.roundToInt
 
 data class RawStackResult(
@@ -19,6 +19,7 @@ data class RawStackResult(
     val height: Int,
     val isNormalizedSensorData: Boolean,
     val blackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
+    val fusedBayerUsesNativeAllocator: Boolean = false,
 )
 
 /**
@@ -399,6 +400,7 @@ object MultiFrameStacker {
             if (vulkanStackerPtr != 0L) {
                 PLog.i(TAG, "Using Vulkan RAW stacker")
                 var vulkanFusedBayer: ByteBuffer? = null
+                var returnsVulkanFusedBayer = false
                 try {
                     for (image in images) {
                         image.use {
@@ -411,11 +413,9 @@ object MultiFrameStacker {
 
                     val outWidth = (width * outputScale).roundToInt()
                     val outHeight = (height * outputScale).roundToInt()
-                    vulkanFusedBayer = try {
-                        ByteBuffer.allocateDirect(outWidth * outHeight * 2)
-                            .order(ByteOrder.nativeOrder())
-                    } catch (e: OutOfMemoryError) {
-                        PLog.e(TAG, "OOM allocating Vulkan fused Bayer buffer", e)
+                    val outputByteCount = outWidth.toLong() * outHeight.toLong() * 2L
+                    vulkanFusedBayer = allocateFusedBayerBuffer(outputByteCount, "Vulkan")
+                    if (vulkanFusedBayer == null) {
                         return null
                     }
 
@@ -423,12 +423,14 @@ object MultiFrameStacker {
                     if (fusedOk) {
                         vulkanFusedBayer.rewind()
                         PLog.i(TAG, "Vulkan RAW stacking completed successfully")
+                        returnsVulkanFusedBayer = true
                         return RawStackResult(
                             fusedBayerBuffer = vulkanFusedBayer,
                             width = outWidth,
                             height = outHeight,
                             isNormalizedSensorData = true,
                             blackLevel = masterBlackLevel.copyOf(),
+                            fusedBayerUsesNativeAllocator = true,
                         )
                     } else {
                         PLog.w(TAG, "Vulkan RAW stacking failed")
@@ -439,6 +441,10 @@ object MultiFrameStacker {
                     PLog.e(TAG, "Vulkan RAW stacking error: ${e.message}", e)
                     invalidateCachedVulkanRawStacker(vulkanStackerPtr)
                     return null
+                } finally {
+                    if (!returnsVulkanFusedBayer) {
+                        LargeDirectBuffer.free(vulkanFusedBayer)
+                    }
                 }
             } else {
                 PLog.w(TAG, "Failed to create Vulkan RAW stacker, falling back to CPU")
@@ -452,6 +458,8 @@ object MultiFrameStacker {
             return null
         }
 
+        var cpuFusedBayerBuffer: ByteBuffer? = null
+        var returnsCpuFusedBayer = false
         try {
             val stagedIndices = mutableListOf<Int>()
             for (image in images) {
@@ -470,28 +478,36 @@ object MultiFrameStacker {
 
             val stackedWidth = if (useNativeSuperResolution) width * 2 else width
             val stackedHeight = if (useNativeSuperResolution) height * 2 else height
-            val fusedBayerBuffer = try {
-                ByteBuffer.allocateDirect(stackedWidth * stackedHeight * 2)
-                    .order(ByteOrder.nativeOrder())
-            } catch (e: OutOfMemoryError) {
-                PLog.e(TAG, "OOM allocating fused Bayer buffer", e)
-                return null
-            }
-            processRawStackWithBufferNative(stackerPtr, fusedBayerBuffer)
+            val outputByteCount = stackedWidth.toLong() * stackedHeight.toLong() * 2L
+            cpuFusedBayerBuffer = allocateFusedBayerBuffer(outputByteCount, "CPU") ?: return null
+            processRawStackWithBufferNative(stackerPtr, cpuFusedBayerBuffer)
 
-            fusedBayerBuffer.rewind()
+            cpuFusedBayerBuffer.rewind()
             PLog.i(TAG, "CPU RAW stacking completed successfully")
+            returnsCpuFusedBayer = true
             return RawStackResult(
-                fusedBayerBuffer = fusedBayerBuffer,
+                fusedBayerBuffer = cpuFusedBayerBuffer,
                 width = stackedWidth,
                 height = stackedHeight,
                 isNormalizedSensorData = false,
                 blackLevel = masterBlackLevel.copyOf(),
+                fusedBayerUsesNativeAllocator = true,
             )
 
         } finally {
             releaseRawStackerNative(stackerPtr)
+            if (!returnsCpuFusedBayer) {
+                LargeDirectBuffer.free(cpuFusedBayerBuffer)
+            }
         }
+    }
+
+    private fun allocateFusedBayerBuffer(byteCount: Long, label: String): ByteBuffer? {
+        if (byteCount <= 0L || byteCount > Int.MAX_VALUE) {
+            PLog.e(TAG, "$label fused Bayer buffer size is invalid: $byteCount")
+            return null
+        }
+        return LargeDirectBuffer.allocate(byteCount, "$label fused Bayer")
     }
 
     // --- Native Methods ---

@@ -3,6 +3,7 @@ package com.hinnka.mycamera.ml
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +19,6 @@ import org.tensorflow.lite.nnapi.NnApiDelegate
 import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -262,41 +262,48 @@ class DnCNNDenoiseEstimator(
 
             val isRgb = inputTensor.shape().last() == 3 || (inputChannelsFirst && inputTensor.shape()[1] == 3)
             val channels = if (isRgb) 3 else 1
-            val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
+            val buffer = LargeDirectBuffer.allocate(
+                inputWidth.toLong() * inputHeight.toLong() * channels.toLong() * 4L,
+                "DnCNN denoise input"
+            ) ?: return null
+            try {
 
-            preprocessNative(inputBitmap, 0, 0, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                preprocessNative(inputBitmap, 0, 0, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
 
-            val outputBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
+                val outputBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
 
-            StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
-                interpreterMutex.withLock {
-                    buffer.rewind()
-                    outputBuffer.buffer.rewind()
-                    interpreter?.run(buffer, outputBuffer.buffer)
+                StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
+                    interpreterMutex.withLock {
+                        buffer.rewind()
+                        outputBuffer.buffer.rewind()
+                        interpreter?.run(buffer, outputBuffer.buffer)
+                    }
                 }
-            }
 
-            val resultBitmap = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
-            postprocessNative(
-                outputBuffer.buffer,
-                inputBitmap,
-                resultBitmap,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                outputWidth,
-                outputHeight,
-                outputWidth,
-                outputHeight,
-                strength,
-                isRgb,
-                outputChannelsFirst
-            )
+                val resultBitmap = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
+                postprocessNative(
+                    outputBuffer.buffer,
+                    inputBitmap,
+                    resultBitmap,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    outputWidth,
+                    outputHeight,
+                    outputWidth,
+                    outputHeight,
+                    strength,
+                    isRgb,
+                    outputChannelsFirst
+                )
             
-            return resultBitmap
+                return resultBitmap
+            } finally {
+                LargeDirectBuffer.free(buffer)
+            }
 
         } catch (e: Exception) {
             PLog.e(TAG, "Error during DnCNN denoise", e)
@@ -384,42 +391,48 @@ class DnCNNDenoiseEstimator(
 
             cpuInterpreters.map { workerInterpreter ->
                 async(Dispatchers.Default) {
-                    val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
+                    val buffer = LargeDirectBuffer.allocate(
+                        inputWidth.toLong() * inputHeight.toLong() * channels.toLong() * 4L,
+                        "DnCNN worker input"
+                    ) ?: throw OutOfMemoryError("Failed to allocate DnCNN worker input buffer")
                     val outBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
+                    try {
+                        while (true) {
+                            val patchIndex = nextPatch.getAndIncrement()
+                            if (patchIndex >= patchTasks.size) break
 
-                    while (true) {
-                        val patchIndex = nextPatch.getAndIncrement()
-                        if (patchIndex >= patchTasks.size) break
+                            val task = patchTasks[patchIndex]
+                            var stageStartMs = SystemClock.elapsedRealtime()
+                            bitmapMutex.withLock {
+                                preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                            }
+                            preprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
 
-                        val task = patchTasks[patchIndex]
-                        var stageStartMs = SystemClock.elapsedRealtime()
-                        bitmapMutex.withLock {
-                            preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                            stageStartMs = SystemClock.elapsedRealtime()
+                            buffer.rewind()
+                            outBuffer.buffer.rewind()
+                            workerInterpreter.run(buffer, outBuffer.buffer)
+                            inferenceTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
+
+                            stageStartMs = SystemClock.elapsedRealtime()
+                            bitmapMutex.withLock {
+                                postprocessNative(
+                                    outBuffer.buffer, inputBitmap, resultBitmap,
+                                    task.dstX - task.startX, task.dstY - task.startY,
+                                    task.dstX, task.dstY,
+                                    task.dstX, task.dstY,
+                                    task.validW, task.validH,
+                                    outputWidth, outputHeight,
+                                    strength, isRgb, outputChannelsFirst
+                                )
+                            }
+                            postprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
+
+                            val progress = completedPatches.incrementAndGet().toFloat() / totalSteps
+                            onProgress?.invoke(progress)
                         }
-                        preprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
-
-                        stageStartMs = SystemClock.elapsedRealtime()
-                        buffer.rewind()
-                        outBuffer.buffer.rewind()
-                        workerInterpreter.run(buffer, outBuffer.buffer)
-                        inferenceTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
-
-                        stageStartMs = SystemClock.elapsedRealtime()
-                        bitmapMutex.withLock {
-                            postprocessNative(
-                                outBuffer.buffer, inputBitmap, resultBitmap,
-                                task.dstX - task.startX, task.dstY - task.startY,
-                                task.dstX, task.dstY,
-                                task.dstX, task.dstY,
-                                task.validW, task.validH,
-                                outputWidth, outputHeight,
-                                strength, isRgb, outputChannelsFirst
-                            )
-                        }
-                        postprocessTotalMs.addAndGet(SystemClock.elapsedRealtime() - stageStartMs)
-
-                        val progress = completedPatches.incrementAndGet().toFloat() / totalSteps
-                        onProgress?.invoke(progress)
+                    } finally {
+                        LargeDirectBuffer.free(buffer)
                     }
                 }
             }.awaitAll()
@@ -429,38 +442,45 @@ class DnCNNDenoiseEstimator(
             inferenceMs = inferenceTotalMs.get()
             postprocessMs = postprocessTotalMs.get()
         } else {
-            val buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * channels * 4).order(ByteOrder.nativeOrder())
+            val buffer = LargeDirectBuffer.allocate(
+                inputWidth.toLong() * inputHeight.toLong() * channels.toLong() * 4L,
+                "DnCNN patch input"
+            ) ?: return@coroutineScope null
             val outBuffer = TensorBuffer.createFixedSize(outputTensor.shape(), outputDataType)
 
-            for (task in patchTasks) {
-                var stageStartMs = SystemClock.elapsedRealtime()
-                preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
-                preprocessMs += SystemClock.elapsedRealtime() - stageStartMs
+            try {
+                for (task in patchTasks) {
+                    var stageStartMs = SystemClock.elapsedRealtime()
+                    preprocessNative(inputBitmap, task.startX, task.startY, inputWidth, inputHeight, buffer, isRgb, inputChannelsFirst)
+                    preprocessMs += SystemClock.elapsedRealtime() - stageStartMs
 
-                stageStartMs = SystemClock.elapsedRealtime()
-                StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
-                    interpreterMutex.withLock {
-                        buffer.rewind()
-                        outBuffer.buffer.rewind()
-                        interpreter?.run(buffer, outBuffer.buffer)
+                    stageStartMs = SystemClock.elapsedRealtime()
+                    StartupTrace.measure("DnCNNDenoiseEstimator.Interpreter.run") {
+                        interpreterMutex.withLock {
+                            buffer.rewind()
+                            outBuffer.buffer.rewind()
+                            interpreter?.run(buffer, outBuffer.buffer)
+                        }
                     }
+                    inferenceMs += SystemClock.elapsedRealtime() - stageStartMs
+
+                    stageStartMs = SystemClock.elapsedRealtime()
+                    postprocessNative(
+                        outBuffer.buffer, inputBitmap, resultBitmap,
+                        task.dstX - task.startX, task.dstY - task.startY,
+                        task.dstX, task.dstY,
+                        task.dstX, task.dstY,
+                        task.validW, task.validH,
+                        outputWidth, outputHeight,
+                        strength, isRgb, outputChannelsFirst
+                    )
+                    postprocessMs += SystemClock.elapsedRealtime() - stageStartMs
+
+                    completedSteps++
+                    onProgress?.invoke(completedSteps.toFloat() / totalSteps)
                 }
-                inferenceMs += SystemClock.elapsedRealtime() - stageStartMs
-
-                stageStartMs = SystemClock.elapsedRealtime()
-                postprocessNative(
-                    outBuffer.buffer, inputBitmap, resultBitmap,
-                    task.dstX - task.startX, task.dstY - task.startY,
-                    task.dstX, task.dstY,
-                    task.dstX, task.dstY,
-                    task.validW, task.validH,
-                    outputWidth, outputHeight,
-                    strength, isRgb, outputChannelsFirst
-                )
-                postprocessMs += SystemClock.elapsedRealtime() - stageStartMs
-
-                completedSteps++
-                onProgress?.invoke(completedSteps.toFloat() / totalSteps)
+            } finally {
+                LargeDirectBuffer.free(buffer)
             }
         }
 

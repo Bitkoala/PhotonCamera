@@ -32,6 +32,7 @@ import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
 import com.hinnka.mycamera.utils.YuvProcessor
@@ -103,7 +104,8 @@ object GalleryManager {
         val buffer: ByteBuffer,
         val width: Int,
         val height: Int,
-        val compressed: Boolean
+        val compressed: Boolean,
+        val usesLargeDirectAllocator: Boolean = false,
     )
 
     val processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -1529,30 +1531,44 @@ object GalleryManager {
         val width = firstBitmap.width
         val height = firstBitmap.height
         val bufferSize = firstBitmap.byteCount
-        val outputBuffer = ByteBuffer.allocateDirect(bufferSize).order(ByteOrder.nativeOrder())
-        val inputBuffer = ByteBuffer.allocateDirect(bufferSize).order(ByteOrder.nativeOrder())
-        val outputInts = outputBuffer.asIntBuffer()
-        val inputInts = inputBuffer.asIntBuffer()
-        firstBitmap.copyPixelsToBuffer(outputBuffer)
-        firstBitmap.recycle()
-        var blendedCount = 1
-
-        frameFiles.drop(1).forEach { file ->
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return@forEach
-            if (bitmap.width == width && bitmap.height == height) {
-                inputBuffer.clear()
-                bitmap.copyPixelsToBuffer(inputBuffer)
-                blendAverageInto(outputInts, inputInts, width * height, blendedCount + 1)
-                blendedCount++
-            } else {
-                PLog.w(TAG, "Skipping mismatched multiple exposure frame: ${file.name}")
-            }
-            bitmap.recycle()
+        val outputBuffer = LargeDirectBuffer.allocate(bufferSize.toLong(), "multiple exposure output")
+        if (outputBuffer == null) {
+            firstBitmap.recycle()
+            return null
         }
+        val inputBuffer = LargeDirectBuffer.allocate(bufferSize.toLong(), "multiple exposure input")
+        if (inputBuffer == null) {
+            firstBitmap.recycle()
+            LargeDirectBuffer.free(outputBuffer)
+            return null
+        }
+        try {
+            val outputInts = outputBuffer.asIntBuffer()
+            val inputInts = inputBuffer.asIntBuffer()
+            firstBitmap.copyPixelsToBuffer(outputBuffer)
+            firstBitmap.recycle()
+            var blendedCount = 1
 
-        return createBitmap(width, height, Bitmap.Config.ARGB_8888).also { output ->
-            outputBuffer.rewind()
-            output.copyPixelsFromBuffer(outputBuffer)
+            frameFiles.drop(1).forEach { file ->
+                val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return@forEach
+                if (bitmap.width == width && bitmap.height == height) {
+                    inputBuffer.clear()
+                    bitmap.copyPixelsToBuffer(inputBuffer)
+                    blendAverageInto(outputInts, inputInts, width * height, blendedCount + 1)
+                    blendedCount++
+                } else {
+                    PLog.w(TAG, "Skipping mismatched multiple exposure frame: ${file.name}")
+                }
+                bitmap.recycle()
+            }
+
+            return createBitmap(width, height, Bitmap.Config.ARGB_8888).also { output ->
+                outputBuffer.rewind()
+                output.copyPixelsFromBuffer(outputBuffer)
+            }
+        } finally {
+            LargeDirectBuffer.free(inputBuffer)
+            LargeDirectBuffer.free(outputBuffer)
         }
     }
 
@@ -1749,29 +1765,37 @@ object GalleryManager {
 
             val finalStackResult = rawStackResult ?: return@withContext
 
-            val dngWritten = trySaveStackedRawDng(
-                context = context,
-                photoId = photoId,
-                dngFile = dngFile,
-                fusedBayerBuffer = finalStackResult.fusedBayerBuffer ?: return@withContext,
-                width = finalStackResult.width,
-                height = finalStackResult.height,
-                rawMetadata = rawMetadata,
-                stackBlackLevel = finalStackResult.blackLevel,
-                isNormalizedSensorData = finalStackResult.isNormalizedSensorData,
-                characteristics = characteristics,
-                captureResult = captureResult,
-                rotation = rotation,
-                thumbnail = null,
-                metadata = metadata,
-                shouldAutoSave = shouldAutoSave,
-                exportDngWithRawExport = exportDngWithRawExport
-            )
+            val fusedBayerBuffer = finalStackResult.fusedBayerBuffer ?: return@withContext
+            val dngWritten = try {
+                trySaveStackedRawDng(
+                    context = context,
+                    photoId = photoId,
+                    dngFile = dngFile,
+                    fusedBayerBuffer = fusedBayerBuffer,
+                    width = finalStackResult.width,
+                    height = finalStackResult.height,
+                    rawMetadata = rawMetadata,
+                    stackBlackLevel = finalStackResult.blackLevel,
+                    isNormalizedSensorData = finalStackResult.isNormalizedSensorData,
+                    characteristics = characteristics,
+                    captureResult = captureResult,
+                    rotation = rotation,
+                    thumbnail = null,
+                    metadata = metadata,
+                    shouldAutoSave = shouldAutoSave,
+                    exportDngWithRawExport = exportDngWithRawExport
+                )
+            } finally {
+                finalStackResult.fusedBayerBuffer = null
+                if (finalStackResult.fusedBayerUsesNativeAllocator) {
+                    LargeDirectBuffer.free(fusedBayerBuffer)
+                    PLog.d(TAG, "Released stacked RAW fused Bayer buffer")
+                }
+            }
             if (!dngWritten) {
                 PLog.e(TAG, "Failed to persist stacked RAW DNG before rendering preview")
                 return@withContext
             }
-            finalStackResult.fusedBayerBuffer = null
             @Suppress("ExplicitGarbageCollectionCall")
             System.gc()
 
@@ -2480,14 +2504,19 @@ object GalleryManager {
                     "loadHdrData loaded legacy raw sidecar in ${System.currentTimeMillis() - start}ms, " +
                         "size=${fallbackWidth}x${fallbackHeight}, bytes=${bytes.size}"
                 )
-                HdrSidecarData(
-                    buffer = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).apply {
+                val buffer = LargeDirectBuffer.allocate(bytes.size.toLong(), "HDR legacy sidecar")
+                if (buffer == null) {
+                    PLog.e(TAG, "Failed to load HDR sidecar: unable to allocate ${bytes.size} bytes")
+                    null
+                } else HdrSidecarData(
+                    buffer = buffer.apply {
                         put(bytes)
                         rewind()
                     },
                     width = fallbackWidth,
                     height = fallbackHeight,
-                    compressed = false
+                    compressed = false,
+                    usesLargeDirectAllocator = true,
                 )
             }
         } catch (e: Exception) {

@@ -13,6 +13,7 @@ import com.hinnka.mycamera.lut.ChromaDenoiseShaders
 import com.hinnka.mycamera.ml.SharedDepthEstimator
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.utils.BitmapUtils
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
 import kotlinx.coroutines.Dispatchers
@@ -3171,50 +3172,58 @@ class RawDemosaicProcessor {
                 dcpRenderPlan = dcpRenderPlan,
                 label = "LinearMeteringPass"
             )
-            val buffer = ByteBuffer
-                .allocateDirect(meteringWidth * meteringHeight * 4 * 2)
-                .order(ByteOrder.nativeOrder())
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearMeteringFramebufferId)
-            GLES30.glReadPixels(
-                0,
-                0,
-                meteringWidth,
-                meteringHeight,
-                GLES30.GL_RGBA,
-                GLES30.GL_HALF_FLOAT,
-                buffer
-            )
-            checkGlError("resolveRawAutoExposureEv")
-            buffer.position(0)
+            val buffer = LargeDirectBuffer.allocate(
+                meteringWidth.toLong() * meteringHeight.toLong() * 4L * 2L,
+                "RAW auto exposure metering"
+            ) ?: return MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)
+            var weightBuffer: ByteBuffer? = null
+            try {
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearMeteringFramebufferId)
+                GLES30.glReadPixels(
+                    0,
+                    0,
+                    meteringWidth,
+                    meteringHeight,
+                    GLES30.GL_RGBA,
+                    GLES30.GL_HALF_FLOAT,
+                    buffer
+                )
+                checkGlError("resolveRawAutoExposureEv")
+                buffer.position(0)
 
-            val linearPixels = buffer.asShortBuffer()
+                val linearPixels = buffer.asShortBuffer()
 
-            // Calculate depth weighting from a display-encoded preview, while AE uses linear RAW luma.
-            val bitmap = createLinearMeteringPreviewBitmap(linearPixels, meteringWidth, meteringHeight)
-            val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
-            val weightBuffer = depthMap?.let {
-                val wb = ByteBuffer.allocateDirect(it.byteCount)
-                it.copyPixelsToBuffer(wb)
-                wb.position(0)
-                wb
+                // Calculate depth weighting from a display-encoded preview, while AE uses linear RAW luma.
+                val bitmap = createLinearMeteringPreviewBitmap(linearPixels, meteringWidth, meteringHeight)
+                val depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
+                weightBuffer = depthMap?.let {
+                    val wb = LargeDirectBuffer.allocate(it.byteCount.toLong(), "RAW auto exposure depth weight")
+                        ?: return@let null
+                    it.copyPixelsToBuffer(wb)
+                    wb.position(0)
+                    wb
+                }
+
+                val meteringResult = MeteringSystem.analyzeLinearHalfFloatExposureEv(
+                    pixelBuffer = linearPixels,
+                    width = meteringWidth,
+                    height = meteringHeight,
+                    weightBuffer = weightBuffer,
+                    droMode = rawDROMode
+                )
+
+                // Clean up temporary bitmaps
+                if (depthMap != null && !depthMap.isRecycled) {
+                    depthMap.recycle()
+                }
+                if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+                meteringResult
+            } finally {
+                LargeDirectBuffer.free(weightBuffer)
+                LargeDirectBuffer.free(buffer)
             }
-
-            val meteringResult = MeteringSystem.analyzeLinearHalfFloatExposureEv(
-                pixelBuffer = linearPixels,
-                width = meteringWidth,
-                height = meteringHeight,
-                weightBuffer = weightBuffer,
-                droMode = rawDROMode
-            )
-
-            // Clean up temporary bitmaps
-            if (depthMap != null && !depthMap.isRecycled) {
-                depthMap.recycle()
-            }
-            if (!bitmap.isRecycled) {
-                bitmap.recycle()
-            }
-            meteringResult
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
             MeteringSystem.MeteringResult(0f, 0f, 0f, 0f)

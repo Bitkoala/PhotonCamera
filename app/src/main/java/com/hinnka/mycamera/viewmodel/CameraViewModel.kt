@@ -173,7 +173,8 @@ private data class CameraFeatureUpdate(
     val jpgBaselineLutId: SettingValue<String?>? = null,
     val rawBaselineLutId: SettingValue<String?>? = null,
     val phantomBaselineLutId: SettingValue<String?>? = null,
-    val activePresetId: SettingValue<String?>? = null
+    val activePresetId: SettingValue<String?>? = null,
+    val useMultipleExposure: SettingValue<Boolean>? = null
 )
 
 /**
@@ -415,6 +416,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         update.useRaw?.let { desiredUseRaw = it.value }
         update.useMFNR?.let { desiredUseMFNR = it.value }
         update.useMFSR?.let { desiredUseMFSR = it.value }
+        update.useMultipleExposure?.let { desiredUseMultipleExposure = it.value }
 
         if (update.useRaw?.value == true) {
             desiredUseMultipleExposure = false
@@ -431,6 +433,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 desiredUseMultipleExposure = false
                 desiredUseMFNR = false
             }
+        }
+        if (update.useMultipleExposure?.value == true) {
+            desiredUseRaw = false
+            desiredUseMFNR = false
+            desiredUseMFSR = false
         }
 
         val currentState = state.value
@@ -462,9 +469,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (!desiredUseMultipleExposure) {
                 cancelMultipleExposureSession()
             }
+            multipleExposureState = multipleExposureState.copy(enabled = desiredUseMultipleExposure)
         }
 
-        if (update.useRaw != null) {
+        if (update.useRaw != null || desiredUseRaw != prefs.useRaw) {
             cameraController.setUseRaw(desiredUseRaw)
         }
         if (update.useMFNR != null || desiredUseMFNR != prefs.useMFNR) {
@@ -498,7 +506,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     null
                 },
-                useMultipleExposure = if (desiredUseMultipleExposure != prefs.useMultipleExposure) {
+                useMultipleExposure = if (update.useMultipleExposure != null ||
+                    desiredUseMultipleExposure != prefs.useMultipleExposure
+                ) {
                     PreferenceUpdateValue(desiredUseMultipleExposure)
                 } else {
                     null
@@ -1069,8 +1079,29 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 // 同步锐化等级到相机控制器
                 cameraController.setEdgeLevel(it.edgeLevel)
                 // 同步 RAW 设置到相机控制器
-                if (currentCameraState.useRaw != it.useRaw) {
-                    cameraController.setUseRaw(it.useRaw)
+                val multipleExposureEnabled = it.useMultipleExposure
+                val effectiveUseRaw = it.useRaw && !multipleExposureEnabled
+                val effectiveUseMFNR = it.useMFNR && !multipleExposureEnabled
+                val effectiveUseMFSR = it.useMFSR && !multipleExposureEnabled
+                if (currentCameraState.useRaw != effectiveUseRaw) {
+                    cameraController.setUseRaw(effectiveUseRaw)
+                }
+                if (currentCameraState.useMFNR != effectiveUseMFNR) {
+                    cameraController.setUseMFNR(effectiveUseMFNR)
+                }
+                if (currentCameraState.useMFSR != effectiveUseMFSR) {
+                    cameraController.setUseMFSR(effectiveUseMFSR)
+                }
+                if (multipleExposureEnabled && (it.useRaw || it.useMFNR || it.useMFSR)) {
+                    viewModelScope.launch {
+                        userPreferencesRepository.saveCameraFeaturePreferences(
+                            CameraFeaturePreferencesUpdate(
+                                useRaw = PreferenceUpdateValue(false),
+                                useMFNR = PreferenceUpdateValue(false),
+                                useMFSR = PreferenceUpdateValue(false)
+                            )
+                        )
+                    }
                 }
                 if (currentCameraState.rawMinShutterSpeedNs != it.rawMinShutterSpeedNs) {
                     cameraController.setRawMinShutterSpeedNs(it.rawMinShutterSpeedNs)
@@ -1684,30 +1715,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setUseMultipleExposure(enabled: Boolean) {
-        if (!enabled) {
-            cancelMultipleExposureSession()
-        }
-
-        if (enabled) {
-            cameraController.setUseMFNR(false)
-            cameraController.setUseMFSR(false)
-            cameraController.setUseLivePhoto(false)
-            cameraController.setUseRaw(false)
-        }
-
         viewModelScope.launch {
-            userPreferencesRepository.saveUseMultipleExposure(enabled)
+            applyCameraFeatureUpdate(
+                CameraFeatureUpdate(useMultipleExposure = SettingValue(enabled))
+            )
             if (enabled) {
-                userPreferencesRepository.setUseMFNR(false)
-                userPreferencesRepository.saveUseMFSR(false)
                 userPreferencesRepository.saveUseLivePhoto(false)
-                userPreferencesRepository.saveUseRaw(false)
+                cameraController.setUseLivePhoto(false)
             }
         }
     }
 
     fun cancelMultipleExposureSession() {
-        multipleExposureState.previewBitmap?.recycle()
         multipleExposureState.sessionId?.let { sessionId ->
             GalleryManager.clearMultipleExposureSession(getApplication(), sessionId)
         }
@@ -1807,7 +1826,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 null
             }
-            val oldPreview = multipleExposureState.previewBitmap
             multipleExposureState = multipleExposureState.copy(
                 capturedCount = frameFiles.size,
                 frames = frameFiles.mapIndexed { index, file -> MultipleExposureFrame(index + 1, file) },
@@ -1815,9 +1833,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sessionId = if (frameFiles.isEmpty()) null else sessionId,
                 isProcessing = false
             )
-            if (oldPreview != null && oldPreview !== preview && !oldPreview.isRecycled) {
-                oldPreview.recycle()
-            }
             if (frameFiles.isEmpty()) {
                 multipleExposureMetadata = null
             }
@@ -1862,9 +1877,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 frames = multipleExposureState.frames + MultipleExposureFrame(frameIndex, frameFile),
                 capturedCount = frameIndex
             )
-            refreshMultipleExposurePreview(sessionId)
             if (frameIndex >= multipleExposureState.targetCount) {
                 finishMultipleExposureSession()
+            } else {
+                refreshMultipleExposurePreview(sessionId)
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to handle multiple exposure frame", e)

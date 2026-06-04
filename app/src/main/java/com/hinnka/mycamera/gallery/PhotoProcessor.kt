@@ -23,6 +23,7 @@ import com.hinnka.mycamera.raw.RawHdrRenderResult
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.YuvProcessor
 import kotlinx.coroutines.flow.firstOrNull
@@ -101,44 +102,50 @@ class PhotoProcessor(
                     fallbackHeight = metadata.height
                 )
                 if (hdrData != null) {
-                    val photoFile = GalleryManager.getPhotoFile(context, photoId)
-                    val photoBitmap = BitmapFactory.decodeFile(photoFile.absolutePath) ?: return null
-                    val finalSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
-                    val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
-                    val finalChromaNoiseReduction =
-                        metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
+                    try {
+                        val photoFile = GalleryManager.getPhotoFile(context, photoId)
+                        val photoBitmap = BitmapFactory.decodeFile(photoFile.absolutePath) ?: return null
+                        val finalSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
+                        val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
+                        val finalChromaNoiseReduction =
+                            metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
 
-                    val sdrPostElapsedStart = System.currentTimeMillis()
-                    val sdrBitmap = processBitmap(
-                        context = context,
-                        photoId = photoId,
-                        input = photoBitmap,
-                        metadata = metadata,
-                        sharpening = finalSharpening,
-                        noiseReduction = finalNoiseReduction,
-                        chromaNoiseReduction = finalChromaNoiseReduction,
-                        useComputationalAperture = true
-                    )
-                    val hdrReferenceBitmap = hlgImageProcessor.createHdrReferenceFromRawSidecar(
-                        buffer = hdrData.buffer,
-                        width = hdrData.width,
-                        height = hdrData.height
-                    ).let {
-                        applyFrame(applyCrop(it, metadata, "hlg_sidecar_hdr"), metadata)
+                        val sdrPostElapsedStart = System.currentTimeMillis()
+                        val sdrBitmap = processBitmap(
+                            context = context,
+                            photoId = photoId,
+                            input = photoBitmap,
+                            metadata = metadata,
+                            sharpening = finalSharpening,
+                            noiseReduction = finalNoiseReduction,
+                            chromaNoiseReduction = finalChromaNoiseReduction,
+                            useComputationalAperture = true
+                        )
+                        val hdrReferenceBitmap = hlgImageProcessor.createHdrReferenceFromRawSidecar(
+                            buffer = hdrData.buffer,
+                            width = hdrData.width,
+                            height = hdrData.height
+                        ).let {
+                            applyFrame(applyCrop(it, metadata, "hlg_sidecar_hdr"), metadata)
+                        }
+                        PLog.d(
+                            "PhotoProcessor",
+                            "prepareUltraHdrSource(HLG sidecar) took ${System.currentTimeMillis() - prepareStart}ms " +
+                                    "(sdrPost=${System.currentTimeMillis() - sdrPostElapsedStart}ms, " +
+                                    "hasHdr=true, sidecar=${hdrData.width}x${hdrData.height}, compressed=${hdrData.compressed})"
+                        )
+                        source = GainmapSourceSet(
+                            sdrBase = sdrBitmap,
+                            hdrReference = HdrBuffer(hdrReferenceBitmap, "hlg_sidecar_rgba16"),
+                            sourceKind = SourceKind.HLG_CAPTURE,
+                            confidence = 0.75f,
+                            displayHdrSdrRatio = readDisplayHdrSdrRatio()
+                        )
+                    } finally {
+                        if (hdrData.usesLargeDirectAllocator) {
+                            LargeDirectBuffer.free(hdrData.buffer)
+                        }
                     }
-                    PLog.d(
-                        "PhotoProcessor",
-                        "prepareUltraHdrSource(HLG sidecar) took ${System.currentTimeMillis() - prepareStart}ms " +
-                                "(sdrPost=${System.currentTimeMillis() - sdrPostElapsedStart}ms, " +
-                                "hasHdr=true, sidecar=${hdrData.width}x${hdrData.height}, compressed=${hdrData.compressed})"
-                    )
-                    source = GainmapSourceSet(
-                        sdrBase = sdrBitmap,
-                        hdrReference = HdrBuffer(hdrReferenceBitmap, "hlg_sidecar_rgba16"),
-                        sourceKind = SourceKind.HLG_CAPTURE,
-                        confidence = 0.75f,
-                        displayHdrSdrRatio = readDisplayHdrSdrRatio()
-                    )
                 } else if (yuvFile.exists()) {
                     val data = GalleryManager.loadYuvData(context, photoId)
                     if (data != null) {

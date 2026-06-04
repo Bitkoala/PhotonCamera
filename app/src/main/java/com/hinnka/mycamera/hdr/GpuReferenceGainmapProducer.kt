@@ -12,6 +12,7 @@ import android.opengl.GLES30
 import android.opengl.GLUtils
 import android.os.Build
 import androidx.annotation.RequiresApi
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -173,22 +174,27 @@ class GpuReferenceGainmapProducer : GainmapProducer {
     }
 
     private fun readAlphaBitmap(width: Int, height: Int): Bitmap? {
-        val rgba = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
-        GLES30.glReadPixels(0, 0, width, height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, rgba)
-        checkGlError("readAlphaBitmap")
-        rgba.position(0)
+        val rgba = LargeDirectBuffer.allocate(width.toLong() * height.toLong() * 4L, "gainmap alpha readback")
+            ?: return null
+        try {
+            GLES30.glReadPixels(0, 0, width, height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, rgba)
+            checkGlError("readAlphaBitmap")
+            rgba.position(0)
 
-        val alpha = ByteArray(width * height)
-        for (y in 0 until height) {
-            val srcRow = height - 1 - y
-            val srcOffset = srcRow * width * 4
-            val dstOffset = y * width
-            for (x in 0 until width) {
-                alpha[dstOffset + x] = rgba.get(srcOffset + x * 4)
+            val alpha = ByteArray(width * height)
+            for (y in 0 until height) {
+                val srcRow = height - 1 - y
+                val srcOffset = srcRow * width * 4
+                val dstOffset = y * width
+                for (x in 0 until width) {
+                    alpha[dstOffset + x] = rgba.get(srcOffset + x * 4)
+                }
             }
-        }
-        return Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8).also {
-            it.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
+            return Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8).also {
+                it.copyPixelsFromBuffer(ByteBuffer.wrap(alpha))
+            }
+        } finally {
+            LargeDirectBuffer.free(rgba)
         }
     }
 

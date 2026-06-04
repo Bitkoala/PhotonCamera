@@ -7,6 +7,7 @@ import android.opengl.GLES30
 import android.opengl.GLUtils
 import com.hinnka.mycamera.lut.GlUtils
 import com.hinnka.mycamera.lut.Shaders
+import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 
 class OglBokehProcessor {
@@ -128,9 +129,14 @@ class OglBokehProcessor {
             // Read back to Bitmap
             val resultBitmap = Bitmap.createBitmap(originalImage.width, originalImage.height,
                 Bitmap.Config.ARGB_8888, false, originalImage.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB))
-            val buffer = java.nio.ByteBuffer.allocateDirect(originalImage.width * originalImage.height * 4)
-            GLES30.glReadPixels(0, 0, originalImage.width, originalImage.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
-            resultBitmap.copyPixelsFromBuffer(buffer)
+            val bufferByteCount = originalImage.width.toLong() * originalImage.height.toLong() * 4L
+            val buffer = LargeDirectBuffer.allocate(bufferByteCount, "OGL bokeh readback") ?: return null
+            try {
+                GLES30.glReadPixels(0, 0, originalImage.width, originalImage.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
+                resultBitmap.copyPixelsFromBuffer(buffer)
+            } finally {
+                LargeDirectBuffer.free(buffer)
+            }
 
             // Clean up
             GLES30.glDeleteTextures(1, intArrayOf(inputTex), 0)
