@@ -1978,6 +1978,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         reopenCamera(preserveVideoRecording = true)
     }
 
+    fun switchToLensAndSetZoomRatio(cameraId: String, ratio: Float) {
+        cameraController.switchToCameraId(cameraId)
+        reopenCamera(preserveVideoRecording = true)
+        setZoomRatioForCamera(ratio, cameraId)
+    }
+
     /**
      * 重新打开相机（切换摄像头后使用）
      */
@@ -2046,6 +2052,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setZoomRatio(ratio: Float) {
         zoomRatioByMain = ratio
         val cameraInfo = state.value.getCurrentCameraInfo()
+        setCameraControllerZoomRatio(ratio, cameraInfo)
+    }
+
+    private fun setZoomRatioForCamera(ratio: Float, cameraId: String) {
+        zoomRatioByMain = ratio
+        val cameraInfo = state.value.availableCameras.find { it.cameraId == cameraId }
+        setCameraControllerZoomRatio(ratio, cameraInfo)
+    }
+
+    private fun setCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?) {
         val intrinsicZoomRatio = cameraInfo?.intrinsicZoomRatio ?: 1.0f
         cameraController.setZoomRatio(ratio / intrinsicZoomRatio)
     }
@@ -3087,11 +3103,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 5. 检查是否需要切换镜头 (逻辑同步自 ZoomControlBar.kt)
             val optimalLens = findOptimalLens(targetZoom, availableCameras, currentCamera.cameraId)
             if (optimalLens != null && optimalLens.cameraId != currentCamera.cameraId) {
-                switchToLens(optimalLens.cameraId)
+                switchToLensAndSetZoomRatio(optimalLens.cameraId, targetZoom)
+            } else {
+                setZoomRatio(targetZoom)
             }
-
-            // 6. 应用变焦
-            setZoomRatio(targetZoom)
         }
     }
 
@@ -3428,10 +3443,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // 找到该变焦倍率下的最佳镜头
         val optimalLens = findOptimalLens(targetZoom, availableCameras, currentCamera.cameraId)
         if (optimalLens != null && optimalLens.cameraId != currentCamera.cameraId) {
-            switchToLens(optimalLens.cameraId)
+            switchToLensAndSetZoomRatio(optimalLens.cameraId, targetZoom)
+        } else {
+            setZoomRatio(targetZoom)
         }
-
-        setZoomRatio(targetZoom)
         PLog.d(TAG, "Applied default focal length: ${focalLength}mm (zoom: $targetZoom)")
     }
 

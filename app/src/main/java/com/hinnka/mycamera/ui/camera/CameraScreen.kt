@@ -349,6 +349,23 @@ fun CameraScreen(
         runPreviewTransition { viewModel.switchToLens(cameraId) }
     }
 
+    fun setZoomWithPreviewTransition(targetZoom: Float) {
+        val currentCamera = state.getCurrentCameraInfo()
+        val currentCameraId = currentCamera?.cameraId ?: "0"
+        val camera = viewModel.findOptimalLens(
+            targetZoom,
+            state.availableCameras,
+            currentCameraId
+        )
+        if (camera != null && camera.cameraId != currentCamera?.cameraId) {
+            runPreviewTransition {
+                viewModel.switchToLensAndSetZoomRatio(camera.cameraId, targetZoom)
+            }
+        } else {
+            viewModel.setZoomRatio(targetZoom)
+        }
+    }
+
     fun switchCameraWithPreviewTransition() {
         runPreviewTransition { viewModel.switchCamera() }
     }
@@ -589,7 +606,7 @@ fun CameraScreen(
                     zoomRatio = viewModel.zoomRatioByMain,
                     availableCameras = state.availableCameras,
                     currentCameraId = state.getCurrentCameraInfo()?.cameraId ?: "0",
-                    onZoomChange = { viewModel.setZoomRatio(it) },
+                    onZoomChange = { setZoomWithPreviewTransition(it) },
                     onLensSwitch = { lensId -> switchToLensWithPreviewTransition(lensId) },
                     onFilterClick = {
                         activePanel = if (activePanel == ActivePanel.FILTERS) ActivePanel.NONE else ActivePanel.FILTERS
@@ -736,17 +753,7 @@ fun CameraScreen(
                                                     viewModel.globalMinZoom,
                                                     viewModel.globalMaxZoom
                                                 )
-                                            // Check for lens switch
-                                            val info = state.getCurrentCameraInfo()
-                                            val camera = viewModel.findOptimalLens(
-                                                nextZoom,
-                                                state.availableCameras,
-                                                info?.cameraId ?: "0"
-                                            )
-                                            if (camera != null && camera.cameraId != info?.cameraId) {
-                                                switchToLensWithPreviewTransition(camera.cameraId)
-                                            }
-                                            viewModel.setZoomRatio(nextZoom)
+                                            setZoomWithPreviewTransition(nextZoom)
                                         }
                                         event.changes.forEach { it.consume() }
                                     } else if (event.changes.size == 1) {
@@ -1000,7 +1007,7 @@ fun CameraScreen(
                             zoomRatio = viewModel.zoomRatioByMain,
                             availableCameras = state.availableCameras,
                             currentCameraId = state.getCurrentCameraInfo()?.cameraId ?: "0",
-                            onZoomChange = { viewModel.setZoomRatio(it) },
+                            onZoomChange = { setZoomWithPreviewTransition(it) },
                             onLensSwitch = { lensId -> switchToLensWithPreviewTransition(lensId) },
                             onFilterClick = {
                                 // Toggle Filter Panel

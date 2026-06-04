@@ -196,11 +196,6 @@ fun ZoomControlBar(
                             val newZoom = (internalZoomRatio * exp(-dragAmount.toDouble() * sensitivity).toFloat()).coerceIn(minZoom, maxZoom)
                             internalZoomRatio = newZoom
                             
-                            // 检查是否需要切换镜头
-                            val camera = viewModel.findOptimalLens(newZoom, availableCameras, currentCameraIdState)
-                            if (camera != null && camera.cameraId != currentCameraIdState) {
-                                onLensSwitch(camera.cameraId)
-                            }
                             onZoomChange(newZoom)
                         }
                     },
@@ -304,10 +299,6 @@ fun ZoomControlBar(
                     displayMode = displayMode,
                     onZoomChange = { stop ->
                         val targetStop = if (customZoomStop != null && stop == customZoomStop) originalStopRatio else stop
-                        val camera = viewModel.findOptimalLens(targetStop, availableCameras, currentCameraIdState)
-                        if (camera != null && camera.cameraId != currentCameraIdState) {
-                            onLensSwitch(camera.cameraId)
-                        }
                         onZoomChange(targetStop)
                         customZoomStop = null
                         replacedStopIndex = -1
