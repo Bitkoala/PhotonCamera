@@ -38,6 +38,7 @@ import com.hinnka.mycamera.video.VideoRecorder
 fun CameraPreviewGL(
     aspectRatio: Float,
     previewSize: Size,
+    captureSize: Size,
     captureMode: CaptureMode,
     sensorOrientation: Int,
     lensFacing: Int,
@@ -212,6 +213,7 @@ fun CameraPreviewGL(
                         if (viewWidth > 0 && viewHeight > 0 && surfaceAvailable) {
                             glSurfaceView.getSurfaceTexture()?.let { surfaceTexture ->
                                 glSurfaceView.setPreviewSize(previewSize.width, previewSize.height)
+                                glSurfaceView.setCaptureSize(captureSize.width, captureSize.height)
                                 val shouldNotifySurfaceTexture =
                                     !currentSurfaceNotified ||
                                         currentNotifiedPreviewSize != previewSize ||

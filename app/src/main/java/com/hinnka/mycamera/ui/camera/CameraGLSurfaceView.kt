@@ -107,6 +107,12 @@ class CameraGLSurfaceView @JvmOverloads constructor(
         }
     }
 
+    fun setCaptureSize(width: Int, height: Int) {
+        queueEvent {
+            renderer.setCaptureSize(width, height)
+        }
+    }
+
     fun setSensorOrientation(orientation: Int) {
         queueEvent {
             renderer.setSensorOrientation(orientation)

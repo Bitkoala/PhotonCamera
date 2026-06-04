@@ -825,6 +825,7 @@ class Camera2Controller(private val context: Context) {
                     isHlg10Supported = isHlg10Supported,
                     availableNrModes = selectableNrModes,
                     currentPreviewSize = previewSize,
+                    currentCaptureSize = if (captureMode == CaptureMode.VIDEO) previewSize else _state.value.currentCaptureSize,
                     minimumFocusDistance = cachedCharacteristics?.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
                 )
             } catch (e: Exception) {
@@ -872,7 +873,10 @@ class Camera2Controller(private val context: Context) {
                         ?.contains(ColorSpace.Named.DISPLAY_P3) == true
                 } else false
 
-                _state.value = _state.value.copy(isP3Supported = isP3Supported)
+                _state.value = _state.value.copy(
+                    isP3Supported = isP3Supported,
+                    currentCaptureSize = captureSize
+                )
 
                 val readerMaxImages = resolveImageReaderMaxImages()
                 imageReaderMaxImages = readerMaxImages

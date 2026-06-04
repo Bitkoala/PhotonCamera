@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
@@ -444,6 +445,9 @@ class LutRenderer : GLSurfaceView.Renderer {
     // 渲染尺寸
     private var viewportWidth: Int = 0
     private var viewportHeight: Int = 0
+    private var photoCaptureWidth: Int = 0
+    private var photoCaptureHeight: Int = 0
+    private var lastLoggedSpatialEffectScale: Float = -1f
 
     // 历史高光点记录（用于增加稳定性，减少跳动）
     private var lastBestX = -1
@@ -1491,7 +1495,7 @@ class LutRenderer : GLSurfaceView.Renderer {
             val t = IntArray(1); val f = IntArray(1)
             GLES30.glGenTextures(1, t, 0); GLES30.glGenFramebuffers(1, f, 0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, t[0])
-            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, dsW, dsH, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA16F, dsW, dsH, 0, GLES30.GL_RGBA, GLES30.GL_HALF_FLOAT, null)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
@@ -1551,8 +1555,9 @@ class LutRenderer : GLSurfaceView.Renderer {
         if (hdfExtractBlurHProgram == 0 || hdfBlurVProgram == 0) return
         val dsW = width / 4;
         val dsH = height / 4
-        val texelW = 1.0f / dsW;
-        val texelH = 1.0f / dsH
+        val spatialScale = getPreviewSpatialEffectScale(width, height)
+        val texelW = spatialScale / dsW;
+        val texelH = spatialScale / dsH
         val threshold = 0.9f - halation * 0.3f
         // Pass 1: Extract + Horizontal Blur
         GLES30.glUseProgram(hdfExtractBlurHProgram)
@@ -1582,7 +1587,8 @@ class LutRenderer : GLSurfaceView.Renderer {
         setupHalationFbos(width, height)
         if (halationExtractBlurHProgram == 0 || halationBlurVProgram == 0) return
         val dsW = width / 4; val dsH = height / 4
-        val texelW = 1.0f / dsW; val texelH = 1.0f / dsH
+        val spatialScale = getPreviewSpatialEffectScale(width, height)
+        val texelW = spatialScale / dsW; val texelH = spatialScale / dsH
         val threshold = 0.72f - redHalation.coerceIn(0f, 1f) * 0.22f
         
         GLES30.glUseProgram(halationExtractBlurHProgram)
@@ -1627,6 +1633,20 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(hdfCompositeProgram, "uRedHalationTexture"), 2)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(hdfCompositeProgram, "uRedHalation"), redHalation)
         drawSimpleQuad(hdfCompositeProgram)
+    }
+
+    private fun getPreviewSpatialEffectScale(width: Int, height: Int): Float {
+        val previewLongEdge = maxOf(width, height).coerceAtLeast(1)
+        val captureLongEdge = maxOf(photoCaptureWidth, photoCaptureHeight).coerceAtLeast(previewLongEdge)
+        val scale = (previewLongEdge.toFloat() / captureLongEdge.toFloat()).coerceIn(0.25f, 1f)
+        if (abs(scale - lastLoggedSpatialEffectScale) > 0.01f) {
+            lastLoggedSpatialEffectScale = scale
+            PLog.d(
+                TAG,
+                "Preview spatial effect scale=$scale preview=${width}x${height} capture=${photoCaptureWidth}x${photoCaptureHeight}"
+            )
+        }
+        return scale
     }
 
     /** 使用 VBO 绘制全屏四边形（用于 HDF Pass，使用 SIMPLE_VERTEX_SHADER） */
@@ -1989,6 +2009,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         // 更新 MVP 矩阵以处理 center crop
         updateMVPMatrix()
         updateCaptureSize()
+    }
+
+    fun setCaptureSize(width: Int, height: Int) {
+        photoCaptureWidth = width.coerceAtLeast(0)
+        photoCaptureHeight = height.coerceAtLeast(0)
     }
 
     fun setSourceCrop(crop: PhantomPipCrop) {

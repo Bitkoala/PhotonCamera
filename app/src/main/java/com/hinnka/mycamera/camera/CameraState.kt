@@ -226,6 +226,7 @@ data class CameraState(
     val currentLensType: LensType = LensType.BACK_MAIN,
     val availableCameras: List<CameraInfo> = emptyList(),
     val currentPreviewSize: Size = Size(1440, 1080),
+    val currentCaptureSize: Size = Size(1440, 1080),
 
     // 曝光控制
     val exposureCompensation: Int = 0,
