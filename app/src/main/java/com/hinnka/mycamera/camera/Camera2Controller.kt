@@ -1605,15 +1605,14 @@ class Camera2Controller(private val context: Context) {
         baseIso: Int,
         baseShutter: Long
     ): Pair<Int, Long> {
-        val minShutter = state.rawMinShutterSpeedNs
-        if (!state.useRaw || state.captureMode != CaptureMode.PHOTO || minShutter <= 0L) {
+        if (!shouldApplyRawMinShutterLimit(state)) {
             return Pair(baseIso, baseShutter)
         }
         if (baseIso <= 0 || baseShutter <= 0L) return Pair(baseIso, baseShutter)
 
         val isoRange = state.getIsoRange()
         val shutterRange = state.getShutterSpeedRange()
-        val targetShutterLimit = minShutter.coerceIn(shutterRange.lower, shutterRange.upper)
+        val targetShutterLimit = state.rawMinShutterSpeedNs.coerceIn(shutterRange.lower, shutterRange.upper)
         if (baseShutter == targetShutterLimit) return Pair(baseIso, baseShutter)
 
         val exposureProduct = baseIso.toDouble() * baseShutter.toDouble()
@@ -1650,6 +1649,14 @@ class Camera2Controller(private val context: Context) {
             )
         }
         return adjusted
+    }
+
+    private fun shouldApplyRawMinShutterLimit(state: CameraState): Boolean {
+        return state.useRaw &&
+                state.captureMode == CaptureMode.PHOTO &&
+                state.rawMinShutterSpeedNs > 0L &&
+                state.isIsoAuto &&
+                state.isShutterSpeedAuto
     }
 
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
@@ -3535,7 +3542,7 @@ class Camera2Controller(private val context: Context) {
                 // 强制手动控制 RAW 拍摄曝光调整 (覆盖 applyBaseCameraSettings 中的 AE 设置)
                 if (state.value.useRaw && state.value.captureMode == CaptureMode.PHOTO) {
                     val droExposureReductionEv = DROMode.fromPersistedName(state.value.droMode).captureExposureReductionEv
-                    val minShutterEnabled = state.value.rawMinShutterSpeedNs > 0L
+                    val minShutterEnabled = shouldApplyRawMinShutterLimit(state.value)
                     if (droExposureReductionEv > 0f || minShutterEnabled) {
                         if (isManualSensorSupported) {
                             val (droIso, droShutter) = calculateDroAdjustedExposure(_state.value)
@@ -3558,7 +3565,7 @@ class Camera2Controller(private val context: Context) {
                                 TAG,
                                 "Capture DRO ${state.value.droMode} override (AE Compensation): $adjustedCompensation"
                             )
-                        } else if (minShutterEnabled) {
+                        } else if (state.value.rawMinShutterSpeedNs > 0L && state.value.isAutoExposure) {
                             PLog.w(TAG, "RAW min shutter requires MANUAL_SENSOR support")
                         }
                     }
