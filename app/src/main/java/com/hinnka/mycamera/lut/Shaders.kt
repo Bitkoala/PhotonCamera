@@ -429,9 +429,13 @@ object Shaders {
         vec3 saturation = 1.0 - development * uniformity;
         vec3 densityStd = densityMax * sqrt(max(development * (1.0 - development) * saturation, vec3(0.001)) / max(particles, vec3(1.0)));
         float lumaDensityStd = dot(densityStd, vec3(0.333333));
+        float positiveLuma = dot(linearColor, vec3(0.2126, 0.7152, 0.0722));
+        float positiveHighlightMask = smoothstep(0.55, 0.92, positiveLuma);
+        float highlightGrainVisibility = mix(1.0, 0.32, positiveHighlightMask);
         vec3 densityNoise = vec3(lumaGrain * lumaDensityStd * 2.7);
         densityNoise += dyeCloud * densityStd * 0.28;
         densityNoise += clump * grainAmount * vec3(0.013, 0.012, 0.016);
+        densityNoise *= highlightGrainVisibility;
         density = max(density + densityNoise * grainAmount * 1.8, vec3(0.0));
         return linearToSrgb(pow(vec3(10.0), -density));
     }
