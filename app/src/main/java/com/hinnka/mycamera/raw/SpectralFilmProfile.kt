@@ -28,6 +28,11 @@ data class FilmStockInfo(
     val viewingIlluminant: String
 )
 
+data class FilmDensityWire(
+    val dMin: FloatArray,
+    val dMax: FloatArray
+)
+
 data class PrintPaperInfo(
     val referenceIlluminant: String,
     val viewingIlluminant: String
@@ -96,6 +101,38 @@ object FilmStockRegistry {
     )
 
     fun get(stock: String): FilmStockInfo = stocks[stock] ?: default
+}
+
+object FilmDensityWireRegistry {
+    private val defaultDMin = floatArrayOf(-0.2f, -0.2f, -0.2f)
+
+    val wires = mapOf(
+        "fujifilm_c200" to wire(1.7393f, 1.9257f, 2.2892f),
+        "fujifilm_pro_400h" to wire(1.5215f, 1.6171f, 2.0555f),
+        "fujifilm_xtra_400" to wire(2.0234f, 2.1502f, 2.6683f),
+        "kodak_ektar_100" to wire(1.8008f, 1.7775f, 2.2188f),
+        "kodak_gold_200" to wire(1.6538f, 1.5270f, 1.6814f),
+        "kodak_portra_160" to wire(1.6281f, 1.6692f, 1.9841f),
+        "kodak_portra_400" to wire(1.8590f, 1.7816f, 2.0896f),
+        "kodak_portra_800" to wire(1.8386f, 1.7134f, 1.8858f),
+        "kodak_portra_800_push1" to wire(2.1669f, 1.9517f, 2.2205f),
+        "kodak_portra_800_push2" to wire(2.3529f, 2.0343f, 2.4457f),
+        "kodak_ultramax_400" to wire(1.7868f, 1.6910f, 1.9068f),
+        "kodak_verita_200d" to wire(1.6719f, 1.6319f, 1.8600f),
+        "kodak_vision3_200t" to wire(1.5222f, 1.5838f, 1.8118f),
+        "kodak_vision3_250d" to wire(1.5678f, 1.6333f, 1.8032f),
+        "kodak_vision3_500t" to wire(1.5709f, 1.5010f, 1.8260f),
+        "kodak_vision3_50d" to wire(1.5802f, 1.6924f, 1.9061f)
+    )
+
+    fun get(stock: String): FilmDensityWire? = wires[stock]
+
+    private fun wire(cMax: Float, mMax: Float, yMax: Float): FilmDensityWire {
+        return FilmDensityWire(
+            dMin = defaultDMin.copyOf(),
+            dMax = floatArrayOf(cMax, mMax, yMax)
+        )
+    }
 }
 
 object PrintPaperRegistry {
@@ -617,14 +654,16 @@ object SpectralFilmProfile {
 
         val filmData = loadRawCube(context, filmAssetPath) ?: return null
         val printModel = SpectralPrintModelRegistry.load(context) ?: return null
+        val densityWire = FilmDensityWireRegistry.get(filmStock)
 
-        val combinedValues = combineWithDynamicPrint(filmStock, printPaper, filmData, printModel)
+        val combinedValues = combineWithDynamicPrint(filmStock, printPaper, filmData, printModel, densityWire)
             ?: return null
         val elapsed = System.currentTimeMillis() - startTime
         PLog.d(
             TAG,
             "Dynamically combined film ($filmStock/${filmInfo.referenceIlluminant}) and " +
-                "print ($printPaper/${printInfo.referenceIlluminant}) using Spektrafilm print model in ${elapsed}ms"
+                "print ($printPaper/${printInfo.referenceIlluminant}) using Spektrafilm print model " +
+                "with ${if (densityWire != null) "cmy_film wire" else "film density range fallback"} in ${elapsed}ms"
         )
 
         return SpectralFilmLut(
@@ -633,7 +672,7 @@ object SpectralFilmProfile {
             type = filmInfo.type,
             referenceIlluminant = filmInfo.referenceIlluminant,
             viewingIlluminant = printInfo.viewingIlluminant,
-            sourceKey = "$filmStock:$printPaper:${filmInfo.type}:${filmInfo.referenceIlluminant}:${printInfo.referenceIlluminant}:${printInfo.viewingIlluminant}",
+            sourceKey = "$filmStock:$printPaper:${filmInfo.type}:${filmInfo.referenceIlluminant}:${printInfo.referenceIlluminant}:${printInfo.viewingIlluminant}:wire=${densityWire?.dMax?.joinToString() ?: "fallback"}",
             size = LUT_SIZE,
             values = combinedValues
         )
@@ -693,7 +732,8 @@ object SpectralFilmProfile {
         filmStock: String,
         printPaper: String,
         filmData: FloatArray,
-        model: SpectralFilmPrintModel
+        model: SpectralFilmPrintModel,
+        densityWire: FilmDensityWire?
     ): FloatArray? {
         val filmModel = model.films[filmStock]
         val paperModel = model.papers[printPaper]
@@ -717,8 +757,11 @@ object SpectralFilmProfile {
             paperSensitivity[i] = paperModel.sensitivity[i]
         }
         val scanNormalization = computeScanNormalization(viewingIlluminant, model.observerCmfs, wavelengths)
-        val dMinFilm = filmModel.densityMin
-        val dMaxFilm = filmModel.densityMax
+        val dMinFilm = densityWire?.dMin ?: filmModel.densityMin
+        val dMaxFilm = densityWire?.dMax ?: filmModel.densityMax
+        if (densityWire == null) {
+            PLog.w(TAG, "Missing cmy_film density wire for $filmStock; falling back to film profile density range")
+        }
         val dRange0 = dMaxFilm[0] - dMinFilm[0]
         val dRange1 = dMaxFilm[1] - dMinFilm[1]
         val dRange2 = dMaxFilm[2] - dMinFilm[2]
