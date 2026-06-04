@@ -63,6 +63,51 @@ inline float smoothstepf(float edge0, float edge1, float x) {
   return t * t * (3.0f - 2.0f * t);
 }
 
+inline VkDeviceSize yuvAccumTileBytes(uint32_t fullW, uint32_t fullH,
+                                      int tilesX, int tilesY) {
+  uint32_t tileW = (fullW + tilesX - 1) / tilesX;
+  uint32_t tileH = (fullH + tilesY - 1) / tilesY;
+  return (VkDeviceSize)(tileW + 16) * (tileH + 16) * sizeof(float) * 4;
+}
+
+inline VkDeviceSize yuvKernelTileRangeBytes(uint32_t width, uint32_t height,
+                                            int tilesY) {
+  uint32_t tileH = (height + tilesY - 1) / tilesY;
+  return (VkDeviceSize)width * tileH * sizeof(float) * 4;
+}
+
+void constrainYuvTileGridForStorageRange(uint32_t width, uint32_t height,
+                                         uint32_t scale,
+                                         VkDeviceSize maxStorageBufferRange,
+                                         int &tilesX, int &tilesY) {
+  if (maxStorageBufferRange == 0)
+    return;
+
+  const uint32_t fullW = width * scale;
+  const uint32_t fullH = height * scale;
+  while (yuvAccumTileBytes(fullW, fullH, tilesX, tilesY) >
+             maxStorageBufferRange ||
+         yuvKernelTileRangeBytes(width, height, tilesY) >
+             maxStorageBufferRange) {
+    if (yuvKernelTileRangeBytes(width, height, tilesY) >
+        maxStorageBufferRange) {
+      ++tilesY;
+    } else {
+      uint32_t tileW = (fullW + tilesX - 1) / tilesX;
+      uint32_t tileH = (fullH + tilesY - 1) / tilesY;
+      if (tileW >= tileH) {
+        ++tilesX;
+      } else {
+        ++tilesY;
+      }
+    }
+
+    if (tilesX > 16 || tilesY > 16) {
+      throw std::runtime_error("Unable to tile Vulkan stacker buffers");
+    }
+  }
+}
+
 inline ScalarStats computeScalarStats(const std::vector<float> &values) {
   ScalarStats stats;
   if (values.empty())
@@ -259,6 +304,12 @@ void VulkanImageStacker::initVulkanResources() {
   uint32_t scale = enableSuperRes ? 2 : 1;
   uint32_t fullW = width * scale;
   uint32_t fullH = height * scale;
+  VkDeviceSize maxStorageBufferRange =
+      deviceProperties.limits.maxStorageBufferRange;
+
+  constrainYuvTileGridForStorageRange(width, height, scale,
+                                      maxStorageBufferRange, numTilesX,
+                                      numTilesY);
 
   // Each tile is roughly fullW / numTilesX ...
   uint32_t tileW = (fullW + numTilesX - 1) / numTilesX;
@@ -270,23 +321,25 @@ void VulkanImageStacker::initVulkanResources() {
   VkDeviceSize stagingSize = (VkDeviceSize)fullW * fullH * 4;
   VkDeviceSize kpSize =
       (VkDeviceSize)width * height * sizeof(float) * 4; // vec4
-  VkDeviceSize maxStorageBufferRange =
-      deviceProperties.limits.maxStorageBufferRange;
+  VkDeviceSize kpTileRangeSize = yuvKernelTileRangeBytes(width, height, numTilesY);
   if (maxStorageBufferRange > 0 &&
       (accumBufferSize > maxStorageBufferRange ||
-       stagingSize > maxStorageBufferRange || kpSize > maxStorageBufferRange)) {
+       kpTileRangeSize > maxStorageBufferRange)) {
     LOGE("Vulkan stacker buffers exceed device storage buffer range. "
-         "accum=%llu staging=%llu kernel=%llu limit=%llu size=%ux%u SR=%d",
+         "accum=%llu kernelRange=%llu limit=%llu size=%ux%u SR=%d tiles=%dx%d",
          (unsigned long long)accumBufferSize,
-         (unsigned long long)stagingSize, (unsigned long long)kpSize,
+         (unsigned long long)kpTileRangeSize,
          (unsigned long long)maxStorageBufferRange, width, height,
-         enableSuperRes ? 1 : 0);
+         enableSuperRes ? 1 : 0, numTilesX, numTilesY);
     throw std::runtime_error("Vulkan storage buffer range is too small");
   }
 
   int numTiles = numTilesX * numTilesY;
-  LOGI("initVulkanResources: Tiles: %d (%dx%d)", numTiles, numTilesX,
-       numTilesY);
+  LOGI("initVulkanResources: Tiles: %d (%dx%d) accum=%llu staging=%llu "
+       "kernel=%llu kernelRange=%llu",
+       numTiles, numTilesX, numTilesY, (unsigned long long)accumBufferSize,
+       (unsigned long long)stagingSize, (unsigned long long)kpSize,
+       (unsigned long long)kpTileRangeSize);
 
   accumBuffers.resize(numTiles);
   accumMemories.resize(numTiles);
@@ -951,9 +1004,22 @@ bool VulkanImageStacker::processFrame(AHardwareBuffer *buffer, float frameScore,
       refImageInfo.imageView = referenceRgbFrame.viewY;
       refImageInfo.sampler = referenceRgbFrame.sampler;
 
-      VkDescriptorBufferInfo accumBufferInfo{accumBuffers[i], 0, VK_WHOLE_SIZE};
+      uint32_t scale = enableSuperRes ? 2 : 1;
+      uint32_t fullH = height * scale;
+      uint32_t fullTileH = (fullH + numTilesY - 1) / numTilesY;
+      uint32_t tileRow = i / numTilesX;
+      uint32_t fullTileY = tileRow * fullTileH;
+      uint32_t fullActualTileH = std::min(fullTileH, fullH - fullTileY);
+      uint32_t nativeTileY = fullTileY / scale;
+      uint32_t nativeTileEndY =
+          (fullTileY + fullActualTileH + scale - 1) / scale;
+      VkDeviceSize kernelRowBytes = (VkDeviceSize)width * sizeof(float) * 4;
+      VkDescriptorBufferInfo accumBufferInfo{accumBuffers[i], 0,
+                                             VK_WHOLE_SIZE};
       VkDescriptorBufferInfo alignBufferInfo{alignmentBuffer, 0, VK_WHOLE_SIZE};
-      VkDescriptorBufferInfo kpBufferInfo{kernelParamsBuffer, 0, VK_WHOLE_SIZE};
+      VkDescriptorBufferInfo kpBufferInfo{
+          kernelParamsBuffer, nativeTileY * kernelRowBytes,
+          (nativeTileEndY - nativeTileY) * kernelRowBytes};
       VkDescriptorBufferInfo mpBufferInfo{motionPriorBuffer, 0, VK_WHOLE_SIZE};
       VkDescriptorBufferInfo lmBufferInfo{localTileMaskBuffer, 0, VK_WHOLE_SIZE};
 
@@ -1025,7 +1091,14 @@ bool VulkanImageStacker::processFrame(AHardwareBuffer *buffer, float frameScore,
       imageInfo.imageView = rgbFrame.viewY;
       imageInfo.sampler = rgbFrame.sampler;
 
-      VkDescriptorBufferInfo kpBufferInfo{kernelParamsBuffer, 0, VK_WHOLE_SIZE};
+      uint32_t stTileH = (height + numTilesY - 1) / numTilesY;
+      uint32_t tileRow = i / numTilesX;
+      uint32_t stTileY = tileRow * stTileH;
+      uint32_t stActualTileH = std::min(stTileH, height - stTileY);
+      VkDeviceSize kernelRowBytes = (VkDeviceSize)width * sizeof(float) * 4;
+      VkDescriptorBufferInfo kpBufferInfo{
+          kernelParamsBuffer, stTileY * kernelRowBytes,
+          stActualTileH * kernelRowBytes};
 
       VkWriteDescriptorSet tensorWrites[2] = {};
       tensorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1468,6 +1541,7 @@ bool VulkanImageStacker::processFrame(AHardwareBuffer *buffer, float frameScore,
         stPC.tileH = std::min(stTileH, stFullH - stPC.tileY);
         stPC.width = stFullW;
         stPC.height = stFullH;
+        stPC.offsetY = static_cast<float>(stPC.tileY);
 
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
                                 tensorPipelineLayout, 0, 1, &tensorSets[i], 0,
@@ -1517,6 +1591,7 @@ bool VulkanImageStacker::processFrame(AHardwareBuffer *buffer, float frameScore,
       pc.tileW = std::min(tileW, fullW - pc.tileX);
       pc.tileH = std::min(tileH, fullH - pc.tileY);
       pc.bufferStride = tileW + 16; // The allocated stride
+      pc.offsetY = static_cast<float>(pc.tileY / (enableSuperRes ? 2 : 1));
 
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
                               pipelineLayout, 0, 1, &accumSets[i], 0, nullptr);
@@ -1742,6 +1817,17 @@ bool VulkanImageStacker::processStack(uint32_t *outBitmap, uint32_t outWidth,
   }
 
   VkDeviceSize outSize = outWidth * outHeight * 4;
+  VkPhysicalDeviceProperties deviceProperties{};
+  vkGetPhysicalDeviceProperties(vm.getPhysicalDevice(), &deviceProperties);
+  VkDeviceSize maxStorageBufferRange =
+      deviceProperties.limits.maxStorageBufferRange;
+  if (maxStorageBufferRange > 0 && outSize > maxStorageBufferRange) {
+    LOGE("processStack: output storage buffer range is too large. out=%llu "
+         "limit=%llu output=%ux%u",
+         (unsigned long long)outSize,
+         (unsigned long long)maxStorageBufferRange, outWidth, outHeight);
+    return false;
+  }
 
   // 1. Dispatch Normalization for each tile
   VkCommandBuffer cb = vm.beginSingleTimeCommands();
@@ -1762,7 +1848,7 @@ bool VulkanImageStacker::processStack(uint32_t *outBitmap, uint32_t outWidth,
     allocInfo.pSetLayouts = &normalizeSetLayout;
     VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &normalizeSets[i]));
 
-    VkDescriptorBufferInfo outBufferInfo{stagingBuffer, 0, VK_WHOLE_SIZE};
+    VkDescriptorBufferInfo outBufferInfo{stagingBuffer, 0, outSize};
     VkDescriptorBufferInfo accumBufferInfo{accumBuffers[i], 0, VK_WHOLE_SIZE};
 
     VkWriteDescriptorSet writes[2] = {};
@@ -1890,7 +1976,7 @@ bool VulkanImageStacker::processStack(uint32_t *outBitmap, uint32_t outWidth,
   hostBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
   hostBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
   hostBarrier.buffer = stagingBuffer;
-  hostBarrier.size = VK_WHOLE_SIZE;
+  hostBarrier.size = outSize;
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                        VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
                        &hostBarrier, 0, nullptr);

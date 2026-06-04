@@ -64,13 +64,13 @@ object VideoCapabilitiesResolver {
             ?: availableFps.firstOrNull()
             ?: VideoFpsPreset.FPS_30
 
-        PLog.d(
+        /*PLog.d(
             TAG,
             "Resolved video capabilities: resolution=${resolvedResolution.displayName}, " +
                 "recording=${recordingSize.width}x${recordingSize.height}, " +
                 "preview=${previewSize.width}x${previewSize.height}, " +
                 "fps=${availableFps.map { it.fps }}"
-        )
+        )*/
 
         val linearTonemapSupported = availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE) ||
             availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_GAMMA_VALUE)

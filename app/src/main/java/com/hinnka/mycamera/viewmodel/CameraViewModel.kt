@@ -20,6 +20,8 @@ import androidx.lifecycle.viewModelScope
 import com.hinnka.mycamera.camera.*
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.data.AiFocusTargetMode
+import com.hinnka.mycamera.data.CameraFeaturePreferencesUpdate
+import com.hinnka.mycamera.data.PreferenceUpdateValue
 import com.hinnka.mycamera.data.UserPreferences
 import com.hinnka.mycamera.data.VolumeKeyAction
 import com.hinnka.mycamera.frame.FrameEditorDraft
@@ -167,7 +169,8 @@ private data class CameraFeatureUpdate(
     val droMode: SettingValue<String>? = null,
     val jpgBaselineLutId: SettingValue<String?>? = null,
     val rawBaselineLutId: SettingValue<String?>? = null,
-    val phantomBaselineLutId: SettingValue<String?>? = null
+    val phantomBaselineLutId: SettingValue<String?>? = null,
+    val activePresetId: SettingValue<String?>? = null
 )
 
 /**
@@ -356,10 +359,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             isApplyingPreset = true
             try {
                 applyCameraFeatureUpdate(
-                    preset.toCameraFeatureUpdate(),
+                    preset.toCameraFeatureUpdate().copy(activePresetId = SettingValue(preset?.id)),
                     clearActivePresetOnMismatch = false
                 )
-                userPreferencesRepository.saveActivePresetId(preset?.id)
             } finally {
                 isApplyingPreset = false
             }
@@ -441,71 +443,71 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         update.lutId?.let {
             setLut(it.value, persist = false)
-            userPreferencesRepository.saveLutConfig(it.value)
-        }
-
-        update.effects?.let {
-            userPreferencesRepository.saveActiveEffectParams(it.value)
         }
 
         update.aspectRatio?.let {
             cameraController.setAspectRatio(it.value)
-            userPreferencesRepository.saveAspectRatio(it.value.name)
         }
 
         if (desiredUseMultipleExposure != prefs.useMultipleExposure) {
             if (!desiredUseMultipleExposure) {
                 cancelMultipleExposureSession()
             }
-            userPreferencesRepository.saveUseMultipleExposure(desiredUseMultipleExposure)
         }
 
         if (update.useRaw != null) {
             cameraController.setUseRaw(desiredUseRaw)
-            userPreferencesRepository.saveUseRaw(desiredUseRaw)
         }
         if (update.useMFNR != null || desiredUseMFNR != prefs.useMFNR) {
             cameraController.setUseMFNR(desiredUseMFNR)
-            userPreferencesRepository.setUseMFNR(desiredUseMFNR)
         }
         if (update.useMFSR != null || desiredUseMFSR != prefs.useMFSR) {
             cameraController.setUseMFSR(desiredUseMFSR)
-            userPreferencesRepository.saveUseMFSR(desiredUseMFSR)
         }
 
         update.frameId?.let {
             currentFrameId = it.value
-            userPreferencesRepository.saveFrameConfig(it.value)
         }
 
         update.rawDcpId?.let {
-            userPreferencesRepository.saveRawDcpId(it.value)
             prewarmRawDcp(it.value)
         }
-        update.rawSpectralFilmEnabled?.let {
-            userPreferencesRepository.saveRawSpectralFilmEnabled(it.value)
-        }
-        update.rawSpectralFilmStock?.let {
-            userPreferencesRepository.saveRawSpectralFilmStock(it.value)
-        }
-        update.rawSpectralFilmPrint?.let {
-            userPreferencesRepository.saveRawSpectralFilmPrint(it.value)
-        }
-        update.droMode?.let {
-            val resolvedMode = RawProcessingPreferences.DROMode.fromPersistedName(it.value)
-            userPreferencesRepository.saveDroMode(resolvedMode.name)
-            userPreferencesRepository.updateRawDROEnabled(resolvedMode.isEnabled)
-        }
 
-        update.jpgBaselineLutId?.let {
-            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.JPG, it.value)
-        }
-        update.rawBaselineLutId?.let {
-            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.RAW, it.value)
-        }
-        update.phantomBaselineLutId?.let {
-            userPreferencesRepository.saveBaselineLutConfig(BaselineColorCorrectionTarget.PHANTOM, it.value)
-        }
+        userPreferencesRepository.saveCameraFeaturePreferences(
+            CameraFeaturePreferencesUpdate(
+                lutId = update.lutId?.let { PreferenceUpdateValue(it.value) },
+                effects = update.effects?.let { PreferenceUpdateValue(it.value) },
+                aspectRatio = update.aspectRatio?.let { PreferenceUpdateValue(it.value.name) },
+                useRaw = update.useRaw?.let { PreferenceUpdateValue(desiredUseRaw) },
+                useMFNR = if (update.useMFNR != null || desiredUseMFNR != prefs.useMFNR) {
+                    PreferenceUpdateValue(desiredUseMFNR)
+                } else {
+                    null
+                },
+                useMFSR = if (update.useMFSR != null || desiredUseMFSR != prefs.useMFSR) {
+                    PreferenceUpdateValue(desiredUseMFSR)
+                } else {
+                    null
+                },
+                useMultipleExposure = if (desiredUseMultipleExposure != prefs.useMultipleExposure) {
+                    PreferenceUpdateValue(desiredUseMultipleExposure)
+                } else {
+                    null
+                },
+                frameId = update.frameId?.let { PreferenceUpdateValue(it.value) },
+                rawDcpId = update.rawDcpId?.let { PreferenceUpdateValue(it.value) },
+                rawSpectralFilmEnabled = update.rawSpectralFilmEnabled?.let { PreferenceUpdateValue(it.value) },
+                rawSpectralFilmStock = update.rawSpectralFilmStock?.let { PreferenceUpdateValue(it.value) },
+                rawSpectralFilmPrint = update.rawSpectralFilmPrint?.let { PreferenceUpdateValue(it.value) },
+                droMode = update.droMode?.let {
+                    PreferenceUpdateValue(RawProcessingPreferences.DROMode.fromPersistedName(it.value).name)
+                },
+                jpgBaselineLutId = update.jpgBaselineLutId?.let { PreferenceUpdateValue(it.value) },
+                rawBaselineLutId = update.rawBaselineLutId?.let { PreferenceUpdateValue(it.value) },
+                phantomBaselineLutId = update.phantomBaselineLutId?.let { PreferenceUpdateValue(it.value) },
+                activePresetId = update.activePresetId?.let { PreferenceUpdateValue(it.value) }
+            )
+        )
 
         if (needsCameraReopen) {
             reopenCamera()
@@ -1044,15 +1046,29 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 isShutterSoundEnabled = it.shutterSoundEnabled
                 isVibrationEnabled = it.vibrationEnabled
                 // 同步降噪等级到相机控制器
-                cameraController.setNRLevel(it.nrLevel)
+                val currentCameraState = cameraController.state.value
+                if (currentCameraState.nrLevel != it.nrLevel) {
+                    cameraController.setNRLevel(it.nrLevel)
+                }
                 // 同步锐化等级到相机控制器
                 cameraController.setEdgeLevel(it.edgeLevel)
                 // 同步 RAW 设置到相机控制器
-                cameraController.setUseRaw(it.useRaw)
-                cameraController.setRawMinShutterSpeedNs(it.rawMinShutterSpeedNs)
-                cameraController.setDroMode(it.droMode)
-                cameraController.setTonemapMode(it.tonemapMode)
-                cameraController.setFixTonemapPreview(it.fixTonemapPreview)
+                if (currentCameraState.useRaw != it.useRaw) {
+                    cameraController.setUseRaw(it.useRaw)
+                }
+                if (currentCameraState.rawMinShutterSpeedNs != it.rawMinShutterSpeedNs) {
+                    cameraController.setRawMinShutterSpeedNs(it.rawMinShutterSpeedNs)
+                }
+                val resolvedDroMode = RawProcessingPreferences.DROMode.fromPersistedName(it.droMode).name
+                if (currentCameraState.droMode != resolvedDroMode) {
+                    cameraController.setDroMode(resolvedDroMode)
+                }
+                if (currentCameraState.tonemapMode != it.tonemapMode) {
+                    cameraController.setTonemapMode(it.tonemapMode)
+                }
+                if (currentCameraState.fixTonemapPreview != it.fixTonemapPreview) {
+                    cameraController.setFixTonemapPreview(it.fixTonemapPreview)
+                }
                 if (cameraController.state.value.meteringMode != it.meteringMode) {
                     cameraController.setMeteringMode(it.meteringMode)
                 }

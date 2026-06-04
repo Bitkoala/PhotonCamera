@@ -163,13 +163,6 @@ fun PresetManagementScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item(key = "preset_default") {
-                DefaultPresetManagementItem(
-                    isActive = activePresetId == null,
-                    onSelect = { viewModel.applyPreset(null) }
-                )
-            }
-
             itemsIndexed(localPresets, key = { _, preset -> preset.id }) { _, preset ->
                 ReorderableItem(reorderableLazyListState, key = preset.id) { isDragging ->
                     PresetManagementItem(
@@ -231,49 +224,6 @@ fun PresetManagementScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun DefaultPresetManagementItem(
-    isActive: Boolean,
-    onSelect: () -> Unit
-) {
-    val cardColor = if (isActive) Color(0xFFFFD700).copy(alpha = 0.10f) else Color.White.copy(alpha = 0.055f)
-    val borderColor = if (isActive) Color(0xFFFFD700).copy(alpha = 0.7f) else Color.White.copy(alpha = 0.10f)
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onSelect)
-            .border(1.dp, borderColor, RoundedCornerShape(10.dp)),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = cardColor)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Spacer(modifier = Modifier.size(28.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.preset_none_default),
-                    color = if (isActive) Color(0xFFFFD700) else Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                PresetBadge(
-                    text = stringResource(R.string.current_default),
-                    highlighted = isActive
-                )
-            }
-        }
     }
 }
 
@@ -373,6 +323,7 @@ private fun PresetManagementItem(
 @Composable
 private fun presetDisplayName(preset: CameraPreset): String {
     return when (preset.id) {
+        "builtin_default" -> stringResource(R.string.default_text)
         "builtin_portrait" -> stringResource(R.string.preset_builtin_portrait)
         "builtin_classic_film" -> stringResource(R.string.preset_builtin_classic_film)
         "builtin_monochrome" -> stringResource(R.string.preset_builtin_monochrome)

@@ -99,7 +99,9 @@ void main() {
     uint nativeH = uint(float(pc.height) / pc.scale);
     nx = clamp(nx, 0, nativeW - 1);
     ny = clamp(ny, 0, nativeH - 1);
-    uint kpIndex = ny * nativeW + nx;
+    uint kernelTileY = uint(pc.offsetY);
+    uint localNy = (ny > kernelTileY) ? (ny - kernelTileY) : 0u;
+    uint kpIndex = localNy * nativeW + nx;
     vec4 kp = kernelParams.data[kpIndex];
 
     // 1. Get transformations / coordinates

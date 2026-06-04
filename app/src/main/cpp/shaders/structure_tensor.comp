@@ -144,5 +144,7 @@ void main() {
     if (any(isnan(result)) || any(isinf(result))) {
         result = vec4(1.0, 1.0, 1.0, 0.0); // Safe fallback (Identity kernel)
     }
-    kernelParams.data[y * pc.width + x] = result;
+    uint kernelTileY = uint(pc.offsetY);
+    uint localY = (y > kernelTileY) ? (y - kernelTileY) : 0u;
+    kernelParams.data[localY * pc.width + x] = result;
 }

@@ -61,27 +61,10 @@ fun PresetEditorScreen(
         }
     }
 
-    val portraitCustom = stringResource(R.string.preset_custom_suffix, stringResource(R.string.preset_builtin_portrait))
-    val classicFilmCustom = stringResource(R.string.preset_custom_suffix, stringResource(R.string.preset_builtin_classic_film))
-    val monochromeCustom = stringResource(R.string.preset_custom_suffix, stringResource(R.string.preset_builtin_monochrome))
-    val cinematicCustom = stringResource(R.string.preset_custom_suffix, stringResource(R.string.preset_builtin_cinematic))
-    val leicaM9MomentCustom = stringResource(R.string.preset_custom_suffix, stringResource(R.string.preset_builtin_leica_m9_moment))
-
     // 在编辑状态中维护各个字段，以便保存
     var presetName by remember {
         mutableStateOf(
-            sourcePreset?.let {
-                if (it.isBuiltIn) {
-                    when (it.id) {
-                        "builtin_portrait" -> portraitCustom
-                        "builtin_classic_film" -> classicFilmCustom
-                        "builtin_monochrome" -> monochromeCustom
-                        "builtin_cinematic" -> cinematicCustom
-                        "builtin_leica_m9_moment" -> leicaM9MomentCustom
-                        else -> it.name
-                    }
-                } else it.name
-            } ?: defaultNewPresetName
+            sourcePreset?.name ?: defaultNewPresetName
         )
     }
 

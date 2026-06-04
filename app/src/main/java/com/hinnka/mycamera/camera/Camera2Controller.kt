@@ -2901,6 +2901,8 @@ class Camera2Controller(private val context: Context) {
         } catch (e: IllegalStateException) {
             // 相机已关闭或处于错误状态
             PLog.w(TAG, "Failed to update preview - camera closed or in error state", e)
+        } catch (e: IllegalArgumentException) {
+            PLog.w(TAG, "Failed to update preview - request settings error", e)
         }
     }
 

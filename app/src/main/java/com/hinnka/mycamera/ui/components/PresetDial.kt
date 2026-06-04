@@ -97,52 +97,6 @@ fun PresetsPanel(
                 }
             }
 
-            val isDefaultSelected = activePresetId == null
-            val defaultBorderColor by animateColorAsState(
-                targetValue = if (isDefaultSelected) Color(0xFFFFD700) else Color.White.copy(alpha = 0.15f),
-                label = "defaultPresetBorderColor"
-            )
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isDefaultSelected) Color(0xFFFFD700).copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.15f)
-                ),
-                modifier = Modifier
-                    .width(80.dp)
-                    .height(80.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .combinedClickable(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onPresetSelected(null)
-                        },
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onManagePresets()
-                        }
-                    )
-                    .border(1.2.dp, defaultBorderColor, RoundedCornerShape(16.dp))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = stringResource(R.string.preset_none_default),
-                        color = if (isDefaultSelected) Color(0xFFFFD700) else Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 2.dp).basicMarquee()
-                    )
-                }
-            }
-
             // 各个预设卡片
             allPresets.forEach { preset ->
                 val isSelected = activePresetId == preset.id
@@ -153,6 +107,7 @@ fun PresetsPanel(
 
                 // 翻译内置预设名字
                 val displayName = when (preset.id) {
+                    "builtin_default" -> stringResource(R.string.default_text)
                     "builtin_portrait" -> stringResource(R.string.preset_builtin_portrait)
                     "builtin_classic_film" -> stringResource(R.string.preset_builtin_classic_film)
                     "builtin_monochrome" -> stringResource(R.string.preset_builtin_monochrome)

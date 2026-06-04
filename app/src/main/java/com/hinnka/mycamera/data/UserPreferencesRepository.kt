@@ -16,6 +16,7 @@ import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
+import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
@@ -187,6 +188,28 @@ data class UserPreferences(
     val customPresets: List<CameraPreset>
         get() = CameraPreset.listFromJson(customPresetsJson)
 }
+
+data class PreferenceUpdateValue<T>(val value: T)
+
+data class CameraFeaturePreferencesUpdate(
+    val lutId: PreferenceUpdateValue<String?>? = null,
+    val effects: PreferenceUpdateValue<EffectParams>? = null,
+    val aspectRatio: PreferenceUpdateValue<String>? = null,
+    val useRaw: PreferenceUpdateValue<Boolean>? = null,
+    val useMFNR: PreferenceUpdateValue<Boolean>? = null,
+    val useMFSR: PreferenceUpdateValue<Boolean>? = null,
+    val useMultipleExposure: PreferenceUpdateValue<Boolean>? = null,
+    val frameId: PreferenceUpdateValue<String?>? = null,
+    val rawDcpId: PreferenceUpdateValue<String?>? = null,
+    val rawSpectralFilmEnabled: PreferenceUpdateValue<Boolean>? = null,
+    val rawSpectralFilmStock: PreferenceUpdateValue<String?>? = null,
+    val rawSpectralFilmPrint: PreferenceUpdateValue<String?>? = null,
+    val droMode: PreferenceUpdateValue<String>? = null,
+    val jpgBaselineLutId: PreferenceUpdateValue<String?>? = null,
+    val rawBaselineLutId: PreferenceUpdateValue<String?>? = null,
+    val phantomBaselineLutId: PreferenceUpdateValue<String?>? = null,
+    val activePresetId: PreferenceUpdateValue<String?>? = null
+)
 
 /**
  * 用户偏好设置仓库
@@ -1452,6 +1475,102 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveActiveEffectParams(effects: EffectParams) {
         context.dataStore.edit { preferences ->
             preferences[ACTIVE_EFFECT_PARAMS_JSON] = effects.toJson()
+        }
+    }
+
+    suspend fun saveCameraFeaturePreferences(update: CameraFeaturePreferencesUpdate) {
+        context.dataStore.edit { preferences ->
+            update.lutId?.let {
+                if (it.value != null) {
+                    preferences[LUT_ID_KEY] = it.value
+                } else {
+                    preferences.remove(LUT_ID_KEY)
+                }
+                preferences.remove(LEGACY_PHANTOM_LUT_ID_KEY)
+            }
+            update.effects?.let {
+                preferences[ACTIVE_EFFECT_PARAMS_JSON] = it.value.toJson()
+            }
+            update.aspectRatio?.let {
+                preferences[ASPECT_RATIO_KEY] = it.value
+            }
+            update.useRaw?.let {
+                preferences[USE_RAW] = it.value
+            }
+            update.useMFNR?.let {
+                preferences[USE_MULTI_FRAME] = it.value
+            }
+            update.useMFSR?.let {
+                preferences[USE_SUPER_RESOLUTION] = it.value
+            }
+            update.useMultipleExposure?.let {
+                preferences[USE_MULTIPLE_EXPOSURE] = it.value
+            }
+            update.frameId?.let {
+                if (it.value != null) {
+                    preferences[FRAME_ID_KEY] = it.value
+                } else {
+                    preferences.remove(FRAME_ID_KEY)
+                }
+            }
+            update.rawDcpId?.let {
+                if (it.value != null) {
+                    preferences[RAW_DCP_ID_KEY] = it.value
+                } else {
+                    preferences.remove(RAW_DCP_ID_KEY)
+                }
+            }
+            update.rawSpectralFilmEnabled?.let {
+                preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] = it.value
+            }
+            update.rawSpectralFilmStock?.let {
+                if (it.value != null) {
+                    preferences[RAW_SPECTRAL_FILM_STOCK_KEY] = it.value
+                } else {
+                    preferences.remove(RAW_SPECTRAL_FILM_STOCK_KEY)
+                }
+            }
+            update.rawSpectralFilmPrint?.let {
+                if (it.value != null) {
+                    preferences[RAW_SPECTRAL_FILM_PRINT_KEY] = it.value
+                } else {
+                    preferences.remove(RAW_SPECTRAL_FILM_PRINT_KEY)
+                }
+            }
+            update.droMode?.let {
+                val resolvedMode = RawProcessingPreferences.DROMode.fromPersistedName(it.value)
+                preferences[DRO_MODE] = resolvedMode.name
+                preferences[RAW_DRO_ENABLED_KEY] = resolvedMode.isEnabled
+            }
+            update.jpgBaselineLutId?.let {
+                if (it.value != null) {
+                    preferences[JPG_BASELINE_LUT_ID_KEY] = it.value
+                } else {
+                    preferences.remove(JPG_BASELINE_LUT_ID_KEY)
+                }
+            }
+            update.rawBaselineLutId?.let {
+                if (it.value != null) {
+                    preferences[RAW_BASELINE_LUT_ID_KEY] = it.value
+                } else {
+                    preferences.remove(RAW_BASELINE_LUT_ID_KEY)
+                }
+                preferences[RAW_BASELINE_LUT_CONFIGURED_KEY] = true
+            }
+            update.phantomBaselineLutId?.let {
+                if (it.value != null) {
+                    preferences[PHANTOM_BASELINE_LUT_ID_KEY] = it.value
+                } else {
+                    preferences.remove(PHANTOM_BASELINE_LUT_ID_KEY)
+                }
+            }
+            update.activePresetId?.let {
+                if (it.value != null) {
+                    preferences[ACTIVE_PRESET_ID] = it.value
+                } else {
+                    preferences.remove(ACTIVE_PRESET_ID)
+                }
+            }
         }
     }
 

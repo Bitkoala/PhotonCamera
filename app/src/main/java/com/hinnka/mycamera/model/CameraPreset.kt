@@ -41,6 +41,20 @@ data class CameraPreset(
         // 场景默认预设
         val BUILT_IN_PRESETS = listOf(
             CameraPreset(
+                id = "builtin_default",
+                name = "builtin_default",
+                lutId = null,
+                colorRecipe = ColorRecipeParams.DEFAULT,
+                effects = EffectParams.DEFAULT,
+                frameId = null,
+                useRaw = false,
+                useMFNR = false,
+                rawDcpId = null,
+                rawSpectralFilmEnabled = false,
+                rawDROMode = "DR100",
+                isBuiltIn = true
+            ),
+            CameraPreset(
                 id = "builtin_portrait",
                 name = "builtin_portrait",
                 lutId = "standard",
