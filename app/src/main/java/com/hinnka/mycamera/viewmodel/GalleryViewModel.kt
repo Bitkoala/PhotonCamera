@@ -63,6 +63,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val TAG = "GalleryViewModel"
+        private const val FULL_QUALITY_PREVIEW_MAX_EDGE = 4096
     }
 
 
@@ -2063,13 +2064,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /**
      * 生成预览缓存 key
      */
-    private fun previewCacheKey(mediaData: MediaData, metadata: MediaMetadata, showOrigin: Boolean, maxEdge: Int = 4096): String {
+    private fun previewCacheKey(
+        mediaData: MediaData,
+        metadata: MediaMetadata,
+        showOrigin: Boolean,
+        maxEdge: Int = FULL_QUALITY_PREVIEW_MAX_EDGE
+    ): String {
         val photoId = mediaData.id
         val metadataHash = metadata.hashCode()
         val refreshKey = photoRefreshKeys[photoId] ?: 0L
         return if (showOrigin) {
             "${photoId}_${refreshKey}"
-        } else if (maxEdge < 4096) {
+        } else if (maxEdge < FULL_QUALITY_PREVIEW_MAX_EDGE) {
             "${photoId}_${metadataHash}_${refreshKey}_${maxEdge}"
         } else {
             "${photoId}_${metadataHash}_${refreshKey}"
@@ -2117,7 +2123,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         ignoreCrop: Boolean = false,
         ignoreDenoise: Boolean = false,
         recipeParamsOverride: ColorRecipeParams? = null,
-        maxEdge: Int = 4096
+        maxEdge: Int = FULL_QUALITY_PREVIEW_MAX_EDGE
     ): Bitmap? {
         if (photo.isVideo) return null
         return withContext(Dispatchers.IO) {
@@ -2221,21 +2227,33 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 } ?: return@withContext null
 
                 // 只在全分辨率路径下缓存原始底图（避免低分辨率污染 origin 缓存）
-                if (showOrigin && maxEdge >= 4096) {
+                if (showOrigin && maxEdge >= FULL_QUALITY_PREVIEW_MAX_EDGE) {
                     previewBitmapCache.put(previewCacheKey(photo, finalMetadata, true), currentBitmap)
                 }
 
                 if (showOrigin) {
                     currentBitmap
                 } else {
+                    val skipPreviewDenoise = maxEdge < FULL_QUALITY_PREVIEW_MAX_EDGE
+                    val previewMetadata = if (skipPreviewDenoise) {
+                        finalMetadata.copy(
+                            noiseReduction = 0f,
+                            chromaNoiseReduction = 0f
+                        )
+                    } else {
+                        finalMetadata
+                    }
+                    val previewNoiseReduction = if (skipPreviewDenoise) 0f else finalNR
+                    val previewChromaNoiseReduction = if (skipPreviewDenoise) 0f else finalCNR
+
                     // 预览生成
                     val result = contentRepository.photoProcessor.processBitmap(
-                        context, photo.id, currentBitmap, finalMetadata,
-                        finalS, finalNR, finalCNR,
+                        context, photo.id, currentBitmap, previewMetadata,
+                        finalS, previewNoiseReduction, previewChromaNoiseReduction,
                         false
                     )
                     // 只在全分辨率路径下更新亮度估计（结果更准确）
-                    if (maxEdge >= 4096) {
+                    if (maxEdge >= FULL_QUALITY_PREVIEW_MAX_EDGE) {
                         currentBrightness[photo.id] = estimateAverageBrightness(result)
                     }
                     // 存入缓存

@@ -2532,11 +2532,15 @@ object GalleryManager {
                   ?: return@withContext
 
                 // 应用所有效果（LUT、虚化、裁切、边框等）到缩略图尺寸的位图
+                val thumbnailMetadata = resolvedMetadata.copy(
+                    noiseReduction = 0f,
+                    chromaNoiseReduction = 0f
+                )
                 val processedBitmap = photoProcessor.processBitmap(
                     context = context,
                     photoId = photoId,
                     input = originalBitmap,
-                    metadata = resolvedMetadata,
+                    metadata = thumbnailMetadata,
                     sharpening = 0f,
                     noiseReduction = 0f,
                     chromaNoiseReduction = 0f,
