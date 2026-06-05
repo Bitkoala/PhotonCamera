@@ -70,6 +70,16 @@ private fun sanitizeCustomLutCategoryInput(
     }
 }
 
+private fun sanitizeCategoryOrder(
+    order: List<String>,
+    builtInText: String,
+    reservedCategoryNames: Set<String>
+): List<String> {
+    return order
+        .filter { it == builtInText || it !in reservedCategoryNames }
+        .distinct()
+}
+
 private fun isZipImportUri(uri: Uri): Boolean {
     return uri.lastPathSegment?.endsWith(".zip", ignoreCase = true) == true
 }
@@ -1447,7 +1457,9 @@ fun FilterManagementScreen(
                 CategoryManagementSheet(
                     categories = allCategories,
                     onSaveOrder = { newOrder ->
-                        viewModel.saveCategoryOrder(newOrder)
+                        viewModel.saveCategoryOrder(
+                            sanitizeCategoryOrder(newOrder, builtInText, reservedCategoryNames)
+                        )
                     },
                     onRenameCategory = { oldName, newName ->
                         scope.launch {
@@ -1462,7 +1474,11 @@ fun FilterManagementScreen(
                                     customImportManager.updateLutCategory(lut.id, newName)
                                 }
                                 // 在排序中更新
-                                val newOrder = categoryOrder.map { if (it == oldName) newName else it }
+                                val newOrder = sanitizeCategoryOrder(
+                                    categoryOrder.map { if (it == oldName) newName else it },
+                                    builtInText,
+                                    reservedCategoryNames
+                                )
                                 viewModel.saveCategoryOrder(newOrder)
                             }
                             viewModel.refreshCustomContent()
@@ -1481,7 +1497,11 @@ fun FilterManagementScreen(
                                     customImportManager.updateLutCategory(lut.id, "")
                                 }
                                 // 从排序中移除
-                                val newOrder = categoryOrder.filter { it != target }
+                                val newOrder = sanitizeCategoryOrder(
+                                    categoryOrder.filter { it != target },
+                                    builtInText,
+                                    reservedCategoryNames
+                                )
                                 viewModel.saveCategoryOrder(newOrder)
                             }
                             viewModel.refreshCustomContent()
@@ -1516,7 +1536,10 @@ private fun CategoryManagementSheet(
     }
     val builtInText = stringResource(R.string.built_in)
     val uncategorizedText = stringResource(R.string.uncategorized)
-    val fixedNames = remember(builtInText, uncategorizedText) { setOf(builtInText, uncategorizedText) }
+    val favoriteText = stringResource(R.string.favorite)
+    val fixedNames = remember(builtInText, uncategorizedText, favoriteText) {
+        setOf(builtInText, uncategorizedText, favoriteText)
+    }
 
     LaunchedEffect(categories, fixedNames) {
         localCategories = categories.map { name ->

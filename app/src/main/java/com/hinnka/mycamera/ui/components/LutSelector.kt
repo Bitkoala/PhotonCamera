@@ -143,6 +143,13 @@ private sealed class LutCategoryTab {
     data class Category(val name: String) : LutCategoryTab()
 }
 
+private fun LutCategoryTab.stableKey(): String = when (this) {
+    LutCategoryTab.Favorite -> "fixed:favorite"
+    LutCategoryTab.BuiltIn -> "fixed:built_in"
+    LutCategoryTab.Uncategorized -> "fixed:uncategorized"
+    is LutCategoryTab.Category -> "category:$name"
+}
+
 private const val NONE_LUT_ITEM_KEY = "__photon_lut_selector_none__"
 
 /**
@@ -310,7 +317,7 @@ fun LutSelector(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    items(categoryTabs) { category ->
+                    items(categoryTabs, key = { it.stableKey() }) { category ->
                         val isSelected = selectedCategory == category
                         val categoryName = when (category) {
                             LutCategoryTab.Favorite -> favoriteText
