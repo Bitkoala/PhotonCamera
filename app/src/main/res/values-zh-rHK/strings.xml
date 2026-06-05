@@ -2,52 +2,34 @@
     <string name="app_name">光子相機</string>
 
     <!-- Camera Controls -->
-    <string name="capture">拍攝</string>
     <string name="switch_camera">切換攝像頭</string>
     <string name="settings">設定</string>
     <string name="flash">閃光燈</string>
     <string name="timer">計時器</string>
     <string name="histogram">直方圖</string>
-    <string name="grid">網格</string>
     <string name="back">返回</string>
 
     <!-- Exposure Controls -->
-    <string name="exposure_compensation">EV</string>
-    <string name="iso">ISO</string>
-    <string name="shutter_speed">快門</string>
-    <string name="auto">自動</string>
 
     <!-- Focus -->
-    <string name="focus">對焦</string>
-    <string name="tap_to_focus">點擊對焦</string>
 
     <!-- Aspect Ratio -->
     <string name="aspect_ratio">畫面比例</string>
-    <string name="ratio_3_2">3:2</string>
-    <string name="ratio_4_3">4:3</string>
-    <string name="ratio_16_9">16:9</string>
-    <string name="ratio_1_1">1:1</string>
 
     <!-- Permissions -->
     <string name="camera_permission_required">需要相機和麥克風權限</string>
     <string name="grant_permission">授予權限</string>
 
     <!-- Zoom -->
-    <string name="zoom">變焦</string>
 
     <!-- Gallery -->
-    <string name="gallery">相簿</string>
     <string name="gallery_photon">光子相簿</string>
-    <string name="gallery_system">系統相簿</string>
     <string name="gallery_group_today">今天</string>
     <string name="gallery_group_yesterday">昨天</string>
     <string name="permission_required_gallery">需要媒體存取權限以顯示系統相簿</string>
-    <string name="photo_detail">相片詳情</string>
     <string name="share">分享</string>
     <string name="delete">刪除</string>
     <string name="export">匯出</string>
-    <string name="batch_export">批次匯出</string>
-    <string name="exporting">正在匯出 %1$d/%2$d...</string>
     <string name="export_complete">匯出完成</string>
     <string name="export_all">匯出全部</string>
     <string name="export_success">相片匯出成功</string>
@@ -59,27 +41,20 @@
     <string name="select_all">全選</string>
     <string name="cancel">取消</string>
     <string name="save">儲存</string>
-    <string name="rotate">旋轉</string>
     <string name="crop">裁切</string>
     <string name="crop_free">自由</string>
     <string name="crop_original">原始</string>
     <string name="crop_reset">重設</string>
-    <string name="brightness">亮度</string>
     <string name="delete_confirm">刪除這張照片嗎？</string>
     <string name="delete_multiple_confirm">刪除 %d 張照片嗎？</string>
-    <string name="delete_exported_photos">同時刪除系統相冊中的導出圖</string>
     <string name="delete_exported_photos_count">同時刪除 %d 張已導出照片</string>
     <string name="delete_exported_videos_count">同時刪除 %d 個已導出視頻</string>
-    <string name="delete_system_warning">注意：此操作將同步刪除已匯出至系統相簿的照片。系統會彈出刪除確認，即使拒絕也不影響刪除 App 內的相片。</string>
 
     <string name="no_photos">暫無相片</string>
     <string name="photo_info">相片資訊</string>
     <string name="filter">LUT</string>
-    <string name="intensity">強度</string>
-    <string name="original">原圖</string>
     <string name="export_confirm">要匯出已套用濾鏡的相片嗎？</string>
     <string name="items_selected">已選擇 %1$d</string>
-    <string name="not_selected">未選擇</string>
     <string name="selected">已選擇</string>
     <string name="imported">匯入</string>
     <string name="photo_info_date">拍攝時間</string>
@@ -94,9 +69,7 @@
     <string name="frame">邊框</string>
     <string name="none">無</string>
     <string name="show_app_branding">顯示 App 品牌</string>
-    <string name="export_with_frame_confirm">要匯出帶有邊框浮水印的相片嗎？</string>
     <string name="import_photo">匯入</string>
-    <string name="adjust_watermark">調整浮水印</string>
     <string name="watermark_adjustment">浮水印調整</string>
     <string name="logo">LOGO</string>
     <string name="text_content">文字內容</string>
@@ -113,7 +86,6 @@
     <!-- Settings -->
     <string name="settings_title">設定</string>
     <string name="settings_section_capture">拍攝設定</string>
-    <string name="settings_section_display">顯示設定</string>
 
     <!-- Settings Restructuring Tabs -->
     <string name="settings_tab_camera">拍攝</string>
@@ -139,27 +111,15 @@
     <string name="settings_grid_lines">網格線顯示</string>
     <string name="settings_grid_description">在拍攝時顯示網格線，輔助構圖</string>
     <string name="settings_use_multi_frame">多幀合成</string>
-    <string name="settings_use_multi_frame_description">拍攝多張相片並合成，以獲得更好的畫質和更低的雜訊。</string>
     <string name="settings_use_multiple_exposure">多重曝光</string>
-    <string name="settings_use_multiple_exposure_description">透過多次快門逐步疊加一張作品，並提供幽靈預覽輔助構圖。</string>
-    <string name="multiple_exposure_short">多曝</string>
     <string name="multiple_exposure_finish">完成</string>
     <string name="multiple_exposure_undo">撤銷</string>
     <string name="multiple_exposure_cancel">取消拍攝</string>
-    <string name="multiple_exposure_blending">平均疊加</string>
-    <string name="multiple_exposure_guidance">參考半透明疊影繼續構圖，然後拍攝下一張。</string>
-    <string name="multiple_exposure_ready">已就緒，等待下一次曝光</string>
     <string name="settings_multiple_exposure_count">多重曝光張數</string>
     <string name="settings_multiple_exposure_count_description">最終合成所使用的曝光張數。預設 2 張，更接近經典雙重曝光工作流程。</string>
     <string name="settings_multi_frame_count">多幀合成幀數</string>
     <string name="settings_multi_frame_count_description">多幀合成所使用的幀數（幀數越多效果越好，但合成也越慢）。</string>
     <string name="settings_use_super_resolution">超解析度</string>
-    <string name="settings_use_super_resolution_description">使用 2x 多幀超解析度以獲得更多細節。（需要開啟多幀合成）</string>
-    <string name="settings_super_resolution_scale_description">设置多帧超分倍率，默认 1.5x。</string>
-    <string name="settings_raw_engine">RAW 處理引擎</string>
-    <string name="settings_raw_engine_description">選擇用於處理 RAW 資料的引擎</string>
-    <string name="settings_raw_engine_native">原生</string>
-    <string name="settings_raw_engine_self_developed">自研</string>
     <string name="settings_use_live_photo">動態相片 (Live Photo)</string>
     <string name="settings_use_live_photo_description">在拍照時同時錄製一段短片，讓相片動起來。</string>
     <string name="settings_develop_animation_description">拍摄后显示胶片显影动画效果。</string>
@@ -168,8 +128,6 @@
     <string name="settings_section_frame">邊框浮水印</string>
     <string name="settings_frame_style">邊框樣式</string>
     <string name="settings_frame_description">為拍攝的相片加上裝飾性邊框和浮水印</string>
-    <string name="settings_section_operation">拍攝操作</string>
-    <string name="settings_section_image_processing">影像處理</string>
     <string name="settings_section_software_processing">細節微調</string>
     <string name="settings_shutter_sound">快門聲音</string>
     <string name="settings_shutter_sound_description">拍照時播放快門聲音</string>
@@ -210,7 +168,6 @@
     <string name="settings_tonemap_mode_description">調整硬體色調映射（對比度/伽馬）模式</string>
     <string name="settings_tonemap_mode_fast">快速</string>
     <string name="settings_tonemap_mode_high_quality">高品質</string>
-    <string name="settings_tonemap_mode_off">停用</string>
     <string name="settings_tonemap_mode_srgb">sRGB</string>
     <string name="settings_tonemap_mode_rec709">Rec.709</string>
     <string name="settings_fix_tonemap_preview">修復色調映射預覽異常</string>
@@ -218,10 +175,6 @@
 
     <!-- LUT -->
     <string name="filter_intensity">濾鏡強度</string>
-    <string name="lut_intensity_none">關閉</string>
-    <string name="lut_intensity_low">低</string>
-    <string name="lut_intensity_medium">中</string>
-    <string name="lut_intensity_high">高</string>
     <string name="filters_panel">濾鏡面板</string>
     <string name="toggle_display_mode">切換顯示模式</string>
 
@@ -239,26 +192,11 @@
 
     <!-- Custom Import -->
     <string name="custom_tag">自訂</string>
-    <string name="settings_section_custom">自訂匯入</string>
-    <string name="settings_custom_import">匯入自訂內容</string>
-    <string name="import_lut">匯入 LUT</string>
-    <string name="import_frame">匯入邊框</string>
-    <string name="import_image_frame">匯入圖片邊框</string>
-    <string name="settings_import_description">匯入自訂 LUT 濾鏡檔 (.cube) 或邊框範本圖片 (.png/.webp)</string>
-    <string name="custom_content_management">已匯入內容</string>
-    <string name="lut_type">LUT 濾鏡</string>
-    <string name="frame_type">邊框範本</string>
     <string name="delete_confirm_title">刪除確認</string>
-    <string name="delete_custom_content_confirm">要刪除 "%s" 嗎？</string>
-    <string name="importing">匯入中...</string>
-    <string name="edit_name">編輯名稱</string>
     <string name="name">名稱</string>
     <string name="confirm">確認</string>
-    <string name="lut_selector_style_tab">風格</string>
     <string name="lut_selector_baseline_tab">基準</string>
-    <string name="baseline_target_jpg">JPG</string>
     <string name="baseline_target_raw">RAW</string>
-    <string name="baseline_target_phantom">幻影</string>
 
     <!-- Color Recipe -->
     <string name="color_recipe">色彩配方</string>
@@ -316,7 +254,6 @@
     <string name="recipe_param_magenta_lightness">洋紅 明度</string>
 
     <!-- Color Recipe Tabs -->
-    <string name="recipe_tab_basic">基礎</string>
     <string name="recipe_tab_color">顏色</string>
     <string name="recipe_tab_lch">LCH</string>
     <string name="recipe_tab_light">亮度</string>
@@ -337,12 +274,8 @@
     <string name="recipe_placeholder_remarks">點擊新增備註資訊…</string>
 
     <!-- Post-Processing Parameters (Capture/Edit only) -->
-    <string name="recipe_param_sharpening">銳化</string>
-    <string name="recipe_param_noise_reduction">降噪</string>
-    <string name="recipe_param_chroma_noise_reduction">減少雜色</string>
 
     <!-- Developer Options -->
-    <string name="settings_section_developer">開發者選項</string>
     <string name="settings_log_viewer">日誌收集</string>
     <string name="settings_log_viewer_description">查看和匯出應用日誌，用於問題診斷</string>
     <string name="logs">日誌</string>
@@ -357,8 +290,6 @@
     <string name="settings_openai_api_key_desc">用於 AI 分析的 API 金鑰</string>
     <string name="settings_openai_base_url">OpenAI API 網域</string>
     <string name="settings_openai_base_url_desc">允許設定相容大語言模型的自訂介面位址</string>
-    <string name="settings_use_built_in_ai">使用內建體驗服務</string>
-    <string name="settings_use_built_in_ai_desc">開啟後使用內建 AI 提取服務，無需設定 API Key。</string>
     <string name="settings_backup_settings">備份設定</string>
     <string name="settings_backup_settings_description">備份您的偏好設定以及自訂匯入的 LUT 和邊框。</string>
     <string name="settings_restore_settings">還原設定</string>
@@ -371,14 +302,11 @@
     <string name="restore_in_progress">正在還原設定和自訂內容...</string>
     <string name="filter_management_title">濾鏡管理</string>
     <string name="frame_management_title">邊框管理</string>
-    <string name="category_all">所有</string>
     <string name="category_custom">自訂</string>
-    <string name="set_as_default">設為預設</string>
     <string name="current_default">預設</string>
     <string name="rename">重新命名</string>
     <string name="import_filter">匯入濾鏡</string>
     <string name="import_frame_json">匯入邊框設定</string>
-    <string name="import_frame_image">匯入圖片邊框</string>
     <string name="delete_filter_confirm_message">要刪除濾鏡 "%s"？</string>
     <string name="delete_frame_confirm_message">要刪除邊框 "%s"？</string>
     <string name="delete_dcp_confirm_message">要刪除 DCP "%s"？</string>
@@ -394,7 +322,6 @@
     <string name="frame_export_failed">邊框匯出失敗</string>
     <string name="edit_category">編輯分類</string>
     <string name="batch_edit_category">批次編輯分類</string>
-    <string name="sort_categories">分類排序</string>
     <string name="drag_to_reorder_categories">拖動圖示調整 Tab 顯示順序</string>
     <string name="selected_count">已選擇 %1$d</string>
     <string name="category">分類</string>
@@ -408,15 +335,9 @@
     <string name="built_in">內建</string>
     <string name="custom">自訂</string>
     <string name="uncategorized">未分类</string>
-    <string name="no_filters">暫無自訂濾鏡</string>
-    <string name="no_frames">暫無自訂邊框</string>
     <string name="input_curve">輸入曲線</string>
 
     <!-- 边框导入帮助 -->
-    <string name="help">幫助</string>
-    <string name="got_it">知道了</string>
-    <string name="frame_import_help_title">邊框匯入說明</string>
-    <string name="frame_import_help_message">支援的格式：PNG、WebP\n\n要求：\n• 圖片必須包含透明區域（Alpha 通道）\n• 您的相片會被自動放置在邊框下層，透過透明區域顯示\n\n提示：在您希望顯示相片的位置設計透明開口即可。</string>
 
     <!-- Camera Calibration -->
     <string name="settings_section_calibration">相機校正</string>
@@ -432,7 +353,6 @@
     <string name="current_camera">目前攝像頭</string>
 
     <!-- 关于与捐赠 -->
-    <string name="settings_section_about">關於</string>
     <string name="settings_community_group">交流群組</string>
     <string name="settings_community_group_telegram_description">Telegram 群組：https://t.me/photoncameraapp</string>
     <string name="settings_community_group_qq_description">QQ 群：569605452</string>
@@ -458,29 +378,15 @@
     <string name="settings_lens_id_blacklist_description">多個相機 ID 用逗號分隔。填入的 ID 將不再被主動探測。</string>
     <string name="settings_custom_focal_length_add">新增自訂焦段</string>
     <string name="settings_custom_focal_length_hint">如：35、50、85</string>
-    <string name="settings_custom_focal_length_max">最多 8 個焦段</string>
-    <string name="settings_raw_restore_lut">RAW 還原 LUT</string>
-    <string name="settings_raw_restore_lut_description">選擇用於 RAW 色彩還原的 LUT。選擇「無」以獲得 Log 風格輸出。</string>
-    <string name="settings_raw_profile">RAW 風格方案</string>
-    <string name="settings_raw_profile_description">統一設定 RAW 的色彩空間、Log 曲線與還原 LUT。</string>
     <string name="raw_dcp_import_success_count">已匯入 %1$d 個 DCP 設定檔</string>
     <string name="raw_dcp_import_partial">已匯入 %1$d 個 DCP 設定檔，%2$d 個失敗</string>
     <string name="raw_dcp_delete_success">已刪除 DCP</string>
     <string name="raw_dcp_delete_failed">刪除 DCP 失敗</string>
     <string name="settings_dro_mode">RAW 動態範圍最佳化 (DRO)</string>
-    <string name="settings_dro_mode_description">透過利用 Log 曲線高光冗餘，在不犧牲高光的前提下提升陰影細節。</string>
     <string name="settings_dro_off">關閉</string>
-    <string name="settings_dro_low">中等</string>
-    <string name="settings_dro_high">最高</string>
     <string name="settings_dro_dr100">DR100</string>
     <string name="settings_dro_dr200">DR200</string>
     <string name="settings_dro_dr400">DR400</string>
-    <string name="settings_log_curve_description">選擇 RAW 處理的傳輸函數 (Log 曲線)。</string>
-    <string name="raw_profile_aces_cine">ACES 電影</string>
-    <string name="raw_profile_apple_cinema">Apple 電影</string>
-    <string name="raw_profile_arri_master">ARRI 大師</string>
-    <string name="raw_profile_fuji_provia">富士 PROVIA</string>
-    <string name="raw_profile_standard_srgb">標準 sRGB</string>
     <string name="settings_raw_nlm_noise_factor">降噪</string>
     <string name="settings_use_p010">P010 (10 位 YUV)</string>
     <string name="settings_use_p010_description">啟用 10 位 YUV 輸出以獲得更好的影像資料精度。僅在支援的裝置上且 RAW 關閉時生效。</string>
@@ -497,11 +403,6 @@
     <string name="import_to_category">匯入至分類</string>
     <string name="import_success">成功匯入 %1$d 個項目</string>
     <string name="settings_default_focal_length">預設焦段</string>
-    <string name="settings_apply_ultra_hdr">Ultra HDR 曝光策略</string>
-    <string name="settings_apply_ultra_hdr_description">基於多幀堆疊和直方圖分析，在光線充足時自動壓低曝光以保護高光。僅當 RAW 和多幀合成同時開啟時生效。</string>
-    <string name="settings_color_space">RAW 色彩空間</string>
-    <string name="settings_color_space_description">選擇 RAW 處理的目標色彩空間。</string>
-    <string name="settings_log_curve">RAW 伽瑪</string>
     <string name="hdr_toggle_failed">HDR 开关更新失败</string>
     <string name="ghost_mode">幻影模式</string>
     <string name="close_ghost_mode">關閉幻影模式</string>
@@ -509,9 +410,6 @@
     <string name="ghost_mode_dialog_description">開啟後，App 將在背景自動為系統相機拍攝的相片（DCIM/Camera 目錄）套用目前選擇的 LUT 效果。</string>
     <string name="ghost_mode_permissions_required">需開啟以下權限：</string>
     <string name="ghost_mode_overlay_permission">• 懸浮窗權限：允許 App 在背景穩定執行而不被系統清理，確保監測的連續性。</string>
-    <string name="screen_capture_test_title">錄屏測試</string>
-    <string name="screen_capture_test_start">開始</string>
-    <string name="screen_capture_test_stop">停止</string>
     <string name="screen_capture_test_status_idle">準備啟動錄屏預覽。</string>
     <string name="screen_capture_status_running">錄屏已開啟，正在以畫中畫小窗顯示。</string>
     <string name="screen_capture_return_to_pip">畫中畫</string>
@@ -531,15 +429,10 @@
     <string name="settings_phantom_pip_preview_description">開啟幻影模式時，同步啟動錄屏畫中畫即時預覽。</string>
     <string name="settings_phantom_pip_crop">畫中畫裁剪區域</string>
     <string name="settings_phantom_pip_crop_description">選擇錄屏內容中要在畫中畫內展示的區域。</string>
-    <string name="settings_phantom_pip_crop_left">左側</string>
-    <string name="settings_phantom_pip_crop_top">頂部</string>
-    <string name="settings_phantom_pip_crop_right">右側</string>
-    <string name="settings_phantom_pip_crop_bottom">底部</string>
     <string name="settings_phantom_pip_crop_reset">重設裁剪</string>
     <string name="settings_phantom_save_as_new">另存新圖</string>
     <string name="settings_phantom_save_as_new_description">開啟時，會在儲存編輯後的相片時建立新檔案，而不是覆蓋原圖。</string>
     <string name="color_space">色彩空間</string>
-    <string name="advanced_options">高級選項</string>
 
     <string name="settings_widget_theme">小工具主題</string>
     <string name="settings_widget_theme_description">設定桌面小工具的配色方案</string>
@@ -561,7 +454,6 @@
     <string name="lut_creator_ai_mode_desc">上傳一張效果圖，AI 會先還原原圖，再沿用現有分析流程。</string>
     <string name="lut_creator_local_mode_desc">上傳多組圖片，每組包含一張原圖和一張效果圖，且應盡量是完全相同的場景。</string>
     <string name="lut_creator_local_pairs_hint">本地分析支援多組原圖/效果圖配對。構圖、曝光和場景越一致，合併後的控制點越穩定。</string>
-    <string name="lut_creator_add_local_pair">新增圖片組</string>
     <string name="lut_creator_select_source_image">選擇原圖</string>
     <string name="lut_creator_select_effect_image">選擇效果圖</string>
     <string name="lut_creator_reset_local_selection">清空已選內容</string>
@@ -573,9 +465,6 @@
     <string name="lut_creator_local_pending_target">目前有 1 組還差效果圖</string>
     <string name="lut_creator_local_ready_status">可以繼續新增圖片組，或直接開始分析</string>
     <string name="lut_creator_start_local_analysis">開始本地分析</string>
-    <string name="lut_creator_pair_label">第 %1$d 組</string>
-    <string name="lut_creator_source_image">原圖</string>
-    <string name="lut_creator_target_image">效果圖</string>
     <string name="lut_creator_analyzing">正在分析圖片風格…</string>
     <string name="lut_creator_analysis_complete">分析完成！</string>
     <string name="lut_creator_lut_name_hint">LUT 預設名稱</string>
@@ -589,7 +478,6 @@
     <string name="gallery_ai_quality_title">AI 攝影分析</string>
     <string name="gallery_ai_premium_required">AI 相片分析是 Pro 功能，升級後可解鎖 AI 評分與點評。</string>
     <string name="gallery_ai_analyzing">正在分析相片…</string>
-    <string name="gallery_ai_analysis_failed">分析失敗，請檢查 AI 設定後重試。</string>
     <string name="gallery_ai_rank_excellent_plus">非常優秀</string>
     <string name="gallery_ai_rank_excellent">優秀</string>
     <string name="gallery_ai_rank_good">良好</string>
@@ -614,36 +502,22 @@
     <string name="settings_ai_model_select">點此選擇模型…</string>
     <string name="settings_ai_model_fetching">正在請求列表…</string>
     <string name="settings_ai_model_empty">未找到任何可用模型</string>
-    <string name="general">常用</string>
     <string name="imaging">影像</string>
     <string name="phantom">幻影</string>
-    <string name="about">關於</string>
-    <string name="aperture">光圈</string>
     <string name="virtual_aperture">虛擬光圈</string>
     <string name="settings_default_virtual_aperture">預設虛擬光圈</string>
     <string name="settings_default_virtual_aperture_description">開啟後，拍攝及匯入相片將自動套用所選光圈值的虛化效果。</string>
-    <string name="recipe_palette_title">調色盤</string>
-    <string name="recipe_palette_hint">拖動以調整色彩與影調</string>
-    <string name="recipe_palette_density">調色盤濃度</string>
-    <string name="recipe_palette_advanced">高級調整</string>
     <string name="recipe_tab_palette">調色盤</string>
-    <string name="settings_super_resolution_scale">超分倍率</string>
     <string name="settings_develop_animation">显影动画</string>
     <string name="settings_use_p3_color_space">P3 色域</string>
     <string name="settings_use_p3_color_space_description">在支持的设备上启用 Display P3 输出。默认关闭。</string>
     <string name="settings_auto_enable_hdr_for_hdr_capture">默认开启 HDR</string>
     <string name="settings_auto_enable_hdr_for_hdr_capture_description">默认开启 HDR显示。</string>
-    <string name="settings_auto_enable_hdr_for_sdr_photos">普通 JPG 默认生成 HDR</string>
-    <string name="settings_auto_enable_hdr_for_sdr_photos_description">普通 JPG 拍摄和导入后，默认在详情页生成并开启 HDR
-        效果。
-    </string>
     <string name="settings_screen_hdr">螢幕 HDR 顯示</string>
     <string name="settings_screen_hdr_description">在螢幕窗口上啟用高動態範圍 (HDR) 顯示。若部分設備開啟該模式導致螢幕發黃、變暗，可將其關閉。</string>
     <string name="hdr_label">HDR</string>
     <string name="hdr_strength_label">HDR 強度</string>
     <string name="hdr_strength_update_failed">HDR 強度更新失敗</string>
-    <string name="settings_raw_nlm_base_h">RAW NLM 基础强度</string>
-    <string name="settings_raw_nlm_gain_factor">RAW NLM 增益响应</string>
     <string name="ai_service">AI服务</string>
 
     <!-- 測光模式 -->
@@ -659,16 +533,13 @@
     <string name="toolbox_puzzle_desc">智能瀑布流排版，一鍵拼接照片</string>
     <string name="puzzle_select_photos">選擇照片</string>
     <string name="puzzle_columns">列數</string>
-    <string name="puzzle_aspect_ratio">模版比例</string>
     <string name="puzzle_corner_radius">照片圓角</string>
     <string name="puzzle_padding">照片間距</string>
     <string name="puzzle_frame_watermark">邊框水印</string>
     <string name="puzzle_save">保存</string>
-    <string name="puzzle_saving">保存中...</string>
     <string name="puzzle_save_success">已保存至系統相冊</string>
     <string name="puzzle_save_fail">保存失敗</string>
     <string name="puzzle_no_photos">請先選擇照片</string>
-    <string name="puzzle_ratio_adaptive">自適應</string>
     <string name="puzzle_background">背景顏色</string>
     <string name="puzzle_background_white">純白</string>
     <string name="puzzle_background_black">純黑</string>

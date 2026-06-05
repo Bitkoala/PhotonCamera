@@ -2,7 +2,6 @@
     <string name="app_name">Photon Camera</string>
 
     <!-- Camera Controls -->
-    <string name="capture">Capture</string>
     <string name="switch_camera">Switch Camera</string>
     <string name="settings">Settings</string>
     <string name="flash">Flash</string>
@@ -20,22 +19,13 @@
     <string name="color_walk_apply_frame">Apply Frame</string>
     <string name="color_walk_select_color">Select a Color</string>
     <string name="histogram">Histogram</string>
-    <string name="grid">Grid</string>
     <string name="back">Back</string>
     <string name="unknown">Unknown</string>
     <string name="take_photo">Take Photo</string>
-    <string name="pause">Pause</string>
-    <string name="resume">Resume</string>
 
     <!-- Exposure Controls -->
-    <string name="exposure_compensation">EV</string>
-    <string name="iso">ISO</string>
-    <string name="shutter_speed">Shutter</string>
-    <string name="auto">AUTO</string>
 
     <!-- Focus -->
-    <string name="focus">Focus</string>
-    <string name="tap_to_focus">Tap to focus</string>
 
     <!-- Aspect Ratio -->
     <string name="aspect_ratio">Aspect Ratio</string>
@@ -45,27 +35,14 @@
     <string name="settings_custom_aspect_ratio">Custom Aspect Ratio</string>
     <string name="settings_custom_aspect_ratio_width">Width</string>
     <string name="settings_custom_aspect_ratio_height">Height</string>
-    <string name="ratio_3_2">3:2</string>
-    <string name="ratio_4_3">4:3</string>
-    <string name="ratio_16_9">16:9</string>
-    <string name="ratio_1_1">1:1</string>
-    <string name="capture_mode_photo">Photo</string>
-    <string name="capture_mode_video">Video</string>
     <string name="video_torch_chip">Torch</string>
-    <string name="video_stabilization_chip">Stab</string>
-    <string name="video_resolution_chip">Res</string>
-    <string name="video_fps_chip">FPS</string>
     <string name="video_aspect_chip">Aspect</string>
     <string name="video_log_chip">Log</string>
-    <string name="video_option_on">On</string>
     <string name="video_option_off">Off</string>
     <string name="video_aspect_16_9">16:9</string>
     <string name="video_aspect_21_9">21:9</string>
     <string name="video_aspect_open_gate">Open Gate</string>
     <string name="video_log_off">OFF</string>
-    <string name="video_log_flog2_bt2020">F-Log2</string>
-    <string name="video_log_logc4_arri4">LogC4</string>
-    <string name="video_log_acescct_ap1">ACEScct</string>
     <string name="video_codec_chip">Encoding</string>
     <string name="video_microphone_title">Microphone</string>
     <string name="video_microphone_auto">Auto</string>
@@ -77,38 +54,28 @@
     <string name="video_microphone_usb">USB</string>
     <string name="video_microphone_hdmi">HDMI Input</string>
     <string name="video_microphone_line_in">Line In</string>
-    <string name="video_microphone_telephony">Call Audio</string>
     <string name="video_microphone_external">External</string>
     <string name="video_bitrate_chip">Bitrate</string>
-    <string name="video_advanced_settings">Advanced Video Settings</string>
-    <string name="video_rec_label">REC</string>
 
     <!-- Permissions -->
     <string name="camera_permission_required">Camera and Microphone permissions are required</string>
     <string name="grant_permission">Grant Permission</string>
 
     <!-- Zoom -->
-    <string name="zoom">Zoom</string>
 
     <!-- Gallery -->
-    <string name="gallery">Gallery</string>
     <string name="gallery_photon">Photon</string>
-    <string name="gallery_system">System</string>
     <string name="gallery_group_today">Today</string>
     <string name="gallery_group_yesterday">Yesterday</string>
     <string name="permission_required_gallery">Media permission is required to access system gallery</string>
-    <string name="photo_detail">Photo Detail</string>
     <string name="share">Share</string>
     <string name="delete">Delete</string>
     <string name="export">Export</string>
-    <string name="batch_export">Batch Export</string>
-    <string name="exporting">Exporting %1$d/%2$d...</string>
     <string name="export_complete">Export Complete</string>
     <string name="export_all">Export All</string>
     <string name="export_success">Photo exported successfully</string>
     <string name="export_all_success">All photos exported successfully</string>
     <string name="export_failed">Failed to export photo</string>
-    <string name="export_dng">Export DNG</string>
     <string name="export_dng_success">DNG exported successfully</string>
     <string name="export_dng_failed">Failed to export DNG</string>
     <string name="export_all_confirm">Export all burst photos?</string>
@@ -116,7 +83,6 @@
     <string name="export_video_confirm">Bake effects into video and save to gallery? This may take a while depending on video length. The original video will not be changed.</string>
     <string name="export_video_success">Video exported successfully</string>
     <string name="export_video_failed">Failed to export video</string>
-    <string name="export_video_exporting">Exporting video… %d%%</string>
     <string name="edit">Edit</string>
     <string name="refresh">Refresh</string>
     <string name="refresh_success">Preview refreshed</string>
@@ -124,27 +90,20 @@
     <string name="select_all">Select All</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
-    <string name="rotate">Rotate</string>
     <string name="crop">Crop</string>
     <string name="crop_free">Free</string>
     <string name="crop_original">Original</string>
     <string name="crop_reset">Reset</string>
-    <string name="brightness">Brightness</string>
     <string name="delete_confirm">Delete this photo?</string>
     <string name="delete_multiple_confirm">Delete %d photos?</string>
-    <string name="delete_exported_photos">Also delete from system gallery</string>
     <string name="delete_exported_photos_count">Also delete %d exported photos</string>
     <string name="delete_exported_videos_count">Also delete %d exported videos</string>
-    <string name="delete_system_warning">Note: Exported photos in the system gallery will also be removed. A system prompt will appear; declining it will only cancel the system deletion, while the app version will still be deleted.</string>
     <string name="no_photos">No photos yet</string>
     <string name="photo_info">Photo Info</string>
     <string name="video_info">Video Info</string>
     <string name="filter">LUT</string>
-    <string name="intensity">Intensity</string>
-    <string name="original">Original</string>
     <string name="export_confirm">Export photo with LUT applied?</string>
     <string name="items_selected">%d Selected</string>
-    <string name="not_selected">Not selected</string>
     <string name="selected">Selected</string>
     <string name="imported">Imported</string>
     <string name="photo_info_date">Date</string>
@@ -154,7 +113,6 @@
     <string name="photo_info_aperture">Aperture</string>
     <string name="photo_info_iso">ISO</string>
     <string name="photo_info_shutter_speed">Shutter Speed</string>
-    <string name="video">Video</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="video_info_duration">Duration</string>
@@ -168,9 +126,7 @@
     <string name="frame">Frame</string>
     <string name="none">None</string>
     <string name="show_app_branding">Show App Branding</string>
-    <string name="export_with_frame_confirm">Export photo with frame watermark?</string>
     <string name="import_photo">Import</string>
-    <string name="adjust_watermark">Adjust Watermark</string>
     <string name="watermark_adjustment">Watermark Adjustment</string>
     <string name="logo">LOGO</string>
     <string name="text_content">Text Content</string>
@@ -187,7 +143,6 @@
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_section_capture">Capture</string>
-    <string name="settings_section_display">Display</string>
 
     <!-- Settings Restructuring Tabs -->
     <string name="settings_tab_camera">Capture</string>
@@ -225,28 +180,15 @@
     <string name="settings_grid_lines">Grid Lines</string>
     <string name="settings_grid_description">Show grid lines for composition</string>
     <string name="settings_use_multi_frame">Multi-Frame Denoise</string>
-    <string name="settings_use_multi_frame_description">Capture multiple frames on the YUV path and merge them mainly for noise reduction.</string>
     <string name="settings_use_multiple_exposure">Multiple Exposure</string>
-    <string name="settings_use_multiple_exposure_description">Build one image across multiple shutter presses with ghost preview guidance.</string>
-    <string name="multiple_exposure_short">ME</string>
     <string name="multiple_exposure_finish">Finish</string>
     <string name="multiple_exposure_undo">Undo</string>
     <string name="multiple_exposure_cancel">Cancel Session</string>
-    <string name="multiple_exposure_blending">Average Blend</string>
-    <string name="multiple_exposure_guidance">Compose with the ghosted result, then fire again.</string>
-    <string name="multiple_exposure_ready">Ready for next exposure</string>
     <string name="settings_multiple_exposure_count">Multiple Exposure Count</string>
     <string name="settings_multiple_exposure_count_description">How many exposures to combine for one final image. Default is 2 for a classic double exposure workflow.</string>
     <string name="settings_multi_frame_count">Multi-Frame Denoise Count</string>
     <string name="settings_multi_frame_count_description">Number of frames used for YUV multi-frame denoise (more frames reduce noise more, but take longer).</string>
     <string name="settings_use_super_resolution">Multi-Frame Super Resolution</string>
-    <string name="settings_use_super_resolution_description">Enable multi-frame super resolution.</string>
-    <string name="settings_super_resolution_scale">Super Resolution Scale</string>
-    <string name="settings_super_resolution_scale_description">Set the multi-frame super resolution scale. Default is 1x.</string>
-    <string name="settings_raw_engine">RAW Processing Engine</string>
-    <string name="settings_raw_engine_description">Choose the engine for RAW data processing</string>
-    <string name="settings_raw_engine_native">Native</string>
-    <string name="settings_raw_engine_self_developed">Self-developed</string>
     <string name="settings_use_live_photo">Live Photo</string>
     <string name="settings_use_live_photo_description">Capture a short video clip along with your photo for a dynamic live photo effect.</string>
     <string name="settings_develop_animation">Develop Animation</string>
@@ -256,14 +198,10 @@
     <string name="settings_section_frame">Frame Watermark</string>
     <string name="settings_frame_style">Frame Style</string>
     <string name="settings_frame_description">Add decorative frame and watermark to photos</string>
-    <string name="settings_section_operation">Operations</string>
-    <string name="settings_section_image_processing">Image Processing</string>
-    <string name="settings_section_baseline_color_correction">Baseline Color Correction</string>
     <string name="settings_section_software_processing">Fine Tuning</string>
     <string name="settings_baseline_jpg_title">JPG Baseline Color Correction</string>
     <string name="settings_baseline_jpg_description">Choose the baseline LUT and recipe applied before the regular JPG creative LUT.</string>
     <string name="settings_baseline_raw_title">RAW Baseline Color Correction</string>
-    <string name="settings_baseline_raw_description">Choose the baseline LUT and recipe used for RAW rendering, export, and reprocessing.</string>
     <string name="raw_dcp_title">DCP</string>
     <string name="raw_dcp_import">Import DCP</string>
     <string name="raw_dcp_import_success">Imported DCP: %1$s</string>
@@ -277,11 +215,8 @@
     <string name="settings_baseline_dialog_description">Select a baseline LUT for this target. It will be applied before the regular creative LUT.</string>
     <string name="settings_baseline_edit_recipe">Edit Recipe</string>
     <string name="settings_baseline_clear">Clear</string>
-    <string name="lut_selector_style_tab">Style</string>
     <string name="lut_selector_baseline_tab">Baseline</string>
-    <string name="baseline_target_jpg">JPG</string>
     <string name="baseline_target_raw">RAW</string>
-    <string name="baseline_target_phantom">Phantom</string>
     <string name="settings_shutter_sound">Shutter Sound</string>
     <string name="settings_shutter_sound_description">Play sound when taking a photo</string>
     <string name="settings_vibration">Vibration</string>
@@ -321,8 +256,6 @@
     <string name="settings_tonemap_mode_description">Adjust the hardware tone mapping (contrast/gamma) mode</string>
     <string name="settings_tonemap_mode_fast">Fast</string>
     <string name="settings_tonemap_mode_high_quality">HQ</string>
-    <string name="settings_tonemap_mode_off">Off</string>
-    <string name="settings_tonemap_mode_acr3">ACR3</string>
     <string name="settings_tonemap_mode_srgb">sRGB</string>
     <string name="settings_tonemap_mode_rec709">Rec.709</string>
     <string name="settings_tonemap_mode_srgb_acr3">ACR3 + sRGB</string>
@@ -335,10 +268,6 @@
 
     <!-- LUT -->
     <string name="filter_intensity">LUT Intensity</string>
-    <string name="lut_intensity_none">None</string>
-    <string name="lut_intensity_low">Low</string>
-    <string name="lut_intensity_medium">Medium</string>
-    <string name="lut_intensity_high">High</string>
     <string name="filters_panel">LUTs</string>
     <string name="toggle_display_mode">Toggle Display Mode</string>
 
@@ -356,19 +285,7 @@
 
     <!-- Custom Import -->
     <string name="custom_tag">CUSTOM</string>
-    <string name="settings_section_custom">Custom Import</string>
-    <string name="settings_custom_import">Import Custom Content</string>
-    <string name="import_lut">Import LUT</string>
-    <string name="import_frame">Import Frame</string>
-    <string name="import_image_frame">Import Image Frame</string>
-    <string name="settings_import_description">Import custom LUT filters (.cube) or frame templates (.png/.webp)</string>
-    <string name="custom_content_management">Imported Content</string>
-    <string name="lut_type">LUT Filter</string>
-    <string name="frame_type">Frame Template</string>
     <string name="delete_confirm_title">Delete Confirmation</string>
-    <string name="delete_custom_content_confirm">Delete "%s"?</string>
-    <string name="importing">Importing...</string>
-    <string name="edit_name">Edit Name</string>
     <string name="name">Name</string>
     <string name="confirm">Confirm</string>
 
@@ -438,7 +355,6 @@
     <string name="recipe_param_primary_blue_lightness">Blue Primary Light</string>
 
     <!-- Color Recipe Tabs -->
-    <string name="recipe_tab_basic">Basic</string>
     <string name="recipe_tab_color">Color</string>
     <string name="recipe_tab_lch">LCH</string>
     <string name="recipe_tab_light">Light</string>
@@ -460,30 +376,24 @@
     <string name="recipe_placeholder_remarks">Tap to add notes…</string>
 
     <!-- Post-Processing Parameters (Capture/Edit only) -->
-    <string name="recipe_param_sharpening">Sharpening</string>
-    <string name="recipe_param_noise_reduction">Noise Red.</string>
-    <string name="recipe_param_chroma_noise_reduction">Chroma NR</string>
 
     <!-- Developer Options -->
-    <string name="settings_section_developer">Developer Options</string>
     <string name="settings_log_viewer">Log Viewer</string>
     <string name="settings_log_viewer_description">View and export app logs for diagnostics</string>
     <string name="logs">Logs</string>
 
     <!-- Filter/Frame Management -->
     <string name="settings_section_management">Content Management</string>
-    <string name="settings_filter_management">LUT Management</string>
+    <string name="settings_filter_management">LUT Manage</string>
     <string name="settings_filter_management_description">Manage LUTs, set default, reorder</string>
-    <string name="settings_frame_management">Frame Management</string>
+    <string name="settings_frame_management">Frame Manage</string>
     <string name="settings_frame_management_description">Manage frames, set default, reorder</string>
-    <string name="settings_preset_management">Preset Management</string>
+    <string name="settings_preset_management">Preset Manage</string>
     <string name="settings_preset_management_description">Manage custom presets</string>
     <string name="settings_openai_api_key">OpenAI API Key</string>
     <string name="settings_openai_api_key_desc">API key required for AI</string>
     <string name="settings_openai_base_url">OpenAI Base URL</string>
     <string name="settings_openai_base_url_desc">Set a custom API destination to support compatible language models</string>
-    <string name="settings_use_built_in_ai">Use Built-in Experience Service</string>
-    <string name="settings_use_built_in_ai_desc">Use the built-in AI extraction service without configuring your own API Key.</string>
     <string name="settings_backup_settings">Backup Settings</string>
     <string name="settings_backup_settings_description">Backup your preferences and custom imported LUTs/Frames.</string>
     <string name="settings_restore_settings">Restore Settings</string>
@@ -507,14 +417,11 @@
     <string name="apply_lut_permission_message">Applying LUT from shared images requires file management access. Please grant access for this app first.</string>
     <string name="apply_lut_permission_confirm">Grant Access</string>
     <string name="frame_management_title">Frame Management</string>
-    <string name="category_all">All</string>
     <string name="category_custom">Custom</string>
-    <string name="set_as_default">Set as Default</string>
     <string name="current_default">Default</string>
     <string name="rename">Rename</string>
     <string name="import_filter">Import LUT</string>
     <string name="import_frame_json">Import Frame Config</string>
-    <string name="import_frame_image">Import Image Frame</string>
     <string name="delete_filter_confirm_message">Delete LUT \"%s\"?</string>
     <string name="delete_frame_confirm_message">Delete frame \"%s\"?</string>
     <string name="delete_dcp_confirm_message">Delete DCP \"%s\"?</string>
@@ -534,7 +441,6 @@
     <string name="frame_export_failed">Failed to export frame</string>
     <string name="edit_category">Edit Category</string>
     <string name="batch_edit_category">Batch Edit Category</string>
-    <string name="sort_categories">Sort Categories</string>
     <string name="drag_to_reorder_categories">Drag handles to reorder tabs</string>
     <string name="selected_count">%d Selected</string>
     <string name="category">Category</string>
@@ -553,18 +459,12 @@
     <string name="built_in">Built-in</string>
     <string name="custom">Custom</string>
     <string name="uncategorized">Uncategorized</string>
-    <string name="no_filters">No custom LUTs</string>
-    <string name="no_frames">No custom frames</string>
     <string name="input_curve">Input Curve</string>
     <string name="photo_lut">Photo LUT</string>
     <string name="video_lut">Video LUT</string>
     <string name="video_lut_photo_conversion_hint">Used for color conversion when applying this video LUT to photos.</string>
 
     <!-- Frame Import Help -->
-    <string name="help">Help</string>
-    <string name="got_it">Got it</string>
-    <string name="frame_import_help_title">Frame Import Guide</string>
-    <string name="frame_import_help_message">Supported formats: PNG, WebP\n\nRequirements:\n• The image must have a transparent area (alpha channel)\n• Your photo will be placed behind the frame, visible through the transparent region\n\nTip: Design your frame with a transparent cutout where you want the photo to appear.</string>
     <string name="more_options">More options</string>
     <string name="discard">Discard</string>
     <string name="frame_editor_create_menu">Create or import frame</string>
@@ -576,7 +476,6 @@
     <string name="frame_editor_validation_name_required">Please enter a frame name and required image source.</string>
     <string name="frame_editor_save_failed">Unable to save this frame.</string>
     <string name="frame_editor_save_as_copy">Save as Copy</string>
-    <string name="frame_editor_preview_title">Live Preview</string>
     <string name="frame_editor_preview_portrait">Portrait</string>
     <string name="frame_editor_preview_landscape">Landscape</string>
     <string name="frame_editor_preview_unavailable">Preview unavailable</string>
@@ -608,8 +507,6 @@
     <string name="frame_editor_elements_disabled_title">Elements Unavailable</string>
     <string name="frame_editor_elements_disabled_message">IMAGE mode only uses the selected frame image. Switch to another position to edit text, logo, divider, or spacer elements.</string>
     <string name="frame_editor_add_element">Add Element</string>
-    <string name="frame_editor_selected_element">Selected Element</string>
-    <string name="frame_editor_no_element_selected">Select an element from the list to edit it.</string>
     <string name="frame_editor_text_type">Text Type</string>
     <string name="frame_editor_alignment">Alignment</string>
     <string name="frame_editor_line">Line</string>
@@ -694,7 +591,6 @@
     <string name="current_camera">Current Camera</string>
 
     <!-- About & Donation -->
-    <string name="settings_section_about">About</string>
     <string name="settings_community_group">Community Group</string>
     <string name="settings_community_group_telegram_description">Telegram: https://t.me/photoncameraapp</string>
     <string name="settings_community_group_qq_description">QQ Group: 569605452</string>
@@ -719,32 +615,11 @@
     <string name="settings_lens_id_blacklist_description">Camera IDs separated by commas. These IDs will be skipped during active lens probing.</string>
     <string name="settings_custom_focal_length_add">Add Custom Focal Length</string>
     <string name="settings_custom_focal_length_hint">e.g. 35, 50, 85</string>
-    <string name="settings_custom_focal_length_max">Maximum 8 custom focal lengths</string>
-    <string name="settings_raw_restore_lut">RAW Restore LUT</string>
-    <string name="settings_raw_restore_lut_description">Choose the LUT used for RAW color restoration. Use \"None\" for log output.</string>
-    <string name="settings_raw_profile">RAW Look</string>
-    <string name="settings_raw_profile_description">Choose a unified RAW rendering profile that sets the color space, log curve, and restore LUT together.</string>
     <string name="settings_dro_mode">RAW Dynamic Range Optimizer (DRO)</string>
-    <string name="settings_dro_mode_description">Optimizes shadow detail and highlight compression by utilizing Log curve headroom. Higher values preserve more highlights but may require more light.</string>
     <string name="settings_dro_off">Off</string>
-    <string name="settings_dro_low">Low</string>
-    <string name="settings_dro_high">High</string>
     <string name="settings_dro_dr100">DR100</string>
     <string name="settings_dro_dr200">DR200</string>
     <string name="settings_dro_dr400">DR400</string>
-    <string name="settings_apply_ultra_hdr">Ultra HDR Exposure Strategy</string>
-    <string name="settings_apply_ultra_hdr_description">Based on multi-frame stacking and histogram analysis, automatically reduce exposure to protect highlights when lighting is sufficient. Effective only when RAW and Multi-Frame are enabled.</string>
-    <string name="settings_color_space">RAW Color Space</string>
-    <string name="settings_color_space_description">Choose the target color space for RAW processing.</string>
-    <string name="settings_log_curve">RAW Gamma</string>
-    <string name="settings_log_curve_description">Choose the transfer function for RAW processing (Log Curve).</string>
-    <string name="raw_profile_aces_cine">ACES Cine</string>
-    <string name="raw_profile_apple_cinema">Apple Cinema</string>
-    <string name="raw_profile_arri_master">ARRI Master</string>
-    <string name="raw_profile_fuji_provia">Fuji Provia</string>
-    <string name="raw_profile_standard_srgb">Standard sRGB</string>
-    <string name="settings_raw_nlm_base_h">RAW NLM Base Strength</string>
-    <string name="settings_raw_nlm_gain_factor">RAW NLM Gain Response</string>
     <string name="settings_raw_nlm_noise_factor">Denoise</string>
     <string name="settings_raw_exposure_compensation">Exposure Compensation</string>
     <string name="settings_spectral_film">Spectral Film Simulation</string>
@@ -762,14 +637,10 @@
     <string name="settings_raw_min_shutter_speed_description">For RAW capture only, keeps the capture shutter near this limit and automatically balances ISO for the selected speed.</string>
     <string name="settings_raw_dro">Dynamic Range Optimization</string>
     <string name="settings_raw_dro_description">Intelligently lifts shadows while protecting highlights in high-contrast scenes.</string>
-    <string name="settings_raw_metering_center_weight">RAW Metering Center Weight</string>
-    <string name="settings_raw_metering_center_weight_description">Lower values are closer to evaluative metering; higher values tighten and emphasize the center area.</string>
     <string name="settings_raw_black_point_correction">Black Point Correction</string>
     <string name="settings_raw_white_point_correction">White Point Correction</string>
     <string name="settings_export_dng_with_raw_export">Export DNG with RAW photos</string>
     <string name="settings_export_dng_with_raw_export_description">When exporting a RAW photo, also export its original DNG file to the system gallery.</string>
-    <string name="settings_raw_auto_white_balance_estimate">RAW auto white balance</string>
-    <string name="settings_raw_auto_white_balance_estimate_description">Estimate white balance from RAW pixels when developing DNG files, useful when device metadata is unreliable.</string>
     <string name="settings_raw_black_level_correction">Black Level Correction</string>
     <string name="settings_raw_black_level_correction_with_lens">Black Level Correction (Lens %1$s · %2$dmm)</string>
     <string name="settings_raw_black_level_correction_description">Manually set the black level for RAW development to fix color cast issues. Applied per camera lens.</string>
@@ -785,8 +656,6 @@
     <string name="settings_use_p3_color_space_description">Enable Display P3 output on supported devices. Default is off.</string>
     <string name="settings_auto_enable_hdr_for_hdr_capture">Enable HDR by default</string>
     <string name="settings_auto_enable_hdr_for_hdr_capture_description">Enable HDR display by default.</string>
-    <string name="settings_auto_enable_hdr_for_sdr_photos">Generate HDR by default for standard JPG</string>
-    <string name="settings_auto_enable_hdr_for_sdr_photos_description">Generate and enable estimated HDR by default in the detail page for standard JPG captures and imports.</string>
     <string name="settings_screen_hdr">HDR Display</string>
     <string name="settings_screen_hdr_description">Enable High Dynamic Range (HDR) for the screen window. Turn off if screen causes yellowing or dimming.</string>
     <string name="hdr_label">HDR</string>
@@ -799,9 +668,6 @@
     <string name="ghost_mode_dialog_description">When enabled, the app will automatically apply the current LUT to photos taken by the system camera (DCIM/Camera directory) in the background.</string>
     <string name="ghost_mode_permissions_required">Permissions required:</string>
     <string name="ghost_mode_overlay_permission">• Overlay Permission: Allows the app to run stably in the background to ensure continuous monitoring.</string>
-    <string name="screen_capture_test_title">Screen Capture Test</string>
-    <string name="screen_capture_test_start">Start</string>
-    <string name="screen_capture_test_stop">Stop</string>
     <string name="screen_capture_test_status_idle">Ready to start screen capture preview.</string>
     <string name="screen_capture_status_running">Screen capture is active and shown in picture-in-picture.</string>
     <string name="screen_capture_return_to_pip">PiP</string>
@@ -821,21 +687,12 @@
     <string name="settings_phantom_pip_preview_description">When Phantom Mode is enabled, also start the screen capture PiP live preview.</string>
     <string name="settings_phantom_pip_crop">PiP Crop Area</string>
     <string name="settings_phantom_pip_crop_description">Choose which part of the recorded screen should be shown in PiP.</string>
-    <string name="settings_phantom_pip_crop_left">Left</string>
-    <string name="settings_phantom_pip_crop_top">Top</string>
-    <string name="settings_phantom_pip_crop_right">Right</string>
-    <string name="settings_phantom_pip_crop_bottom">Bottom</string>
     <string name="settings_phantom_pip_crop_reset">Reset Crop</string>
     <string name="settings_phantom_pip_crop_choose_background">Choose Background</string>
     <string name="settings_phantom_pip_crop_default_background">Default Background</string>
     <string name="settings_phantom_save_as_new">Save as New Image</string>
     <string name="settings_phantom_save_as_new_description">When enabled, the app will save the edited photo as a new image instead of overwriting the original one.</string>
     <string name="color_space">Color Space</string>
-    <string name="advanced_options">Advanced Options</string>
-    <string name="recipe_palette_title">Palette</string>
-    <string name="recipe_palette_hint">Drag to shape color and tone</string>
-    <string name="recipe_palette_density">Palette Density</string>
-    <string name="recipe_palette_advanced">Advanced Adjustments</string>
     <string name="recipe_tab_palette">Palette</string>
 
     <string name="settings_widget_theme">Widget Theme</string>
@@ -858,7 +715,6 @@
     <string name="lut_creator_ai_mode_desc">Upload one styled image. AI will infer a text LUT recipe directly, without using image editing.</string>
     <string name="lut_creator_local_mode_desc">Upload multiple image pairs. Each pair should include an original image and a styled image of the same scene.</string>
     <string name="lut_creator_local_pairs_hint">For local analysis, add multiple original/styled pairs. The closer the framing and exposure match, the better the merged control points will be.</string>
-    <string name="lut_creator_add_local_pair">Add Image Pair</string>
     <string name="lut_creator_select_source_image">Select Original Image</string>
     <string name="lut_creator_select_effect_image">Select Styled Image</string>
     <string name="lut_creator_reset_local_selection">Clear Selection</string>
@@ -870,9 +726,6 @@
     <string name="lut_creator_local_pending_target">1 pair is still waiting for its styled image</string>
     <string name="lut_creator_local_ready_status">You can add more pairs or start analysis now</string>
     <string name="lut_creator_start_local_analysis">Analyze Local Pairs</string>
-    <string name="lut_creator_pair_label">Pair %1$d</string>
-    <string name="lut_creator_source_image">Original Image</string>
-    <string name="lut_creator_target_image">Styled Image</string>
     <string name="lut_creator_analyzing">Analyzing image style...</string>
     <string name="lut_creator_analysis_complete">Analysis Complete!</string>
     <string name="lut_creator_ai_restored_preview">AI restored original preview</string>
@@ -887,7 +740,6 @@
     <string name="gallery_ai_quality_title">AI Photo Analysis</string>
     <string name="gallery_ai_premium_required">AI photo analysis is a Pro feature. Upgrade to unlock AI scoring and comments.</string>
     <string name="gallery_ai_analyzing">Analyzing photo...</string>
-    <string name="gallery_ai_analysis_failed">Analysis failed. Check AI settings and try again.</string>
     <string name="gallery_ai_rank_excellent_plus">Outstanding</string>
     <string name="gallery_ai_rank_excellent">Excellent</string>
     <string name="gallery_ai_rank_good">Good</string>
@@ -915,11 +767,8 @@
     <string name="settings_ai_model_custom">Custom…</string>
     <string name="settings_ai_model_custom_dialog_title">Custom AI Model</string>
     <string name="settings_ai_model_custom_dialog_desc">Enter the name of the AI model to use.</string>
-    <string name="general">General</string>
     <string name="imaging">Imaging</string>
     <string name="phantom">Phantom</string>
-    <string name="about">About</string>
-    <string name="aperture">Aperture</string>
     <string name="virtual_aperture">Virtual Aperture</string>
     <string name="settings_default_virtual_aperture">Default Virtual Aperture</string>
     <string name="settings_default_virtual_aperture_description">Automatically enable virtual aperture with the selected f-stop value for new photos.</string>
@@ -927,9 +776,7 @@
     <string name="ai_denoise_title">AI Deep Denoise</string>
     <string name="ai_denoise_description">Use neural network to reconstruct image details</string>
     <string name="ai_denoise_processing">Processing... %1$.1f%%</string>
-    <string name="ai_denoise_success">AI Denoise Success</string>
     <string name="ai_denoise_failed">AI Denoise Failed</string>
-    <string name="ai_denoise_strength">AI Denoise Strength</string>
 
     <!-- Metering Mode -->
     <string name="metering_mode">Metering</string>
@@ -937,21 +784,11 @@
     <string name="metering_center_weighted">Center Weighted</string>
     <string name="metering_average">Average</string>
     <string name="metering_highlight_priority">Highlight</string>
-    <string name="center_weight">CW</string>
-    <string name="avg">AVG</string>
-    <string name="spot">SPOT</string>
     <string name="frame_editor_text_type_filter_name">Filter Name</string>
 
     <!-- Film Detail -->
     <string name="film_specs">Specs</string>
     <string name="film_example_photos">Example Photos</string>
-    <string name="film_type">Type</string>
-    <string name="film_manufacturer">Manufacturer</string>
-    <string name="film_formats">Formats</string>
-    <string name="film_origin">Origin</string>
-    <string name="film_iso">ISO</string>
-    <string name="film_grain">Grain</string>
-    <string name="film_contrast">Contrast</string>
     <string name="set_as_reference">Set as Reference</string>
     <string name="reference_photo_set_success">Set as reference photo. It will display in next edit!</string>
     <string name="zoom_in">Enlarge</string>
@@ -964,7 +801,6 @@
     <string name="lut_synthesis_save_success">Synthesized LUT imported successfully!</string>
     <string name="lut_synthesis_save_failed">Failed to synthesize and import LUT</string>
     <string name="lut_synthesis_add_lut">Add LUT Layer</string>
-    <string name="lut_synthesis_layer_weight">Intensity</string>
     <string name="lut_synthesis_bake_params">Color Baking</string>
     <string name="lut_synthesis_empty_layers">No LUT layers added yet. Click plus below to add.</string>
     <string name="lut_synthesis_enter_name">Enter LUT Details</string>
@@ -983,16 +819,13 @@
     <string name="toolbox_puzzle_desc">Smart staggered collage, one-click layout</string>
     <string name="puzzle_select_photos">Select Photos</string>
     <string name="puzzle_columns">Columns</string>
-    <string name="puzzle_aspect_ratio">Template Ratio</string>
     <string name="puzzle_corner_radius">Corner Radius</string>
     <string name="puzzle_padding">Spacing</string>
     <string name="puzzle_frame_watermark">Frame Watermark</string>
     <string name="puzzle_save">Save</string>
-    <string name="puzzle_saving">Saving...</string>
     <string name="puzzle_save_success">Collage saved to gallery</string>
     <string name="puzzle_save_fail">Save failed</string>
     <string name="puzzle_no_photos">Please select photos first</string>
-    <string name="puzzle_ratio_adaptive">Adaptive</string>
     <string name="puzzle_background">Background Color</string>
     <string name="puzzle_background_white">White</string>
     <string name="puzzle_background_black">Black</string>
@@ -1002,8 +835,6 @@
     <!-- Presets Panel -->
     <string name="preset_title">Presets</string>
     <string name="preset_new">New Preset</string>
-    <string name="preset_builtin">Built-in</string>
-    <string name="preset_save_current">Save Current State as Preset</string>
     <string name="preset_delete_confirm">Are you sure you want to delete this preset?</string>
     <string name="preset_name_hint">Preset name</string>
     <string name="preset_builtin_portrait">Portrait Style</string>
@@ -1011,20 +842,14 @@
     <string name="preset_builtin_monochrome">Monochrome</string>
     <string name="preset_builtin_cinematic">Cinematic</string>
     <string name="preset_builtin_leica_m9_moment">Leica Moment</string>
-    <string name="preset_delete">Delete</string>
-    <string name="preset_rename">Rename</string>
     <string name="preset_save">Save</string>
-    <string name="preset_cancel">Cancel</string>
-    <string name="preset_auto">Standard</string>
 
     <!-- Preset Editor & Management Extensions -->
     <string name="preset_editor_title">Edit Preset</string>
-    <string name="preset_custom_suffix">%1$s (Custom)</string>
     <string name="preset_new_preset_default">New Preset</string>
     <string name="preset_name_label">Preset Name</string>
     <string name="preset_restore_defaults">Restore Default Presets</string>
     <string name="preset_restore_defaults_confirm">Restoring default presets will clear all custom modifications. Do you want to continue?</string>
     <string name="preset_custom_badge">Custom</string>
     <string name="preset_builtin_badge">Built-in</string>
-    <string name="preset_none_default">None / Default</string>
 </resources>
