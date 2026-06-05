@@ -136,6 +136,8 @@ class Camera2Controller(private val context: Context) {
     private var cameraHandler: Handler? = null
 
     private var cachedCharacteristics: CameraCharacteristics? = null
+    private var activeOpenCameraId: String = ""
+    private var activeOutputPhysicalCameraId: String? = null
     private var cachedSensorOrientation: Int = 0
     private var cachedLensFacing: Int = CameraCharacteristics.LENS_FACING_BACK
     private var cachedHardwareLevel: Int = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
@@ -707,13 +709,25 @@ class Camera2Controller(private val context: Context) {
         }
 
         val cameraId = _state.value.currentCameraId
+        val selectedCamera = _state.value.getCurrentCameraInfo()
+        val openCameraId = selectedCamera?.getOpenCameraId() ?: cameraId
+        val targetZoomRatioByMain = getTargetZoomRatioByMain(_state.value, selectedCamera)
+        val outputPhysicalCameraId = resolveOutputPhysicalCameraId(_state.value, selectedCamera)
         val captureMode = _state.value.captureMode
         if (cameraId.isEmpty()) {
             PLog.e(TAG, "No camera ID set")
             return
         }
 
-        PLog.i(TAG, "打开相机: $cameraId, 模式: ${captureMode.name}")
+        activeOpenCameraId = openCameraId
+        activeOutputPhysicalCameraId = outputPhysicalCameraId
+
+        PLog.i(
+            TAG,
+            "打开相机: selected=$cameraId, open=$openCameraId, targetZoom=$targetZoomRatioByMain, " +
+                    "physicalOutput=$outputPhysicalCameraId, " +
+                    "模式: ${captureMode.name}"
+        )
 
         var previewSize = _state.value.currentPreviewSize
 
@@ -859,12 +873,25 @@ class Camera2Controller(private val context: Context) {
                 } else {
                     CameraUtils.getBestCaptureSize(context, cameraId, aspectRatio)
                 }
+                val forceStandardPhysicalOutput = outputPhysicalCameraId != null
                 val captureFormat = if (rawCaptureSize != null) {
                     ImageFormat.RAW_SENSOR
-                } else if (isP010Supported && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && state.value.useP010) {
+                } else if (
+                    !forceStandardPhysicalOutput &&
+                    isP010Supported &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    state.value.useP010
+                ) {
                     ImageFormat.YCBCR_P010
                 } else {
                     ImageFormat.YUV_420_888
+                }
+                if (forceStandardPhysicalOutput && state.value.useP010) {
+                    PLog.i(
+                        TAG,
+                        "Physical output binding uses standard YUV stream for stability: " +
+                                "physicalCameraId=$outputPhysicalCameraId"
+                    )
                 }
 
                 val isP3Supported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -961,9 +988,9 @@ class Camera2Controller(private val context: Context) {
                 _state.value = _state.value.copy(isP3Supported = false)
             }
 
-            PLog.d(TAG, "Opening camera: $cameraId")
+            PLog.d(TAG, "Opening camera: open=$openCameraId, selected=$cameraId")
 
-            cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+            cameraManager.openCamera(openCameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     if (openGeneration != cameraOpenGeneration) {
                         PLog.w(TAG, "Ignoring stale camera open callback: camera=${camera.id}")
@@ -1194,19 +1221,11 @@ class Camera2Controller(private val context: Context) {
             }
 
             if (captureMode == CaptureMode.VIDEO) {
-                val useHlgCapture = _state.value.useHlg10 && !forceStandardSession
+                val useHlgCapture = _state.value.useHlg10 && activeOutputPhysicalCameraId == null && !forceStandardSession
                 val sessionConfig = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
                     surfaces.map { outputSurface ->
-                        OutputConfiguration(outputSurface).apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !DeviceUtil.isHarmonyOS) {
-                                dynamicRangeProfile = if (useHlgCapture) {
-                                    DynamicRangeProfiles.HLG10
-                                } else {
-                                    DynamicRangeProfiles.STANDARD
-                                }
-                            }
-                        }
+                        createOutputConfiguration(outputSurface, useHlgCapture)
                     },
                     Executors.newSingleThreadExecutor(),
                     object : CameraCaptureSession.StateCallback() {
@@ -1244,7 +1263,10 @@ class Camera2Controller(private val context: Context) {
 
 
             // Android 9+ 使用 SessionConfiguration
-            val useHlgCapture = _state.value.useHlg10 && !_state.value.useRaw && !forceStandardSession
+            val useHlgCapture = _state.value.useHlg10 &&
+                    activeOutputPhysicalCameraId == null &&
+                    !_state.value.useRaw &&
+                    !forceStandardSession
             val readerFormat = reader?.imageFormat ?: ImageFormat.YUV_420_888
             PLog.i(
                 TAG,
@@ -1252,17 +1274,8 @@ class Camera2Controller(private val context: Context) {
                         "useHlgCapture=$useHlgCapture, readerFormat=${imageFormatToString(readerFormat)}, " +
                         "isP010Supported=$isP010Supported, isHlg10Supported=$isHlg10Supported, "
             )
-            val outputConfigs = surfaces.mapIndexed { index, outputSurface ->
-                OutputConfiguration(outputSurface).apply {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !DeviceUtil.isHarmonyOS) {
-                        val profile = if (useHlgCapture) {
-                            DynamicRangeProfiles.HLG10
-                        } else {
-                            DynamicRangeProfiles.STANDARD
-                        }
-                        dynamicRangeProfile = profile
-                    }
-                }
+            val outputConfigs = surfaces.map { outputSurface ->
+                createOutputConfiguration(outputSurface, useHlgCapture)
             }
             val sessionConfig = SessionConfiguration(
                 SessionConfiguration.SESSION_REGULAR,
@@ -1313,6 +1326,44 @@ class Camera2Controller(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
         }
+    }
+
+    private fun createOutputConfiguration(
+        surface: Surface,
+        useHlgCapture: Boolean
+    ): OutputConfiguration {
+        return OutputConfiguration(surface).apply {
+            activeOutputPhysicalCameraId?.let { physicalCameraId ->
+                setPhysicalCameraId(physicalCameraId)
+                PLog.i(
+                    TAG,
+                    "OutputConfiguration bound to physicalCameraId=$physicalCameraId " +
+                            "(openCameraId=$activeOpenCameraId)"
+                )
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !DeviceUtil.isHarmonyOS) {
+                dynamicRangeProfile = if (useHlgCapture) {
+                    DynamicRangeProfiles.HLG10
+                } else {
+                    DynamicRangeProfiles.STANDARD
+                }
+            }
+        }
+    }
+
+    private fun getTargetZoomRatioByMain(
+        state: CameraState,
+        camera: CameraInfo?
+    ): Float {
+        return camera?.let { it.intrinsicZoomRatio * state.zoomRatio } ?: state.zoomRatio
+    }
+
+    private fun resolveOutputPhysicalCameraId(
+        state: CameraState = _state.value,
+        camera: CameraInfo? = state.getCurrentCameraInfo()
+    ): String? {
+        return camera?.getBoundPhysicalCameraId(getTargetZoomRatioByMain(state, camera))
     }
 
     private fun onSessionConfigured(
@@ -2936,6 +2987,10 @@ class Camera2Controller(private val context: Context) {
             val clampedRatio = ratio.coerceIn(minZoom, maxSupportedZoom)
 
             _state.value = _state.value.copy(zoomRatio = clampedRatio)
+            if (recreateSessionForPhysicalZoomIfNeeded(_state.value)) {
+                PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio (physical output session recreated)")
+                return
+            }
 
             // 计算裁剪区域
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
@@ -2973,6 +3028,25 @@ class Camera2Controller(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to set zoom", e)
         }
+    }
+
+    private fun recreateSessionForPhysicalZoomIfNeeded(state: CameraState): Boolean {
+        val desiredPhysicalCameraId = resolveOutputPhysicalCameraId(state)
+        if (desiredPhysicalCameraId == activeOutputPhysicalCameraId) return false
+        if (cameraDevice == null || previewSurface == null) return false
+
+        PLog.i(
+            TAG,
+            "Recreating session for zoom physical output: " +
+                    "old=$activeOutputPhysicalCameraId, new=$desiredPhysicalCameraId, " +
+                    "targetZoom=${getTargetZoomRatioByMain(state, state.getCurrentCameraInfo())}"
+        )
+
+        activeOutputPhysicalCameraId = desiredPhysicalCameraId
+        safeCloseCaptureSession(captureSession, "physical zoom output changed")
+        captureSession = null
+        createPreviewSession(openGeneration = cameraOpenGeneration)
+        return true
     }
 
     /**
@@ -3911,6 +3985,8 @@ class Camera2Controller(private val context: Context) {
 
             //清理所有缓存的相机特性和属性
             cachedCharacteristics = null
+            activeOpenCameraId = ""
+            activeOutputPhysicalCameraId = null
             cachedSensorOrientation = 0
             cachedLensFacing = CameraCharacteristics.LENS_FACING_BACK
             cachedHardwareLevel = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED

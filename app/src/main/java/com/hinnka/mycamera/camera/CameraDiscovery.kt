@@ -60,9 +60,10 @@ class CameraDiscovery(private val context: Context) {
     fun discoverAllCameras(): List<CameraInfo> {
         val cameras = mutableListOf<CameraInfo>()
 
-        // 获取完整的 Camera ID 列表（包括探测的隐藏摄像头）
-        val allCameraIds = getAllCameraIds()
         val customLensIdSet = loadCustomLensIds().toSet()
+        val logicalCameraBindings = findLogicalCameraBindings()
+        // 获取完整的 Camera ID 列表（包括探测的隐藏摄像头和逻辑多摄暴露的物理摄像头）
+        val allCameraIds = (getAllCameraIds() + logicalCameraBindings.keys).distinct()
         PLog.d(TAG, "Camera2 discovered IDs: $allCameraIds")
 
         // 构建摄像头信息
@@ -85,7 +86,8 @@ class CameraDiscovery(private val context: Context) {
                     characteristics = characteristics,
                     lensFacing = lensFacing,
                     intrinsicZoomRatio = intrinsicZoomRatio,
-                    isCustomLensId = customLensIdSet.contains(cameraId)
+                    isCustomLensId = customLensIdSet.contains(cameraId),
+                    logicalBinding = logicalCameraBindings[cameraId]
                 )
 
                 when (lensFacing) {
@@ -169,6 +171,77 @@ class CameraDiscovery(private val context: Context) {
         return (baseIds + customIds).distinct()
     }
 
+    private fun findLogicalCameraBindings(): Map<String, LogicalCameraBinding> {
+        val bindings = mutableMapOf<String, LogicalCameraBinding>()
+
+        for (logicalCameraId in cameraManager.cameraIdList) {
+            try {
+                val characteristics = cameraManager.getCameraCharacteristics(logicalCameraId)
+                val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+                    ?: continue
+                if (!capabilities.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)) {
+                    continue
+                }
+
+                val physicalCameras = characteristics.physicalCameraIds
+                    .mapNotNull { physicalCameraId ->
+                        createPhysicalCameraCandidate(
+                            logicalCameraId = logicalCameraId,
+                            physicalCameraId = physicalCameraId
+                        )
+                    }
+                if (physicalCameras.isEmpty()) continue
+
+                PLog.d(
+                    TAG,
+                    "Logical multi-camera $logicalCameraId exposes physical IDs: " +
+                            physicalCameras.joinToString { "${it.cameraId}:${it.intrinsicZoomRatio}" }
+                )
+
+                val binding = LogicalCameraBinding(
+                    logicalCameraId = logicalCameraId,
+                    physicalCameras = physicalCameras
+                )
+                bindings[logicalCameraId] = binding
+                for (physicalCamera in physicalCameras) {
+                    bindings[physicalCamera.cameraId] = binding
+                }
+            } catch (e: Exception) {
+                PLog.w(TAG, "Failed to inspect logical camera $logicalCameraId", e)
+            }
+        }
+
+        return bindings
+    }
+
+    private fun createPhysicalCameraCandidate(
+        logicalCameraId: String,
+        physicalCameraId: String
+    ): CameraPhysicalInfo? {
+        return try {
+            val characteristics = cameraManager.getCameraCharacteristics(physicalCameraId)
+            val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                ?: cameraManager.getCameraCharacteristics(logicalCameraId)
+                    .get(CameraCharacteristics.LENS_FACING)
+                ?: return null
+            CameraPhysicalInfo(
+                cameraId = physicalCameraId,
+                intrinsicZoomRatio = calculateIntrinsicZoomRatio(
+                    physicalCameraId,
+                    characteristics,
+                    lensFacing
+                ),
+                focalLength35mmEquivalent = get35mmEquivalentFocalLength(characteristics),
+                focalLength = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                    ?.firstOrNull()
+                    ?: 0f
+            )
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to inspect physical camera $physicalCameraId of logical $logicalCameraId", e)
+            null
+        }
+    }
+
     private fun loadCustomLensIds(): List<String> {
         return try {
             runBlocking {
@@ -244,14 +317,7 @@ class CameraDiscovery(private val context: Context) {
         val foundIds = mutableListOf<String>()
         val foundMap = mutableMapOf<String, Float>()
 
-        val idList = mutableListOf(0, 1, 2, 3, 4, 5)
-        if (DeviceUtil.isSamsung) {
-            val samsungList = listOf(52,54,56,58)
-            idList.addAll(samsungList)
-        }
-
-        for (id in idList) {
-            val cameraId = id.toString()
+        for (cameraId in getProbeCameraIdCandidates()) {
 
             if (existingSet.contains(cameraId)) {
                 foundMap[cameraId] = loadZoomRation(cameraId) ?: 1f
@@ -302,6 +368,15 @@ class CameraDiscovery(private val context: Context) {
         }
 
         return foundIds
+    }
+
+    private fun getProbeCameraIdCandidates(): List<String> {
+        val idList = mutableListOf(0, 1, 2, 3, 4, 5)
+        if (DeviceUtil.isSamsung) {
+            val samsungList = listOf(52, 54, 56, 58)
+            idList.addAll(samsungList)
+        }
+        return idList.map { it.toString() }
     }
 
     private fun loadZoomRation(cameraId: String): Float? {
@@ -498,11 +573,12 @@ class CameraDiscovery(private val context: Context) {
             }
 
             val existing = selectedCameras[sameFocalIndex]
-            if (!existing.info.isCustomLensId && camera.info.isCustomLensId) {
+            if (shouldReplaceSameFocalCamera(existing.info, camera.info)) {
                 PLog.d(
                     TAG,
-                    "Custom lens ID ${camera.info.cameraId} overrides same focal ID ${existing.info.cameraId} " +
-                        "(intrinsicZoom=${camera.intrinsicZoomRatio})"
+                    "Camera ID ${camera.info.cameraId} overrides same focal ID ${existing.info.cameraId} " +
+                            "(intrinsicZoom=${camera.intrinsicZoomRatio}, " +
+                            "physicalCandidates=${camera.info.physicalCameraIds})"
                 )
                 selectedCameras[sameFocalIndex] = camera
             } else {
@@ -517,6 +593,15 @@ class CameraDiscovery(private val context: Context) {
         return selectedCameras
     }
 
+    private fun shouldReplaceSameFocalCamera(existing: CameraInfo, candidate: CameraInfo): Boolean {
+        if (!existing.isCustomLensId && candidate.isCustomLensId) return true
+        if (existing.isCustomLensId != candidate.isCustomLensId) return false
+
+        val existingHasPhysicalBinding = existing.physicalCameras.isNotEmpty()
+        val candidateHasPhysicalBinding = candidate.physicalCameras.isNotEmpty()
+        return !existingHasPhysicalBinding && candidateHasPhysicalBinding
+    }
+
     private fun isSameFocalLength(firstZoomRatio: Float, secondZoomRatio: Float): Boolean {
         return abs(firstZoomRatio - secondZoomRatio) <= 0.01f
     }
@@ -529,7 +614,8 @@ class CameraDiscovery(private val context: Context) {
         characteristics: CameraCharacteristics,
         lensFacing: Int,
         intrinsicZoomRatio: Float,
-        isCustomLensId: Boolean
+        isCustomLensId: Boolean,
+        logicalBinding: LogicalCameraBinding?
     ): CameraInfo {
         // 焦距信息
         val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
@@ -570,9 +656,12 @@ class CameraDiscovery(private val context: Context) {
 
         return CameraInfo(
             cameraId = cameraId,
+            logicalCameraId = logicalBinding?.logicalCameraId,
+            outputPhysicalCameraId = null,
+            physicalCameras = logicalBinding?.physicalCameras ?: emptyList(),
             lensFacing = lensFacing,
             lensType = LensType.BACK_MAIN, // 临时，后续分类
-            physicalCameraIds = emptyList(),
+            physicalCameraIds = logicalBinding?.physicalCameraIds ?: characteristics.physicalCameraIds.toList(),
             isoRange = isoRange,
             exposureTimeRange = exposureTimeRange,
             exposureCompensationRange = exposureCompensationRange,
@@ -630,4 +719,11 @@ class CameraDiscovery(private val context: Context) {
         val intrinsicZoomRatio: Float,
         val isMacro: Boolean
     )
+
+    private data class LogicalCameraBinding(
+        val logicalCameraId: String,
+        val physicalCameras: List<CameraPhysicalInfo>
+    ) {
+        val physicalCameraIds: List<String> = physicalCameras.map { it.cameraId }
+    }
 }

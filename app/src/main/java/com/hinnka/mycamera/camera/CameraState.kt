@@ -7,6 +7,7 @@ import com.hinnka.mycamera.video.CaptureMode
 import com.hinnka.mycamera.video.VideoCapabilities
 import com.hinnka.mycamera.video.VideoConfig
 import com.hinnka.mycamera.video.VideoRecordingState
+import kotlin.math.abs
 
 /**
  * 画面比例。内置比例使用稳定名称持久化，自定义比例使用 CUSTOM_宽_高。
@@ -152,6 +153,9 @@ enum class MeteringMode {
  */
 data class CameraInfo(
     val cameraId: String,
+    val logicalCameraId: String? = null,
+    val outputPhysicalCameraId: String? = null,
+    val physicalCameras: List<CameraPhysicalInfo> = emptyList(),
     val lensFacing: Int,
     val lensType: LensType,
     val physicalCameraIds: List<String>,
@@ -173,6 +177,17 @@ data class CameraInfo(
     val isCustomLensId: Boolean = false, // 是否来自用户手动添加的镜头 ID
     val minimumFocusDistance: Float = 0f // 最小对焦距离 (diopters, 0 = infinity only)
 ) {
+    fun getOpenCameraId(): String = logicalCameraId ?: cameraId
+
+    fun getBoundPhysicalCameraId(): String? = outputPhysicalCameraId
+
+    fun getBoundPhysicalCameraId(zoomRatioByMain: Float): String? {
+        if (physicalCameras.isEmpty()) return outputPhysicalCameraId
+        return physicalCameras.minByOrNull {
+            abs(it.intrinsicZoomRatio - zoomRatioByMain)
+        }?.cameraId ?: outputPhysicalCameraId
+    }
+
     /**
      * 获取镜头类型显示名称
      */
@@ -211,6 +226,13 @@ data class CameraInfo(
         }
     }
 }
+
+data class CameraPhysicalInfo(
+    val cameraId: String,
+    val intrinsicZoomRatio: Float,
+    val focalLength35mmEquivalent: Float = 0f,
+    val focalLength: Float = 0f
+)
 
 enum class FocusPointSource {
     MANUAL,

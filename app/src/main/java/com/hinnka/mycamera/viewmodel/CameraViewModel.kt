@@ -2040,8 +2040,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun switchToLensAndSetZoomRatio(cameraId: String, ratio: Float) {
         cameraController.switchToCameraId(cameraId)
-        reopenCamera(preserveVideoRecording = true)
         setZoomRatioForCamera(ratio, cameraId)
+        reopenCamera(preserveVideoRecording = true)
     }
 
     /**
