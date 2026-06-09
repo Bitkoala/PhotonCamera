@@ -93,8 +93,7 @@ object MeteringSystem {
                 val spatialWeight = calculateMatrixSpatialWeight(x, y, width, height)
                 val toneWeight = calculateReflectiveMeterWeight(luma)
                 val depthWeight = depthWeights?.weights?.get(idx) ?: 1f
-                val highlightWeight = calculateHighlightWeight(luma, droMode)
-                val finalWeight = sanitizeMeteringWeight(spatialWeight * toneWeight * depthWeight * highlightWeight)
+                val finalWeight = sanitizeMeteringWeight(spatialWeight * toneWeight * depthWeight)
 
                 lumas[idx] = luma
                 weightedLumaSum += (luma * finalWeight).toDouble()
@@ -106,7 +105,7 @@ object MeteringSystem {
         lumas.sort()
         val p998 = lumas[(pixelCount * 0.998f).toInt().coerceIn(0, pixelCount - 1)]
 
-        val highlightAnchorGain = 1f / p998.coerceAtLeast(0.01f)
+        val highlightAnchorGain = 2f.pow(ACR3_AVERAGE_TONE_CURVE_EV) / p998.coerceAtLeast(0.01f)
         val safeTotalWeight = totalWeight.coerceAtLeast(0.001)
         val linearAvgLuma = sanitizeAverageLuma((weightedLumaSum / safeTotalWeight).toFloat(), targetLuma)
         val logAvgLuma = sanitizeAverageLuma(exp2((weightedLogLumaSum / safeTotalWeight).toFloat()), targetLuma)
@@ -114,8 +113,8 @@ object MeteringSystem {
         val midToneGain = targetLuma / avgLuma.coerceAtLeast(0.001f)
         val dynamicRangeGap = midToneGain / highlightAnchorGain
 
-        val extra = 1f - smoothStep(0.66f, 2.22f, dynamicRangeGap)
-        val adaptiveGain = sanitizeMeteringGain(midToneGain * lerp(0.9f, 1.2f, extra))
+        val extra = smoothStep(0.66f, 2.2f, dynamicRangeGap)
+        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain * 1.2f, extra)
         val rawMeteredEv = log2(adaptiveGain.coerceIn(0.25f, 4.0f))
 
         PLog.d(
@@ -123,7 +122,7 @@ object MeteringSystem {
             "$tag: dro=$droMode p998=$p998 avg=$avgLuma target=$targetLuma " +
                 "logAvg=$logAvgLuma linearAvg=$linearAvgLuma " +
                 "midToneGain=$midToneGain highlightAnchorGain=$highlightAnchorGain gain=$adaptiveGain " +
-                "rawEv=$rawMeteredEv ev=$rawMeteredEv gap=$dynamicRangeGap " +
+                "ev=$rawMeteredEv gap=$dynamicRangeGap " +
                 "depth=${depthWeights?.enabled == true} depthSeparation=${depthWeights?.separation ?: 0f} " +
                 "sanitized=$sanitizedSampleCount"
         )
