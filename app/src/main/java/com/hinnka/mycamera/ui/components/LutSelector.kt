@@ -65,7 +65,7 @@ fun LutSelectorWithRecipeAction(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(R.string.filter).uppercase(),
                     color = Color.White.copy(alpha = 0.4f),
@@ -79,7 +79,8 @@ fun LutSelectorWithRecipeAction(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee()
                 )
             }
 
