@@ -105,6 +105,20 @@ private const val DefaultShutterSpeedNs = 1_000_000_000f / 60f
 private const val DefaultIso = 100f
 private const val DefaultAwbTemperature = 5000f
 private const val DefaultFocusDistance = 0f
+private val CameraTopBarBaseTopPadding = 32.dp
+private val CameraTopBarBaseHeight = 80.dp
+
+@Composable
+private fun cameraTopSafePadding(): Dp {
+    val density = LocalDensity.current
+    val topInset = with(density) {
+        maxOf(
+            WindowInsets.statusBars.getTop(this).toDp(),
+            WindowInsets.displayCutout.getTop(this).toDp()
+        )
+    }
+    return (topInset - CameraTopBarBaseTopPadding).coerceAtLeast(0.dp)
+}
 
 private fun Bitmap.copyForCaptureAnimation(): Bitmap? {
     if (isRecycled) return null
@@ -598,22 +612,24 @@ fun CameraScreen(
         val videoAspectRatio =
             state.videoConfig.aspectRatio.getPortraitAspectRatio(state.videoCapabilities.openGatePortraitAspectRatio)
 
-        val width = with(LocalDensity.current) { constraints.maxWidth.toDp() }
-        val height = with(LocalDensity.current) { constraints.maxHeight.toDp() }
+        val density = LocalDensity.current
+        val width = with(density) { constraints.maxWidth.toDp() }
+        val height = with(density) { constraints.maxHeight.toDp() }
+        val topSafePadding = cameraTopSafePadding()
+        val topBarHeight = CameraTopBarBaseHeight + topSafePadding
         val cardWidth = if (isXpan) {
-            (height - 280.dp) * 24 / 65 + 8.dp
+            (height - topSafePadding - 280.dp) * 24 / 65 + 8.dp
         } else {
             width
         }
         val cardHeight = if (isXpan) {
-            height - 224.dp
+            height - topSafePadding - 224.dp
         } else if (isVideoMode) {
             width / videoAspectRatio
         } else {
             val standardHeight = (width - 24.dp) * 4 / 3 + 50.dp
-            val topBarHeight = 80.dp
             val bottomMinHeight = 196.dp // Precise height for parameterBar (52.dp) + controls (136.dp min + 8.dp buffer)
-            val navigationBarHeight = with(LocalDensity.current) {
+            val navigationBarHeight = with(density) {
                 WindowInsets.navigationBars.getBottom(this).toDp()
             }
             val maxCardHeight = (height - topBarHeight - bottomMinHeight - navigationBarHeight).coerceAtLeast(300.dp)
@@ -651,7 +667,8 @@ fun CameraScreen(
                 },
                 onSettingsClick = {
                     activePanel = if (activePanel == ActivePanel.SETTINGS) ActivePanel.NONE else ActivePanel.SETTINGS
-                }
+                },
+                modifier = Modifier.padding(top = topSafePadding)
             )
         }
 
@@ -1352,7 +1369,8 @@ fun CameraScreen(
             useMFSR = useMFSR,
             onMFSRToggle = {
                 viewModel.setUseMFSR(it)
-            }
+            },
+            modifier = Modifier.padding(top = topSafePadding)
         )
 
         AnimatedVisibility(
@@ -1371,7 +1389,7 @@ fun CameraScreen(
                             Modifier.height(maxHeight - 170.dp)
                         } else {
                             Modifier
-                                .padding(top = 80.dp)
+                                .padding(top = topBarHeight)
                                 .height(cardHeight - 48.dp)
                         }
                     ),
