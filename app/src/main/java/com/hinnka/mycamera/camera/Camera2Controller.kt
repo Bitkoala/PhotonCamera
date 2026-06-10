@@ -138,6 +138,7 @@ class Camera2Controller(private val context: Context) {
     private var cachedCharacteristics: CameraCharacteristics? = null
     private var activeOpenCameraId: String = ""
     private var activeOutputPhysicalCameraId: String? = null
+    private val failedPhysicalOutputCameraIds = mutableSetOf<String>()
     private var cachedSensorOrientation: Int = 0
     private var cachedLensFacing: Int = CameraCharacteristics.LENS_FACING_BACK
     private var cachedHardwareLevel: Int = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
@@ -1249,6 +1250,10 @@ class Camera2Controller(private val context: Context) {
                                 return
                             }
                             PLog.e(TAG, "Video session configuration failed: useHlgCapture=$useHlgCapture")
+                            safeCloseCaptureSession(session, "video configure failure")
+                            if (retryPreviewSessionWithoutPhysicalOutput("video configure failed", openGeneration)) {
+                                return
+                            }
                             if (useHlgCapture) {
                                 PLog.w(TAG, "Retrying video preview session with STANDARD dynamic range fallback")
                                 _state.value = _state.value.copy(currentDynamicRangeProfile = "STANDARD")
@@ -1307,7 +1312,11 @@ class Camera2Controller(private val context: Context) {
                                     "readerFormat=${imageFormatToString(readerFormat)}, " +
                                     "sessionColorSpace=${if (shouldUseP3ColorSpace()) "DISPLAY_P3" else "DEFAULT"}"
                         )
-                       if (useHlgCapture) {
+                        safeCloseCaptureSession(session, "photo configure failure")
+                        if (retryPreviewSessionWithoutPhysicalOutput("photo configure failed", openGeneration)) {
+                            return
+                        }
+                        if (useHlgCapture) {
                             PLog.w(TAG, "Retrying preview session with STANDARD dynamic range fallback")
                             _state.value = _state.value.copy(currentDynamicRangeProfile = "STANDARD")
                             createPreviewSession(forceStandardSession = true, openGeneration = openGeneration)
@@ -1323,9 +1332,27 @@ class Camera2Controller(private val context: Context) {
             device.createCaptureSession(sessionConfig)
         } catch (e: IllegalStateException) {
             PLog.w(TAG, "Failed to create preview session", e)
+            retryPreviewSessionWithoutPhysicalOutput("create session illegal state: ${e.message}", openGeneration)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
+            retryPreviewSessionWithoutPhysicalOutput("create session exception: ${e.message}", openGeneration)
         }
+    }
+
+    private fun retryPreviewSessionWithoutPhysicalOutput(
+        reason: String,
+        openGeneration: Long
+    ): Boolean {
+        val failedPhysicalCameraId = activeOutputPhysicalCameraId ?: return false
+        failedPhysicalOutputCameraIds.add(failedPhysicalCameraId)
+        PLog.w(
+            TAG,
+            "Retrying preview session without physical output binding: " +
+                    "physicalCameraId=$failedPhysicalCameraId, reason=$reason"
+        )
+        activeOutputPhysicalCameraId = null
+        createPreviewSession(openGeneration = openGeneration)
+        return true
     }
 
     private fun createOutputConfiguration(
@@ -1363,7 +1390,9 @@ class Camera2Controller(private val context: Context) {
         state: CameraState = _state.value,
         camera: CameraInfo? = state.getCurrentCameraInfo()
     ): String? {
-        return camera?.getBoundPhysicalCameraId(getTargetZoomRatioByMain(state, camera))
+        return camera
+            ?.getBoundPhysicalCameraId(getTargetZoomRatioByMain(state, camera))
+            ?.takeUnless { failedPhysicalOutputCameraIds.contains(it) }
     }
 
     private fun onSessionConfigured(
@@ -3987,6 +4016,7 @@ class Camera2Controller(private val context: Context) {
             cachedCharacteristics = null
             activeOpenCameraId = ""
             activeOutputPhysicalCameraId = null
+            failedPhysicalOutputCameraIds.clear()
             cachedSensorOrientation = 0
             cachedLensFacing = CameraCharacteristics.LENS_FACING_BACK
             cachedHardwareLevel = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
