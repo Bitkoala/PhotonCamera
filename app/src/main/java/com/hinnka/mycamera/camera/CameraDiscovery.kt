@@ -266,16 +266,20 @@ class CameraDiscovery(private val context: Context) {
                     logicalCameraId = logicalCameraId,
                     physicalCameras = physicalCameras
                 )
-                putBetterLogicalBinding(bindings, logicalCameraId, binding)
                 for (physicalCamera in physicalCameras) {
                     if (publicCameraIdSet.contains(physicalCamera.cameraId)) {
                         PLog.d(
                             TAG,
-                            "Skip logical binding for public physical camera ${physicalCamera.cameraId} " +
+                            "Skip logical binding for direct camera ${physicalCamera.cameraId} " +
                                     "from logical $logicalCameraId"
                         )
                         continue
                     }
+                    PLog.d(
+                        TAG,
+                        "Add supplemental logical binding for missing physical camera ${physicalCamera.cameraId} " +
+                                "from logical $logicalCameraId"
+                    )
                     putBetterLogicalBinding(bindings, physicalCamera.cameraId, binding)
                 }
             } catch (e: Exception) {

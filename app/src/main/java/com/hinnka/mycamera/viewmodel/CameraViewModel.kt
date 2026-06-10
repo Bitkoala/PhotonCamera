@@ -44,12 +44,10 @@ import com.hinnka.mycamera.phantom.PhantomWidgetProvider
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.DcpProfileParser
 import com.hinnka.mycamera.raw.DcpInfo
-import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawProfile
-import com.hinnka.mycamera.raw.SpectralFilmProfile
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
@@ -199,7 +197,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val TAG = "CameraViewModel"
-        private const val CAMERA_SWITCH_REOPEN_DELAY_MS = 350L
     }
 
     private val cameraController = Camera2Controller(application)
@@ -2074,8 +2071,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun switchCamera() {
         cameraController.switchCamera()
         reopenCamera(
-            preserveVideoRecording = true,
-            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+            preserveVideoRecording = true
         )
         zoomRatioByMain = 1f
     }
@@ -2086,8 +2082,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun switchToLens(cameraId: String) {
         cameraController.switchToCameraId(cameraId)
         reopenCamera(
-            preserveVideoRecording = true,
-            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+            preserveVideoRecording = true
         )
     }
 
@@ -2095,8 +2090,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraController.switchToCameraId(cameraId)
         setZoomRatioForCamera(ratio, cameraId)
         reopenCamera(
-            preserveVideoRecording = true,
-            delayMs = CAMERA_SWITCH_REOPEN_DELAY_MS
+            preserveVideoRecording = true
         )
     }
 
@@ -2104,8 +2098,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 重新打开相机（切换摄像头后使用）
      */
     private fun reopenCamera(
-        preserveVideoRecording: Boolean = false,
-        delayMs: Long = 0L
+        preserveVideoRecording: Boolean = false
     ) {
         if (currentSurfaceTexture == null) {
             cameraOpenInFlight = false
@@ -2114,10 +2107,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraReopenJob?.cancel()
         cameraOpenInFlight = true
         cameraReopenJob = viewModelScope.launch {
-            if (delayMs > 0L) {
-                PLog.d(TAG, "Delay camera reopen after switch: ${delayMs}ms")
-                delay(delayMs)
-            }
             val texture = currentSurfaceTexture ?: run {
                 cameraOpenInFlight = false
                 return@launch
