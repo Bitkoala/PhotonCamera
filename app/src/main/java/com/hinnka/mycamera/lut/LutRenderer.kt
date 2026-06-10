@@ -16,6 +16,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.abs
@@ -106,13 +107,16 @@ class LutRenderer : GLSurfaceView.Renderer {
     private var texCoordBufferId: Int = 0
     private var indexBufferId: Int = 0
     private var pboId: Int = 0
-    private var meteringPboId: Int = 0
+    private val meteringPboIds = IntArray(2)
+    private val meteringPboFences = LongArray(2)
+    private var meteringPboIndex = 0
 
     // 测光相关纹理和 FBO
     private var meteringFboId: Int = 0
     private var meteringTextureId: Int = 0
     private val METERING_SIZE = 32
     private val meteringExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val meteringDispatchInFlight = AtomicBoolean(false)
     private var captureFboId: Int = 0
     private var captureTextureId: Int = 0
     private var recordFboId: Int = 0
@@ -130,9 +134,10 @@ class LutRenderer : GLSurfaceView.Renderer {
     // 深度估计输入采集
     private var depthInputFboId: Int = 0
     private var depthInputTextureId: Int = 0
-    private var depthInputPboId: Int = 0
+    private val depthInputPboIds = IntArray(2)
+    private val depthInputPboFences = LongArray(2)
+    private var depthInputPboIndex = 0
     private val DEPTH_INPUT_SIZE = 256
-    private val depthInputBuffer = ByteBuffer.allocateDirect(DEPTH_INPUT_SIZE * DEPTH_INPUT_SIZE * 4)
     private var lastRunDepthInputTime: Long = 0
     var onDepthInputAvailable: ((Bitmap) -> Unit)? = null
     private var aiFocusInputFboId: Int = 0
@@ -143,9 +148,16 @@ class LutRenderer : GLSurfaceView.Renderer {
     @Volatile
     var isAiFocusBusy = false
     private val AI_FOCUS_INPUT_SIZE = 640
-    private val aiFocusInputBuffer = ByteBuffer.allocateDirect(AI_FOCUS_INPUT_SIZE * AI_FOCUS_INPUT_SIZE * 4)
     private var lastRunAiFocusInputTime: Long = 0
     var onAiFocusInputAvailable: ((Bitmap) -> Unit)? = null
+    private val inputCaptureExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            runnable.run()
+        }, "LutInputCapture")
+    }
+    private val depthInputDispatchInFlight = AtomicBoolean(false)
+    private val aiFocusInputDispatchInFlight = AtomicBoolean(false)
 
     // FBO 相关
     private var fboId: Int = 0
@@ -586,7 +598,8 @@ class LutRenderer : GLSurfaceView.Renderer {
         texCoordBufferId = 0
         indexBufferId = 0
         pboId = 0
-        meteringPboId = 0
+        resetPixelPackState(meteringPboIds, meteringPboFences)
+        meteringPboIndex = 0
         meteringFboId = 0
         meteringTextureId = 0
         captureFboId = 0
@@ -598,13 +611,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         passthroughProgramId = 0
         depthInputFboId = 0
         depthInputTextureId = 0
-        depthInputPboId = 0
+        resetPixelPackState(depthInputPboIds, depthInputPboFences)
+        depthInputPboIndex = 0
         aiFocusInputFboId = 0
         aiFocusInputTextureId = 0
-        aiFocusInputPboIds[0] = 0
-        aiFocusInputPboIds[1] = 0
-        aiFocusInputPboFences[0] = 0L
-        aiFocusInputPboFences[1] = 0L
+        resetPixelPackState(aiFocusInputPboIds, aiFocusInputPboFences)
         aiFocusInputPboIndex = 0
         isAiFocusBusy = false
         fboId = 0
@@ -2708,159 +2719,106 @@ class LutRenderer : GLSurfaceView.Renderer {
         sourceHeight: Int = viewportHeight,
         compositeWithHdf: Boolean = false
     ) {
+        val pixelSize = METERING_SIZE * METERING_SIZE * 4
+        if (!ensurePixelPackPbos(meteringPboIds, pixelSize)) return
+
+        val writeIndex = meteringPboIndex % 2
+        val readIndex = (meteringPboIndex + 1) % 2
+        val completedBytes = if (meteringPboIndex > 0) {
+            readReadyPixelPackBuffer(meteringPboIds, meteringPboFences, readIndex, pixelSize)
+        } else {
+            null
+        }
+        val currentFocus = focusPoint?.let { PointF(it.x, it.y) }
+        val currentMode = meteringMode
+
         val now = System.currentTimeMillis()
-        if (now - lastRunMeteringTime < 100) return // 限制频率，每秒约 10 次
+        if (now - lastRunMeteringTime < 100) {
+            dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
+            return
+        }
+        if (!isPixelPackBufferWritable(meteringPboFences, writeIndex)) {
+            dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
+            return
+        }
         lastRunMeteringTime = now
 
-        if (sourceTextureId != null && sourceTextureId != 0) {
-            if (compositeWithHdf) {
-                drawPostProcessEffects(meteringFboId, METERING_SIZE, METERING_SIZE, sourceTextureId)
+        try {
+            if (sourceTextureId != null && sourceTextureId != 0) {
+                if (compositeWithHdf) {
+                    drawPostProcessEffects(meteringFboId, METERING_SIZE, METERING_SIZE, sourceTextureId)
+                } else {
+                    drawFboToScreen(
+                        fboId = meteringFboId,
+                        width = METERING_SIZE,
+                        height = METERING_SIZE,
+                        sourceTextureId = sourceTextureId,
+                        targetMvpMatrix = buildTextureMvpMatrix(
+                            sourceWidth = sourceWidth,
+                            sourceHeight = sourceHeight,
+                            targetWidth = METERING_SIZE,
+                            targetHeight = METERING_SIZE
+                        )
+                    )
+                }
             } else {
-                drawFboToScreen(
+                drawInternal(
                     fboId = meteringFboId,
                     width = METERING_SIZE,
                     height = METERING_SIZE,
-                    sourceTextureId = sourceTextureId,
-                    targetMvpMatrix = buildTextureMvpMatrix(
-                        sourceWidth = sourceWidth,
-                        sourceHeight = sourceHeight,
-                        targetWidth = METERING_SIZE,
-                        targetHeight = METERING_SIZE
-                    )
+                    targetMvpMatrix = buildMvpMatrix(METERING_SIZE, METERING_SIZE)
                 )
             }
-        } else {
-            drawInternal(
-                fboId = meteringFboId,
-                width = METERING_SIZE,
-                height = METERING_SIZE,
-                targetMvpMatrix = buildMvpMatrix(METERING_SIZE, METERING_SIZE)
-            )
+
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, meteringPboIds[writeIndex])
+            GLES30.glReadPixels(0, 0, METERING_SIZE, METERING_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
+            meteringPboFences[writeIndex] = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+            meteringPboIndex++
+        } finally {
+            restorePixelReadbackState()
         }
 
-        // 2. 使用 PBO 读取像素 (减少 CPU 阻塞)
-        val pixelSize = METERING_SIZE * METERING_SIZE * 4
-        if (meteringPboId == 0) {
-            val pbos = IntArray(1)
-            GLES30.glGenBuffers(1, pbos, 0)
-            meteringPboId = pbos[0]
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, meteringPboId)
-            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, pixelSize, null, GLES30.GL_STREAM_READ)
-        } else {
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, meteringPboId)
-        }
-
-        GLES30.glReadPixels(0, 0, METERING_SIZE, METERING_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
-
-        val mappedBuffer = GLES30.glMapBufferRange(
-            GLES30.GL_PIXEL_PACK_BUFFER, 0, pixelSize, GLES30.GL_MAP_READ_BIT
-        ) as? ByteBuffer
-
-        if (mappedBuffer != null) {
-            val bytesCopy = ByteArray(pixelSize)
-            mappedBuffer.rewind()
-            mappedBuffer.get(bytesCopy)
-            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
-
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-            GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
-
-            val currentFocus = focusPoint
-            val currentMode = meteringMode
-
-            try {
-                if (!meteringExecutor.isShutdown) {
-                    meteringExecutor.execute {
-                        calculateMeteringResults(bytesCopy, currentFocus, currentMode)
-                    }
-                }
-            } catch (e: Exception) {
-                PLog.e(TAG, "Failed to dispatch metering task", e)
-            }
-        } else {
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-            GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
-        }
+        dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
     }
 
     private fun runDepthInputCaptureInternal(sourceTextureId: Int) {
-        if (onDepthInputAvailable == null || sourceTextureId == 0) return
+        if (onDepthInputAvailable == null || sourceTextureId == 0 || copyProgramId == 0) return
         if (depthInputFboId == 0 || depthInputTextureId == 0) {
             initDepthInputFbo()
         }
         if (depthInputFboId == 0 || depthInputTextureId == 0) return
+        val pixelSize = DEPTH_INPUT_SIZE * DEPTH_INPUT_SIZE * 4
+        if (!ensurePixelPackPbos(depthInputPboIds, pixelSize)) return
+
+        val writeIndex = depthInputPboIndex % 2
+        val readIndex = (depthInputPboIndex + 1) % 2
+        val completedBytes = if (depthInputPboIndex > 0) {
+            readReadyPixelPackBuffer(depthInputPboIds, depthInputPboFences, readIndex, pixelSize)
+        } else {
+            null
+        }
+        dispatchInputBitmap(
+            pixelBytes = completedBytes,
+            size = DEPTH_INPUT_SIZE,
+            inFlight = depthInputDispatchInFlight,
+            callbackProvider = { onDepthInputAvailable },
+            label = "depth"
+        )
+
         val now = System.currentTimeMillis()
         if (now - lastRunDepthInputTime < 50) return
+        if (!isPixelPackBufferWritable(depthInputPboFences, writeIndex)) return
         lastRunDepthInputTime = now
 
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, depthInputFboId)
-        GLES30.glViewport(0, 0, DEPTH_INPUT_SIZE, DEPTH_INPUT_SIZE)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-
-        // 使用 Copy Shader 采集，源是已校正好的 FBO 纹理
-        GLES30.glUseProgram(copyProgramId)
-        
-        // 计算居中裁剪矩阵 (Center Crop)
-        val captureMatrix = FloatArray(16)
-        android.opengl.Matrix.setIdentityM(captureMatrix, 0)
-        
-        // MVP 矩阵处理 glReadPixels 的 Y 轴翻转
-        // 标准 Quad 是 [-1, 1]，直接 Scale -1 即可垂直镜像，无需位移
-        val flipMatrix = FloatArray(16)
-        android.opengl.Matrix.setIdentityM(flipMatrix, 0)
-        android.opengl.Matrix.scaleM(flipMatrix, 0, 1f, -1f, 1f)
-        
-        GLES30.glUniformMatrix4fv(uCopyMVPMatrixLoc, 1, false, flipMatrix, 0)
-        GLES30.glUniformMatrix4fv(uCopySTMatrixLoc, 1, false, captureMatrix, 0) 
-        GLES30.glUniform4f(uCopyCropRectLoc, 0f, 0f, 1f, 1f)
-
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
-        GLES30.glUniform1i(uCopyTextureLoc, 0)
-
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vertexBufferId)
-        GLES30.glEnableVertexAttribArray(aCopyPositionLoc)
-        GLES30.glVertexAttribPointer(aCopyPositionLoc, POSITION_COMPONENT_COUNT, GLES30.GL_FLOAT, false, 0, 0)
-        
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, texCoordBufferId)
-        GLES30.glEnableVertexAttribArray(aCopyTexCoordLoc)
-        GLES30.glVertexAttribPointer(aCopyTexCoordLoc, TEXTURE_COORD_COMPONENT_COUNT, GLES30.GL_FLOAT, false, 0, 0)
-
-        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, indexBufferId)
-        GLES30.glDrawElements(GLES30.GL_TRIANGLES, 6, GLES30.GL_UNSIGNED_SHORT, 0)
-
-        // 确保渲染已完成
-        GLES30.glFinish()
-
-        val pixelSize = DEPTH_INPUT_SIZE * DEPTH_INPUT_SIZE * 4
-        if (depthInputPboId == 0) {
-            val pbos = IntArray(1)
-            GLES30.glGenBuffers(1, pbos, 0)
-            depthInputPboId = pbos[0]
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, depthInputPboId)
-            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, pixelSize, null, GLES30.GL_STREAM_READ)
-        } else {
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, depthInputPboId)
+        try {
+            drawInputCaptureTexture(depthInputFboId, DEPTH_INPUT_SIZE, sourceTextureId)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, depthInputPboIds[writeIndex])
+            GLES30.glReadPixels(0, 0, DEPTH_INPUT_SIZE, DEPTH_INPUT_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
+            depthInputPboFences[writeIndex] = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+            depthInputPboIndex++
+        } finally {
+            restorePixelReadbackState()
         }
-
-        GLES30.glReadPixels(0, 0, DEPTH_INPUT_SIZE, DEPTH_INPUT_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
-        val mappedBuffer = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, pixelSize, GLES30.GL_MAP_READ_BIT) as? ByteBuffer
-        if (mappedBuffer != null) {
-            depthInputBuffer.rewind()
-            depthInputBuffer.put(mappedBuffer)
-            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
-            
-            val bitmap = Bitmap.createBitmap(DEPTH_INPUT_SIZE, DEPTH_INPUT_SIZE, Bitmap.Config.ARGB_8888)
-            depthInputBuffer.rewind()
-            bitmap.copyPixelsFromBuffer(depthInputBuffer)
-            onDepthInputAvailable?.invoke(bitmap)
-        }
-
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
     }
 
     private fun runAiFocusInputCaptureInternal(sourceTextureId: Int) {
@@ -2869,12 +2827,43 @@ class LutRenderer : GLSurfaceView.Renderer {
             initAiFocusInputFbo()
         }
         if (aiFocusInputFboId == 0 || aiFocusInputTextureId == 0 || copyProgramId == 0) return
+        val pixelSize = AI_FOCUS_INPUT_SIZE * AI_FOCUS_INPUT_SIZE * 4
+        if (!ensurePixelPackPbos(aiFocusInputPboIds, pixelSize)) return
+
+        val writeIndex = aiFocusInputPboIndex % 2
+        val readIndex = (aiFocusInputPboIndex + 1) % 2
+        val completedBytes = if (aiFocusInputPboIndex > 0) {
+            readReadyPixelPackBuffer(aiFocusInputPboIds, aiFocusInputPboFences, readIndex, pixelSize)
+        } else {
+            null
+        }
+        dispatchInputBitmap(
+            pixelBytes = completedBytes,
+            size = AI_FOCUS_INPUT_SIZE,
+            inFlight = aiFocusInputDispatchInFlight,
+            callbackProvider = { onAiFocusInputAvailable },
+            label = "ai focus"
+        )
+
         val now = System.currentTimeMillis()
         if (now - lastRunAiFocusInputTime < 300) return
+        if (!isPixelPackBufferWritable(aiFocusInputPboFences, writeIndex)) return
         lastRunAiFocusInputTime = now
 
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, aiFocusInputFboId)
-        GLES30.glViewport(0, 0, AI_FOCUS_INPUT_SIZE, AI_FOCUS_INPUT_SIZE)
+        try {
+            drawInputCaptureTexture(aiFocusInputFboId, AI_FOCUS_INPUT_SIZE, sourceTextureId)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, aiFocusInputPboIds[writeIndex])
+            GLES30.glReadPixels(0, 0, AI_FOCUS_INPUT_SIZE, AI_FOCUS_INPUT_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
+            aiFocusInputPboFences[writeIndex] = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+            aiFocusInputPboIndex++
+        } finally {
+            restorePixelReadbackState()
+        }
+    }
+
+    private fun drawInputCaptureTexture(targetFboId: Int, targetSize: Int, sourceTextureId: Int) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, targetSize, targetSize)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
         GLES30.glUseProgram(copyProgramId)
@@ -2903,62 +2892,166 @@ class LutRenderer : GLSurfaceView.Renderer {
 
         GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, indexBufferId)
         GLES30.glDrawElements(GLES30.GL_TRIANGLES, 6, GLES30.GL_UNSIGNED_SHORT, 0)
-
-        val pixelSize = AI_FOCUS_INPUT_SIZE * AI_FOCUS_INPUT_SIZE * 4
-        val writeIndex = aiFocusInputPboIndex % 2
-        val readIndex = (aiFocusInputPboIndex + 1) % 2
-
-        if (aiFocusInputPboIds[0] == 0) {
-            GLES30.glGenBuffers(2, aiFocusInputPboIds, 0)
-            for (i in 0 until 2) {
-                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, aiFocusInputPboIds[i])
-                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, pixelSize, null, GLES30.GL_STREAM_READ)
-            }
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        }
-
-        // 异步将当前帧读取到 writeIndex PBO
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, aiFocusInputPboIds[writeIndex])
-        GLES30.glReadPixels(0, 0, AI_FOCUS_INPUT_SIZE, AI_FOCUS_INPUT_SIZE, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
-        deleteAiFocusInputFence(writeIndex)
-        aiFocusInputPboFences[writeIndex] = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
-
-        // 只在上一帧 PBO 已完成时读取，避免 GL 线程在暂停流程中被同步等待卡住。
-        if (aiFocusInputPboIndex > 0 && isAiFocusInputFenceReady(readIndex)) {
-            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, aiFocusInputPboIds[readIndex])
-            val mappedBuffer = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, pixelSize, GLES30.GL_MAP_READ_BIT) as? ByteBuffer
-            if (mappedBuffer != null) {
-                aiFocusInputBuffer.rewind()
-                aiFocusInputBuffer.put(mappedBuffer)
-                GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
-
-                val bitmap = Bitmap.createBitmap(AI_FOCUS_INPUT_SIZE, AI_FOCUS_INPUT_SIZE, Bitmap.Config.ARGB_8888)
-                aiFocusInputBuffer.rewind()
-                bitmap.copyPixelsFromBuffer(aiFocusInputBuffer)
-                onAiFocusInputAvailable?.invoke(bitmap)
-            }
-            deleteAiFocusInputFence(readIndex)
-        }
-
-        aiFocusInputPboIndex++
-
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
     }
 
-    private fun isAiFocusInputFenceReady(index: Int): Boolean {
-        val fence = aiFocusInputPboFences[index]
+    private fun ensurePixelPackPbos(pboIds: IntArray, pixelSize: Int): Boolean {
+        if (pboIds[0] != 0 && pboIds[1] != 0) return true
+        if (pboIds.any { it != 0 }) {
+            GLES30.glDeleteBuffers(pboIds.size, pboIds, 0)
+            for (i in pboIds.indices) {
+                pboIds[i] = 0
+            }
+        }
+
+        GLES30.glGenBuffers(2, pboIds, 0)
+        var success = true
+        for (i in 0 until 2) {
+            if (pboIds[i] == 0) {
+                success = false
+                break
+            }
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pboIds[i])
+            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, pixelSize, null, GLES30.GL_STREAM_READ)
+        }
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        if (!success) {
+            GLES30.glDeleteBuffers(pboIds.size, pboIds, 0)
+            for (i in pboIds.indices) {
+                pboIds[i] = 0
+            }
+        }
+        return success
+    }
+
+    private fun readReadyPixelPackBuffer(
+        pboIds: IntArray,
+        fences: LongArray,
+        index: Int,
+        pixelSize: Int,
+    ): ByteArray? {
+        if (pboIds[index] == 0 || !isPixelPackFenceReady(fences, index)) return null
+
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pboIds[index])
+        val mappedBuffer = GLES30.glMapBufferRange(
+            GLES30.GL_PIXEL_PACK_BUFFER,
+            0,
+            pixelSize,
+            GLES30.GL_MAP_READ_BIT
+        ) as? ByteBuffer
+        val bytes = if (mappedBuffer != null) {
+            ByteArray(pixelSize).also {
+                mappedBuffer.rewind()
+                mappedBuffer.get(it)
+                GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            }
+        } else {
+            null
+        }
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        deletePixelPackFence(fences, index)
+        return bytes
+    }
+
+    private fun isPixelPackBufferWritable(fences: LongArray, index: Int): Boolean {
+        val fence = fences[index]
+        if (fence == 0L) return true
+        if (!isPixelPackFenceReady(fences, index)) return false
+        deletePixelPackFence(fences, index)
+        return true
+    }
+
+    private fun isPixelPackFenceReady(fences: LongArray, index: Int): Boolean {
+        val fence = fences[index]
         if (fence == 0L) return false
         val result = GLES30.glClientWaitSync(fence, 0, 0)
         return result == GLES30.GL_ALREADY_SIGNALED || result == GLES30.GL_CONDITION_SATISFIED
     }
 
-    private fun deleteAiFocusInputFence(index: Int) {
-        val fence = aiFocusInputPboFences[index]
+    private fun deletePixelPackFence(fences: LongArray, index: Int) {
+        val fence = fences[index]
         if (fence != 0L) {
             GLES30.glDeleteSync(fence)
-            aiFocusInputPboFences[index] = 0L
+            fences[index] = 0L
+        }
+    }
+
+    private fun releasePixelPackPbos(pboIds: IntArray, fences: LongArray) {
+        for (i in fences.indices) {
+            deletePixelPackFence(fences, i)
+        }
+        if (pboIds.any { it != 0 }) {
+            GLES30.glDeleteBuffers(pboIds.size, pboIds, 0)
+        }
+        resetPixelPackState(pboIds, fences)
+    }
+
+    private fun resetPixelPackState(pboIds: IntArray, fences: LongArray) {
+        for (i in pboIds.indices) {
+            pboIds[i] = 0
+            fences[i] = 0L
+        }
+    }
+
+    private fun restorePixelReadbackState() {
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
+    }
+
+    private fun dispatchMeteringCalculation(bytesCopy: ByteArray?, focus: PointF?, mode: MeteringMode) {
+        if (bytesCopy == null) return
+        if (!meteringDispatchInFlight.compareAndSet(false, true)) return
+
+        try {
+            if (meteringExecutor.isShutdown) {
+                meteringDispatchInFlight.set(false)
+                return
+            }
+            meteringExecutor.execute {
+                try {
+                    calculateMeteringResults(bytesCopy, focus, mode)
+                } catch (e: Exception) {
+                    PLog.e(TAG, "Failed to calculate metering results", e)
+                } finally {
+                    meteringDispatchInFlight.set(false)
+                }
+            }
+        } catch (e: Exception) {
+            meteringDispatchInFlight.set(false)
+            PLog.e(TAG, "Failed to dispatch metering task", e)
+        }
+    }
+
+    private fun dispatchInputBitmap(
+        pixelBytes: ByteArray?,
+        size: Int,
+        inFlight: AtomicBoolean,
+        callbackProvider: () -> ((Bitmap) -> Unit)?,
+        label: String,
+    ) {
+        if (pixelBytes == null) return
+        if (!inFlight.compareAndSet(false, true)) return
+
+        try {
+            if (inputCaptureExecutor.isShutdown) {
+                inFlight.set(false)
+                return
+            }
+            inputCaptureExecutor.execute {
+                try {
+                    val callback = callbackProvider() ?: return@execute
+                    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                    bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixelBytes))
+                    callback.invoke(bitmap)
+                } catch (e: Exception) {
+                    PLog.e(TAG, "Failed to dispatch $label input bitmap", e)
+                } finally {
+                    inFlight.set(false)
+                }
+            }
+        } catch (e: Exception) {
+            inFlight.set(false)
+            PLog.e(TAG, "Failed to enqueue $label input bitmap", e)
         }
     }
 
@@ -3111,6 +3204,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         } catch (e: Exception) {
             PLog.e(TAG, "Error shutting down metering executor", e)
         }
+        try {
+            inputCaptureExecutor.shutdown()
+        } catch (e: Exception) {
+            PLog.e(TAG, "Error shutting down input capture executor", e)
+        }
         // 删除纹理
         if (cameraTextureId != 0) {
             GlUtils.deleteTexture(cameraTextureId)
@@ -3186,21 +3284,9 @@ class LutRenderer : GLSurfaceView.Renderer {
             GLES30.glDeleteBuffers(1, intArrayOf(pboId), 0)
             pboId = 0
         }
-        if (meteringPboId != 0) {
-            GLES30.glDeleteBuffers(1, intArrayOf(meteringPboId), 0)
-            meteringPboId = 0
-        }
-        if (depthInputPboId != 0) {
-            GLES30.glDeleteBuffers(1, intArrayOf(depthInputPboId), 0)
-            depthInputPboId = 0
-        }
-        if (aiFocusInputPboIds[0] != 0) {
-            deleteAiFocusInputFence(0)
-            deleteAiFocusInputFence(1)
-            GLES30.glDeleteBuffers(2, aiFocusInputPboIds, 0)
-            aiFocusInputPboIds[0] = 0
-            aiFocusInputPboIds[1] = 0
-        }
+        releasePixelPackPbos(meteringPboIds, meteringPboFences)
+        releasePixelPackPbos(depthInputPboIds, depthInputPboFences)
+        releasePixelPackPbos(aiFocusInputPboIds, aiFocusInputPboFences)
 
         if (meteringFboId != 0) {
             GLES30.glDeleteFramebuffers(1, intArrayOf(meteringFboId), 0)
