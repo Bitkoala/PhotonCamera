@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.FilterNone
+import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -61,12 +62,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RippleConfiguration
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -75,6 +78,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -135,6 +139,15 @@ enum class SettingsTab {
 private enum class BackupOperation {
     BACKUP, RESTORE
 }
+
+private val SettingsBackgroundColor = Color(0xFF151515)
+private val SettingsBackgroundScrim = Color.Black.copy(alpha = 0.62f)
+private val SettingsRippleAlpha = RippleAlpha(
+    pressedAlpha = 0.04f,
+    focusedAlpha = 0.06f,
+    draggedAlpha = 0.08f,
+    hoveredAlpha = 0.03f
+)
 
 private const val TELEGRAM_GROUP_URL = "https://t.me/photoncameraapp"
 private const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=SFezWP1Ub5Egb5yMc7dbc1W4BVKGzzs1Ld9RD%2BKYn%2FlXiuqD4XZCGse48v%2FNcvrq&busi_data=eyJncm91cENvZGUiOiI1Njk2MDU0NTIiLCJ0b2tlbiI6IjNTM0Z4MkN1NUpDQVU1OXJDZ0xFVlJOb0xHZHFCQ0xWc1pKQWpSVzNVT0FwaHFRcEFYR0lFTU9mNUxuNFl5TDEiLCJ1aW4iOiI0MTk3NzQ2OTYifQ%3D%3D&data=WwMa6V5hKvkhzfvOaOKz8MKqNOvSSjTxTRj6Dn-1bHP68fZuRJ66cyD5xOhydrUkF8yIA70R_yXqlFRwJGoaCQ&svctype=4&tempid=h5_group_info"
@@ -567,12 +580,22 @@ fun SettingsScreen(
     }
 
     val backgroundPainter = rememberBackgroundPainter(viewModel)
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .paint(backgroundPainter, contentScale = ContentScale.Crop)
-            .navigationBarsPadding()
-    ) {
+    val settingsRippleConfiguration = remember {
+        RippleConfiguration(
+            color = Color.White,
+            rippleAlpha = SettingsRippleAlpha
+        )
+    }
+
+    CompositionLocalProvider(LocalRippleConfiguration provides settingsRippleConfiguration) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(SettingsBackgroundColor)
+                .paint(backgroundPainter, contentScale = ContentScale.Crop)
+                .background(SettingsBackgroundScrim)
+                .navigationBarsPadding()
+        ) {
         // 顶部标题栏
         TopAppBar(
             title = {
@@ -1770,6 +1793,7 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(32.dp))
+        }
         }
     }
 
