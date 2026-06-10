@@ -252,12 +252,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             StartupComposeReadyEffect()
             val currentRecipeParams by cameraViewModel.currentRecipeParams.collectAsState()
+            val currentEffectParams by cameraViewModel.currentEffectParams.collectAsState()
             val phantomPipCrop by cameraViewModel.phantomPipCrop.collectAsState()
             ScreenCaptureRenderConfigStore.save(
                 baselineLutConfig = cameraViewModel.currentBaselineLutConfig,
                 baselineColorRecipeParams = cameraViewModel.currentBaselineRecipeParams.value,
                 creativeLutConfig = cameraViewModel.currentLutConfig,
-                creativeColorRecipeParams = currentRecipeParams,
+                creativeColorRecipeParams = currentEffectParams.applyTo(currentRecipeParams),
                 crop = phantomPipCrop
             )
 

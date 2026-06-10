@@ -27,6 +27,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,6 +44,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.collectAsState
@@ -64,7 +67,9 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.compositionContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -94,7 +99,15 @@ import com.hinnka.mycamera.livephoto.GoogleLivePhotoCreator
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.livephoto.VivoLivePhotoCreator
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
-import com.hinnka.mycamera.ui.components.LutSelector
+import com.hinnka.mycamera.model.ColorPaletteMapper
+import com.hinnka.mycamera.model.ColorPaletteState
+import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.EffectParams
+import com.hinnka.mycamera.ui.camera.LutIntensitySlider
+import com.hinnka.mycamera.ui.components.ColorRecipePanel
+import com.hinnka.mycamera.ui.components.CurveChannel
+import com.hinnka.mycamera.ui.components.EffectsPanel
+import com.hinnka.mycamera.ui.components.LutSelectorWithRecipeAction
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +172,9 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
     private var processingInfo: ProcessingInfo? by mutableStateOf(null)
     private var expanded by mutableStateOf(false)
     private var showFilterPicker by mutableStateOf(false)
+    private var showRecipeEditor by mutableStateOf(false)
+    private var showEffectsEditor by mutableStateOf(false)
+    private var floatingWindowYBeforeEditor: Int? = null
 
     private val contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean, uri: Uri?) {
@@ -395,11 +411,21 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         val baselineColorRecipeParams = phantomBaselineLutId?.let {
             ContentRepository.getInstance(context).lutManager.loadColorRecipeParams(it, BaselineColorCorrectionTarget.PHANTOM)
         }
+        val creativeColorRecipeParams = lutId?.let {
+            ContentRepository.getInstance(context).lutManager.loadColorRecipeParams(it)
+        } ?: ColorRecipeParams.DEFAULT
+        val effectiveCreativeColorRecipeParams = preferences
+            ?.activeEffectParams
+            ?.applyTo(creativeColorRecipeParams)
+            ?: creativeColorRecipeParams
+        val metadataCreativeColorRecipeParams = effectiveCreativeColorRecipeParams
+            .takeUnless { it.isDefault() }
 
         val updatedMetadata = GalleryManager.updateMetadata(context, photoId) { current ->
             if (baselineTarget != null) {
                 current.copy(
                     lutId = lutId,
+                    colorRecipeParams = metadataCreativeColorRecipeParams,
                     baselineTarget = baselineTarget,
                     baselineLutId = baselineLutId,
                     baselineColorRecipeParams = baselineColorRecipeParams,
@@ -407,6 +433,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             } else {
                 current.copy(
                     lutId = lutId,
+                    colorRecipeParams = metadataCreativeColorRecipeParams,
                     baselineTarget = null,
                     baselineLutId = null,
                     baselineColorRecipeParams = null,
@@ -636,13 +663,28 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
     }
 
     private fun updateWindowParams(hidden: Boolean) {
+        val editorVisible = showRecipeEditor || showEffectsEditor
         if (hidden) {
             windowParams.width = 1
             windowParams.height = 1
             windowParams.flags = windowParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             windowParams.alpha = 0f
         } else {
+            if (editorVisible) {
+                if (floatingWindowYBeforeEditor == null) {
+                    floatingWindowYBeforeEditor = windowParams.y
+                }
+                windowParams.gravity = Gravity.BOTTOM or Gravity.END
+                windowParams.y = 0
+            } else {
+                windowParams.gravity = Gravity.TOP or Gravity.END
+                floatingWindowYBeforeEditor?.let {
+                    windowParams.y = it
+                    floatingWindowYBeforeEditor = null
+                }
+            }
             windowParams.width = when {
+                editorVisible -> getOverlayDisplayBounds().width()
                 showFilterPicker -> WindowManager.LayoutParams.WRAP_CONTENT
                 expanded -> WindowManager.LayoutParams.WRAP_CONTENT
                 else -> WindowManager.LayoutParams.WRAP_CONTENT
@@ -680,6 +722,23 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
 
                 val scope = rememberCoroutineScope()
                 val processingInfo = processingInfo
+                val currentLutIdFlow = remember {
+                    userPreferencesRepository.userPreferences.map {
+                        it.lutId
+                    }
+                }
+                val currentLutId by currentLutIdFlow.collectAsState(initial = null)
+                val currentEffectParamsFlow = remember {
+                    userPreferencesRepository.userPreferences.map {
+                        it.activeEffectParams
+                    }
+                }
+                val currentEffectParams by currentEffectParamsFlow.collectAsState(
+                    initial = EffectParams.DEFAULT
+                )
+                var recipePreviewParams by remember(currentLutId) {
+                    mutableStateOf<ColorRecipeParams?>(null)
+                }
                 LaunchedEffect(expanded, processingInfo, showFilterPicker) {
                     if (expanded && !showFilterPicker) {
                         delay(2000L)
@@ -687,78 +746,79 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     }
                 }
 
-                Row(
-                    modifier = Modifier
-                        .padding(4.dp)
-                        .onSizeChanged {
-                            composeView?.let { view ->
-                                if (view.isAttachedToWindow) {
-                                    updateWindowParams(false)
-                                    windowManager.updateViewLayout(view, windowParams)
+                if (!showRecipeEditor && !showEffectsEditor) {
+                    Row(
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .onSizeChanged {
+                                composeView?.let { view ->
+                                    if (view.isAttachedToWindow) {
+                                        updateWindowParams(false)
+                                        windowManager.updateViewLayout(view, windowParams)
+                                    }
                                 }
                             }
-                        }
-                        .background(Color(0xFF1A1C1E).copy(alpha = 0.8f), RoundedCornerShape(24.dp))
-                        .padding(4.dp)
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    windowParams.y += dragAmount.y.toInt()
-                                    windowManager.updateViewLayout(this@apply, windowParams)
-                                }
-                            )
-                        }
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable {
-                            if (!expanded) {
-                                expanded = true
-                            } else {
-                                context.startActivity(
-                                    Intent(
-                                        context,
-                                        MainActivity::class.java
-                                    ).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        if (processingInfo?.thumbnail?.isRecycled == false) {
-                                            val photoId = processingInfo.photoId
-                                            putExtra("photoId", photoId)
-                                            putExtra("route", Routes.photoDetail(photoId = photoId))
-                                        }
-                                    })
-                            }
-                        },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (!showFilterPicker) {
-                        val thumbnail = processingInfo?.thumbnail?.takeIf { !it.isRecycled }
-                        if (thumbnail != null) {
-                            Image(
-                                bitmap = thumbnail.asImageBitmap(),
-                                contentDescription = stringResource(R.string.app_name),
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF252525)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                                    contentDescription = stringResource(R.string.app_name),
-                                    modifier = Modifier.fillMaxSize()
+                            .background(Color(0xFF1A1C1E).copy(alpha = 0.8f), RoundedCornerShape(24.dp))
+                            .padding(4.dp)
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        windowParams.y += dragAmount.y.toInt()
+                                        windowManager.updateViewLayout(this@apply, windowParams)
+                                    }
                                 )
                             }
+                            .clip(RoundedCornerShape(24.dp))
+                            .clickable {
+                                if (!expanded) {
+                                    expanded = true
+                                } else {
+                                    context.startActivity(
+                                        Intent(
+                                            context,
+                                            MainActivity::class.java
+                                        ).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            if (processingInfo?.thumbnail?.isRecycled == false) {
+                                                val photoId = processingInfo.photoId
+                                                putExtra("photoId", photoId)
+                                                putExtra("route", Routes.photoDetail(photoId = photoId))
+                                            }
+                                        })
+                                }
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (!showFilterPicker) {
+                            val thumbnail = processingInfo?.thumbnail?.takeIf { !it.isRecycled }
+                            if (thumbnail != null) {
+                                Image(
+                                    bitmap = thumbnail.asImageBitmap(),
+                                    contentDescription = stringResource(R.string.app_name),
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF252525)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                                        contentDescription = stringResource(R.string.app_name),
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }
                         }
-                    }
 
-                    if (expanded) {
-                        if (showFilterPicker) {
+                        if (expanded) {
+                            if (showFilterPicker) {
                             val sortedLutsFlow = remember {
                                 ContentRepository.getInstance(context).availableLuts.combine(
                                     userPreferencesRepository.userPreferences.map {
@@ -779,16 +839,10 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                             )
                             val availableLuts = sortedLutData.first
                             val categoryOrder = sortedLutData.second
-                            val currentLutIdFlow = remember {
-                                userPreferencesRepository.userPreferences.map {
-                                    it.lutId
-                                }
-                            }
-                            val currentLutId by currentLutIdFlow.collectAsState(initial = null)
                             Box(
                                 modifier = Modifier
-                                    .heightIn(max = 180.dp)
-                                    .width(320.dp)
+                                    .heightIn(max = 220.dp)
+                                    .width(340.dp)
                                     .padding(8.dp)
                             ) {
                                 fun closeFilterPicker() {
@@ -797,7 +851,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                     composeView?.let { windowManager.updateViewLayout(it, windowParams) }
                                 }
 
-                                LutSelector(
+                                LutSelectorWithRecipeAction(
                                     availableLuts = availableLuts,
                                     currentLutId = currentLutId,
                                     thumbnail = processingInfo?.thumbnail?.takeIf { !it.isRecycled },
@@ -808,7 +862,18 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                             closeFilterPicker()
                                         }
                                     },
-                                    onEditClick = { closeFilterPicker() },
+                                    onEditRecipeClick = if (currentLutId != null) {
+                                        {
+                                            showRecipeEditor = true
+                                            updateWindowParams(false)
+                                            composeView?.let { windowManager.updateViewLayout(it, windowParams) }
+                                        }
+                                    } else null,
+                                    onEditEffectClick = {
+                                        showEffectsEditor = true
+                                        updateWindowParams(false)
+                                        composeView?.let { windowManager.updateViewLayout(it, windowParams) }
+                                    },
                                     categoryOrder = categoryOrder,
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -882,7 +947,158 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                     }
                                 }
                             }
+                            }
                         }
+                    }
+                }
+
+                val editingLutId = currentLutId
+                if (showRecipeEditor && editingLutId != null) {
+                    var editingParams by remember(editingLutId) {
+                        mutableStateOf(ColorRecipeParams.DEFAULT)
+                    }
+                    var paletteState by remember(editingLutId) {
+                        mutableStateOf(ColorPaletteState.DEFAULT)
+                    }
+
+                    fun updateRecipeParams(params: ColorRecipeParams) {
+                        editingParams = params
+                        recipePreviewParams = params
+                        scope.launch {
+                            ContentRepository.getInstance(context).lutManager.saveColorRecipeParams(
+                                editingLutId,
+                                params
+                            )
+                            syncScreenCaptureRenderConfig(
+                                lutId = editingLutId,
+                                creativeRecipeParamsOverride = params
+                            )
+                        }
+                    }
+
+                    fun closeRecipeEditor() {
+                        showRecipeEditor = false
+                        val finalPreviewParams = recipePreviewParams
+                        recipePreviewParams = null
+                        scope.launch {
+                            if (finalPreviewParams != null) {
+                                ContentRepository.getInstance(context).lutManager.saveColorRecipeParams(
+                                    editingLutId,
+                                    finalPreviewParams
+                                )
+                            }
+                            syncScreenCaptureRenderConfig(
+                                lutId = editingLutId,
+                                creativeRecipeParamsOverride = finalPreviewParams
+                            )
+                            updateWindowParams(false)
+                            composeView?.let { windowManager.updateViewLayout(it, windowParams) }
+                        }
+                    }
+
+                    LaunchedEffect(editingLutId) {
+                        val params = ContentRepository.getInstance(context)
+                            .lutManager
+                            .loadColorRecipeParams(editingLutId)
+                        editingParams = params
+                        paletteState = ColorPaletteState(
+                            x = params.paletteX,
+                            y = params.paletteY,
+                            density = params.paletteDensity
+                        ).normalized()
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.88f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        PhantomEditorHeader(
+                            title = stringResource(R.string.color_recipe),
+                            onClose = { closeRecipeEditor() }
+                        )
+                        LutIntensitySlider(
+                            intensity = editingParams.lutIntensity,
+                            onIntensityChange = {
+                                updateRecipeParams(editingParams.copy(lutIntensity = it))
+                            }
+                        )
+                        ColorRecipePanel(
+                            currentParams = editingParams,
+                            paletteState = paletteState,
+                            onPaletteStateChange = { newState ->
+                                val normalizedState = newState.normalized()
+                                paletteState = normalizedState
+                                updateRecipeParams(
+                                    ColorPaletteMapper.updatePaletteState(
+                                        editingParams,
+                                        normalizedState
+                                    )
+                                )
+                            },
+                            onParamChange = { param, value ->
+                                updateRecipeParams(param.setValue(editingParams, value))
+                            },
+                            onParamsChange = { newParams ->
+                                paletteState = ColorPaletteState(
+                                    x = newParams.paletteX,
+                                    y = newParams.paletteY,
+                                    density = newParams.paletteDensity
+                                ).normalized()
+                                updateRecipeParams(newParams)
+                            },
+                            onRemarksChange = {
+                                updateRecipeParams(editingParams.copy(remarks = it))
+                            },
+                            onCurveChange = { channel, points ->
+                                updateRecipeParams(
+                                    when (channel) {
+                                        CurveChannel.MASTER -> editingParams.copy(masterCurvePoints = points)
+                                        CurveChannel.RED -> editingParams.copy(redCurvePoints = points)
+                                        CurveChannel.GREEN -> editingParams.copy(greenCurvePoints = points)
+                                        CurveChannel.BLUE -> editingParams.copy(blueCurvePoints = points)
+                                    }
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                if (showEffectsEditor) {
+                    fun closeEffectsEditor() {
+                        showEffectsEditor = false
+                        scope.launch {
+                            syncScreenCaptureRenderConfig(currentLutId)
+                            updateWindowParams(false)
+                            composeView?.let { windowManager.updateViewLayout(it, windowParams) }
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.88f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        PhantomEditorHeader(
+                            title = stringResource(R.string.effects_title),
+                            onClose = { closeEffectsEditor() }
+                        )
+                        EffectsPanel(
+                            currentParams = currentEffectParams,
+                            onParamsChange = { effects ->
+                                scope.launch {
+                                    userPreferencesRepository.saveActiveEffectParams(effects)
+                                    syncScreenCaptureRenderConfig(
+                                        lutId = currentLutId,
+                                        effectParamsOverride = effects
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -895,6 +1111,38 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             view.compositionContext = recomposer
             lifecycleScope.launch(AndroidUiDispatcher.Main) {
                 recomposer.runRecomposeAndApplyChanges()
+            }
+        }
+    }
+
+    @Composable
+    private fun PhantomEditorHeader(
+        title: String,
+        onClose: () -> Unit
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = stringResource(R.string.close),
+                    tint = Color.White.copy(alpha = 0.72f),
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }
@@ -937,13 +1185,22 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             isWindowShown = false
             expanded = false
             showFilterPicker = false
+            showRecipeEditor = false
+            showEffectsEditor = false
+            floatingWindowYBeforeEditor = null
         }
     }
 
-    private suspend fun syncScreenCaptureRenderConfig(lutId: String?) {
+    private suspend fun syncScreenCaptureRenderConfig(
+        lutId: String?,
+        creativeRecipeParamsOverride: ColorRecipeParams? = null,
+        effectParamsOverride: EffectParams? = null
+    ) {
         ScreenCaptureRenderConfigStore.syncFromPreferences(
             context = context,
             lutIdOverride = lutId,
+            creativeRecipeParamsOverride = creativeRecipeParamsOverride,
+            effectParamsOverride = effectParamsOverride
         )
     }
 
