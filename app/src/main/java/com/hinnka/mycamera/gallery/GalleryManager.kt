@@ -136,6 +136,17 @@ object GalleryManager {
             ?: (ContentRepository.getInstance(context).userPreferencesRepository.userPreferences.firstOrNull()
                 ?.rawAutoExposure ?: true)
     }
+
+    private fun MediaMetadata.withRawAutoAdjustments(
+        adjustments: RawDemosaicProcessor.RawAutoAdjustments
+    ): MediaMetadata {
+        return copy(
+            rawExposureCompensation = adjustments.exposureCompensation,
+            rawHighlightsAdjustment = adjustments.highlights,
+            rawShadowsAdjustment = adjustments.shadows
+        )
+    }
+
     private val _photoLibraryChangedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     val photoLibraryChangedEvents: SharedFlow<Unit> = _photoLibraryChangedEvents.asSharedFlow()
     private val hdrWorkLock = Any()
@@ -1288,33 +1299,41 @@ object GalleryManager {
                 exportDng(context, photoId, dngFile, metadata)
             }
 
+            var updatedMetadata: MediaMetadata = metadata
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
                 context,
                 dngFile.absolutePath,
                 aspectRatio = aspectRatio,
-                cropRegion = metadata.cropRegion,
+                cropRegion = updatedMetadata.cropRegion,
                 rotation = rotation,
                 exposureBias = exposureBias ?: 0f,
-                rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
-                rawAutoExposure = resolveRawAutoExposure(context, metadata),
-                rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
-                rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+                rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
+                rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+                rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
+                rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
+                rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
+                rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
+                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                 sharpeningValue = 0.4f,
-                denoiseValue = metadata.rawDenoiseValue,
-                rawDcpId = metadata.rawDcpId,
-                spectralFilmEnabled = metadata.spectralFilmEnabled,
-                spectralFilmStock = metadata.spectralFilmStock,
-                spectralFilmPrint = metadata.spectralFilmPrint,
+                denoiseValue = updatedMetadata.rawDenoiseValue,
+                rawDcpId = updatedMetadata.rawDcpId,
+                spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                spectralFilmStock = updatedMetadata.spectralFilmStock,
+                spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
-                    cDensityGain = metadata.spectralFilmCDensityGain,
-                    mDensityGain = metadata.spectralFilmMDensityGain,
-                    yDensityGain = metadata.spectralFilmYDensityGain
-                )
+                    cDensityGain = updatedMetadata.spectralFilmCDensityGain,
+                    mDensityGain = updatedMetadata.spectralFilmMDensityGain,
+                    yDensityGain = updatedMetadata.spectralFilmYDensityGain
+                ),
+                onRawAutoAdjustments = { adjustments ->
+                    updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                }
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
-            if (metadata.isMirrored) {
+            saveMetadata(context, photoId, updatedMetadata)
+
+            if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
 
@@ -1322,13 +1341,13 @@ object GalleryManager {
                 writeFinalJpeg(bitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
-            generateBokehPhoto(context, photoId, metadata, bitmap)
-            val preparedUltraHdrSource = if (metadata.manualHdrEffectEnabled) {
+            generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
+            val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
                 photoProcessor.prepareUltraHdrSourceFromRawResult(
                     context = context,
                     photoId = photoId,
                     rawResult = rawResult,
-                    metadata = metadata,
+                    metadata = updatedMetadata,
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
@@ -1340,7 +1359,7 @@ object GalleryManager {
             val preparedGainmapResult = preparedUltraHdrSource?.let { source ->
                 var result: GainmapResult? = null
                 val gainmapElapsed = measureTimeMillis {
-                    result = gainmapProducer.build(source, HdrGainmapStrength.coerce(metadata.hdrEffectStrength))
+                    result = gainmapProducer.build(source, HdrGainmapStrength.coerce(updatedMetadata.hdrEffectStrength))
                 }
                 PLog.d(TAG, "saveRawPhoto prepared gainmap for reuse, took=${gainmapElapsed}ms")
                 result
@@ -1350,7 +1369,7 @@ object GalleryManager {
                 buildDetailHdrCache(
                     context = context,
                     photoId = photoId,
-                    metadata = metadata,
+                    metadata = updatedMetadata,
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
@@ -1358,14 +1377,14 @@ object GalleryManager {
                     preparedGainmapResult = preparedGainmapResult
                 )
             }
-            updateThumbnail(context, photoId, photoProcessor, metadata, bitmap)
+            updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
             if (shouldAutoSave) {
                 exportPhoto(
                     context,
                     photoId,
                     bitmap,
                     photoProcessor,
-                    metadata,
+                    updatedMetadata,
                     sharpeningValue,
                     noiseReductionValue,
                     chromaNoiseReductionValue,
@@ -1999,33 +2018,41 @@ object GalleryManager {
             @Suppress("ExplicitGarbageCollectionCall")
             System.gc()
 
+            var updatedMetadata: MediaMetadata = metadata
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
                 context,
                 dngFile.absolutePath,
                 aspectRatio = aspectRatio,
-                cropRegion = metadata.cropRegion,
+                cropRegion = updatedMetadata.cropRegion,
                 rotation = rotation,
                 exposureBias = exposureBias ?: 0f,
-                rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
-                rawAutoExposure = resolveRawAutoExposure(context, metadata),
-                rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
-                rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+                rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
+                rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+                rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
+                rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
+                rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
+                rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
+                rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                 sharpeningValue = 0.4f,
-                denoiseValue = metadata.rawDenoiseValue,
-                rawDcpId = metadata.rawDcpId,
-                spectralFilmEnabled = metadata.spectralFilmEnabled,
-                spectralFilmStock = metadata.spectralFilmStock,
-                spectralFilmPrint = metadata.spectralFilmPrint,
+                denoiseValue = updatedMetadata.rawDenoiseValue,
+                rawDcpId = updatedMetadata.rawDcpId,
+                spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                spectralFilmStock = updatedMetadata.spectralFilmStock,
+                spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
-                    cDensityGain = metadata.spectralFilmCDensityGain,
-                    mDensityGain = metadata.spectralFilmMDensityGain,
-                    yDensityGain = metadata.spectralFilmYDensityGain
-                )
+                    cDensityGain = updatedMetadata.spectralFilmCDensityGain,
+                    mDensityGain = updatedMetadata.spectralFilmMDensityGain,
+                    yDensityGain = updatedMetadata.spectralFilmYDensityGain
+                ),
+                onRawAutoAdjustments = { adjustments ->
+                    updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                }
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
 
-            if (metadata.isMirrored) {
+            saveMetadata(context, photoId, updatedMetadata)
+
+            if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
 
@@ -2034,14 +2061,14 @@ object GalleryManager {
                 writeFinalJpeg(bitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
-            generateBokehPhoto(context, photoId, metadata, bitmap)
+            generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
 
-            val preparedUltraHdrSource = if (metadata.manualHdrEffectEnabled) {
+            val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
                 photoProcessor.prepareUltraHdrSourceFromRawResult(
                     context = context,
                     photoId = photoId,
                     rawResult = rawResult,
-                    metadata = metadata,
+                    metadata = updatedMetadata,
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
@@ -2053,7 +2080,7 @@ object GalleryManager {
             val preparedGainmapResult = preparedUltraHdrSource?.let { source ->
                 var result: GainmapResult? = null
                 val gainmapElapsed = measureTimeMillis {
-                    result = gainmapProducer.build(source, HdrGainmapStrength.coerce(metadata.hdrEffectStrength))
+                    result = gainmapProducer.build(source, HdrGainmapStrength.coerce(updatedMetadata.hdrEffectStrength))
                 }
                 PLog.d(TAG, "saveRawStackedPhoto prepared gainmap for reuse, took=${gainmapElapsed}ms")
                 result
@@ -2063,7 +2090,7 @@ object GalleryManager {
                 buildDetailHdrCache(
                     context = context,
                     photoId = photoId,
-                    metadata = metadata,
+                    metadata = updatedMetadata,
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
@@ -2072,7 +2099,7 @@ object GalleryManager {
                 )
             }
 
-            updateThumbnail(context, photoId, photoProcessor, metadata, bitmap)
+            updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
             // Auto Save
             if (shouldAutoSave) {
                 exportPhoto(
@@ -2080,7 +2107,7 @@ object GalleryManager {
                     photoId,
                     bitmap,
                     photoProcessor,
-                    metadata,
+                    updatedMetadata,
                     sharpeningValue,
                     noiseReductionValue,
                     chromaNoiseReductionValue,
@@ -2381,33 +2408,41 @@ object GalleryManager {
         val photoDir = getPhotoDir(context, photoId, true)
         val photoFile = File(photoDir, PHOTO_FILE)
         val tempFile = File(photoDir, "temp.jpg")
+        var updatedMetadata: MediaMetadata = metadata
         val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
             context,
             dngFile.absolutePath,
             aspectRatio = aspectRatio,
-            cropRegion = metadata.cropRegion,
+            cropRegion = updatedMetadata.cropRegion,
             rotation = rotation,
             exposureBias = exposureBias ?: 0f,
-            rawExposureCompensation = metadata.rawExposureCompensation ?: 0f,
-            rawAutoExposure = resolveRawAutoExposure(context, metadata),
-            rawBlackPointCorrection = metadata.rawBlackPointCorrection ?: 0f,
-            rawWhitePointCorrection = metadata.rawWhitePointCorrection ?: 0f,
-            rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, metadata),
+            rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
+            rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+            rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
+            rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
+            rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
+            rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
+            rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
             sharpeningValue = 0.4f,
-            denoiseValue = metadata.rawDenoiseValue,
-            rawDcpId = metadata.rawDcpId,
-            spectralFilmEnabled = metadata.spectralFilmEnabled,
-            spectralFilmStock = metadata.spectralFilmStock,
-            spectralFilmPrint = metadata.spectralFilmPrint,
+            denoiseValue = updatedMetadata.rawDenoiseValue,
+            rawDcpId = updatedMetadata.rawDcpId,
+            spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+            spectralFilmStock = updatedMetadata.spectralFilmStock,
+            spectralFilmPrint = updatedMetadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
-                cDensityGain = metadata.spectralFilmCDensityGain,
-                mDensityGain = metadata.spectralFilmMDensityGain,
-                yDensityGain = metadata.spectralFilmYDensityGain
-            )
+                cDensityGain = updatedMetadata.spectralFilmCDensityGain,
+                mDensityGain = updatedMetadata.spectralFilmMDensityGain,
+                yDensityGain = updatedMetadata.spectralFilmYDensityGain
+            ),
+            onRawAutoAdjustments = { adjustments ->
+                updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+            }
         ) ?: return
         var bitmap = rawResult.sdrBitmap
 
-        if (metadata.isMirrored) {
+        saveMetadata(context, photoId, updatedMetadata)
+
+        if (updatedMetadata.isMirrored) {
             bitmap = BitmapUtils.flipHorizontal(bitmap)
         }
 
@@ -2415,14 +2450,14 @@ object GalleryManager {
             writeFinalJpeg(bitmap, outputStream, photoQuality)
         }
         tempFile.renameTo(photoFile)
-        generateBokehPhoto(context, photoId, metadata, bitmap)
+        generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
 
-        val preparedUltraHdrSource = if (metadata.manualHdrEffectEnabled) {
+        val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
             photoProcessor.prepareUltraHdrSourceFromRawResult(
                 context = context,
                 photoId = photoId,
                 rawResult = rawResult,
-                metadata = metadata,
+                metadata = updatedMetadata,
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
@@ -2434,7 +2469,7 @@ object GalleryManager {
         val preparedGainmapResult = preparedUltraHdrSource?.let { source ->
             var result: GainmapResult? = null
             val gainmapElapsed = measureTimeMillis {
-                result = gainmapProducer.build(source, HdrGainmapStrength.coerce(metadata.hdrEffectStrength))
+                result = gainmapProducer.build(source, HdrGainmapStrength.coerce(updatedMetadata.hdrEffectStrength))
             }
             PLog.d(TAG, "renderRawDngPhotoOutputs prepared gainmap for reuse, took=${gainmapElapsed}ms")
             result
@@ -2444,7 +2479,7 @@ object GalleryManager {
             buildDetailHdrCache(
                 context = context,
                 photoId = photoId,
-                metadata = metadata,
+                metadata = updatedMetadata,
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
@@ -2453,14 +2488,14 @@ object GalleryManager {
             )
         }
 
-        updateThumbnail(context, photoId, photoProcessor, metadata, bitmap)
+        updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
         if (shouldAutoSave) {
             exportPhoto(
                 context,
                 photoId,
                 bitmap,
                 photoProcessor,
-                metadata,
+                updatedMetadata,
                 sharpeningValue,
                 noiseReductionValue,
                 chromaNoiseReductionValue,
@@ -3360,12 +3395,14 @@ object GalleryManager {
                     }
 
                     // 3. 处理 RAW 以生成 JPEG 预览
-                    var updatedMetadata = metadata
+                    var updatedMetadata: MediaMetadata = metadata
                     val processedBitmap = RawDemosaicProcessor.getInstance().process(
                         context,
                         dngFile.absolutePath, null, null, 0,
                         rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
                         rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+                        rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
+                        rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
                         rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
                         rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
                         rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
@@ -3382,6 +3419,9 @@ object GalleryManager {
                         ),
                         onMetadata = { raw ->
                             updatedMetadata = updatedMetadata.merge(raw)
+                        },
+                        onRawAutoAdjustments = { adjustments ->
+                            updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
                         }
                     )
 
@@ -3509,6 +3549,8 @@ object GalleryManager {
                     dngFile.absolutePath, metadata?.ratio, metadata?.cropRegion, 0,
                     rawExposureCompensation = updatedMetadata?.rawExposureCompensation ?: 0f,
                     rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+                    rawHighlightsAdjustment = updatedMetadata?.rawHighlightsAdjustment ?: 0f,
+                    rawShadowsAdjustment = updatedMetadata?.rawShadowsAdjustment ?: 0f,
                     rawBlackPointCorrection = updatedMetadata?.rawBlackPointCorrection ?: 0f,
                     rawWhitePointCorrection = updatedMetadata?.rawWhitePointCorrection ?: 0f,
                     rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
@@ -3525,6 +3567,9 @@ object GalleryManager {
                     ),
                     onMetadata = { raw ->
                         updatedMetadata = updatedMetadata?.merge(raw) ?: MediaMetadata().merge(raw)
+                    },
+                    onRawAutoAdjustments = { adjustments ->
+                        updatedMetadata = (updatedMetadata ?: MediaMetadata()).withRawAutoAdjustments(adjustments)
                     }
                 )
 

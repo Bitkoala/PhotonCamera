@@ -630,6 +630,8 @@
     <string name="settings_dro_dr400">DR400</string>
     <string name="settings_raw_nlm_noise_factor">Denoise</string>
     <string name="settings_raw_exposure_compensation">Exposure Compensation</string>
+    <string name="settings_raw_highlights_adjustment">Highlights</string>
+    <string name="settings_raw_shadows_adjustment">Shadows</string>
     <string name="settings_spectral_film">Spectral Film Simulation</string>
     <string name="settings_spectral_film_description">Simulate classic negative film and print medium color curves.</string>
     <string name="settings_negative_film">Negative Film</string>

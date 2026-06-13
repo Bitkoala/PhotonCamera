@@ -5,6 +5,7 @@ import android.util.Half
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
 import java.nio.ShortBuffer
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
@@ -26,27 +27,35 @@ object MeteringSystem {
     private const val LUMA_FLOOR = 0.001f
     private const val MAX_LINEAR_LUMA = 16.0f
     private const val MIN_DEPTH_SEPARATION = 0.08f
+    private const val RAW_CURVE_NEUTRAL_WHITE_POINT = 1.0f
+    private const val AUTO_DEVELOP_EPSILON = 0.0001f
+    private const val AUTO_CLIP_FRACTION = 0.0002f
+    private const val RAW_AUTO_HIGHLIGHT_LIMIT = 0.85f
+    private const val RAW_AUTO_SHADOW_LIMIT = 0.65f
+    private const val RAW_AUTO_HIGHLIGHT_RATIO_START = 0.02f
+    private const val RAW_AUTO_HIGHLIGHT_RATIO_FULL = 0.30f
+    private const val RAW_AUTO_SHADOW_GAP_DEAD_ZONE_EV = 0.45f
+    private const val RAW_AUTO_SHADOW_GAP_FULL_EV = 2.4f
+    private const val RAW_AUTO_DEEP_SHADOW_GAP_DEAD_ZONE_EV = 1.5f
+    private const val RAW_AUTO_DEEP_SHADOW_GAP_FULL_EV = 3.6f
 
 
     data class MeteringResult(
         val meteredEv: Float,
         val dynamicRangeGap: Float,
         val avgLuma: Float,
-        val p05: Float,
-        val p50: Float,
-        val p95: Float,
-        val p99: Float,
-        val p998: Float
+        val clipLow: Float,
+        val clipHigh: Float,
+        val highlights: Float,
+        val shadows: Float,
+        val curveWhitePoint: Float
     ) {
         fun scaleLuma(scale: Float): MeteringResult {
             val safeScale = if (scale.isFinite() && scale > 0f) scale else 1f
             return copy(
                 avgLuma = (avgLuma * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
-                p05 = (p05 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
-                p50 = (p50 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
-                p95 = (p95 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
-                p99 = (p99 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
-                p998 = (p998 * safeScale).coerceIn(0f, MAX_LINEAR_LUMA)
+                clipLow = (clipLow * safeScale).coerceIn(0f, MAX_LINEAR_LUMA),
+                clipHigh = (clipHigh * safeScale).coerceIn(0f, MAX_LINEAR_LUMA)
             )
         }
 
@@ -55,11 +64,25 @@ object MeteringSystem {
                 meteredEv = 0f,
                 dynamicRangeGap = 0f,
                 avgLuma = 0f,
-                p05 = 0f,
-                p50 = 0f,
-                p95 = 0f,
-                p99 = 0f,
-                p998 = 0f
+                clipLow = 0f,
+                clipHigh = 0f,
+                highlights = 0f,
+                shadows = 0f,
+                curveWhitePoint = 0f
+            )
+        }
+    }
+
+    data class ShadowsHighlightsParams(
+        val highlights: Float,
+        val shadows: Float,
+        val curveWhitePoint: Float,
+    ) {
+        companion object {
+            val NEUTRAL = ShadowsHighlightsParams(
+                highlights = 0f,
+                shadows = 0f,
+                curveWhitePoint = RAW_CURVE_NEUTRAL_WHITE_POINT,
             )
         }
     }
@@ -94,6 +117,8 @@ object MeteringSystem {
         val weight: Float
     )
 
+
+
     @SuppressLint("HalfFloat")
     fun analyzeLinearHalfFloatExposureEv(
         pixelBuffer: ShortBuffer,
@@ -116,6 +141,31 @@ object MeteringSystem {
             val b = Half.toFloat(pixelBuffer.get(base + 2))
             r * 0.2126f + g * 0.7152f + b * 0.0722f
         }
+    }
+
+    fun hasManualRawDevelopAdjustments(
+        rawExposureCompensation: Float,
+        rawHighlightsAdjustment: Float,
+        rawShadowsAdjustment: Float
+    ): Boolean {
+        return abs(rawExposureCompensation) > AUTO_DEVELOP_EPSILON ||
+            abs(rawHighlightsAdjustment) > AUTO_DEVELOP_EPSILON ||
+            abs(rawShadowsAdjustment) > AUTO_DEVELOP_EPSILON
+    }
+
+    fun resolveManualShadowsHighlightsParams(
+        rawHighlightsAdjustment: Float,
+        rawShadowsAdjustment: Float
+    ): ShadowsHighlightsParams {
+        val highlights = rawHighlightsAdjustment.coerceIn(-1f, 1f)
+        val shadows = rawShadowsAdjustment.coerceIn(-1f, 1f)
+        if (abs(highlights) <= AUTO_DEVELOP_EPSILON && abs(shadows) <= AUTO_DEVELOP_EPSILON) {
+            return ShadowsHighlightsParams.NEUTRAL
+        }
+        return ShadowsHighlightsParams.NEUTRAL.copy(
+            highlights = highlights,
+            shadows = shadows
+        )
     }
 
     private inline fun analyzeExposureEv(
@@ -156,43 +206,49 @@ object MeteringSystem {
         val midToneLuma = midToneReference.luma
 
         lumas.sort()
+        val clipLow = percentile(lumas, AUTO_CLIP_FRACTION)
         val p05 = percentile(lumas, 0.05f)
-        val p50 = percentile(lumas, 0.50f)
-        val p95 = percentile(lumas, 0.95f)
+        val p25 = percentile(lumas, 0.25f)
+        val p75 = percentile(lumas, 0.75f)
         val p99 = percentile(lumas, 0.99f)
-        val p998 = percentile(lumas, 0.998f)
+        val clipHigh = percentile(lumas, 1f - AUTO_CLIP_FRACTION)
 
-        val highlightAnchorGain = 1f //linearExposureGain / p998.coerceAtLeast(0.01f)
-        val avgLuma = midToneLuma
+        val highlightAnchorGain = maxOf(linearExposureGain, clipHigh) / clipHigh.coerceAtLeast(0.01f)
         val midToneGain = targetLuma / midToneLuma.coerceAtLeast(LUMA_FLOOR)
-        val dynamicRangeGap = midToneGain / highlightAnchorGain
+        val dynamicRangeGap = evDifference(clipHigh, clipLow)
 
-        val extra = smoothStep(0.66f, 2.2f, dynamicRangeGap)
-        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain * 1.2f, extra)
+        val extra = smoothStep(4f, 12f, dynamicRangeGap)
+        val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain, extra)
         val rawMeteredEv = log2(adaptiveGain.coerceIn(0.25f, 4.0f))
+
+        val highlights = 0f
+        val shadows = 0f
+
+        // Curve points
+        val curveWhitePoint = if (clipHigh > 1f) {
+            clipHigh.coerceIn(1.05f, 4.0f)
+        } else {
+            RAW_CURVE_NEUTRAL_WHITE_POINT
+        }
 
         PLog.d(
             TAG,
-            "$tag: p05=$p05 p50=$p50 p95=$p95 p99=$p99 p998=$p998 " +
+            "$tag: clipLow=$clipLow clipHigh=$clipHigh " +
+                "p05=$p05 p25=$p25 p75=$p75 p99=$p99 " +
                 "target=$targetLuma midToneLuma=$midToneLuma " +
-                "midToneZoneMedianLuma=${midToneReference.zoneMedianLuma} " +
-                "midToneBucketMedianLuma=${midToneReference.bucketMedianLuma} " +
-                "midToneZones=${midToneReference.retainedZoneCount} midToneBuckets=${midToneReference.retainedBucketCount} " +
                 "midToneGain=$midToneGain highlightAnchorGain=$highlightAnchorGain gain=$adaptiveGain " +
-                "ev=$rawMeteredEv gap=$dynamicRangeGap " +
-                "depth=${depthWeights?.enabled == true} depthSeparation=${depthWeights?.separation ?: 0f} " +
-                "sanitized=$sanitizedSampleCount"
+                "ev=$rawMeteredEv gap=$dynamicRangeGap "
         )
 
         return MeteringResult(
             meteredEv = rawMeteredEv.coerceIn(-2f, 2f),
             dynamicRangeGap = dynamicRangeGap,
-            avgLuma = avgLuma,
-            p05 = p05,
-            p50 = p50,
-            p95 = p95,
-            p99 = p99,
-            p998 = p998
+            avgLuma = midToneLuma,
+            clipLow = clipLow,
+            clipHigh = clipHigh,
+            highlights = highlights,
+            shadows = shadows,
+            curveWhitePoint = curveWhitePoint
         )
     }
 
@@ -595,6 +651,40 @@ object MeteringSystem {
         }
     }
 
+    private fun calculateHighlightRatio(sortedLumas: FloatArray, avgLuma: Float): Float {
+        if (sortedLumas.isEmpty()) {
+            return 0f
+        }
+
+        var weightedHighlightCount = 0.0
+        for (luma in sortedLumas) {
+            if (luma > avgLuma * 2.22f) {
+                weightedHighlightCount += 1
+            }
+        }
+
+        return (weightedHighlightCount / sortedLumas.size).toFloat().coerceIn(0f, 1f)
+    }
+
+    private fun calculateAutoHighlightCompression(highlightRatio: Float): Float {
+        return (
+            smoothStep(
+                RAW_AUTO_HIGHLIGHT_RATIO_START,
+                RAW_AUTO_HIGHLIGHT_RATIO_FULL,
+                highlightRatio.coerceIn(0f, 1f)
+            ) * RAW_AUTO_HIGHLIGHT_LIMIT
+        ).coerceIn(0f, RAW_AUTO_HIGHLIGHT_LIMIT)
+    }
+
+    private fun calculateAutoShadowLift(
+        shadowGapEv: Float,
+        deepShadowGapEv: Float
+    ): Float {
+        val shadowLift = smoothStep(0f, RAW_AUTO_SHADOW_GAP_FULL_EV, shadowGapEv) * 0.42f
+        val deepShadowLift = smoothStep(0f, RAW_AUTO_DEEP_SHADOW_GAP_FULL_EV, deepShadowGapEv) * 0.23f
+        return (shadowLift + deepShadowLift).coerceIn(0f, RAW_AUTO_SHADOW_LIMIT)
+    }
+
     private fun percentile(sortedValues: FloatArray, percentile: Float): Float {
         if (sortedValues.isEmpty()) {
             return 0f
@@ -602,6 +692,12 @@ object MeteringSystem {
 
         val index = ((sortedValues.size - 1) * percentile.coerceIn(0f, 1f)).toInt()
         return sortedValues[index]
+    }
+
+    private fun evDifference(brighter: Float, darker: Float): Float {
+        val safeBrighter = sanitizeLinearLuma(brighter).coerceAtLeast(LUMA_FLOOR)
+        val safeDarker = sanitizeLinearLuma(darker).coerceAtLeast(1e-5f)
+        return log2(safeBrighter / safeDarker)
     }
 
     private fun log2(value: Float): Float {

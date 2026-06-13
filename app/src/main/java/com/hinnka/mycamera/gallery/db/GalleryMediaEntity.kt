@@ -45,6 +45,8 @@ data class GalleryMediaEntity(
     val rawDenoiseValue: Float?,
     val rawExposureCompensation: Float?,
     val rawAutoExposure: Boolean?,
+    val rawHighlightsAdjustment: Float?,
+    val rawShadowsAdjustment: Float?,
     val rawBlackPointCorrection: Float?,
     val rawWhitePointCorrection: Float?,
     val rawAutoWhiteBalanceEstimate: Boolean?,

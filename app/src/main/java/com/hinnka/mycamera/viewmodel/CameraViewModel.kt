@@ -841,6 +841,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val rawAutoExposure: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.rawAutoExposure }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val rawHighlightsAdjustment: StateFlow<Float> = userPreferencesRepository.userPreferences
+        .map { it.rawHighlightsAdjustment }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+    val rawShadowsAdjustment: StateFlow<Float> = userPreferencesRepository.userPreferences
+        .map { it.rawShadowsAdjustment }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
     val rawMinShutterSpeedNs: StateFlow<Long> = userPreferencesRepository.userPreferences
         .map { it.rawMinShutterSpeedNs }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
@@ -1499,6 +1505,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setRawAutoExposure(enabled: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveRawAutoExposure(enabled) }
     }
+    fun setRawHighlightsAdjustment(value: Float) {
+        viewModelScope.launch { userPreferencesRepository.saveRawHighlightsAdjustment(value) }
+    }
+    fun setRawShadowsAdjustment(value: Float) {
+        viewModelScope.launch { userPreferencesRepository.saveRawShadowsAdjustment(value) }
+    }
     fun setRawMinShutterSpeedNs(value: Long) {
         viewModelScope.launch { userPreferencesRepository.saveRawMinShutterSpeedNs(value) }
     }
@@ -1732,6 +1744,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
+            rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
+            rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -3747,6 +3761,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
+                rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
+                rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -3880,6 +3896,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
+                rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
+                rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -4029,6 +4047,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
+                rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
+                rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
                 rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
@@ -4429,6 +4449,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDenoiseValue = userPrefs?.rawNlmNoiseFactor ?: 0f,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
+            rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
+            rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
             rawWhitePointCorrection = userPrefs?.rawWhitePointCorrection ?: 0f,
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,

@@ -5,14 +5,21 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.media.Image
-import android.opengl.*
+import android.opengl.EGL14
+import android.opengl.EGLConfig
+import android.opengl.EGLContext
+import android.opengl.EGLDisplay
+import android.opengl.EGLSurface
+import android.opengl.GLES30
+import android.opengl.GLES31
 import android.util.Half
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
-import com.hinnka.mycamera.lut.ShadowsHighlightsShader
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
+import com.hinnka.mycamera.lut.ShadowsHighlightsShader
 import com.hinnka.mycamera.ml.SharedDepthEstimator
+import com.hinnka.mycamera.raw.MeteringSystem.ShadowsHighlightsParams
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
@@ -33,6 +40,8 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 import android.opengl.Matrix as GlMatrix
 
+private typealias ShadowsHighlightsParams = MeteringSystem.ShadowsHighlightsParams
+
 /**
  * RAW 图像解马赛克处理器
  *
@@ -48,22 +57,6 @@ import android.opengl.Matrix as GlMatrix
  * 8. 最终锐化 (Unsharp Mask)
  */
 class RawDemosaicProcessor {
-
-    private data class ShadowsHighlightsParams(
-        val highlights: Float,
-        val shadows: Float,
-        val curveWhitePoint: Float,
-        val curveShoulderStart: Float
-    ) {
-        companion object {
-            val NEUTRAL = ShadowsHighlightsParams(
-                highlights = 0f,
-                shadows = 0f,
-                curveWhitePoint = 1f,
-                curveShoulderStart = 0.78f
-            )
-        }
-    }
 
     /**
      * DNG 数据容器（包含原始 DngRawData 用于清理）
@@ -307,6 +300,12 @@ class RawDemosaicProcessor {
         val curveLut: FloatArray? = null
     )
 
+    data class RawAutoAdjustments(
+        val exposureCompensation: Float,
+        val highlights: Float,
+        val shadows: Float
+    )
+
     private fun SceneStats.toRenderPlan(): RawRenderPlan {
         return RawRenderPlan(
             sceneNormalizationGain = exposureGain,
@@ -343,6 +342,8 @@ class RawDemosaicProcessor {
         exposureBias: Float = 0f,
         rawExposureCompensation: Float = 0f,
         rawAutoExposure: Boolean = true,
+        rawHighlightsAdjustment: Float = 0f,
+        rawShadowsAdjustment: Float = 0f,
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
@@ -354,6 +355,7 @@ class RawDemosaicProcessor {
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -371,6 +373,8 @@ class RawDemosaicProcessor {
                 exposureBias = exposureBias,
                 rawExposureCompensation = rawExposureCompensation,
                 rawAutoExposure = rawAutoExposure,
+                rawHighlightsAdjustment = rawHighlightsAdjustment,
+                rawShadowsAdjustment = rawShadowsAdjustment,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
@@ -383,6 +387,7 @@ class RawDemosaicProcessor {
                 spectralFilmPrint = spectralFilmPrint,
                 spectralFilmTuning = spectralFilmTuning,
                 dngFile = dngFile,
+                onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata
             )?.sdrBitmap
         } catch (e: Exception) {
@@ -406,6 +411,8 @@ class RawDemosaicProcessor {
         rotation: Int,
         rawExposureCompensation: Float = 0f,
         rawAutoExposure: Boolean = true,
+        rawHighlightsAdjustment: Float = 0f,
+        rawShadowsAdjustment: Float = 0f,
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
@@ -439,6 +446,8 @@ class RawDemosaicProcessor {
                 rotation = rotation,
                 rawExposureCompensation = rawExposureCompensation,
                 rawAutoExposure = rawAutoExposure,
+                rawHighlightsAdjustment = rawHighlightsAdjustment,
+                rawShadowsAdjustment = rawShadowsAdjustment,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
@@ -467,6 +476,8 @@ class RawDemosaicProcessor {
         exposureBias: Float = 0f,
         rawExposureCompensation: Float = 0f,
         rawAutoExposure: Boolean = true,
+        rawHighlightsAdjustment: Float = 0f,
+        rawShadowsAdjustment: Float = 0f,
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
@@ -478,6 +489,7 @@ class RawDemosaicProcessor {
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -495,6 +507,8 @@ class RawDemosaicProcessor {
                 exposureBias = exposureBias,
                 rawExposureCompensation = rawExposureCompensation,
                 rawAutoExposure = rawAutoExposure,
+                rawHighlightsAdjustment = rawHighlightsAdjustment,
+                rawShadowsAdjustment = rawShadowsAdjustment,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
@@ -507,6 +521,7 @@ class RawDemosaicProcessor {
                 spectralFilmPrint = spectralFilmPrint,
                 spectralFilmTuning = spectralFilmTuning,
                 dngFile = dngFile,
+                onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata,
                 includeHdrReference = true
             )
@@ -532,6 +547,8 @@ class RawDemosaicProcessor {
         exposureBias: Float = 0f,
         rawExposureCompensation: Float = 0f,
         rawAutoExposure: Boolean = true,
+        rawHighlightsAdjustment: Float = 0f,
+        rawShadowsAdjustment: Float = 0f,
         rawBlackPointCorrection: Float = 0f,
         rawWhitePointCorrection: Float = 0f,
         rawAutoWhiteBalanceEstimate: Boolean = false,
@@ -545,6 +562,7 @@ class RawDemosaicProcessor {
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
         dngFile: File? = null,
+        onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
         includeHdrReference: Boolean = false
     ): RawHdrRenderResult? = withContext(glDispatcher) {
@@ -661,8 +679,6 @@ class RawDemosaicProcessor {
             )
             // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
             actualRawData = null
-
-            var effectiveExposureCompensation = rawExposureCompensation
 
             // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
             val ssboIds = IntArray(9)
@@ -932,13 +948,42 @@ class RawDemosaicProcessor {
                 useDepthWeighting = rawAutoExposure
             )
 
-            if (rawAutoExposure) {
-                val autoExposureEv = meteringResult.meteredEv
-                effectiveExposureCompensation += autoExposureEv
-            }
-            val shadowsHighlightsParams = resolveShadowsHighlightsParams(
-                meteringResult = meteringResult.scaleLuma(2.0f.pow(effectiveExposureCompensation))
+            val useAutoDevelopAdjustments = rawAutoExposure && !MeteringSystem.hasManualRawDevelopAdjustments(
+                rawExposureCompensation = rawExposureCompensation,
+                rawHighlightsAdjustment = rawHighlightsAdjustment,
+                rawShadowsAdjustment = rawShadowsAdjustment
             )
+            val effectiveExposureCompensation = if (useAutoDevelopAdjustments) {
+                meteringResult.meteredEv
+            } else {
+                rawExposureCompensation
+            }
+            val shadowsHighlightsParams = if (useAutoDevelopAdjustments) {
+                ShadowsHighlightsParams(
+                    highlights = meteringResult.highlights,
+                    shadows = meteringResult.shadows,
+                    curveWhitePoint = meteringResult.curveWhitePoint
+                )
+            } else {
+                MeteringSystem.resolveManualShadowsHighlightsParams(
+                    rawHighlightsAdjustment = rawHighlightsAdjustment,
+                    rawShadowsAdjustment = rawShadowsAdjustment
+                )
+            }
+            if (useAutoDevelopAdjustments) {
+                RawAutoAdjustments(
+                    exposureCompensation = effectiveExposureCompensation.coerceIn(-2f, 2f),
+                    highlights = shadowsHighlightsParams.highlights,
+                    shadows = shadowsHighlightsParams.shadows
+                ).also { adjustments ->
+                    PLog.d(
+                        TAG,
+                        "RAW auto develop sliders: exposure=${adjustments.exposureCompensation} " +
+                            "highlights=${adjustments.highlights} shadows=${adjustments.shadows}"
+                    )
+                    onRawAutoAdjustments?.invoke(adjustments)
+                }
+            }
 
             // 运行 linearRcdProgram 将 CCM & Exposure 应用在已解马赛克的浮点 RCD 图像上
             checkGlError("Before LinearRcdPass")
@@ -3322,7 +3367,7 @@ class RawDemosaicProcessor {
                 "RAW Shadows/Highlights uniforms: " +
                     "uHighlightsLoc=$highlightsLocation uShadowsLoc=$shadowsLocation " +
                     "highlights=${params.highlights} shadows=${params.shadows} " +
-                    "curveWhitePoint=${params.curveWhitePoint} curveShoulderStart=${params.curveShoulderStart}"
+                    "curveWhitePoint=${params.curveWhitePoint}"
             )
         }
         GLES30.glUniform1f(
@@ -3331,7 +3376,7 @@ class RawDemosaicProcessor {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(combinedProgram, "uCurveShoulderStart"),
-            params.curveShoulderStart
+            0.4f
         )
     }
 
@@ -3540,97 +3585,6 @@ class RawDemosaicProcessor {
         val normalizationGain = ExposureNormalization.compute(metadata)
         val dcpBaselineExposureOffset = dcpRenderPlan?.baselineExposureOffset ?: 0f
         return normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
-    }
-
-    private fun resolveShadowsHighlightsParams(
-        meteringResult: MeteringSystem.MeteringResult
-    ): ShadowsHighlightsParams {
-        if (meteringResult.p50 <= 0f || meteringResult.p998 <= 0f) {
-            return ShadowsHighlightsParams.NEUTRAL
-        }
-
-        val p05 = sanitizeToneLuma(meteringResult.p05)
-        val p50 = sanitizeToneLuma(meteringResult.p50).coerceAtLeast(p05 + 1e-4f)
-        val p95 = sanitizeToneLuma(meteringResult.p95).coerceAtLeast(p50 + 1e-4f)
-        val p99 = sanitizeToneLuma(meteringResult.p99).coerceAtLeast(p95 + 1e-4f)
-        val p998 = sanitizeToneLuma(meteringResult.p998).coerceAtLeast(p99 + 1e-4f)
-
-        val l05 = labLightnessSignal(p05)
-        val l50 = labLightnessSignal(p50).coerceAtLeast(l05 + 1e-4f)
-        val l95 = labLightnessSignal(p95).coerceAtLeast(l50 + 1e-4f)
-        val l99 = labLightnessSignal(p99).coerceAtLeast(l95 + 1e-4f)
-        val l998 = labLightnessSignal(p998).coerceAtLeast(l99 + 1e-4f)
-
-        val shadowTailRatio = (1f - l05 / l50.coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
-        val shadowVisibility = smoothStep(0.035f, 0.16f, l50)
-        val lowKeyProtection = smoothStep(0.55f, 0.85f, l95)
-        val midtoneDeficit = (1f - smoothStep(0.20f, 0.42f, l50)).coerceIn(0f, 1f)
-        val shadowScale = 0.08f + 0.10f * lowKeyProtection
-
-        val highlightBodyPressure = smoothStep(0.72f, 0.92f, l95) * 0.65f
-        val highlightTailPressure = smoothStep(0.95f, 1.10f, l99)
-        val highlightPressure = max(highlightBodyPressure, highlightTailPressure)
-        val highlightTailSpread = smoothStep(0.04f, 0.16f, l998 - l95)
-        val highlightStrength = (highlightPressure * (0.45f + 0.55f * highlightTailSpread))
-            .coerceIn(0f, 0.95f)
-        val highlights = -highlightStrength
-        val highlightSuppression = 1f - highlightPressure * 0.78f
-        val shadows = (shadowTailRatio * shadowVisibility * midtoneDeficit * shadowScale * highlightSuppression)
-            .coerceIn(0f, 0.22f)
-        val curveWhitePoint = if (p99 > 1f || p998 > 1.05f) {
-            p998.coerceIn(1.05f, 4.0f)
-        } else {
-            1f
-        }
-        val curveShoulderStart = (0.78f - highlightPressure * 0.20f).coerceIn(0.56f, 0.82f)
-
-        val params = ShadowsHighlightsParams(
-            highlights = highlights,
-            shadows = shadows,
-            curveWhitePoint = curveWhitePoint,
-            curveShoulderStart = curveShoulderStart
-        )
-        PLog.d(
-            TAG,
-            "Histogram Shadows/Highlights: p05=$p05 p50=$p50 p95=$p95 p99=$p99 p998=$p998 " +
-                "labL=[$l05,$l50,$l95,$l99,$l998] " +
-                "shadowTail=$shadowTailRatio shadowVisibility=$shadowVisibility " +
-                "lowKeyProtection=$lowKeyProtection midtoneDeficit=$midtoneDeficit " +
-                "highlightPressure=$highlightPressure highlightSuppression=$highlightSuppression " +
-                "rawHighlightStrength=$highlightStrength sharedLocalTone=true " +
-                "curveWhitePoint=$curveWhitePoint curveShoulderStart=$curveShoulderStart " +
-                "sliders highlights=$highlights shadows=$shadows"
-        )
-        return params
-    }
-
-    private fun labLightnessSignal(luma: Float): Float {
-        val safeLuma = sanitizeToneLuma(luma)
-        val epsilon = 216f / 24389f
-        val kappa = 24389f / 27f
-        val fy = if (safeLuma > epsilon) {
-            safeLuma.pow(1f / 3f)
-        } else {
-            (kappa * safeLuma + 16f) / 116f
-        }
-        return ((116f * fy - 16f) / 100f).coerceAtLeast(0f)
-    }
-
-    private fun sanitizeToneLuma(value: Float): Float {
-        return if (value.isFinite() && value > 0f) {
-            value.coerceAtMost(16f)
-        } else {
-            0f
-        }
-    }
-
-    private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
-        val width = edge1 - edge0
-        if (!edge0.isFinite() || !edge1.isFinite() || !x.isFinite() || abs(width) < 1e-6f) {
-            return if (x >= edge1) 1f else 0f
-        }
-        val t = ((x - edge0) / width).coerceIn(0f, 1f)
-        return t * t * (3f - 2f * t)
     }
 
     private fun renderLinearRcdPass(

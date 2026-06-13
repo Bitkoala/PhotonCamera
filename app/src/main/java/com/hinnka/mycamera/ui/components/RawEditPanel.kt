@@ -49,6 +49,8 @@ fun RawEditPanel(
     rawNlmNoiseFactor: Float,
     rawExposureCompensation: Float,
     rawAutoExposure: Boolean,
+    rawHighlightsAdjustment: Float,
+    rawShadowsAdjustment: Float,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
     spectralFilmEnabled: Boolean,
@@ -60,6 +62,8 @@ fun RawEditPanel(
     onRawNlmNoiseFactorChange: (Float) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
     onRawAutoExposureChange: (Boolean) -> Unit,
+    onRawHighlightsAdjustmentChange: (Float) -> Unit,
+    onRawShadowsAdjustmentChange: (Float) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onSpectralFilmEnabledChange: (Boolean) -> Unit,
@@ -197,6 +201,28 @@ fun RawEditPanel(
                 onValueChange = {
                     onAdjustmentStart()
                     onRawExposureCompensationChange(it)
+                },
+                onValueChangeFinished = onAdjustmentEnd
+            )
+            SliderSettingItem(
+                title = stringResource(R.string.settings_raw_highlights_adjustment),
+                value = rawHighlightsAdjustment,
+                valueRange = -1f..1f,
+                resetValue = 0f,
+                onValueChange = {
+                    onAdjustmentStart()
+                    onRawHighlightsAdjustmentChange(it)
+                },
+                onValueChangeFinished = onAdjustmentEnd
+            )
+            SliderSettingItem(
+                title = stringResource(R.string.settings_raw_shadows_adjustment),
+                value = rawShadowsAdjustment,
+                valueRange = -1f..1f,
+                resetValue = 0f,
+                onValueChange = {
+                    onAdjustmentStart()
+                    onRawShadowsAdjustmentChange(it)
                 },
                 onValueChangeFinished = onAdjustmentEnd
             )

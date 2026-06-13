@@ -260,6 +260,8 @@ fun SettingsScreen(
     val rawNlmNoiseFactor by viewModel.rawNlmNoiseFactor.collectAsState()
     val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
     val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
+    val rawHighlightsAdjustment by viewModel.rawHighlightsAdjustment.collectAsState()
+    val rawShadowsAdjustment by viewModel.rawShadowsAdjustment.collectAsState()
     val rawMinShutterSpeedNs by viewModel.rawMinShutterSpeedNs.collectAsState()
     val droMode by viewModel.droMode.collectAsState()
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
@@ -280,16 +282,27 @@ fun SettingsScreen(
     var mainCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
     var rawNlmNoiseFactorUi by remember { mutableStateOf(rawNlmNoiseFactor) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
+    var rawHighlightsAdjustmentUi by remember { mutableStateOf(rawHighlightsAdjustment) }
+    var rawShadowsAdjustmentUi by remember { mutableStateOf(rawShadowsAdjustment) }
     var rawBlackPointCorrectionUi by remember { mutableStateOf(rawBlackPointCorrection) }
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
     var aiFocusScoreThresholdUi by remember(aiFocusScoreThreshold) { mutableStateOf(aiFocusScoreThreshold) }
     var showAspectRatioDialog by remember { mutableStateOf(false) }
     var backupOperation by remember { mutableStateOf<BackupOperation?>(null) }
 
-    LaunchedEffect(rawNlmNoiseFactor, rawExposureCompensation, rawBlackPointCorrection, rawWhitePointCorrection) {
+    LaunchedEffect(
+        rawNlmNoiseFactor,
+        rawExposureCompensation,
+        rawHighlightsAdjustment,
+        rawShadowsAdjustment,
+        rawBlackPointCorrection,
+        rawWhitePointCorrection
+    ) {
         if (!isRawSliderAdjusting) {
             rawNlmNoiseFactorUi = rawNlmNoiseFactor
             rawExposureCompensationUi = rawExposureCompensation
+            rawHighlightsAdjustmentUi = rawHighlightsAdjustment
+            rawShadowsAdjustmentUi = rawShadowsAdjustment
             rawBlackPointCorrectionUi = rawBlackPointCorrection
             rawWhitePointCorrectionUi = rawWhitePointCorrection
         }
@@ -307,6 +320,8 @@ fun SettingsScreen(
         isRawSliderAdjusting = false
         viewModel.setRawNlmNoiseFactor(rawNlmNoiseFactorUi)
         viewModel.setRawExposureCompensation(rawExposureCompensationUi)
+        viewModel.setRawHighlightsAdjustment(rawHighlightsAdjustmentUi)
+        viewModel.setRawShadowsAdjustment(rawShadowsAdjustmentUi)
         viewModel.setRawBlackPointCorrection(rawBlackPointCorrectionUi)
         viewModel.setRawWhitePointCorrection(rawWhitePointCorrectionUi)
     }
@@ -1345,6 +1360,8 @@ fun SettingsScreen(
                         rawNlmNoiseFactor = rawNlmNoiseFactorUi,
                         rawExposureCompensation = rawExposureCompensationUi,
                         rawAutoExposure = rawAutoExposure,
+                        rawHighlightsAdjustment = rawHighlightsAdjustmentUi,
+                        rawShadowsAdjustment = rawShadowsAdjustmentUi,
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
                         spectralFilmEnabled = rawSpectralFilmEnabled,
@@ -1363,7 +1380,19 @@ fun SettingsScreen(
                         },
                         onRawNlmNoiseFactorChange = { rawNlmNoiseFactorUi = it },
                         onRawExposureCompensationChange = { rawExposureCompensationUi = it },
-                        onRawAutoExposureChange = { viewModel.setRawAutoExposure(it) },
+                        onRawAutoExposureChange = {
+                            if (it) {
+                                rawExposureCompensationUi = 0f
+                                rawHighlightsAdjustmentUi = 0f
+                                rawShadowsAdjustmentUi = 0f
+                                viewModel.setRawExposureCompensation(0f)
+                                viewModel.setRawHighlightsAdjustment(0f)
+                                viewModel.setRawShadowsAdjustment(0f)
+                            }
+                            viewModel.setRawAutoExposure(it)
+                        },
+                        onRawHighlightsAdjustmentChange = { rawHighlightsAdjustmentUi = it },
+                        onRawShadowsAdjustmentChange = { rawShadowsAdjustmentUi = it },
                         onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
                         onSpectralFilmEnabledChange = { enabled ->

@@ -108,6 +108,8 @@ private data class PreviewRenderSignature(
     val editRawDenoise: Float,
     val editRawExposureCompensation: Float,
     val editRawAutoExposure: Boolean,
+    val editRawHighlightsAdjustment: Float,
+    val editRawShadowsAdjustment: Float,
     val editRawBlackPointCorrection: Float,
     val editRawWhitePointCorrection: Float,
     val editRawDROMode: String,
@@ -183,6 +185,8 @@ fun GalleryEditScreen(
     val editRawNlmNoiseFactor by viewModel.editRawDenoise.collectAsState()
     val editRawExposureCompensation by viewModel.editRawExposureCompensation.collectAsState()
     val editRawAutoExposure by viewModel.editRawAutoExposure.collectAsState()
+    val editRawHighlightsAdjustment by viewModel.editRawHighlightsAdjustment.collectAsState()
+    val editRawShadowsAdjustment by viewModel.editRawShadowsAdjustment.collectAsState()
     val editRawBlackPointCorrection by viewModel.editRawBlackPointCorrection.collectAsState()
     val editRawWhitePointCorrection by viewModel.editRawWhitePointCorrection.collectAsState()
     val editRawDROMode by viewModel.editRawDROMode.collectAsState()
@@ -246,6 +250,8 @@ fun GalleryEditScreen(
             editRawDenoise = editRawNlmNoiseFactor,
             editRawExposureCompensation = editRawExposureCompensation,
             editRawAutoExposure = editRawAutoExposure,
+            editRawHighlightsAdjustment = editRawHighlightsAdjustment,
+            editRawShadowsAdjustment = editRawShadowsAdjustment,
             editRawBlackPointCorrection = editRawBlackPointCorrection,
             editRawWhitePointCorrection = editRawWhitePointCorrection,
             editRawDROMode = editRawDROMode,
@@ -1080,6 +1086,8 @@ fun GalleryEditScreen(
                                         rawNlmNoiseFactor = editRawNlmNoiseFactor,
                                         rawExposureCompensation = editRawExposureCompensation,
                                         rawAutoExposure = editRawAutoExposure,
+                                        rawHighlightsAdjustment = editRawHighlightsAdjustment,
+                                        rawShadowsAdjustment = editRawShadowsAdjustment,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
                                         spectralFilmEnabled = editRawSpectralFilmEnabled,
@@ -1122,9 +1130,20 @@ fun GalleryEditScreen(
                                             viewModel.saveRawExposureCompensationValue(currentPhoto, it)
                                         },
                                         onRawAutoExposureChange = {
+                                            if (it) {
+                                                viewModel.saveRawExposureCompensationValue(currentPhoto, 0f)
+                                                viewModel.saveRawHighlightsAdjustmentValue(currentPhoto, 0f)
+                                                viewModel.saveRawShadowsAdjustmentValue(currentPhoto, 0f)
+                                            }
                                             viewModel.saveRawAutoExposureValue(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
+                                        },
+                                        onRawHighlightsAdjustmentChange = {
+                                            viewModel.saveRawHighlightsAdjustmentValue(currentPhoto, it)
+                                        },
+                                        onRawShadowsAdjustmentChange = {
+                                            viewModel.saveRawShadowsAdjustmentValue(currentPhoto, it)
                                         },
                                         onRawBlackPointCorrectionChange = {
                                             viewModel.saveRawBlackPointCorrectionValue(currentPhoto, it)

@@ -197,6 +197,8 @@ fun CameraScreen(
     val rawNlmNoiseFactor by viewModel.rawNlmNoiseFactor.collectAsState()
     val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
     val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
+    val rawHighlightsAdjustment by viewModel.rawHighlightsAdjustment.collectAsState()
+    val rawShadowsAdjustment by viewModel.rawShadowsAdjustment.collectAsState()
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
     val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val droMode by viewModel.droMode.collectAsState()
@@ -1305,6 +1307,8 @@ fun CameraScreen(
             rawNlmNoiseFactor = rawNlmNoiseFactor,
             rawExposureCompensation = rawExposureCompensation,
             rawAutoExposure = rawAutoExposure,
+            rawHighlightsAdjustment = rawHighlightsAdjustment,
+            rawShadowsAdjustment = rawShadowsAdjustment,
             rawDROMode = droMode,
             rawBlackPointCorrection = rawBlackPointCorrection,
             rawWhitePointCorrection = rawWhitePointCorrection,

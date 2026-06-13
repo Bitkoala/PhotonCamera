@@ -315,6 +315,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         private set
     var editRawAutoExposure = MutableStateFlow(true)
         private set
+    var editRawHighlightsAdjustment = MutableStateFlow(0f)
+        private set
+    var editRawShadowsAdjustment = MutableStateFlow(0f)
+        private set
     var editRawBlackPointCorrection = MutableStateFlow(0f)
         private set
     var editRawWhitePointCorrection = MutableStateFlow(0f)
@@ -1051,6 +1055,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawDenoise.value = m.rawDenoiseValue ?: 0f
             editRawExposureCompensation.value = m.rawExposureCompensation ?: 0f
             editRawAutoExposure.value = m.rawAutoExposure ?: true
+            editRawHighlightsAdjustment.value = m.rawHighlightsAdjustment ?: 0f
+            editRawShadowsAdjustment.value = m.rawShadowsAdjustment ?: 0f
             editRawBlackPointCorrection.value = m.rawBlackPointCorrection ?: 0f
             editRawWhitePointCorrection.value = m.rawWhitePointCorrection ?: 0f
             editRawDcpId.value = m.rawDcpId
@@ -1596,6 +1602,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun applyRawDevelopMetadataToEditState(metadata: MediaMetadata) {
+        editRawExposureCompensation.value = metadata.rawExposureCompensation ?: 0f
+        editRawAutoExposure.value = metadata.rawAutoExposure ?: true
+        editRawHighlightsAdjustment.value = metadata.rawHighlightsAdjustment ?: 0f
+        editRawShadowsAdjustment.value = metadata.rawShadowsAdjustment ?: 0f
+    }
+
     /**
      * 进入编辑模式
      */
@@ -1649,6 +1662,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawDenoise.value = metadata.rawDenoiseValue ?: 0f
                 editRawExposureCompensation.value = metadata.rawExposureCompensation ?: 0f
                 editRawAutoExposure.value = metadata.rawAutoExposure ?: true
+                editRawHighlightsAdjustment.value = metadata.rawHighlightsAdjustment ?: 0f
+                editRawShadowsAdjustment.value = metadata.rawShadowsAdjustment ?: 0f
                 editRawBlackPointCorrection.value = metadata.rawBlackPointCorrection ?: 0f
                 editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
                 editRawDROMode.value = RawProcessingPreferences.DROMode.fromPersistedName(metadata.droMode).name
@@ -1669,6 +1684,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawDenoise.value = 0.2f
                 editRawExposureCompensation.value = 0f
                 editRawAutoExposure.value = true
+                editRawHighlightsAdjustment.value = 0f
+                editRawShadowsAdjustment.value = 0f
                 editRawBlackPointCorrection.value = 0f
                 editRawWhitePointCorrection.value = 0f
                 editRawDROMode.value = "OFF"
@@ -1712,6 +1729,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawDenoise.value = 0.2f
         editRawExposureCompensation.value = 0f
         editRawAutoExposure.value = true
+        editRawHighlightsAdjustment.value = 0f
+        editRawShadowsAdjustment.value = 0f
         editRawBlackPointCorrection.value = 0f
         editRawWhitePointCorrection.value = 0f
         editRawDROMode.value = "OFF"
@@ -1839,6 +1858,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val denoise = editRawDenoise.value
         val exposure = editRawExposureCompensation.value
         val autoExposure = editRawAutoExposure.value
+        val highlights = editRawHighlightsAdjustment.value
+        val shadows = editRawShadowsAdjustment.value
         val blackPoint = editRawBlackPointCorrection.value
         val whitePoint = editRawWhitePointCorrection.value
         val droMode = editRawDROMode.value
@@ -1863,6 +1884,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     rawDenoiseValue = denoise,
                     rawExposureCompensation = exposure,
                     rawAutoExposure = autoExposure,
+                    rawHighlightsAdjustment = highlights,
+                    rawShadowsAdjustment = shadows,
                     rawBlackPointCorrection = blackPoint,
                     rawWhitePointCorrection = whitePoint,
                     droMode = droMode,
@@ -1914,6 +1937,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawAutoExposureValue(mediaData: MediaData, enabled: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
         editRawAutoExposure.value = enabled
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawHighlightsAdjustmentValue(mediaData: MediaData, value: Float, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawHighlightsAdjustment.value = value
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawShadowsAdjustmentValue(mediaData: MediaData, value: Float, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawShadowsAdjustment.value = value
         persistRawEditMetadata(mediaData, onComplete)
     }
 
@@ -2192,6 +2225,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         rawDenoiseValue = editRawDenoise.value,
                         rawExposureCompensation = editRawExposureCompensation.value,
                         rawAutoExposure = editRawAutoExposure.value,
+                        rawHighlightsAdjustment = editRawHighlightsAdjustment.value,
+                        rawShadowsAdjustment = editRawShadowsAdjustment.value,
                         rawBlackPointCorrection = editRawBlackPointCorrection.value,
                         rawWhitePointCorrection = editRawWhitePointCorrection.value,
                         rawDcpId = editRawDcpId.value,
@@ -2503,6 +2538,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         rawDenoiseValue = editRawDenoise.value,
                         rawExposureCompensation = editRawExposureCompensation.value,
                         rawAutoExposure = editRawAutoExposure.value,
+                        rawHighlightsAdjustment = editRawHighlightsAdjustment.value,
+                        rawShadowsAdjustment = editRawShadowsAdjustment.value,
                         rawBlackPointCorrection = editRawBlackPointCorrection.value,
                         rawWhitePointCorrection = editRawWhitePointCorrection.value,
                         rawDcpId = editRawDcpId.value,
@@ -2586,7 +2623,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 val context = getApplication<Application>()
                 val result = GalleryManager.refreshRawPreview(context, photo.id)
                 if (result != null) {
-                    updatePhotoMetadata(photo.id) { it }
+                    val updatedMetadata = updatePhotoMetadata(photo.id) { it }
+                    updatedMetadata?.let { applyRawDevelopMetadataToEditState(it) }
                     // 更新刷新密钥以强制 UI 重新加载
                     photoRefreshKeys[photo.id] = System.currentTimeMillis()
                     invalidatePreviewCache(photo.id)

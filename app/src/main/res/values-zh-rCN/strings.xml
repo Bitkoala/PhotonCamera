@@ -646,6 +646,8 @@
     <string name="settings_default_focal_length">默认焦段</string>
     <string name="settings_raw_nlm_noise_factor">降噪</string>
     <string name="settings_raw_exposure_compensation">曝光补偿</string>
+    <string name="settings_raw_highlights_adjustment">高光</string>
+    <string name="settings_raw_shadows_adjustment">阴影</string>
     <string name="settings_spectral_film">光谱胶片模拟</string>
     <string name="settings_spectral_film_description">模拟经典底片和打印介质的色彩响应与物理特征曲线。</string>
     <string name="settings_negative_film">底片胶卷</string>

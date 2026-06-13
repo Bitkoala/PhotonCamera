@@ -467,7 +467,7 @@ object RawShaders {
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
             color = applyDcpMaps(color);
-//            color = highlightRolloff(color);
+            color = highlightRolloff(color);
             color = applyDisplayTone(color);
             color = uOutputTransform * color;
             color = applyShadowsHighlights(color, vTexCoord);

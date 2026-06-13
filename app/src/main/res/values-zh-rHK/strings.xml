@@ -396,6 +396,8 @@
     <string name="settings_dro_dr200">DR200</string>
     <string name="settings_dro_dr400">DR400</string>
     <string name="settings_raw_nlm_noise_factor">降噪</string>
+    <string name="settings_raw_highlights_adjustment">高光</string>
+    <string name="settings_raw_shadows_adjustment">陰影</string>
     <string name="settings_use_p010">P010 (10 位 YUV)</string>
     <string name="settings_use_p010_description">啟用 10 位 YUV 輸出以獲得更好的影像資料精度。僅在支援的裝置上且 RAW 關閉時生效。</string>
     <string name="settings_use_hlg10">HLG10 HDR</string>
