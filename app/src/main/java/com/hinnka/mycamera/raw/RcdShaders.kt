@@ -31,6 +31,8 @@ object RcdShaders {
         uniform vec4 uBlackLevel; // R, Gr, Gb, B 或 [0,1,2,3] 四通道黑电平
         uniform float uWhiteLevel;
         uniform vec4 uWhiteBalanceGains; // R, Gr, Gb, B 或 [0,1,2,3] 四通道白平衡增益
+        uniform float uHighlightClipThreshold;
+        uniform float uHighlightCeiling;
         uniform bool uLensShadingEnabled;
         uniform bool uLensShadingUsesDngGrid;
         uniform vec2 uLensShadingMapSize;
@@ -76,6 +78,10 @@ object RcdShaders {
             }
         }
 
+        ivec2 clampCoord(ivec2 coord) {
+            return clamp(coord, ivec2(0), uImageSize - ivec2(1));
+        }
+
         float getLensShadingGain(int channelIndex, ivec2 coord) {
             if (!uLensShadingEnabled) {
                 return 1.0;
@@ -92,24 +98,168 @@ object RcdShaders {
             return max(gains[channelIndex], 0.0);
         }
 
+        float readSensorNormalized(ivec2 coord, int channelIndex) {
+            ivec2 sampleCoord = clampCoord(coord);
+            uint rawVal = texelFetch(uRawTexture, sampleCoord, 0).r;
+            float bl = uBlackLevel[channelIndex];
+            float wl = max(uWhiteLevel, bl + 1.0);
+            return max(float(rawVal) - bl, 0.0) / max(wl - bl, 1.0);
+        }
+
+        float linearSampleAt(ivec2 coord, int channelIndex) {
+            ivec2 sampleCoord = clampCoord(coord);
+            float sensor = readSensorNormalized(sampleCoord, channelIndex);
+            float linear = sensor * getLensShadingGain(channelIndex, sampleCoord) *
+                uWhiteBalanceGains[channelIndex];
+            return min(max(linear, 0.0), uHighlightCeiling);
+        }
+
+        void accumulateGreenSample(
+            inout float weightedSum,
+            inout float weightSum,
+            inout float fallbackSum,
+            inout float fallbackWeight,
+            ivec2 coord,
+            float sampleWeight
+        ) {
+            ivec2 sampleCoord = clampCoord(coord);
+            int channelIndex = getBlackLevelIndex(uCfaPattern, sampleCoord.x, sampleCoord.y);
+            float sensor = readSensorNormalized(sampleCoord, channelIndex);
+            float linear = linearSampleAt(sampleCoord, channelIndex);
+            float unclippedWeight = 1.0 - smoothstep(uHighlightClipThreshold, 1.0, sensor);
+            weightedSum += linear * sampleWeight * unclippedWeight;
+            weightSum += sampleWeight * unclippedWeight;
+            fallbackSum += linear * sampleWeight;
+            fallbackWeight += sampleWeight;
+        }
+
+        float estimateGreenLinearAt(ivec2 coord, int color) {
+            if (color == GREEN) {
+                int channelIndex = getBlackLevelIndex(uCfaPattern, coord.x, coord.y);
+                return linearSampleAt(coord, channelIndex);
+            }
+
+            float weightedSum = 0.0;
+            float weightSum = 0.0;
+            float fallbackSum = 0.0;
+            float fallbackWeight = 0.0;
+            accumulateGreenSample(weightedSum, weightSum, fallbackSum, fallbackWeight, coord + ivec2( 0, -1), 1.0);
+            accumulateGreenSample(weightedSum, weightSum, fallbackSum, fallbackWeight, coord + ivec2(-1,  0), 1.0);
+            accumulateGreenSample(weightedSum, weightSum, fallbackSum, fallbackWeight, coord + ivec2( 1,  0), 1.0);
+            accumulateGreenSample(weightedSum, weightSum, fallbackSum, fallbackWeight, coord + ivec2( 0,  1), 1.0);
+            if (weightSum > 1e-5) {
+                return weightedSum / weightSum;
+            }
+            return fallbackSum / max(fallbackWeight, 1e-5);
+        }
+
+        void accumulateSameColorSample(
+            inout float weightedSum,
+            inout float weightSum,
+            ivec2 coord,
+            int channelIndex,
+            float sampleWeight
+        ) {
+            ivec2 sampleCoord = clampCoord(coord);
+            float sensor = readSensorNormalized(sampleCoord, channelIndex);
+            float unclippedWeight = 1.0 - smoothstep(uHighlightClipThreshold, 1.0, sensor);
+            if (unclippedWeight <= 0.0) {
+                return;
+            }
+            float linear = linearSampleAt(sampleCoord, channelIndex);
+            weightedSum += linear * sampleWeight * unclippedWeight;
+            weightSum += sampleWeight * unclippedWeight;
+        }
+
+        void accumulateColorGreenRatio(
+            inout float weightedRatio,
+            inout float weightSum,
+            ivec2 coord,
+            int channelIndex,
+            float sampleWeight
+        ) {
+            ivec2 sampleCoord = clampCoord(coord);
+            float sensor = readSensorNormalized(sampleCoord, channelIndex);
+            float unclippedWeight = 1.0 - smoothstep(uHighlightClipThreshold, 1.0, sensor);
+            if (unclippedWeight <= 0.0) {
+                return;
+            }
+            int color = getBayerColor(uCfaPattern, sampleCoord.x, sampleCoord.y);
+            float green = estimateGreenLinearAt(sampleCoord, color);
+            if (green <= 1e-5) {
+                return;
+            }
+            float ratio = linearSampleAt(sampleCoord, channelIndex) / green;
+            weightedRatio += ratio * sampleWeight * unclippedWeight;
+            weightSum += sampleWeight * unclippedWeight;
+        }
+
+        float estimateSameColorLinear(ivec2 coord, int channelIndex, float fallback) {
+            float weightedSum = 0.0;
+            float weightSum = 0.0;
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2(-2,  0), channelIndex, 1.0);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2( 2,  0), channelIndex, 1.0);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2( 0, -2), channelIndex, 1.0);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2( 0,  2), channelIndex, 1.0);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2(-2, -2), channelIndex, 0.7071);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2( 2, -2), channelIndex, 0.7071);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2(-2,  2), channelIndex, 0.7071);
+            accumulateSameColorSample(weightedSum, weightSum, coord + ivec2( 2,  2), channelIndex, 0.7071);
+            if (weightSum > 1e-5) {
+                return weightedSum / weightSum;
+            }
+            return fallback;
+        }
+
+        float estimateByGreenRatio(ivec2 coord, int channelIndex, int color, float fallback) {
+            if (color == GREEN) {
+                return estimateSameColorLinear(coord, channelIndex, fallback);
+            }
+
+            float weightedRatio = 0.0;
+            float weightSum = 0.0;
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2(-2,  0), channelIndex, 1.0);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2( 2,  0), channelIndex, 1.0);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2( 0, -2), channelIndex, 1.0);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2( 0,  2), channelIndex, 1.0);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2(-2, -2), channelIndex, 0.7071);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2( 2, -2), channelIndex, 0.7071);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2(-2,  2), channelIndex, 0.7071);
+            accumulateColorGreenRatio(weightedRatio, weightSum, coord + ivec2( 2,  2), channelIndex, 0.7071);
+            if (weightSum <= 1e-5) {
+                return estimateSameColorLinear(coord, channelIndex, fallback);
+            }
+
+            float centerGreen = estimateGreenLinearAt(coord, color);
+            float ratio = weightedRatio / weightSum;
+            return centerGreen * ratio;
+        }
+
+        float reconstructHighlightSample(ivec2 coord, int channelIndex, int color, float sensor, float linear) {
+            float clipMask = smoothstep(uHighlightClipThreshold, 1.0, sensor);
+            if (clipMask <= 0.0) {
+                return min(max(linear, 0.0), uHighlightCeiling);
+            }
+
+            float reconstructed = estimateByGreenRatio(coord, channelIndex, color, linear);
+            reconstructed = max(linear, reconstructed);
+            return min(mix(linear, reconstructed, clipMask), uHighlightCeiling);
+        }
+
         void main() {
             ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
             if (coord.x >= uImageSize.x || coord.y >= uImageSize.y) return;
 
             int idx = coord.y * uImageSize.x + coord.x;
 
-            uint rawVal = texelFetch(uRawTexture, coord, 0).r;
-            float val = float(rawVal);
-
             int blIdx = getBlackLevelIndex(uCfaPattern, coord.x, coord.y);
-            float bl = uBlackLevel[blIdx];
-            float wl = max(uWhiteLevel, bl + 1.0);
-            val = max(val - bl, 0.0) * getLensShadingGain(blIdx, coord);
-            val = min(clamp(val / (wl - bl), 0.0, 1.0) * uWhiteBalanceGains[blIdx], 1.0);
+            int color = getBayerColor(uCfaPattern, coord.x, coord.y);
+            float sensor = readSensorNormalized(coord, blIdx);
+            float linear = linearSampleAt(coord, blIdx);
+            float val = reconstructHighlightSample(coord, blIdx, color, sensor, linear);
 
             cfa[idx] = val;
 
-            int color = getBayerColor(uCfaPattern, coord.x, coord.y);
             if (color == RED) {
                 rgb0[idx] = val;
                 rgb1[idx] = 0.0;

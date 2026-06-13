@@ -153,6 +153,8 @@ class RawDemosaicProcessor {
         private const val RCD_PQ_WRITE_BINDING = 5
         private const val RCD_PQ_READ_BINDING = 4
         private const val RCD_VH_DIR_BINDING = 4
+        private const val RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD = 0.985f
+        private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
 
         init {
             // 加载 JNI 库
@@ -716,6 +718,14 @@ class RawDemosaicProcessor {
                 GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteLevel"),
                 actualMetadata.whiteLevel
             )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightClipThreshold"),
+                RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightCeiling"),
+                RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
+            )
             val wbGains = actualMetadata.whiteBalanceGains
             val lscSize = if (hasValidLensShadingMap(actualMetadata)) {
                 "${actualMetadata.lensShadingMapWidth}x${actualMetadata.lensShadingMapHeight}"
@@ -727,6 +737,8 @@ class RawDemosaicProcessor {
                 "RCD populate: cfa=${actualMetadata.cfaPattern} black=${blackLevel4.contentToString()} " +
                         "white=${actualMetadata.whiteLevel} wb=${wbGains.contentToString()} " +
                         "lsc=$lscSize " +
+                        "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
+                        "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING " +
                         "linearBlackPoint=${rawBlackPointCorrection.coerceIn(0f, 0.99f)} " +
                         "linearWhitePoint=${
                             (1f + rawWhitePointCorrection).coerceAtLeast(
@@ -1361,7 +1373,7 @@ class RawDemosaicProcessor {
             vec3 rgb = texture(uDemosaickedTexture, vTexCoord).rgb;
             float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
             float whitePoint = max(uWhitePoint, blackPoint + 0.01);
-            rgb = clamp((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), 0.0, 1.0);
+            rgb = max((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), vec3(0.0));
             // 应用色彩转换 CCM 矩阵和曝光值增益
             rgb = uColorCorrectionMatrix * rgb * uExposureGain;
             fragColor = vec4(rgb, 1.0);
