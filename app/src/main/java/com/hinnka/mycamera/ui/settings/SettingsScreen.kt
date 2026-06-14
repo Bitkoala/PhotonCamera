@@ -269,7 +269,7 @@ fun SettingsScreen(
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
-    val rawSpectralFilmEnabled by viewModel.rawSpectralFilmEnabled.collectAsState()
+    val rawColorEngine by viewModel.rawColorEngine.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
@@ -1364,7 +1364,7 @@ fun SettingsScreen(
                         rawShadowsAdjustment = rawShadowsAdjustmentUi,
                         rawBlackPointCorrection = rawBlackPointCorrectionUi,
                         rawWhitePointCorrection = rawWhitePointCorrectionUi,
-                        spectralFilmEnabled = rawSpectralFilmEnabled,
+                        rawColorEngine = rawColorEngine,
                         spectralFilmSelection = rawSpectralFilmSelection ?: SpectralFilmSelection(rawSpectralFilmStock ?: "kodak_portra_400"),
                         spectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
                         onSelectDcp = { viewModel.setRawDcpId(it) },
@@ -1395,13 +1395,7 @@ fun SettingsScreen(
                         onRawShadowsAdjustmentChange = { rawShadowsAdjustmentUi = it },
                         onRawBlackPointCorrectionChange = { rawBlackPointCorrectionUi = it },
                         onRawWhitePointCorrectionChange = { rawWhitePointCorrectionUi = it },
-                        onSpectralFilmEnabledChange = { enabled ->
-                            if (enabled) {
-                                if (rawSpectralFilmSelection == null) viewModel.setRawSpectralFilmSelection(SpectralFilmSelection("kodak_portra_400"))
-                                if (rawSpectralFilmPrint == null) viewModel.setRawSpectralFilmPrint("kodak_portra_endura")
-                            }
-                            viewModel.setRawSpectralFilmEnabled(enabled)
-                        },
+                        onRawColorEngineChange = { viewModel.setRawColorEngine(it) },
                         onSpectralFilmSelectionChange = { viewModel.setRawSpectralFilmSelection(it) },
                         onSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
                         onAdjustmentStart = { isRawSliderAdjusting = true },

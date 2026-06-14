@@ -31,6 +31,7 @@ import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.ui.components.ColorRecipePanel
 import com.hinnka.mycamera.ui.components.LutSelectorWithRecipeAction
 import com.hinnka.mycamera.ui.components.CurveChannel
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.ui.components.EffectsBottomSheet
 import com.hinnka.mycamera.ui.components.FrameSelector
@@ -95,7 +96,9 @@ fun PresetEditorScreen(
 
     // Quick RAW 参数
     var rawDcpId by remember { mutableStateOf(sourcePreset?.rawDcpId) }
-    var rawSpectralFilmEnabled by remember { mutableStateOf(sourcePreset?.rawSpectralFilmEnabled ?: false) }
+    var rawColorEngine by remember {
+        mutableStateOf(RawColorEngine.fromPersistedName(sourcePreset?.rawColorEngine))
+    }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
@@ -131,7 +134,7 @@ fun PresetEditorScreen(
             useMFSR = useMFSR,
             frameId = frameId,
             rawDcpId = rawDcpId,
-            rawSpectralFilmEnabled = rawSpectralFilmEnabled,
+            rawColorEngine = rawColorEngine.name,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
             rawDROMode = rawDROMode,
@@ -381,33 +384,53 @@ fun PresetEditorScreen(
                 isExpanded = expandQuickRaw,
                 onToggleExpand = { expandQuickRaw = !expandQuickRaw }
             ) {
-                val defaultDcpName = stringResource(R.string.none)
-                val currentDcp = availableDcps.find { it.id == rawDcpId }
-                val currentDcpName = currentDcp?.getName() ?: defaultDcpName
+                val engineNames = RawColorEngine.entries.associateWith { engine ->
+                    when (engine) {
+                        RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
+                        RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
+                        RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
+                    }
+                }
                 DropdownSettingItem(
-                    title = stringResource(R.string.raw_dcp_title),
-                    value = currentDcpName,
-                    options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
+                    title = stringResource(R.string.settings_raw_color_engine),
+                    value = engineNames[rawColorEngine] ?: rawColorEngine.name,
+                    options = engineNames.values.toList(),
                     isLoading = false,
                     onExpanded = {},
                     onOptionSelected = { selectedName ->
-                        rawDcpId = if (selectedName == defaultDcpName) {
-                            null
-                        } else {
-                            availableDcps.find { it.getName() == selectedName }?.id
+                        engineNames.entries.find { it.value == selectedName }?.key?.let { engine ->
+                            rawColorEngine = engine
+                            if (engine == RawColorEngine.SpectralFilm) {
+                                if (rawSpectralFilmStock.isBlank()) rawSpectralFilmStock = "kodak_portra_400"
+                                if (rawSpectralFilmPrint.isBlank()) rawSpectralFilmPrint = "kodak_2383"
+                            }
                         }
                     }
                 )
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+                if (rawColorEngine == RawColorEngine.AdobeCurve) {
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
 
-                SwitchSettingItem(
-                    title = stringResource(R.string.settings_spectral_film),
-                    checked = rawSpectralFilmEnabled,
-                    onCheckedChange = { rawSpectralFilmEnabled = it }
-                )
+                    val defaultDcpName = stringResource(R.string.none)
+                    val currentDcp = availableDcps.find { it.id == rawDcpId }
+                    val currentDcpName = currentDcp?.getName() ?: defaultDcpName
+                    DropdownSettingItem(
+                        title = stringResource(R.string.raw_dcp_title),
+                        value = currentDcpName,
+                        options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
+                        isLoading = false,
+                        onExpanded = {},
+                        onOptionSelected = { selectedName ->
+                            rawDcpId = if (selectedName == defaultDcpName) {
+                                null
+                            } else {
+                                availableDcps.find { it.getName() == selectedName }?.id
+                            }
+                        }
+                    )
+                }
 
-                AnimatedVisibility(visible = rawSpectralFilmEnabled) {
+                AnimatedVisibility(visible = rawColorEngine == RawColorEngine.SpectralFilm) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         val currentStockLabel = SpectralFilmUiInfo.getFilmDisplayName(rawSpectralFilmStock)
                         val stockMap = SpectralFilmUiInfo.availableFilms.associateWith { SpectralFilmUiInfo.getFilmDisplayName(it) }

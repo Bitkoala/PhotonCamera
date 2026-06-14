@@ -48,6 +48,7 @@ import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawProfile
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
@@ -100,7 +101,6 @@ private fun UserPreferences.getBaselineLutId(target: BaselineColorCorrectionTarg
 }
 
 private data class RawSpectralFilmSettings(
-    val enabled: Boolean,
     val stock: String?,
     val print: String?,
     val tuning: SpectralFilmTuning
@@ -127,7 +127,7 @@ private data class PresetMatchSnapshot(
     val useMFSR: Boolean,
     val frameId: String?,
     val rawDcpId: String?,
-    val rawSpectralFilmEnabled: Boolean,
+    val rawColorEngine: RawColorEngine,
     val rawSpectralFilmStock: String?,
     val rawSpectralFilmPrint: String?,
     val rawDROMode: String,
@@ -148,7 +148,7 @@ private data class PresetMatchSnapshot(
             useMFSR == preset.useMFSR &&
             frameId == preset.frameId &&
             rawDcpId == preset.rawDcpId &&
-            rawSpectralFilmEnabled == preset.rawSpectralFilmEnabled &&
+            rawColorEngine == RawColorEngine.fromPersistedName(preset.rawColorEngine) &&
             rawSpectralFilmStock == preset.rawSpectralFilmStock &&
             rawSpectralFilmPrint == preset.rawSpectralFilmPrint &&
             rawDROMode == preset.rawDROMode &&
@@ -180,7 +180,7 @@ private data class CameraFeatureUpdate(
     val useMFSR: SettingValue<Boolean>? = null,
     val frameId: SettingValue<String?>? = null,
     val rawDcpId: SettingValue<String?>? = null,
-    val rawSpectralFilmEnabled: SettingValue<Boolean>? = null,
+    val rawColorEngine: SettingValue<RawColorEngine>? = null,
     val rawSpectralFilmStock: SettingValue<String?>? = null,
     val rawSpectralFilmPrint: SettingValue<String?>? = null,
     val droMode: SettingValue<String>? = null,
@@ -306,7 +306,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             useMFSR = saved.useMFSR,
                             frameId = saved.frameId,
                             rawDcpId = saved.rawDcpId,
-                            rawSpectralFilmEnabled = saved.rawSpectralFilmEnabled,
+                            rawColorEngine = saved.rawColorEngine,
                             rawSpectralFilmStock = saved.rawSpectralFilmStock,
                             rawSpectralFilmPrint = saved.rawSpectralFilmPrint,
                             rawDROMode = saved.rawDROMode,
@@ -362,7 +362,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = useMFSR.value,
             frameId = currentFrameId,
             rawDcpId = rawDcpId.value,
-            rawSpectralFilmEnabled = rawSpectralFilmEnabled.value,
+            rawColorEngine = rawColorEngine.value.name,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
             rawSpectralFilmPrint = rawSpectralFilmPrint.value,
             rawDROMode = droMode.value,
@@ -423,7 +423,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = SettingValue(this?.useMFSR ?: false),
             frameId = SettingValue(this?.frameId),
             rawDcpId = SettingValue(this?.rawDcpId),
-            rawSpectralFilmEnabled = SettingValue(this?.rawSpectralFilmEnabled ?: false),
+            rawColorEngine = SettingValue(RawColorEngine.fromPersistedName(this?.rawColorEngine)),
             rawSpectralFilmStock = SettingValue(this?.rawSpectralFilmStock),
             rawSpectralFilmPrint = SettingValue(this?.rawSpectralFilmPrint),
             droMode = SettingValue(this?.rawDROMode ?: RawProcessingPreferences.DROMode.OFF.name),
@@ -563,7 +563,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 },
                 frameId = update.frameId?.let { PreferenceUpdateValue(it.value) },
                 rawDcpId = update.rawDcpId?.let { PreferenceUpdateValue(it.value) },
-                rawSpectralFilmEnabled = update.rawSpectralFilmEnabled?.let { PreferenceUpdateValue(it.value) },
+                rawColorEngine = update.rawColorEngine?.let { PreferenceUpdateValue(it.value) },
                 rawSpectralFilmStock = update.rawSpectralFilmStock?.let { PreferenceUpdateValue(it.value) },
                 rawSpectralFilmPrint = update.rawSpectralFilmPrint?.let { PreferenceUpdateValue(it.value) },
                 droMode = update.droMode?.let {
@@ -684,7 +684,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = useMFSR.value,
             frameId = currentFrameId,
             rawDcpId = rawDcpId.value,
-            rawSpectralFilmEnabled = rawSpectralFilmEnabled.value,
+            rawColorEngine = rawColorEngine.value,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
             rawSpectralFilmPrint = rawSpectralFilmPrint.value,
             rawDROMode = droMode.value,
@@ -706,7 +706,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = prefs.useMFSR,
             frameId = prefs.frameId,
             rawDcpId = prefs.rawDcpId,
-            rawSpectralFilmEnabled = prefs.rawSpectralFilmEnabled,
+            rawColorEngine = prefs.rawColorEngine,
             rawSpectralFilmStock = prefs.rawSpectralFilmStock,
             rawSpectralFilmPrint = prefs.rawSpectralFilmPrint,
             rawDROMode = prefs.droMode,
@@ -799,9 +799,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val edgeLevel: StateFlow<Int> = userPreferencesRepository.userPreferences
         .map { it.edgeLevel }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
-    val rawSpectralFilmEnabled: StateFlow<Boolean> = userPreferencesRepository.userPreferences
-        .map { it.rawSpectralFilmEnabled }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val rawColorEngine: StateFlow<RawColorEngine> = userPreferencesRepository.userPreferences
+        .map { it.rawColorEngine }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RawColorEngine.AgX)
     val rawSpectralFilmStock: StateFlow<String?> = userPreferencesRepository.userPreferences
         .map { it.rawSpectralFilmStock }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -1474,10 +1474,23 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
     }
-    fun setRawSpectralFilmEnabled(enabled: Boolean) {
+    fun setRawColorEngine(engine: RawColorEngine) {
         viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
             applyCameraFeatureUpdate(
-                CameraFeatureUpdate(rawSpectralFilmEnabled = SettingValue(enabled))
+                CameraFeatureUpdate(
+                    rawColorEngine = SettingValue(engine),
+                    rawSpectralFilmStock = if (engine == RawColorEngine.SpectralFilm && prefs.rawSpectralFilmStock == null) {
+                        SettingValue("kodak_portra_400")
+                    } else {
+                        null
+                    },
+                    rawSpectralFilmPrint = if (engine == RawColorEngine.SpectralFilm && prefs.rawSpectralFilmPrint == null) {
+                        SettingValue("kodak_portra_endura")
+                    } else {
+                        null
+                    }
+                )
             )
         }
     }
@@ -1764,7 +1777,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
             cameraId = currentCameraId,
-            spectralFilmEnabled = spectralFilmSettings.enabled,
+            rawColorEngine = userPrefs?.rawColorEngine ?: RawColorEngine.AgX,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -1803,7 +1816,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     ): RawSpectralFilmSettings {
         val stock = userPrefs?.rawSpectralFilmStock ?: "kodak_portra_400"
         return RawSpectralFilmSettings(
-            enabled = userPrefs?.rawSpectralFilmEnabled ?: false,
             stock = stock,
             print = userPrefs?.rawSpectralFilmPrint ?: "kodak_portra_endura",
             tuning = (userPrefs?.rawSpectralFilmTuningsByStock?.get(stock) ?: SpectralFilmTuning.DEFAULT).normalized()
@@ -3781,7 +3793,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 cameraId = currentCameraId,
-                spectralFilmEnabled = spectralFilmSettings.enabled,
+                rawColorEngine = userPrefs?.rawColorEngine ?: RawColorEngine.AgX,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -3916,7 +3928,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 cameraId = currentCameraId,
-                spectralFilmEnabled = spectralFilmSettings.enabled,
+                rawColorEngine = userPrefs?.rawColorEngine ?: RawColorEngine.AgX,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -4067,7 +4079,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 cameraId = currentCameraId,
-                spectralFilmEnabled = spectralFilmSettings.enabled,
+                rawColorEngine = userPrefs?.rawColorEngine ?: RawColorEngine.AgX,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -4504,7 +4516,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
             cameraId = currentCameraId,
-            spectralFilmEnabled = spectralFilmSettings.enabled,
+            rawColorEngine = userPrefs?.rawColorEngine ?: RawColorEngine.AgX,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,

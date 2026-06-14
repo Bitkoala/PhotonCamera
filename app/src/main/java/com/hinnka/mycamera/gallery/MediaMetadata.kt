@@ -13,6 +13,7 @@ import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.raw.RawMetadata
+import com.hinnka.mycamera.raw.RawColorEngine
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
@@ -24,7 +25,7 @@ import kotlin.math.log2
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 17,
+    val version: Int = 18,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
@@ -46,6 +47,7 @@ data class MediaMetadata(
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
     val rawDcpId: String? = null,
+    val rawColorEngine: RawColorEngine = RawColorEngine.AgX,
     val cameraId: String? = null,
     // 边框水印配置
     val frameId: String? = null,
@@ -107,7 +109,6 @@ data class MediaMetadata(
     val rawBlackLevelMode: String? = null,
     val rawCustomBlackLevel: Float? = null,
     val applyEffectsToVideo: Boolean = false,
-    val spectralFilmEnabled: Boolean = false,
     val spectralFilmStock: String? = null,
     val spectralFilmPrint: String? = null,
     val spectralFilmCDensityGain: Float = 1f,
@@ -265,6 +266,9 @@ data class MediaMetadata(
                     rawWhitePointCorrection = if (obj.isNull("rawWhitePointCorrection")) null else obj.optDouble("rawWhitePointCorrection").toFloat(),
                     rawAutoWhiteBalanceEstimate = if (obj.isNull("rawAutoWhiteBalanceEstimate")) null else obj.optBoolean("rawAutoWhiteBalanceEstimate"),
                     rawDcpId = if (obj.isNull("rawDcpId")) null else obj.optString("rawDcpId"),
+                    rawColorEngine = RawColorEngine.fromPersistedName(
+                        if (obj.isNull("rawColorEngine")) null else obj.optString("rawColorEngine")
+                    ),
                     rawBlackLevelMode = if (obj.isNull("rawBlackLevelMode")) null else obj.optString("rawBlackLevelMode"),
                     rawCustomBlackLevel = if (obj.isNull("rawCustomBlackLevel")) null else obj.optDouble("rawCustomBlackLevel").toFloat(),
                     cameraId = if (obj.isNull("cameraId")) null else obj.optString("cameraId"),
@@ -346,7 +350,6 @@ data class MediaMetadata(
                     hasAiDenoisedBase = obj.optBoolean("hasAiDenoisedBase", false),
                     aiDenoiseStrength = if (obj.isNull("aiDenoiseStrength")) null else obj.optDouble("aiDenoiseStrength").toFloat(),
                     applyEffectsToVideo = obj.optBoolean("applyEffectsToVideo", false),
-                    spectralFilmEnabled = obj.optBoolean("spectralFilmEnabled", false),
                     spectralFilmStock = if (obj.isNull("spectralFilmStock")) null else obj.optString("spectralFilmStock"),
                     spectralFilmPrint = if (obj.isNull("spectralFilmPrint")) null else obj.optString("spectralFilmPrint"),
                     spectralFilmCDensityGain = if (obj.isNull("spectralFilmCDensityGain")) 1f else obj.optDouble("spectralFilmCDensityGain").toFloat(),

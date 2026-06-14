@@ -63,6 +63,12 @@ enum class ColorSpace(
         0.036598f, 0.000105f,
         0.345704f, 0.358540f
     ),
+    FilmLightEGamut(
+        0.800000f, 0.317700f,
+        0.180000f, 0.900000f,
+        0.065000f, -0.080500f,
+        0.312700f, 0.329000f
+    ),
 ;
 
     val primaries: FloatArray

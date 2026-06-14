@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.CameraPreset
+import com.hinnka.mycamera.raw.RawColorEngine
 
 /**
  * 拍摄预设面板组件 (取代原先的 PresetDial 拨盘)
@@ -163,10 +164,11 @@ fun PresetsPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val rawColorEngine = RawColorEngine.fromPersistedName(preset.rawColorEngine)
                             FeatureBadge(text = AspectRatio.valueOf(preset.aspectRatio).getDisplayName())
-                            if (preset.rawSpectralFilmEnabled) {
+                            if (rawColorEngine == RawColorEngine.SpectralFilm) {
                                 FeatureBadge(text = "FILM")
-                            } else if (preset.rawDcpId != null) {
+                            } else if (rawColorEngine == RawColorEngine.AdobeCurve && preset.rawDcpId != null) {
                                 FeatureBadge(text = "DCP")
                             } else if (preset.lutId != null) {
                                 FeatureBadge(text = "LUT")

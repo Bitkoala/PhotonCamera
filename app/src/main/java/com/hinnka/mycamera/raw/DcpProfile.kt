@@ -132,13 +132,14 @@ object DcpProfileParser {
     fun resolveRenderPlan(
         context: Context,
         dcpInfo: DcpInfo?,
-        metadata: RawMetadata
+        metadata: RawMetadata,
+        workingColorSpace: ColorSpace = ColorSpace.ProPhoto
     ): DcpRenderPlan? {
         if (dcpInfo == null) return null
         val filePath = resolveFilePath(context, dcpInfo) ?: return null
         val file = File(filePath)
         val stamp = file.lastModified() xor file.length()
-        val renderPlanKey = buildRenderPlanKey(filePath, stamp, metadata)
+        val renderPlanKey = "${buildRenderPlanKey(filePath, stamp, metadata)}|working=${workingColorSpace.name}"
         synchronized(renderPlanCache) {
             renderPlanCache[renderPlanKey]?.let { return it }
         }
@@ -146,7 +147,7 @@ object DcpProfileParser {
         val profile = parse(filePath) ?: return null
         val selectedHueSat = interpolateHueSatMap(profile, metadata)
         val selectedMatrix = computeInterpolatedCameraToXyz(profile, metadata)?.let { cameraToXyz ->
-            val xyzToWorking = computeXyzD50ToGamut(ColorSpace.ProPhoto) ?: return@let cameraToXyz
+            val xyzToWorking = computeXyzD50ToGamut(workingColorSpace) ?: return@let cameraToXyz
             multiplyMatrix3x3(xyzToWorking, cameraToXyz)
         } ?: metadata.colorCorrectionMatrix
         return DcpRenderPlan(

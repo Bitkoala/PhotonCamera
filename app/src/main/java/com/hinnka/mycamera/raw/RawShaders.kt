@@ -95,6 +95,7 @@ object RawShaders {
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
         uniform sampler3D uSpectralFilmTexture;
+        uniform sampler3D uAgxBaseSrgbTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
@@ -103,12 +104,19 @@ object RawShaders {
         uniform float uShadows;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
-        uniform bool uSpectralFilmEnabled;
         uniform ivec3 uDcpHueSatDivisions;
         uniform ivec3 uDcpLookTableDivisions;
         uniform int uDcpHueSatEncoding;
         uniform int uDcpLookTableEncoding;
         uniform int uSpectralFilmSize;
+        uniform int uAgxLutSize;
+        uniform int uRawColorEngine;
+
+        const int RAW_COLOR_ENGINE_ADOBE_CURVE = 0;
+        const int RAW_COLOR_ENGINE_AGX = 1;
+        const int RAW_COLOR_ENGINE_SPECTRAL_FILM = 2;
+        const float AGX_LOG_MIN = -12.47393;
+        const float AGX_LOG_MAX = 12.5260688117;
         
         float luminance(vec3 color) {
             return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
@@ -359,7 +367,7 @@ object RawShaders {
         }
 
         vec3 applySpectralFilm(vec3 color) {
-            if (!uSpectralFilmEnabled || uSpectralFilmSize <= 1) {
+            if (uSpectralFilmSize <= 1) {
                 return color;
             }
             vec3 normalizedColor = color / 2.88;
@@ -367,6 +375,69 @@ object RawShaders {
             vec3 lutCoord = clamp(encodedColor, 0.0, 1.0);
             vec3 lutResult = texture(uSpectralFilmTexture, lutCoord).rgb;
             return proPhotoToLinear(lutResult);
+        }
+
+        vec3 fetchAgxBaseSrgb(ivec3 coord) {
+            ivec3 maxCoord = ivec3(max(uAgxLutSize - 1, 0));
+            return texelFetch(uAgxBaseSrgbTexture, clamp(coord, ivec3(0), maxCoord), 0).rgb;
+        }
+
+        vec3 sampleAgxBaseSrgb(vec3 coord) {
+            if (uAgxLutSize <= 1) {
+                return coord;
+            }
+
+            float maxIndex = float(uAgxLutSize - 1);
+            vec3 scaled = clamp(coord, vec3(0.0), vec3(1.0)) * maxIndex;
+            ivec3 p0 = ivec3(floor(scaled));
+            ivec3 p1 = min(p0 + ivec3(1), ivec3(uAgxLutSize - 1));
+            vec3 f = scaled - vec3(p0);
+
+            vec3 c000 = fetchAgxBaseSrgb(p0);
+            vec3 c100 = fetchAgxBaseSrgb(ivec3(p1.x, p0.y, p0.z));
+            vec3 c010 = fetchAgxBaseSrgb(ivec3(p0.x, p1.y, p0.z));
+            vec3 c001 = fetchAgxBaseSrgb(ivec3(p0.x, p0.y, p1.z));
+            vec3 c110 = fetchAgxBaseSrgb(ivec3(p1.x, p1.y, p0.z));
+            vec3 c101 = fetchAgxBaseSrgb(ivec3(p1.x, p0.y, p1.z));
+            vec3 c011 = fetchAgxBaseSrgb(ivec3(p0.x, p1.y, p1.z));
+            vec3 c111 = fetchAgxBaseSrgb(p1);
+
+            if (f.x >= f.y) {
+                if (f.y >= f.z) {
+                    return c000 + f.x * (c100 - c000) + f.y * (c110 - c100) + f.z * (c111 - c110);
+                } else if (f.x >= f.z) {
+                    return c000 + f.x * (c100 - c000) + f.z * (c101 - c100) + f.y * (c111 - c101);
+                } else {
+                    return c000 + f.z * (c001 - c000) + f.x * (c101 - c001) + f.y * (c111 - c101);
+                }
+            } else {
+                if (f.x >= f.z) {
+                    return c000 + f.y * (c010 - c000) + f.x * (c110 - c010) + f.z * (c111 - c110);
+                } else if (f.y >= f.z) {
+                    return c000 + f.y * (c010 - c000) + f.z * (c011 - c010) + f.x * (c111 - c011);
+                } else {
+                    return c000 + f.z * (c001 - c000) + f.y * (c011 - c001) + f.x * (c111 - c011);
+                }
+            }
+        }
+
+        vec3 agxLogEncode(vec3 color) {
+            vec3 safeColor = max(color, vec3(exp2(AGX_LOG_MIN)));
+            return clamp(
+                (log2(safeColor) - vec3(AGX_LOG_MIN)) / (AGX_LOG_MAX - AGX_LOG_MIN),
+                vec3(0.0),
+                vec3(1.0)
+            );
+        }
+
+        vec3 applyAgX(vec3 color) {
+            if (uAgxLutSize <= 1) {
+                return uOutputTransform * applyAdobeCurve(color);
+            }
+            vec3 egamut = max(color, vec3(0.0));
+            vec3 agxLog = agxLogEncode(egamut);
+            vec3 rec1886Encoded = sampleAgxBaseSrgb(agxLog);
+            return pow(max(rec1886Encoded, vec3(0.0)), vec3(2.4));
         }
 
         float proPhotoLuminance(vec3 color) {
@@ -399,19 +470,28 @@ object RawShaders {
         }
 
         vec3 applyDisplayTone(vec3 color) {
-            if (uSpectralFilmEnabled) {
-                color *= 2.0;
+            if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
+                return applyAgX(color);
+            }
+            if (uRawColorEngine == RAW_COLOR_ENGINE_SPECTRAL_FILM && uSpectralFilmSize > 1) {
                 return applySpectralFilm(color);
             }
+            color = applyDcpMaps(color);
+            color = highlightRolloff(color);
             return applyAdobeCurve(color);
+        }
+
+        vec3 applyOutputTransformAfterDisplayTone(vec3 color) {
+            if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
+                return color;
+            }
+            return uOutputTransform * color;
         }
         
         vec3 sampleToneSource(vec2 uv) {
             vec3 sampleColor = texture(uInputTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
-            vec3 color = applyDcpMaps(sampleColor);
-            color = highlightRolloff(color);
-            color = applyDisplayTone(color);
-            color = uOutputTransform * color;
+            vec3 color = applyDisplayTone(sampleColor);
+            color = applyOutputTransformAfterDisplayTone(color);
             return color;
         }
 
@@ -435,10 +515,8 @@ object RawShaders {
 
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
-            color = applyDcpMaps(color);
-            color = highlightRolloff(color);
             color = applyDisplayTone(color);
-            color = uOutputTransform * color;
+            color = applyOutputTransformAfterDisplayTone(color);
             color = applyShadowsHighlights(color, vTexCoord);
             color = linearToSrgb(color);
             fragColor = vec4(color, 1.0);

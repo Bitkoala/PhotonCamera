@@ -34,6 +34,7 @@ import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
@@ -329,7 +330,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         private set
     var editRawBaselineLutId = MutableStateFlow<String?>(null)
         private set
-    var editRawSpectralFilmEnabled = MutableStateFlow(false)
+    var editRawColorEngine = MutableStateFlow(RawColorEngine.AgX)
         private set
     var editRawSpectralFilmStock = MutableStateFlow<String?>(null)
         private set
@@ -1106,7 +1107,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawBlackPointCorrection.value = m.rawBlackPointCorrection ?: 0f
             editRawWhitePointCorrection.value = m.rawWhitePointCorrection ?: 0f
             editRawDcpId.value = m.rawDcpId
-            editRawSpectralFilmEnabled.value = m.spectralFilmEnabled
+            editRawColorEngine.value = m.rawColorEngine
             editRawSpectralFilmStock.value = m.spectralFilmStock ?: "kodak_portra_400"
             editRawSpectralFilmPrint.value = m.spectralFilmPrint ?: "kodak_portra_endura"
             editRawSpectralFilmCDensityGain.value = m.spectralFilmCDensityGain
@@ -1690,7 +1691,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             if (!targetPhoto.isVideo) {
                 editRawDcpId.value = metadata.rawDcpId
                 editRawBaselineLutId.value = metadata.baselineLutId
-                editRawSpectralFilmEnabled.value = metadata.spectralFilmEnabled
+                editRawColorEngine.value = metadata.rawColorEngine
                 editRawSpectralFilmStock.value = metadata.spectralFilmStock ?: "kodak_portra_400"
                 editRawSpectralFilmPrint.value = metadata.spectralFilmPrint ?: "kodak_portra_endura"
                 editRawSpectralFilmCDensityGain.value = metadata.spectralFilmCDensityGain
@@ -1737,7 +1738,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawDROMode.value = "OFF"
                 editRawDcpId.value = null
                 editRawBaselineLutId.value = null
-                editRawSpectralFilmEnabled.value = false
+                editRawColorEngine.value = RawColorEngine.AgX
                 editRawSpectralFilmStock.value = "kodak_portra_400"
                 editRawSpectralFilmPrint.value = "kodak_portra_endura"
                 editRawSpectralFilmCDensityGain.value = 1f
@@ -1782,7 +1783,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawDROMode.value = "OFF"
         editRawDcpId.value = null
         editRawBaselineLutId.value = null
-        editRawSpectralFilmEnabled.value = false
+        editRawColorEngine.value = RawColorEngine.AgX
         editRawSpectralFilmStock.value = null
         editRawSpectralFilmPrint.value = null
         editRawSpectralFilmCDensityGain.value = 1f
@@ -1911,7 +1912,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val droMode = editRawDROMode.value
         val dcpId = editRawDcpId.value
         val baselineLutId = editRawBaselineLutId.value
-        val spectralFilmEnabled = editRawSpectralFilmEnabled.value
+        val rawColorEngine = editRawColorEngine.value
         val spectralFilmStock = editRawSpectralFilmStock.value
         val spectralFilmPrint = editRawSpectralFilmPrint.value
         val spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value
@@ -1939,7 +1940,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     baselineTarget = baselineLutId?.let { BaselineColorCorrectionTarget.RAW },
                     baselineLutId = baselineLutId,
                     baselineColorRecipeParams = baselineRecipeParams,
-                    spectralFilmEnabled = spectralFilmEnabled,
+                    rawColorEngine = rawColorEngine,
                     spectralFilmStock = spectralFilmStock,
                     spectralFilmPrint = spectralFilmPrint,
                     spectralFilmCDensityGain = spectralFilmCDensityGain,
@@ -2022,8 +2023,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         persistRawEditMetadata(mediaData, onComplete)
     }
 
-    fun saveRawSpectralFilmEnabled(mediaData: MediaData, enabled: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
-        editRawSpectralFilmEnabled.value = enabled
+    fun saveRawColorEngine(mediaData: MediaData, engine: RawColorEngine, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawColorEngine.value = engine
+        if (engine == RawColorEngine.SpectralFilm) {
+            if (editRawSpectralFilmStock.value == null) {
+                editRawSpectralFilmStock.value = "kodak_portra_400"
+            }
+            if (editRawSpectralFilmPrint.value == null) {
+                editRawSpectralFilmPrint.value = "kodak_portra_endura"
+            }
+        }
         persistRawEditMetadata(mediaData, onComplete)
     }
 
@@ -2281,7 +2290,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         baselineColorRecipeParams = editRawBaselineLutId.value?.let {
                             editRawBaselineRecipeParams.value
                         },
-                        spectralFilmEnabled = editRawSpectralFilmEnabled.value,
+                        rawColorEngine = editRawColorEngine.value,
                         spectralFilmStock = editRawSpectralFilmStock.value,
                         spectralFilmPrint = editRawSpectralFilmPrint.value,
                         spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value,
@@ -2592,7 +2601,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         baselineTarget = rawBaselineLutId?.let { BaselineColorCorrectionTarget.RAW },
                         baselineLutId = rawBaselineLutId,
                         baselineColorRecipeParams = rawBaselineRecipeParams,
-                        spectralFilmEnabled = editRawSpectralFilmEnabled.value,
+                        rawColorEngine = editRawColorEngine.value,
                         spectralFilmStock = editRawSpectralFilmStock.value,
                         spectralFilmPrint = editRawSpectralFilmPrint.value,
                         spectralFilmCDensityGain = editRawSpectralFilmCDensityGain.value,

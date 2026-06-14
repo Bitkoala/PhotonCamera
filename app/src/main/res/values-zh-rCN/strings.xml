@@ -648,6 +648,13 @@
     <string name="settings_raw_exposure_compensation">曝光补偿</string>
     <string name="settings_raw_highlights_adjustment">高光</string>
     <string name="settings_raw_shadows_adjustment">阴影</string>
+    <string name="settings_raw_color_engine">色彩引擎</string>
+    <string name="settings_raw_color_engine_adobe_curve">Adobe 曲线</string>
+    <string name="settings_raw_color_engine_adobe_curve_description">经典 RAW 曲线流程，可使用 DCP 相机配置。</string>
+    <string name="settings_raw_color_engine_agx">AgX</string>
+    <string name="settings_raw_color_engine_agx_description">使用 Blender AgX 成像，并采用更宽的 RAW 工作空间。</string>
+    <string name="settings_raw_color_engine_spectral_film">光谱胶片</string>
+    <string name="settings_raw_color_engine_spectral_film_description">模拟胶卷和相纸介质，并支持密度微调。</string>
     <string name="settings_spectral_film">光谱胶片模拟</string>
     <string name="settings_spectral_film_description">模拟经典底片和打印介质的色彩响应与物理特征曲线。</string>
     <string name="settings_negative_film">底片胶卷</string>

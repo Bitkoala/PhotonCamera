@@ -6,6 +6,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.raw.RawColorEngine
 
 /**
  * 拍摄预设组合（用户自定义档位配置）
@@ -25,7 +26,7 @@ data class CameraPreset(
     val frameId: String? = null,
     // Quick RAW 功能
     val rawDcpId: String? = null,
-    val rawSpectralFilmEnabled: Boolean = false,
+    val rawColorEngine: String = RawColorEngine.AgX.name,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
     val rawDROMode: String = "OFF",
@@ -70,7 +71,7 @@ data class CameraPreset(
                 useRaw = false,
                 useMFNR = false,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = false,
+                rawColorEngine = RawColorEngine.AgX.name,
                 rawDROMode = "DR100",
                 isBuiltIn = true
             ),
@@ -86,7 +87,7 @@ data class CameraPreset(
                 useRaw = false,
                 useMFNR = true,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = false,
+                rawColorEngine = RawColorEngine.AgX.name,
                 rawDROMode = "DR100",
                 isBuiltIn = true
             ),
@@ -111,7 +112,7 @@ data class CameraPreset(
                 useRaw = true,
                 useMFNR = false,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = false,
+                rawColorEngine = RawColorEngine.AgX.name,
                 rawDROMode = "DR100",
                 isBuiltIn = true
             ),
@@ -128,7 +129,7 @@ data class CameraPreset(
                 aspectRatio = AspectRatio.XPAN.name,
                 useRaw = true,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = false,
+                rawColorEngine = RawColorEngine.AgX.name,
                 rawDROMode = "DR100",
                 isBuiltIn = true
             ),
@@ -148,7 +149,7 @@ data class CameraPreset(
                 frameId = "time",
                 useRaw = true,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = true,
+                rawColorEngine = RawColorEngine.SpectralFilm.name,
                 rawSpectralFilmStock = "kodak_gold_200",
                 rawSpectralFilmPrint = "kodak_2383",
                 rawDROMode = "OFF",
@@ -165,7 +166,7 @@ data class CameraPreset(
                 frameId = "black_border",
                 useRaw = false,
                 rawDcpId = null,
-                rawSpectralFilmEnabled = false,
+                rawColorEngine = RawColorEngine.AgX.name,
                 rawDROMode = "DR100",
                 isBuiltIn = true
             ),

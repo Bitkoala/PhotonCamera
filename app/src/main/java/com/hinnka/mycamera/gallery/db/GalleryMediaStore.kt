@@ -14,6 +14,7 @@ import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.MediaType
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.StartupTrace
 import kotlinx.coroutines.CancellationException
@@ -205,6 +206,7 @@ object GalleryMediaStore {
             rawWhitePointCorrection = metadata.rawWhitePointCorrection,
             rawAutoWhiteBalanceEstimate = metadata.rawAutoWhiteBalanceEstimate,
             rawDcpId = metadata.rawDcpId,
+            rawColorEngine = metadata.rawColorEngine.name,
             frameId = metadata.frameId,
             width = metadata.width,
             height = metadata.height,
@@ -264,7 +266,7 @@ object GalleryMediaStore {
             rawDROEnabled = false,
             cameraId = metadata.cameraId,
             applyEffectsToVideo = metadata.applyEffectsToVideo,
-            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            spectralFilmEnabled = false,
             spectralFilmStock = metadata.spectralFilmStock,
             spectralFilmPrint = metadata.spectralFilmPrint,
             spectralFilmCDensityGain = metadata.spectralFilmCDensityGain,
@@ -346,6 +348,7 @@ object GalleryMediaStore {
             rawWhitePointCorrection = rawWhitePointCorrection,
             rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
             rawDcpId = rawDcpId,
+            rawColorEngine = RawColorEngine.fromPersistedName(rawColorEngine),
             frameId = frameId,
             width = width,
             height = height,
@@ -398,7 +401,6 @@ object GalleryMediaStore {
             rawCustomBlackLevel = rawCustomBlackLevel,
             cameraId = cameraId,
             applyEffectsToVideo = applyEffectsToVideo,
-            spectralFilmEnabled = spectralFilmEnabled,
             spectralFilmStock = spectralFilmStock,
             spectralFilmPrint = spectralFilmPrint,
             spectralFilmCDensityGain = spectralFilmCDensityGain,

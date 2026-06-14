@@ -16,6 +16,7 @@ import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.color.TransferCurve
@@ -85,6 +86,7 @@ data class UserPreferences(
     val rawBaselineLutConfigured: Boolean = false,
     val phantomBaselineLutId: String? = null,
     val rawDcpId: String? = null,
+    val rawColorEngine: RawColorEngine = RawColorEngine.AgX,
     val rawNlmNoiseFactor: Float = 0f,
     val rawExposureCompensation: Float = 0f,
     val rawAutoExposure: Boolean = true,
@@ -181,7 +183,6 @@ data class UserPreferences(
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
     val referencePhotoUrl: String? = null,
     val deleteExported: Boolean = true,
-    val rawSpectralFilmEnabled: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
     val rawSpectralFilmTuningsByStock: Map<String, SpectralFilmTuning> = emptyMap(),
@@ -210,7 +211,7 @@ data class CameraFeaturePreferencesUpdate(
     val useMultipleExposure: PreferenceUpdateValue<Boolean>? = null,
     val frameId: PreferenceUpdateValue<String?>? = null,
     val rawDcpId: PreferenceUpdateValue<String?>? = null,
-    val rawSpectralFilmEnabled: PreferenceUpdateValue<Boolean>? = null,
+    val rawColorEngine: PreferenceUpdateValue<RawColorEngine>? = null,
     val rawSpectralFilmStock: PreferenceUpdateValue<String?>? = null,
     val rawSpectralFilmPrint: PreferenceUpdateValue<String?>? = null,
     val droMode: PreferenceUpdateValue<String>? = null,
@@ -238,6 +239,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BASELINE_LUT_ID_KEY = stringPreferencesKey("raw_baseline_lut_id")
         private val RAW_BASELINE_LUT_CONFIGURED_KEY = booleanPreferencesKey("raw_baseline_lut_configured")
         private val RAW_DCP_ID_KEY = stringPreferencesKey("raw_dcp_id")
+        private val RAW_COLOR_ENGINE_KEY = stringPreferencesKey("raw_color_engine")
         private val RAW_NLM_NOISE_FACTOR_KEY = floatPreferencesKey("raw_nlm_noise_factor")
         private val RAW_EXPOSURE_COMPENSATION_KEY = floatPreferencesKey("raw_exposure_compensation")
         private val RAW_AUTO_EXPOSURE_KEY = booleanPreferencesKey("raw_auto_exposure")
@@ -346,7 +348,6 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_HDR_SCREEN_MODE = booleanPreferencesKey("use_hdr_screen_mode")
         private val REFERENCE_PHOTO_URL = stringPreferencesKey("reference_photo_url")
         private val DELETE_EXPORTED = booleanPreferencesKey("delete_exported")
-        private val RAW_SPECTRAL_FILM_ENABLED_KEY = booleanPreferencesKey("raw_spectral_film_enabled")
         private val RAW_SPECTRAL_FILM_STOCK_KEY = stringPreferencesKey("raw_spectral_film_stock")
         private val RAW_SPECTRAL_FILM_PRINT_KEY = stringPreferencesKey("raw_spectral_film_print")
         private val ACTIVE_EFFECT_PARAMS_JSON = stringPreferencesKey("active_effect_params_json")
@@ -379,6 +380,7 @@ class UserPreferencesRepository(private val context: Context) {
                     ?: if (!rawBaselineLutConfigured) DEFAULT_RAW_BASELINE_LUT_ID else null,
                 rawBaselineLutConfigured = rawBaselineLutConfigured,
                 rawDcpId = preferences[RAW_DCP_ID_KEY],
+                rawColorEngine = RawColorEngine.fromPersistedName(preferences[RAW_COLOR_ENGINE_KEY]),
                 rawNlmNoiseFactor = preferences[RAW_NLM_NOISE_FACTOR_KEY] ?: 0f,
                 rawExposureCompensation = preferences[RAW_EXPOSURE_COMPENSATION_KEY] ?: 0f,
                 rawAutoExposure = preferences[RAW_AUTO_EXPOSURE_KEY] ?: true,
@@ -512,7 +514,6 @@ class UserPreferencesRepository(private val context: Context) {
                 useHdrScreenMode = preferences[USE_HDR_SCREEN_MODE] ?: true,
                 referencePhotoUrl = preferences[REFERENCE_PHOTO_URL],
                 deleteExported = preferences[DELETE_EXPORTED] ?: true,
-                rawSpectralFilmEnabled = preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] ?: false,
                 rawSpectralFilmStock = preferences[RAW_SPECTRAL_FILM_STOCK_KEY],
                 rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY],
                 rawSpectralFilmTuningsByStock = parseSpectralFilmTunings(preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY]),
@@ -1538,9 +1539,9 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveRawSpectralFilmEnabled(enabled: Boolean) {
+    suspend fun saveRawColorEngine(engine: RawColorEngine) {
         context.dataStore.edit { preferences ->
-            preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] = enabled
+            preferences[RAW_COLOR_ENGINE_KEY] = engine.name
         }
     }
 
@@ -1623,8 +1624,8 @@ class UserPreferencesRepository(private val context: Context) {
                     preferences.remove(RAW_DCP_ID_KEY)
                 }
             }
-            update.rawSpectralFilmEnabled?.let {
-                preferences[RAW_SPECTRAL_FILM_ENABLED_KEY] = it.value
+            update.rawColorEngine?.let {
+                preferences[RAW_COLOR_ENGINE_KEY] = it.value.name
             }
             update.rawSpectralFilmStock?.let {
                 if (it.value != null) {

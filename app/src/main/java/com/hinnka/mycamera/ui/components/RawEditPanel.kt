@@ -27,6 +27,7 @@ import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.raw.SpectralFilmTuning
@@ -53,7 +54,7 @@ fun RawEditPanel(
     rawShadowsAdjustment: Float,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
-    spectralFilmEnabled: Boolean,
+    rawColorEngine: RawColorEngine,
     spectralFilmSelection: SpectralFilmSelection?,
     spectralFilmPrint: String?,
     onSelectDcp: (String?) -> Unit,
@@ -66,7 +67,7 @@ fun RawEditPanel(
     onRawShadowsAdjustmentChange: (Float) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
-    onSpectralFilmEnabledChange: (Boolean) -> Unit,
+    onRawColorEngineChange: (RawColorEngine) -> Unit,
     onSpectralFilmSelectionChange: (SpectralFilmSelection?) -> Unit,
     onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
@@ -94,34 +95,24 @@ fun RawEditPanel(
             .padding(vertical = 16.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        RawDcpSelector(
-            selectedDcpId = selectedDcpId,
-            availableDcps = availableDcps,
-            onSelectDcp = onSelectDcp,
-            onImportDcp = onImportDcp,
-            onDeleteDcp = onDeleteDcp
+        RawColorEngineSelector(
+            selectedEngine = rawColorEngine,
+            onSelectEngine = onRawColorEngineChange
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        RawBaselineColorCorrectionSelector(
-            selectedLutId = selectedBaselineLutId,
-            availableLuts = availableLuts,
-            thumbnail = thumbnail,
-            onSelectLut = onSelectBaselineLut,
-            onEditRecipe = onEditBaselineRecipe,
-            onOpenSheet = onOpenBaselineLutSheet
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+        if (rawColorEngine == RawColorEngine.AdobeCurve) {
+            RawDcpSelector(
+                selectedDcpId = selectedDcpId,
+                availableDcps = availableDcps,
+                onSelectDcp = onSelectDcp,
+                onImportDcp = onImportDcp,
+                onDeleteDcp = onDeleteDcp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
-        RawSwitchSettingItem(
-            title = stringResource(R.string.settings_spectral_film),
-            description = stringResource(R.string.settings_spectral_film_description),
-            checked = spectralFilmEnabled,
-            onCheckedChange = onSpectralFilmEnabledChange
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (spectralFilmEnabled) {
+        if (rawColorEngine == RawColorEngine.SpectralFilm) {
             val isPositiveFilm = SpectralFilmUiInfo.isPositiveFilm(spectralFilmSelection?.id)
             RawSpectralFilmSelector(
                 selectedFilm = spectralFilmSelection?.id,
@@ -185,6 +176,16 @@ fun RawEditPanel(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+
+        RawBaselineColorCorrectionSelector(
+            selectedLutId = selectedBaselineLutId,
+            availableLuts = availableLuts,
+            thumbnail = thumbnail,
+            onSelectLut = onSelectBaselineLut,
+            onEditRecipe = onEditBaselineRecipe,
+            onOpenSheet = onOpenBaselineLutSheet
+        )
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (contentMode != RawEditPanelContentMode.QUICK) {
             RawSwitchSettingItem(
@@ -410,6 +411,141 @@ private fun RawSwitchSettingItem(
                 uncheckedBorderColor = Color.Transparent
             )
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RawColorEngineSelector(
+    selectedEngine: RawColorEngine,
+    onSelectEngine: (RawColorEngine) -> Unit
+) {
+    var showSheet by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showSheet = true }
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_raw_color_engine),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = rawColorEngineName(selectedEngine),
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.6f)
+        )
+    }
+
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            containerColor = Color(0xFF1E1E1E),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.2f)) }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(
+                    text = stringResource(R.string.settings_raw_color_engine),
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                RawColorEngine.entries.forEach { engine ->
+                    RawColorEngineItem(
+                        name = rawColorEngineName(engine),
+                        description = rawColorEngineDescription(engine),
+                        isSelected = selectedEngine == engine,
+                        onClick = {
+                            onSelectEngine(engine)
+                            showSheet = false
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun rawColorEngineName(engine: RawColorEngine): String {
+    return when (engine) {
+        RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
+        RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
+        RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
+    }
+}
+
+@Composable
+private fun rawColorEngineDescription(engine: RawColorEngine): String {
+    return when (engine) {
+        RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve_description)
+        RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx_description)
+        RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film_description)
+    }
+}
+
+@Composable
+private fun RawColorEngineItem(
+    name: String,
+    description: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.15f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = name,
+                color = if (isSelected) Color(0xFFFF6B35) else Color.White,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = description,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+        if (isSelected) {
+            Spacer(modifier = Modifier.width(12.dp))
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = Color(0xFFFF6B35),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 

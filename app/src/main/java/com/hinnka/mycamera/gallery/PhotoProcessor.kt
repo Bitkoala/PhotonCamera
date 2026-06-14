@@ -460,7 +460,7 @@ class PhotoProcessor(
             sharpeningValue = 0.4f,
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId,
-            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            rawColorEngine = metadata.rawColorEngine,
             spectralFilmStock = metadata.spectralFilmStock,
             spectralFilmPrint = metadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
@@ -530,7 +530,7 @@ class PhotoProcessor(
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(metadata),
             denoiseValue = metadata.rawDenoiseValue,
             rawDcpId = metadata.rawDcpId,
-            spectralFilmEnabled = metadata.spectralFilmEnabled,
+            rawColorEngine = metadata.rawColorEngine,
             spectralFilmStock = metadata.spectralFilmStock,
             spectralFilmPrint = metadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(

@@ -202,7 +202,7 @@ fun CameraScreen(
     val rawBlackPointCorrection by viewModel.rawBlackPointCorrection.collectAsState()
     val rawWhitePointCorrection by viewModel.rawWhitePointCorrection.collectAsState()
     val droMode by viewModel.droMode.collectAsState()
-    val rawSpectralFilmEnabled by viewModel.rawSpectralFilmEnabled.collectAsState()
+    val rawColorEngine by viewModel.rawColorEngine.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
@@ -1312,7 +1312,7 @@ fun CameraScreen(
             rawDROMode = droMode,
             rawBlackPointCorrection = rawBlackPointCorrection,
             rawWhitePointCorrection = rawWhitePointCorrection,
-            rawSpectralFilmEnabled = rawSpectralFilmEnabled,
+            rawColorEngine = rawColorEngine,
             rawSpectralFilmSelection = rawSpectralFilmSelection ?: SpectralFilmSelection(rawSpectralFilmStock ?: "kodak_portra_400"),
             rawSpectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
             onRawDcpChange = { viewModel.setRawDcpId(it) },
@@ -1334,13 +1334,7 @@ fun CameraScreen(
                 baselineEditTarget = BaselineColorCorrectionTarget.RAW
             },
             onRawDROModeChange = { viewModel.setDroMode(it) },
-            onRawSpectralFilmEnabledChange = { enabled ->
-                if (enabled) {
-                    if (rawSpectralFilmSelection == null) viewModel.setRawSpectralFilmSelection(SpectralFilmSelection("kodak_portra_400"))
-                    if (rawSpectralFilmPrint == null) viewModel.setRawSpectralFilmPrint("kodak_portra_endura")
-                }
-                viewModel.setRawSpectralFilmEnabled(enabled)
-            },
+            onRawColorEngineChange = { viewModel.setRawColorEngine(it) },
             onRawSpectralFilmSelectionChange = { viewModel.setRawSpectralFilmSelection(it) },
             onRawSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
             meteringMode = state.meteringMode,

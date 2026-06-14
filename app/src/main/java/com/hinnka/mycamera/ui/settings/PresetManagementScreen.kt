@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.model.CameraPreset
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -290,14 +291,15 @@ private fun PresetManagementItem(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    val rawColorEngine = RawColorEngine.fromPersistedName(preset.rawColorEngine)
                     PresetFeatureText(preset.aspectRatio.removePrefix("RATIO_").replace("_", ":"))
                     if (preset.useRaw) PresetFeatureText("RAW")
                     if (preset.useMFNR) PresetFeatureText("MFNR")
                     if (preset.useHdrComposition) PresetFeatureText("HDR")
                     if (preset.useMFSR) PresetFeatureText("MFSR")
-                    if (preset.rawSpectralFilmEnabled) PresetFeatureText("FILM")
+                    if (rawColorEngine == RawColorEngine.SpectralFilm) PresetFeatureText("FILM")
                     if (preset.lutId != null) PresetFeatureText("LUT")
-                    if (preset.rawDcpId != null) PresetFeatureText("DCP")
+                    if (rawColorEngine == RawColorEngine.AdobeCurve && preset.rawDcpId != null) PresetFeatureText("DCP")
                 }
             }
 

@@ -17,7 +17,7 @@ import kotlin.math.sqrt
 object MeteringSystem {
     private const val TAG = "MeteringSystem"
     private const val DISPLAY_TARGET_LUMA = 0.18f
-    private const val ACR3_AVERAGE_TONE_CURVE_EV = 1f
+    private const val MAX_METERING_COMPENSATION_EV = 4f
     private const val MID_TONE_GRID_COLUMNS = 7
     private const val MID_TONE_GRID_ROWS = 7
     private const val MID_TONE_ZONE_SAMPLE_TRIM_FRACTION = 0.15f
@@ -146,6 +146,7 @@ object MeteringSystem {
         val compensatedP99: Float,
         val baselineExposure: Float,
         val targetLuma: Float,
+        val meteringCompensationEv: Float,
         val midToneLuma: Float,
         val midToneGain: Float,
         val highlightAnchorGain: Float,
@@ -224,30 +225,6 @@ object MeteringSystem {
         val wellExposedness: Float
     )
 
-    @SuppressLint("HalfFloat")
-    fun analyzeLinearHalfFloatExposureEv(
-        pixelBuffer: ShortBuffer,
-        width: Int,
-        height: Int,
-        weightBuffer: ByteBuffer? = null, // Optional weight mask (e.g. depth map)
-        baselineExposure: Float = 0f
-    ): MeteringResult {
-        val source = decodeLinearHalfFloatRgbImage(
-            pixelBuffer = pixelBuffer,
-            width = width,
-            height = height
-        )
-        return analyzeExposureEv(
-            width = width,
-            height = height,
-            weightBuffer = weightBuffer,
-            targetLuma = DISPLAY_TARGET_LUMA * 2f.pow(-ACR3_AVERAGE_TONE_CURVE_EV),
-            baselineExposure = baselineExposure,
-            tag = "Linear RAW AE",
-            source = source
-        )
-    }
-
     fun hasManualRawDevelopAdjustments(
         rawExposureCompensation: Float,
         rawHighlightsAdjustment: Float,
@@ -261,13 +238,15 @@ object MeteringSystem {
     fun prepareGpuLinearRawAutoExposure(
         stats: GpuRawAutoExposureBaseStats,
         baselineExposure: Float,
+        meteringCompensationEv: Float = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         tag: String = "Linear RAW AE GPU"
     ): GpuRawAutoExposurePlan? {
         if (stats.histogram.isEmpty() || stats.sampleCount <= 0) {
             return null
         }
 
-        val targetLuma = DISPLAY_TARGET_LUMA * 2f.pow(-ACR3_AVERAGE_TONE_CURVE_EV)
+        val safeMeteringCompensationEv = sanitizeMeteringCompensationEv(meteringCompensationEv)
+        val targetLuma = resolveDisplayTargetLuma(safeMeteringCompensationEv)
         val midToneLuma = if (stats.weightSum > 0.0) {
             exp2((stats.weightedLogLumaSum / stats.weightSum).toFloat())
         } else {
@@ -320,6 +299,7 @@ object MeteringSystem {
             compensatedP99 = (p99 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
             baselineExposure = baselineExposure,
             targetLuma = targetLuma,
+            meteringCompensationEv = safeMeteringCompensationEv,
             midToneLuma = midToneLuma,
             midToneGain = midToneGain,
             highlightAnchorGain = highlightAnchorGain,
@@ -380,7 +360,8 @@ object MeteringSystem {
                 "lowKeyShadowProtection=$lowKeyShadowProtection " +
                 "baselineExposure=${plan.baselineExposure} shadowLimit=$shadowLimit " +
                 "highlights=$highlights shadows=$shadows unprotectedShadows=$unprotectedShadows " +
-                "target=${plan.targetLuma} midToneLuma=${plan.midToneLuma} " +
+                "target=${plan.targetLuma} meteringCompensationEv=${plan.meteringCompensationEv} " +
+                "midToneLuma=${plan.midToneLuma} " +
                 "midToneGain=${plan.midToneGain} highlightAnchorGain=${plan.highlightAnchorGain} " +
                 "gain=${plan.adaptiveGain} ev=${plan.rawMeteredEv} gap=${plan.dynamicRangeGap} " +
                 "sanitizedSamples=${plan.sanitizedSampleCount} histogramSamples=${plan.histogramSampleCount} " +
@@ -447,6 +428,7 @@ object MeteringSystem {
         height: Int,
         weightBuffer: ByteBuffer?,
         targetLuma: Float,
+        meteringCompensationEv: Float,
         baselineExposure: Float,
         tag: String,
         source: LinearRgbImage
@@ -540,7 +522,8 @@ object MeteringSystem {
                 "lowKeyShadowProtection=$lowKeyShadowProtection " +
                 "baselineExposure=$baselineExposure shadowLimit=$shadowLimit " +
                 "highlights=$highlights shadows=$shadows unprotectedShadows=$unprotectedShadows " +
-                "target=$targetLuma midToneLuma=$midToneLuma " +
+                "target=$targetLuma meteringCompensationEv=$meteringCompensationEv " +
+                "midToneLuma=$midToneLuma " +
                 "midToneGain=$midToneGain highlightAnchorGain=$highlightAnchorGain gain=$adaptiveGain " +
                 "ev=$rawMeteredEv gap=$dynamicRangeGap " +
                 "sanitizedSamples=${source.sanitizedSampleCount}"
@@ -1445,6 +1428,18 @@ object MeteringSystem {
 
     private fun exp2(value: Float): Float {
         return exp(value * ln(2.0)).toFloat()
+    }
+
+    private fun resolveDisplayTargetLuma(meteringCompensationEv: Float): Float {
+        return DISPLAY_TARGET_LUMA * exp2(-sanitizeMeteringCompensationEv(meteringCompensationEv))
+    }
+
+    private fun sanitizeMeteringCompensationEv(meteringCompensationEv: Float): Float {
+        return if (meteringCompensationEv.isFinite()) {
+            meteringCompensationEv.coerceIn(-MAX_METERING_COMPENSATION_EV, MAX_METERING_COMPENSATION_EV)
+        } else {
+            RAW_COLOR_ENGINE_METERING_COMPENSATION_EV
+        }
     }
 
     private fun gaussian2d(

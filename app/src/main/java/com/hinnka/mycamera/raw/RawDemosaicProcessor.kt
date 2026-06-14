@@ -174,6 +174,13 @@ class RawDemosaicProcessor {
         private const val RAW_AE_HISTOGRAM_BINDING = 0
         private const val RAW_AE_BASE_STATS_BINDING = 1
         private const val RAW_AE_TONE_STATS_BINDING = 0
+        private const val AGX_BASE_SRGB_TEXTURE_UNIT = 7
+
+        private val BRADFORD_D65_TO_D50 = floatArrayOf(
+            1.0478112f, 0.0228866f, -0.0501270f,
+            0.0295424f, 0.9904844f, -0.0170491f,
+            -0.0092345f, 0.0150436f, 0.7521316f
+        )
 
         init {
             // 加载 JNI 库
@@ -262,6 +269,8 @@ class RawDemosaicProcessor {
     private var dcpLookTableTextureId = 0
     private var spectralFilmTextureId = 0
     private var spectralFilmTextureKey: String? = null
+    private var agxLutTextureId = 0
+    private var agxLutTextureKey: String? = null
     private var dummyDcp3DTextureId = 0
     private var dummyDcpToneCurveTextureId = 0
 
@@ -331,8 +340,8 @@ class RawDemosaicProcessor {
     private var isInitialized = false
     private var maxTextureSize = 8192 // default, queried at init
 
-    fun getRawColorSpace(): ColorSpace {
-        return ColorSpace.ProPhoto
+    fun getRawColorSpace(rawColorEngine: RawColorEngine = RawColorEngine.AdobeCurve): ColorSpace {
+        return rawColorEngine.workingColorSpace
     }
 
     /**
@@ -362,10 +371,10 @@ class RawDemosaicProcessor {
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
-        spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        rawColorEngine: RawColorEngine = RawColorEngine.AgX,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
@@ -393,10 +402,10 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan,
-                spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
                 spectralFilmPrint = spectralFilmPrint,
                 spectralFilmTuning = spectralFilmTuning,
+                rawColorEngine = rawColorEngine,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata
@@ -432,10 +441,10 @@ class RawDemosaicProcessor {
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
-        spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        rawColorEngine: RawColorEngine = RawColorEngine.AgX,
     ): Bitmap? = withContext(glDispatcher) {
         try {
             if (!isInitialized) {
@@ -467,10 +476,10 @@ class RawDemosaicProcessor {
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan,
-                spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
                 spectralFilmPrint = spectralFilmPrint,
-                spectralFilmTuning = spectralFilmTuning
+                spectralFilmTuning = spectralFilmTuning,
+                rawColorEngine = rawColorEngine
             )?.sdrBitmap
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to process RAW buffer", e)
@@ -496,10 +505,10 @@ class RawDemosaicProcessor {
         denoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
-        spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        rawColorEngine: RawColorEngine = RawColorEngine.AgX,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
@@ -527,10 +536,10 @@ class RawDemosaicProcessor {
                 denoiseValue = denoiseValue,
                 rawDcpId = rawDcpId,
                 dcpRenderPlan = dcpRenderPlan,
-                spectralFilmEnabled = spectralFilmEnabled,
                 spectralFilmStock = spectralFilmStock,
                 spectralFilmPrint = spectralFilmPrint,
                 spectralFilmTuning = spectralFilmTuning,
+                rawColorEngine = rawColorEngine,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata,
@@ -568,10 +577,10 @@ class RawDemosaicProcessor {
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
         dcpRenderPlan: DcpRenderPlan? = null,
-        spectralFilmEnabled: Boolean = false,
         spectralFilmStock: String? = null,
         spectralFilmPrint: String? = null,
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
+        rawColorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
         dngFile: File? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
@@ -584,14 +593,16 @@ class RawDemosaicProcessor {
         var actualMetadata = metadata
         var actualRotation = rotation
         var dngRawDataCleanup: DngRawData? = null
+        val requestedColorEngine = rawColorEngine
+        val rawWorkingColorSpace = requestedColorEngine.workingColorSpace
 
         if (dngFile != null) {
             val dngRawData = processDngNative(
                 dngFile.absolutePath,
-                ColorSpace.ProPhoto.xr, ColorSpace.ProPhoto.yr,
-                ColorSpace.ProPhoto.xg, ColorSpace.ProPhoto.yg,
-                ColorSpace.ProPhoto.xb, ColorSpace.ProPhoto.yb,
-                ColorSpace.ProPhoto.xw, ColorSpace.ProPhoto.yw,
+                rawWorkingColorSpace.xr, rawWorkingColorSpace.yr,
+                rawWorkingColorSpace.xg, rawWorkingColorSpace.yg,
+                rawWorkingColorSpace.xb, rawWorkingColorSpace.yb,
+                rawWorkingColorSpace.xw, rawWorkingColorSpace.yw,
                 rawAutoWhiteBalanceEstimate
             )
             if (dngRawData == null) {
@@ -622,24 +633,36 @@ class RawDemosaicProcessor {
             return@withContext null
         }
 
-        val resolvedDcpRenderPlan = dcpRenderPlan ?: rawDcpId?.let { dcpId ->
-            val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps()
-                .firstOrNull { it.id == dcpId }
-            if (dcpInfo == null) {
-                PLog.w(TAG, "RAW DCP not found: $dcpId")
-                null
-            } else {
-                DcpProfileParser.resolveRenderPlan(context, dcpInfo, actualMetadata).also { plan ->
-                    if (plan == null) {
-                        PLog.w(TAG, "Failed to resolve RAW DCP render plan: $dcpId")
+        val resolvedDcpRenderPlan =
+            if (requestedColorEngine == RawColorEngine.AdobeCurve) {
+                dcpRenderPlan ?: rawDcpId?.let { dcpId ->
+                    val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps()
+                        .firstOrNull { it.id == dcpId }
+                    if (dcpInfo == null) {
+                        PLog.w(TAG, "RAW DCP not found: $dcpId")
+                        null
                     } else {
-                        PLog.d(TAG, "Resolved RAW DCP plan: ${plan.profileName}")
+                        DcpProfileParser.resolveRenderPlan(
+                            context,
+                            dcpInfo,
+                            actualMetadata,
+                            rawWorkingColorSpace
+                        ).also { plan ->
+                            if (plan == null) {
+                                PLog.w(TAG, "Failed to resolve RAW DCP render plan: $dcpId")
+                            } else {
+                                PLog.d(TAG, "Resolved RAW DCP plan: ${plan.profileName}")
+                            }
+                        }
                     }
                 }
+            } else {
+                null
             }
-        }
         val spectralFilmLut =
-            if (spectralFilmEnabled && spectralFilmStock != null && spectralFilmPrint != null) {
+            if (requestedColorEngine == RawColorEngine.SpectralFilm &&
+                spectralFilmStock != null && spectralFilmPrint != null
+            ) {
                 SpectralFilmProfile.loadCombinedLut(
                     context,
                     spectralFilmStock,
@@ -649,8 +672,31 @@ class RawDemosaicProcessor {
             } else {
                 null
             }
+        val agxLut =
+            if (requestedColorEngine == RawColorEngine.AgX) {
+                AgXColorEngine.loadBaseSrgbLut(context)
+            } else {
+                null
+            }
+        val colorEngine = when {
+            requestedColorEngine == RawColorEngine.AgX && agxLut == null -> {
+                PLog.w(TAG, "AgX LUT unavailable, falling back to AdobeCurve")
+                RawColorEngine.AdobeCurve
+            }
 
-        PLog.d(TAG, "Processing RAW image: ${actualWidth}x${actualHeight}")
+            requestedColorEngine == RawColorEngine.SpectralFilm && spectralFilmLut == null -> {
+                PLog.w(TAG, "SpectralFilm LUT unavailable, falling back to AdobeCurve")
+                RawColorEngine.AdobeCurve
+            }
+
+            else -> requestedColorEngine
+        }
+
+        PLog.d(
+            TAG,
+            "Processing RAW image: ${actualWidth}x${actualHeight}, " +
+                "colorEngine=$colorEngine workingColorSpace=$rawWorkingColorSpace"
+        )
 
         try {
             if (!isInitialized) {
@@ -956,6 +1002,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 dcpRenderPlan = resolvedDcpRenderPlan,
+                meteringCompensationEv = colorEngine.meteringCompensationEv,
                 useDepthWeighting = rawAutoExposure
             )
 
@@ -969,6 +1016,8 @@ class RawDemosaicProcessor {
             } else {
                 rawExposureCompensation
             }
+            val renderExposureCompensation =
+                effectiveExposureCompensation + colorEngine.defaultExposureCompensationEv
             val shadowsHighlightsParams = if (useAutoDevelopAdjustments) {
                 ShadowsHighlightsParams(
                     highlights = meteringResult.highlights,
@@ -991,11 +1040,22 @@ class RawDemosaicProcessor {
                     PLog.d(
                         TAG,
                         "RAW auto develop sliders: exposure=${adjustments.exposureCompensation} " +
-                            "highlights=${adjustments.highlights} shadows=${adjustments.shadows}"
+                            "highlights=${adjustments.highlights} shadows=${adjustments.shadows} " +
+                            "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
+                            "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
+                            "engineCompensationDomain=${colorEngine.exposureCompensationDomain}"
                     )
                     onRawAutoAdjustments?.invoke(adjustments)
                 }
             }
+            PLog.d(
+                TAG,
+                "RAW render exposure: userOrAutoEv=$effectiveExposureCompensation " +
+                    "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
+                    "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
+                    "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
+                    "renderEv=$renderExposureCompensation"
+            )
 
             // 运行 linearRcdProgram 将 CCM & Exposure 应用在已解马赛克的浮点 RCD 图像上
             checkGlError("Before LinearRcdPass")
@@ -1006,7 +1066,7 @@ class RawDemosaicProcessor {
                 targetFramebufferId = linearOutputFramebufferId,
                 viewportWidth = actualWidth,
                 viewportHeight = actualHeight,
-                rawExposureCompensation = effectiveExposureCompensation,
+                rawExposureCompensation = renderExposureCompensation,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 dcpRenderPlan = resolvedDcpRenderPlan,
@@ -1106,6 +1166,8 @@ class RawDemosaicProcessor {
                 inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 spectralFilmLut = spectralFilmLut,
+                agxLut = agxLut,
+                colorEngine = colorEngine,
                 shadowsHighlightsParams = shadowsHighlightsParams
             )
             PLog.d(TAG, "Combined Pass took: ${System.currentTimeMillis() - combinedStart}ms")
@@ -3594,10 +3656,6 @@ class RawDemosaicProcessor {
     private fun bindSpectralFilmCombinedResource(lut: SpectralFilmLut?) {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmTexture"), 6)
         GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmEnabled"),
-            if (lut != null) 1 else 0
-        )
-        GLES30.glUniform1i(
             GLES30.glGetUniformLocation(combinedProgram, "uSpectralFilmSize"),
             lut?.size ?: 1
         )
@@ -3610,6 +3668,74 @@ class RawDemosaicProcessor {
         checkGlError("bindSpectralFilmCombinedResource")
     }
 
+    private fun uploadAgxTexture(lut: AgxLut): Int {
+        val key = "${lut.sourceKey}:${lut.rgbaFloatBuffer.capacity()}"
+        if (agxLutTextureId == 0) {
+            val textures = IntArray(1)
+            GLES30.glGenTextures(1, textures, 0)
+            agxLutTextureId = textures[0]
+            agxLutTextureKey = null
+        }
+        if (agxLutTextureKey == key) {
+            return agxLutTextureId
+        }
+
+        val buffer = lut.rgbaFloatBuffer.duplicate().apply { position(0) }
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, agxLutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(
+            GLES30.GL_TEXTURE_3D,
+            GLES30.GL_TEXTURE_WRAP_S,
+            GLES30.GL_CLAMP_TO_EDGE
+        )
+        GLES30.glTexParameteri(
+            GLES30.GL_TEXTURE_3D,
+            GLES30.GL_TEXTURE_WRAP_T,
+            GLES30.GL_CLAMP_TO_EDGE
+        )
+        GLES30.glTexParameteri(
+            GLES30.GL_TEXTURE_3D,
+            GLES30.GL_TEXTURE_WRAP_R,
+            GLES30.GL_CLAMP_TO_EDGE
+        )
+        GLES30.glTexImage3D(
+            GLES30.GL_TEXTURE_3D,
+            0,
+            GLES30.GL_RGBA16F,
+            lut.size,
+            lut.size,
+            lut.size,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_FLOAT,
+            buffer
+        )
+        agxLutTextureKey = key
+        PLog.d(TAG, "Uploaded AgX LUT: ${lut.name}, size=${lut.size}")
+        checkGlError("uploadAgxTexture")
+        return agxLutTextureId
+    }
+
+    private fun bindAgxCombinedResource(agxLut: AgxLut?) {
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uAgxBaseSrgbTexture"),
+            AGX_BASE_SRGB_TEXTURE_UNIT
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uAgxLutSize"),
+            agxLut?.size ?: 1
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + AGX_BASE_SRGB_TEXTURE_UNIT)
+        if (agxLut != null) {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, uploadAgxTexture(agxLut))
+        } else {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, ensureDummyDcp3DTexture())
+        }
+        checkGlError("bindAgxCombinedResource")
+    }
+
     /**
      * Combined Processing Pass: ToneMap + LUT + Sharpening
      */
@@ -3618,6 +3744,8 @@ class RawDemosaicProcessor {
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
         spectralFilmLut: SpectralFilmLut? = null,
+        agxLut: AgxLut? = null,
+        colorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
         shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
         viewportWidth: Int = metadata.width,
         viewportHeight: Int = metadata.height
@@ -3659,7 +3787,16 @@ class RawDemosaicProcessor {
         checkGlError("renderCombinedPass base uniforms")
 
         bindDcpCombinedResources(dcpRenderPlan)
-        bindSpectralFilmCombinedResource(spectralFilmLut)
+        bindSpectralFilmCombinedResource(
+            if (colorEngine == RawColorEngine.SpectralFilm) spectralFilmLut else null
+        )
+        bindAgxCombinedResource(
+            agxLut = if (colorEngine == RawColorEngine.AgX) agxLut else null
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(combinedProgram, "uRawColorEngine"),
+            colorEngine.shaderId
+        )
 
         GLES30.glUniformMatrix3fv(
             GLES30.glGetUniformLocation(combinedProgram, "uOutputTransform"),
@@ -3768,16 +3905,10 @@ class RawDemosaicProcessor {
             mS[6] * sR, mS[7] * sG, mS[8] * sB
         )
 
-        val bradfordD65ToD50 = floatArrayOf(
-            1.0478112f, 0.0228866f, -0.0501270f,
-            0.0295424f, 0.9904844f, -0.0170491f,
-            -0.0092345f, 0.0150436f, 0.7521316f
-        )
-
         val gamutToXyzD50 = if (isD50WhitePoint(xw, yw)) {
             gamutToXyzNative
         } else {
-            multiplyMatrix3x3(bradfordD65ToD50, gamutToXyzNative)
+            multiplyMatrix3x3(BRADFORD_D65_TO_D50, gamutToXyzNative)
         }
         return invertMatrix3x3(gamutToXyzD50)
     }
@@ -3976,6 +4107,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
         dcpRenderPlan: DcpRenderPlan?,
+        meteringCompensationEv: Float,
         useDepthWeighting: Boolean = true
     ): MeteringSystem.MeteringResult {
         val meteringWidth = minOf(metadata.width, 256).coerceAtLeast(1)
@@ -4042,7 +4174,8 @@ class RawDemosaicProcessor {
                     width = meteringWidth,
                     height = meteringHeight,
                     depthTextureId = depthTextureId,
-                    baselineExposure = metadata.baselineExposure
+                    baselineExposure = metadata.baselineExposure,
+                    meteringCompensationEv = meteringCompensationEv
                 ) ?: MeteringSystem.MeteringResult.EMPTY
 
                 if (depthMap != null && !depthMap.isRecycled) {
@@ -4074,7 +4207,8 @@ class RawDemosaicProcessor {
         width: Int,
         height: Int,
         depthTextureId: Int,
-        baselineExposure: Float
+        baselineExposure: Float,
+        meteringCompensationEv: Float
     ): MeteringSystem.MeteringResult? {
         if (rawAeBaseProgram == 0 || rawAeMertensProgram == 0) {
             PLog.e(
@@ -4093,6 +4227,7 @@ class RawDemosaicProcessor {
         val plan = MeteringSystem.prepareGpuLinearRawAutoExposure(
             stats = baseStats,
             baselineExposure = baselineExposure,
+            meteringCompensationEv = meteringCompensationEv,
             tag = "Linear RAW AE GPU"
         ) ?: return null
         val toneStats = dispatchRawAeMertensStats(
@@ -4790,6 +4925,11 @@ class RawDemosaicProcessor {
             GLES30.glDeleteTextures(1, intArrayOf(spectralFilmTextureId), 0)
             spectralFilmTextureId = 0
             spectralFilmTextureKey = null
+        }
+        if (agxLutTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(agxLutTextureId), 0)
+            agxLutTextureId = 0
+            agxLutTextureKey = null
         }
         if (dummyDcp3DTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dummyDcp3DTextureId), 0)
         if (dummyDcpToneCurveTextureId != 0) GLES30.glDeleteTextures(

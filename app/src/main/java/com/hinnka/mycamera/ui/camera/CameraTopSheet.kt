@@ -29,6 +29,7 @@ import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.components.RawEditPanel
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
@@ -78,7 +79,7 @@ fun CameraTopSheet(
     rawDROMode: String,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
-    rawSpectralFilmEnabled: Boolean,
+    rawColorEngine: RawColorEngine,
     rawSpectralFilmSelection: SpectralFilmSelection?,
     rawSpectralFilmPrint: String?,
     onRawDcpChange: (String?) -> Unit,
@@ -87,7 +88,7 @@ fun CameraTopSheet(
     onRawBaselineLutChange: (String?) -> Unit,
     onEditRawBaselineRecipe: (String) -> Unit,
     onRawDROModeChange: (String) -> Unit,
-    onRawSpectralFilmEnabledChange: (Boolean) -> Unit,
+    onRawColorEngineChange: (RawColorEngine) -> Unit,
     onRawSpectralFilmSelectionChange: (SpectralFilmSelection?) -> Unit,
     onRawSpectralFilmPrintChange: (String?) -> Unit,
     meteringMode: MeteringMode,
@@ -506,7 +507,7 @@ fun CameraTopSheet(
                     rawShadowsAdjustment = rawShadowsAdjustment,
                     rawBlackPointCorrection = rawBlackPointCorrection,
                     rawWhitePointCorrection = rawWhitePointCorrection,
-                    spectralFilmEnabled = rawSpectralFilmEnabled,
+                    rawColorEngine = rawColorEngine,
                     spectralFilmSelection = rawSpectralFilmSelection,
                     spectralFilmPrint = rawSpectralFilmPrint,
                     onSelectDcp = onRawDcpChange,
@@ -519,7 +520,7 @@ fun CameraTopSheet(
                     onRawShadowsAdjustmentChange = {},
                     onRawBlackPointCorrectionChange = {},
                     onRawWhitePointCorrectionChange = {},
-                    onSpectralFilmEnabledChange = onRawSpectralFilmEnabledChange,
+                    onRawColorEngineChange = onRawColorEngineChange,
                     onSpectralFilmSelectionChange = onRawSpectralFilmSelectionChange,
                     onSpectralFilmPrintChange = onRawSpectralFilmPrintChange,
                     onAdjustmentStart = {},

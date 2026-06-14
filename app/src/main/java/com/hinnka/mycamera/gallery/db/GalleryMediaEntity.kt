@@ -51,6 +51,7 @@ data class GalleryMediaEntity(
     val rawWhitePointCorrection: Float?,
     val rawAutoWhiteBalanceEstimate: Boolean?,
     val rawDcpId: String?,
+    val rawColorEngine: String,
     val frameId: String?,
     val width: Int,
     val height: Int,

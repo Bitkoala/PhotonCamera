@@ -1333,7 +1333,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = updatedMetadata.rawDenoiseValue,
                 rawDcpId = updatedMetadata.rawDcpId,
-                spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                rawColorEngine = updatedMetadata.rawColorEngine,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2052,7 +2052,7 @@ object GalleryManager {
                 sharpeningValue = 0.4f,
                 denoiseValue = updatedMetadata.rawDenoiseValue,
                 rawDcpId = updatedMetadata.rawDcpId,
-                spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                rawColorEngine = updatedMetadata.rawColorEngine,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2472,7 +2472,7 @@ object GalleryManager {
             sharpeningValue = 0.4f,
             denoiseValue = updatedMetadata.rawDenoiseValue,
             rawDcpId = updatedMetadata.rawDcpId,
-            spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+            rawColorEngine = updatedMetadata.rawColorEngine,
             spectralFilmStock = updatedMetadata.spectralFilmStock,
             spectralFilmPrint = updatedMetadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
@@ -3459,7 +3459,7 @@ object GalleryManager {
                         sharpeningValue = 0.4f,
                         denoiseValue = updatedMetadata.rawDenoiseValue,
                         rawDcpId = updatedMetadata.rawDcpId,
-                        spectralFilmEnabled = updatedMetadata.spectralFilmEnabled,
+                        rawColorEngine = updatedMetadata.rawColorEngine,
                         spectralFilmStock = updatedMetadata.spectralFilmStock,
                         spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                         spectralFilmTuning = SpectralFilmTuning(
@@ -3607,7 +3607,7 @@ object GalleryManager {
                     sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
                     denoiseValue = (updatedMetadata ?: MediaMetadata()).rawDenoiseValue,
                     rawDcpId = updatedMetadata?.rawDcpId,
-                    spectralFilmEnabled = updatedMetadata?.spectralFilmEnabled ?: false,
+                    rawColorEngine = updatedMetadata?.rawColorEngine ?: MediaMetadata().rawColorEngine,
                     spectralFilmStock = updatedMetadata?.spectralFilmStock,
                     spectralFilmPrint = updatedMetadata?.spectralFilmPrint,
                     spectralFilmTuning = SpectralFilmTuning(

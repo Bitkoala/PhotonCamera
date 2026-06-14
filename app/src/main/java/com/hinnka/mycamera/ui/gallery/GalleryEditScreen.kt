@@ -114,6 +114,7 @@ private data class PreviewRenderSignature(
     val editRawWhitePointCorrection: Float,
     val editRawDROMode: String,
     val editRawDcpId: String?,
+    val editRawColorEngine: String,
     val editRawBaselineLutId: String?,
     val editRawBaselineRecipeParams: ColorRecipeParams?,
     val editComputationalAperture: Float?,
@@ -193,7 +194,7 @@ fun GalleryEditScreen(
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
     val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
     val editRawBaselineRecipeParams by viewModel.editRawBaselineRecipeParams.collectAsState()
-    val editRawSpectralFilmEnabled by viewModel.editRawSpectralFilmEnabled.collectAsState()
+    val editRawColorEngine by viewModel.editRawColorEngine.collectAsState()
     val editRawSpectralFilmStock by viewModel.editRawSpectralFilmStock.collectAsState()
     val editRawSpectralFilmPrint by viewModel.editRawSpectralFilmPrint.collectAsState()
     val editRawSpectralFilmCDensityGain by viewModel.editRawSpectralFilmCDensityGain.collectAsState()
@@ -256,6 +257,7 @@ fun GalleryEditScreen(
             editRawWhitePointCorrection = editRawWhitePointCorrection,
             editRawDROMode = editRawDROMode,
             editRawDcpId = editRawDcpId,
+            editRawColorEngine = editRawColorEngine.name,
             editRawBaselineLutId = editRawBaselineLutId,
             editRawBaselineRecipeParams = editRawBaselineRecipeParams,
             editComputationalAperture = editComputationalAperture,
@@ -1090,7 +1092,7 @@ fun GalleryEditScreen(
                                         rawShadowsAdjustment = editRawShadowsAdjustment,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
-                                        spectralFilmEnabled = editRawSpectralFilmEnabled,
+                                        rawColorEngine = editRawColorEngine,
                                         spectralFilmSelection = editRawSpectralFilmStock?.let { stock ->
                                             SpectralFilmSelection(
                                                 id = stock,
@@ -1151,8 +1153,8 @@ fun GalleryEditScreen(
                                         onRawWhitePointCorrectionChange = {
                                             viewModel.saveRawWhitePointCorrectionValue(currentPhoto, it)
                                         },
-                                        onSpectralFilmEnabledChange = {
-                                            viewModel.saveRawSpectralFilmEnabled(currentPhoto, it) {
+                                        onRawColorEngineChange = {
+                                            viewModel.saveRawColorEngine(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
