@@ -491,6 +491,8 @@ private fun rawColorEngineName(engine: RawColorEngine): String {
     return when (engine) {
         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
+        RawColorEngine.DarktableSigmoid -> stringResource(R.string.settings_raw_color_engine_darktable_sigmoid)
+        RawColorEngine.DarktableFilmic -> stringResource(R.string.settings_raw_color_engine_darktable_filmic)
         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
     }
 }
@@ -500,6 +502,8 @@ private fun rawColorEngineDescription(engine: RawColorEngine): String {
     return when (engine) {
         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve_description)
         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx_description)
+        RawColorEngine.DarktableSigmoid -> stringResource(R.string.settings_raw_color_engine_darktable_sigmoid_description)
+        RawColorEngine.DarktableFilmic -> stringResource(R.string.settings_raw_color_engine_darktable_filmic_description)
         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film_description)
     }
 }

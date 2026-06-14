@@ -115,8 +115,34 @@ object RawShaders {
         const int RAW_COLOR_ENGINE_ADOBE_CURVE = 0;
         const int RAW_COLOR_ENGINE_AGX = 1;
         const int RAW_COLOR_ENGINE_SPECTRAL_FILM = 2;
+        const int RAW_COLOR_ENGINE_DARKTABLE_SIGMOID = 3;
+        const int RAW_COLOR_ENGINE_DARKTABLE_FILMIC = 4;
         const float AGX_LOG_MIN = -12.47393;
         const float AGX_LOG_MAX = 12.5260688117;
+        const float DT_SIGMOID_WHITE_TARGET = 1.0;
+        const float DT_SIGMOID_PAPER_EXPOSURE = 0.354355423;
+        const float DT_SIGMOID_FILM_FOG = 0.00142637086;
+        const float DT_SIGMOID_FILM_POWER = 1.5;
+        const float DT_SIGMOID_PAPER_POWER = 1.0;
+        const float DT_SIGMOID_HUE_PRESERVATION = 1.0;
+        const float DT_FILMIC_NORM_MIN = 0.0000152587890625;
+        const float DT_FILMIC_INPUT_MIN = 0.0009185798271;
+        const float DT_FILMIC_INPUT_MAX = 4.352042729;
+        const float DT_FILMIC_GREY_SOURCE = 0.1845;
+        const float DT_FILMIC_BLACK_SOURCE = -7.65;
+        const float DT_FILMIC_DYNAMIC_RANGE = 12.21;
+        const float DT_FILMIC_OUTPUT_POWER = 3.614815775;
+        const float DT_FILMIC_DISPLAY_BLACK = 0.0001517634;
+        const float DT_FILMIC_DISPLAY_WHITE = 1.0;
+        const float DT_FILMIC_LATITUDE_MIN = 0.6264986897;
+        const float DT_FILMIC_LATITUDE_MAX = 0.6265610375;
+        const float DISPLAY_HEADROOM_ROLLOFF_DEPTH = 0.005;
+        const float DISPLAY_HEADROOM_ROLLOFF_RANGE = 0.5;
+        const vec3 DT_FILMIC_M1 = vec3(0.08781340895, -0.1315144048, -0.271791843);
+        const vec3 DT_FILMIC_M2 = vec3(0.0, 1.387062713, 1.433801098);
+        const vec3 DT_FILMIC_M3 = vec3(1.36863996, -1.920153105, 0.0);
+        const vec3 DT_FILMIC_M4 = vec3(0.7402100865, 4.205175692, 0.0);
+        const vec3 DT_FILMIC_M5 = vec3(-1.171914069, -2.540570894, 0.0);
         
         float luminance(vec3 color) {
             return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
@@ -444,6 +470,211 @@ object RawShaders {
             return pow(max(rec1886Encoded, vec3(0.0)), vec3(2.4));
         }
 
+        vec3 desaturateNegativeValues(vec3 color) {
+            float pixelAverage = max((color.r + color.g + color.b) / 3.0, 0.0);
+            float minValue = min(color.r, min(color.g, color.b));
+            float saturationFactor =
+                minValue < 0.0 ? -pixelAverage / (minValue - pixelAverage) : 1.0;
+            return vec3(pixelAverage) + saturationFactor * (color - vec3(pixelAverage));
+        }
+
+        float darktableSigmoidScalar(float value) {
+            float clampedValue = max(value, 0.0);
+            float filmResponse = pow(DT_SIGMOID_FILM_FOG + clampedValue, DT_SIGMOID_FILM_POWER);
+            float paperResponse = DT_SIGMOID_WHITE_TARGET *
+                pow(filmResponse / (DT_SIGMOID_PAPER_EXPOSURE + filmResponse), DT_SIGMOID_PAPER_POWER);
+            return clamp(paperResponse, 0.0, DT_SIGMOID_WHITE_TARGET);
+        }
+
+        vec3 darktableSigmoidCurve(vec3 color) {
+            return vec3(
+                darktableSigmoidScalar(color.r),
+                darktableSigmoidScalar(color.g),
+                darktableSigmoidScalar(color.b)
+            );
+        }
+
+        ivec3 sigmoidChannelOrder(vec3 color) {
+            if (color.r >= color.g) {
+                if (color.g > color.b) {
+                    return ivec3(2, 1, 0);
+                } else if (color.b > color.r) {
+                    return ivec3(1, 0, 2);
+                } else if (color.b > color.g) {
+                    return ivec3(1, 2, 0);
+                }
+                return ivec3(2, 1, 0);
+            }
+            if (color.r >= color.b) {
+                return ivec3(2, 0, 1);
+            } else if (color.b > color.g) {
+                return ivec3(0, 1, 2);
+            }
+            return ivec3(0, 2, 1);
+        }
+
+        float channelValue(vec3 color, int index) {
+            if (index == 0) return color.r;
+            if (index == 1) return color.g;
+            return color.b;
+        }
+
+        vec3 withChannelValue(vec3 color, int index, float value) {
+            if (index == 0) {
+                color.r = value;
+            } else if (index == 1) {
+                color.g = value;
+            } else {
+                color.b = value;
+            }
+            return color;
+        }
+
+        vec3 preserveSigmoidHueAndEnergy(vec3 inputColor, vec3 perChannel) {
+            ivec3 order = sigmoidChannelOrder(inputColor);
+            float inputMin = channelValue(inputColor, order.x);
+            float inputMid = channelValue(inputColor, order.y);
+            float inputMax = channelValue(inputColor, order.z);
+            float perMin = channelValue(perChannel, order.x);
+            float perMid = channelValue(perChannel, order.y);
+            float perMax = channelValue(perChannel, order.z);
+
+            float chroma = inputMax - inputMin;
+            float midScale = chroma != 0.0 ? (inputMid - inputMin) / chroma : 0.0;
+            float fullHueCorrection = perMin + (perMax - perMin) * midScale;
+            float naiveHueMid = mix(perMid, fullHueCorrection, DT_SIGMOID_HUE_PRESERVATION);
+            float perChannelEnergy = perChannel.r + perChannel.g + perChannel.b;
+            float naiveHueEnergy = perMin + naiveHueMid + perMax;
+            float inputMinPlusMid = inputMin + inputMid;
+            float blendFactor = inputMinPlusMid != 0.0 ? 2.0 * inputMin / inputMinPlusMid : 0.0;
+            float energyTarget = blendFactor * perChannelEnergy + (1.0 - blendFactor) * naiveHueEnergy;
+
+            float outMin;
+            float outMid;
+            float outMax;
+            if (naiveHueMid <= perMid) {
+                float correctedMid =
+                    ((1.0 - DT_SIGMOID_HUE_PRESERVATION) * perMid +
+                        DT_SIGMOID_HUE_PRESERVATION *
+                        (midScale * perMax + (1.0 - midScale) * (energyTarget - perMax))) /
+                    (1.0 + DT_SIGMOID_HUE_PRESERVATION * (1.0 - midScale));
+                outMin = energyTarget - perMax - correctedMid;
+                outMid = correctedMid;
+                outMax = perMax;
+            } else {
+                float correctedMid =
+                    ((1.0 - DT_SIGMOID_HUE_PRESERVATION) * perMid +
+                        DT_SIGMOID_HUE_PRESERVATION *
+                        (perMin * (1.0 - midScale) + midScale * (energyTarget - perMin))) /
+                    (1.0 + DT_SIGMOID_HUE_PRESERVATION * midScale);
+                outMin = perMin;
+                outMid = correctedMid;
+                outMax = energyTarget - perMin - correctedMid;
+            }
+
+            vec3 result = vec3(0.0);
+            result = withChannelValue(result, order.x, outMin);
+            result = withChannelValue(result, order.y, outMid);
+            result = withChannelValue(result, order.z, outMax);
+            return result;
+        }
+
+        vec3 applyDarktableSigmoid(vec3 color) {
+            vec3 positiveColor = desaturateNegativeValues(color);
+            vec3 perChannel = darktableSigmoidCurve(positiveColor);
+            return preserveSigmoidHueAndEnergy(positiveColor, perChannel);
+        }
+
+        float darktableFilmicLogEncode(float value) {
+            float safeValue = max(value, DT_FILMIC_NORM_MIN);
+            return clamp(
+                (log2(safeValue / DT_FILMIC_GREY_SOURCE) - DT_FILMIC_BLACK_SOURCE) / DT_FILMIC_DYNAMIC_RANGE,
+                0.0,
+                1.0
+            );
+        }
+
+        float darktableFilmicSpline(float value) {
+            if (value < DT_FILMIC_LATITUDE_MIN) {
+                return DT_FILMIC_M1.x + value * (
+                    DT_FILMIC_M2.x + value * (
+                        DT_FILMIC_M3.x + value * (
+                            DT_FILMIC_M4.x + value * DT_FILMIC_M5.x
+                        )
+                    )
+                );
+            }
+            if (value > DT_FILMIC_LATITUDE_MAX) {
+                return DT_FILMIC_M1.y + value * (
+                    DT_FILMIC_M2.y + value * (
+                        DT_FILMIC_M3.y + value * (
+                            DT_FILMIC_M4.y + value * DT_FILMIC_M5.y
+                        )
+                    )
+                );
+            }
+            return DT_FILMIC_M1.z + value * DT_FILMIC_M2.z;
+        }
+
+        float darktableFilmicRgbScalar(float value) {
+            float encoded = darktableFilmicLogEncode(value);
+            float curved = clamp(darktableFilmicSpline(encoded), 0.0, DT_FILMIC_DISPLAY_WHITE);
+            return pow(max(curved, 0.0), DT_FILMIC_OUTPUT_POWER);
+        }
+
+        float darktableFilmicNormScalar(float value) {
+            float encoded = darktableFilmicLogEncode(value);
+            float curved = clamp(
+                darktableFilmicSpline(encoded),
+                DT_FILMIC_DISPLAY_BLACK,
+                DT_FILMIC_DISPLAY_WHITE
+            );
+            return pow(max(curved, 0.0), DT_FILMIC_OUTPUT_POWER);
+        }
+
+        vec3 darktableFilmicRgbTone(vec3 color) {
+            vec3 positiveColor = max(color, vec3(DT_FILMIC_NORM_MIN));
+            return vec3(
+                darktableFilmicRgbScalar(positiveColor.r),
+                darktableFilmicRgbScalar(positiveColor.g),
+                darktableFilmicRgbScalar(positiveColor.b)
+            );
+        }
+
+        vec3 darktableFilmicMaxRgbTone(vec3 color) {
+            vec3 positiveColor = max(color, vec3(0.0));
+            float maxRgb = max(positiveColor.r, max(positiveColor.g, positiveColor.b));
+            float ratioNorm = max(maxRgb, DT_FILMIC_INPUT_MIN);
+            float toneNorm = clamp(maxRgb, DT_FILMIC_INPUT_MIN, DT_FILMIC_INPUT_MAX);
+            vec3 ratios = positiveColor / ratioNorm;
+            return ratios * darktableFilmicNormScalar(toneNorm);
+        }
+
+        float displayHeadroomRolloffScalar(float value) {
+            if (value <= 1.0) {
+                return value;
+            }
+
+            float x = (value - 1.0) / DISPLAY_HEADROOM_ROLLOFF_RANGE;
+            return 1.0 - DISPLAY_HEADROOM_ROLLOFF_DEPTH * (1.0 - exp(-x));
+        }
+
+        vec3 displayHeadroomRolloff(vec3 color) {
+            float peak = max(color.r, max(color.g, color.b));
+            if (peak <= 1.0) {
+                return color;
+            }
+
+            float rolledPeak = displayHeadroomRolloffScalar(peak);
+            return color * (rolledPeak / max(peak, 1e-6));
+        }
+
+        vec3 applyDarktableFilmic(vec3 color) {
+            vec3 naiveRgb = darktableFilmicRgbTone(color);
+            vec3 maxRgb = darktableFilmicMaxRgbTone(color);
+            return 0.5 * naiveRgb + 0.5 * maxRgb;
+        }
+
         float proPhotoLuminance(vec3 color) {
             return max(dot(color, vec3(0.2880402, 0.7118741, 0.0000857)), 1e-5);
         }
@@ -477,6 +708,12 @@ object RawShaders {
             if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
                 return applyAgX(color);
             }
+            if (uRawColorEngine == RAW_COLOR_ENGINE_DARKTABLE_SIGMOID) {
+                return applyDarktableSigmoid(color);
+            }
+            if (uRawColorEngine == RAW_COLOR_ENGINE_DARKTABLE_FILMIC) {
+                return applyDarktableFilmic(color);
+            }
             if (uRawColorEngine == RAW_COLOR_ENGINE_SPECTRAL_FILM && uSpectralFilmSize > 1) {
                 return applySpectralFilm(color);
             }
@@ -489,7 +726,11 @@ object RawShaders {
             if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
                 return color;
             }
-            return uOutputTransform * color;
+            vec3 outputColor = uOutputTransform * color;
+            if (uRawColorEngine == RAW_COLOR_ENGINE_DARKTABLE_FILMIC) {
+                return displayHeadroomRolloff(outputColor);
+            }
+            return outputColor;
         }
         
         vec3 sampleToneSource(vec2 uv) {

@@ -47,7 +47,7 @@ data class MediaMetadata(
     val rawWhitePointCorrection: Float? = null,
     val rawAutoWhiteBalanceEstimate: Boolean? = null,
     val rawDcpId: String? = null,
-    val rawColorEngine: RawColorEngine = RawColorEngine.AgX,
+    val rawColorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
     val cameraId: String? = null,
     // 边框水印配置
     val frameId: String? = null,
@@ -267,7 +267,8 @@ data class MediaMetadata(
                     rawAutoWhiteBalanceEstimate = if (obj.isNull("rawAutoWhiteBalanceEstimate")) null else obj.optBoolean("rawAutoWhiteBalanceEstimate"),
                     rawDcpId = if (obj.isNull("rawDcpId")) null else obj.optString("rawDcpId"),
                     rawColorEngine = RawColorEngine.fromPersistedName(
-                        if (obj.isNull("rawColorEngine")) null else obj.optString("rawColorEngine")
+                        if (obj.isNull("rawColorEngine")) null else obj.optString("rawColorEngine"),
+                        fallback = RawColorEngine.AdobeCurve
                     ),
                     rawBlackLevelMode = if (obj.isNull("rawBlackLevelMode")) null else obj.optString("rawBlackLevelMode"),
                     rawCustomBlackLevel = if (obj.isNull("rawCustomBlackLevel")) null else obj.optDouble("rawCustomBlackLevel").toFloat(),

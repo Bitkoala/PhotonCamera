@@ -14,19 +14,33 @@ enum class RawColorEngine(
     val meteringCompensationEv: Float,
     val exposureCompensationDomain: RawExposureCompensationDomain
 ) {
-    AdobeCurve(
-        shaderId = 0,
-        workingColorSpace = ColorSpace.ProPhoto,
-        defaultExposureCompensationEv = 0f,
-        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        exposureCompensationDomain = RawExposureCompensationDomain.Curve
-    ),
     AgX(
         shaderId = 1,
         workingColorSpace = ColorSpace.FilmLightEGamut,
         defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
+    DarktableSigmoid(
+        shaderId = 3,
+        workingColorSpace = ColorSpace.BT2020,
+        defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
+    DarktableFilmic(
+        shaderId = 4,
+        workingColorSpace = ColorSpace.BT2020,
+        defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
+    AdobeCurve(
+        shaderId = 0,
+        workingColorSpace = ColorSpace.ProPhoto,
+        defaultExposureCompensationEv = 0f,
+        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Curve
     ),
     SpectralFilm(
         shaderId = 2,
@@ -38,8 +52,11 @@ enum class RawColorEngine(
     ;
 
     companion object {
-        fun fromPersistedName(value: String?): RawColorEngine {
-            return entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: AgX
+        fun fromPersistedName(
+            value: String?,
+            fallback: RawColorEngine = AgX
+        ): RawColorEngine {
+            return entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: fallback
         }
     }
 }

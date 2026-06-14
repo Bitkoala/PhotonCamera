@@ -388,6 +388,8 @@ fun PresetEditorScreen(
                     when (engine) {
                         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
                         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
+                        RawColorEngine.DarktableSigmoid -> stringResource(R.string.settings_raw_color_engine_darktable_sigmoid)
+                        RawColorEngine.DarktableFilmic -> stringResource(R.string.settings_raw_color_engine_darktable_filmic)
                         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
                     }
                 }

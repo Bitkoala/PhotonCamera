@@ -348,7 +348,10 @@ object GalleryMediaStore {
             rawWhitePointCorrection = rawWhitePointCorrection,
             rawAutoWhiteBalanceEstimate = rawAutoWhiteBalanceEstimate,
             rawDcpId = rawDcpId,
-            rawColorEngine = RawColorEngine.fromPersistedName(rawColorEngine),
+            rawColorEngine = RawColorEngine.fromPersistedName(
+                rawColorEngine,
+                fallback = RawColorEngine.AdobeCurve
+            ),
             frameId = frameId,
             width = width,
             height = height,

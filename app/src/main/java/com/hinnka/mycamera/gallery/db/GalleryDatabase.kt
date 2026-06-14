@@ -69,7 +69,7 @@ abstract class GalleryDatabase : RoomDatabase() {
 
         private val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawColorEngine TEXT NOT NULL DEFAULT 'AgX'")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawColorEngine TEXT NOT NULL DEFAULT 'AdobeCurve'")
             }
         }
 
