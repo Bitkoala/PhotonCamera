@@ -639,8 +639,6 @@
     <string name="settings_raw_color_engine_agx_description">Blender AgX tone formation with a wider RAW working space.</string>
     <string name="settings_raw_color_engine_spectral_film">Spectral Film</string>
     <string name="settings_raw_color_engine_spectral_film_description">Film stock and print medium simulation with density tuning.</string>
-    <string name="settings_raw_color_engine_arri">ARRI LogC4</string>
-    <string name="settings_raw_color_engine_arri_description">ARRI Wide Gamut 4 with LogC4 to Rec.709 Gamma 2.4 rendering.</string>
     <string name="settings_spectral_film">Spectral Film Simulation</string>
     <string name="settings_spectral_film_description">Simulate classic negative film and print medium color curves.</string>
     <string name="settings_negative_film">Negative Film</string>

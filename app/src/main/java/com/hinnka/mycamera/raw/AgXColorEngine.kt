@@ -14,7 +14,6 @@ data class RawEngineLut(
 )
 
 typealias AgxLut = RawEngineLut
-typealias ArriLut = RawEngineLut
 
 object RawEngineLutLoader {
     private const val MAGIC_PLUT = 0x54554C50

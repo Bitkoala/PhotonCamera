@@ -96,7 +96,6 @@ object RawShaders {
         uniform sampler3D uDcpLookTableTexture;
         uniform sampler3D uSpectralFilmTexture;
         uniform sampler3D uAgxBaseSrgbTexture;
-        uniform sampler3D uArriLogC4LutTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
@@ -111,15 +110,11 @@ object RawShaders {
         uniform int uDcpLookTableEncoding;
         uniform int uSpectralFilmSize;
         uniform int uAgxLutSize;
-        uniform int uArriLutSize;
         uniform int uRawColorEngine;
-        uniform vec4 uLogC4Params0;
-        uniform vec4 uLogC4Params1;
 
         const int RAW_COLOR_ENGINE_ADOBE_CURVE = 0;
         const int RAW_COLOR_ENGINE_AGX = 1;
         const int RAW_COLOR_ENGINE_SPECTRAL_FILM = 2;
-        const int RAW_COLOR_ENGINE_ARRI = 3;
         const float AGX_LOG_MIN = -12.47393;
         const float AGX_LOG_MAX = 12.5260688117;
         
@@ -430,10 +425,6 @@ object RawShaders {
             return sampleCubeLut(uAgxBaseSrgbTexture, uAgxLutSize, coord);
         }
 
-        vec3 sampleArriLogC4ToGamma24Rec709(vec3 coord) {
-            return sampleCubeLut(uArriLogC4LutTexture, uArriLutSize, coord);
-        }
-
         vec3 agxLogEncode(vec3 color) {
             vec3 safeColor = max(color, vec3(exp2(AGX_LOG_MIN)));
             return clamp(
@@ -451,45 +442,6 @@ object RawShaders {
             vec3 agxLog = agxLogEncode(egamut);
             vec3 rec1886Encoded = sampleAgxBaseSrgb(agxLog);
             return pow(max(rec1886Encoded, vec3(0.0)), vec3(2.4));
-        }
-
-        float log10Safe(float value) {
-            return log(max(value, 1e-20)) / log(10.0);
-        }
-
-        float linearToLogC4(float reflection) {
-            float a = uLogC4Params0.x;
-            float b = uLogC4Params0.y;
-            float c = uLogC4Params0.z;
-            float d = uLogC4Params0.w;
-            float e = uLogC4Params1.x;
-            float f = uLogC4Params1.y;
-            float cut1 = uLogC4Params1.z;
-            if (reflection >= cut1) {
-                return c * log10Safe(a * reflection + b) + d;
-            }
-            return e * reflection + f;
-        }
-
-        vec3 linearToLogC4(vec3 color) {
-            return clamp(
-                vec3(
-                    linearToLogC4(color.r),
-                    linearToLogC4(color.g),
-                    linearToLogC4(color.b)
-                ),
-                vec3(0.0),
-                vec3(1.0)
-            );
-        }
-
-        vec3 applyArri(vec3 color) {
-            if (uArriLutSize <= 1) {
-                return uOutputTransform * applyAdobeCurve(color);
-            }
-            vec3 logC4 = linearToLogC4(max(color, vec3(0.0)));
-            vec3 gamma24Rec709 = sampleArriLogC4ToGamma24Rec709(logC4);
-            return pow(max(gamma24Rec709, vec3(0.0)), vec3(2.4));
         }
 
         float proPhotoLuminance(vec3 color) {
@@ -525,9 +477,6 @@ object RawShaders {
             if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
                 return applyAgX(color);
             }
-            if (uRawColorEngine == RAW_COLOR_ENGINE_ARRI) {
-                return applyArri(color);
-            }
             if (uRawColorEngine == RAW_COLOR_ENGINE_SPECTRAL_FILM && uSpectralFilmSize > 1) {
                 return applySpectralFilm(color);
             }
@@ -537,7 +486,7 @@ object RawShaders {
         }
 
         vec3 applyOutputTransformAfterDisplayTone(vec3 color) {
-            if (uRawColorEngine == RAW_COLOR_ENGINE_AGX || uRawColorEngine == RAW_COLOR_ENGINE_ARRI) {
+            if (uRawColorEngine == RAW_COLOR_ENGINE_AGX) {
                 return color;
             }
             return uOutputTransform * color;

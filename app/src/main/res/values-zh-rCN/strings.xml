@@ -655,8 +655,6 @@
     <string name="settings_raw_color_engine_agx_description">使用 Blender AgX 成像，并采用更宽的 RAW 工作空间。</string>
     <string name="settings_raw_color_engine_spectral_film">光谱胶片</string>
     <string name="settings_raw_color_engine_spectral_film_description">模拟胶卷和相纸介质，并支持密度微调。</string>
-    <string name="settings_raw_color_engine_arri">ARRI LogC4</string>
-    <string name="settings_raw_color_engine_arri_description">使用 ARRI Wide Gamut 4，并通过 LogC4 到 Rec.709 Gamma 2.4 的 LUT 成像。</string>
     <string name="settings_spectral_film">光谱胶片模拟</string>
     <string name="settings_spectral_film_description">模拟经典底片和打印介质的色彩响应与物理特征曲线。</string>
     <string name="settings_negative_film">底片胶卷</string>

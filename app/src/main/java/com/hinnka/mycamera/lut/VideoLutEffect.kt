@@ -458,6 +458,9 @@ private class VideoLutShaderProgram(
                 if (curveType == 8) {
                     return mix(10.540237 * l + 0.072905536, 0.18955931 * log10(max(l, vec3(1e-6))) + 0.5547945, step(0.0078125, l));
                 }
+                if (curveType == 9) {
+                    return mix(15.1927 * l + 0.151927, 0.224282 * log10(155.975327 * l + 2.55975327), step(-0.01, l));
+                }
                 return l;
             }
 
@@ -483,6 +486,9 @@ private class VideoLutShaderProgram(
                 }
                 if (colorSpace == 7) {
                     return mat3(0.585196, 0.078589, 0.022794, 0.322642, 0.819627, 0.114217, 0.092162, 0.101784, 0.862989) * rgb;
+                }
+                if (colorSpace == 9) {
+                    return mat3(0.541973, 0.076993, 0.058875, 0.360148, 0.767969, 0.273495, 0.097891, 0.155019, 0.667533) * rgb;
                 }
                 return rgb;
             }

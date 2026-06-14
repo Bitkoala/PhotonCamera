@@ -518,8 +518,8 @@ object Shaders {
     uniform float uLutIntensity;
     uniform bool uLutEnabled;
     uniform int uLutMaskType;
-    uniform int uLutCurve; // 0=sRGB, 1=Linear, 2=V-Log, 3=S-Log3, 4=F-Log2, 5=LogC4, 6=AppleLog, 7=HLG, 8=ACEScct
-    uniform int uLutColorSpace; // 0=sRGB, 1=DCI-P3, 2=BT2020, 3=ARRI4, 4=AppleLog2, 5=ProPhoto, 6=ACES_AP1
+    uniform int uLutCurve; // 0=sRGB, 1=Linear, 2=V-Log, 3=S-Log3, 4=F-Log2, 5=LogC4, 6=AppleLog, 7=HLG, 8=ACEScct, 9=Log3G10
+    uniform int uLutColorSpace; // 0=sRGB, 1=DCI-P3, 2=BT2020, 3=ARRI4, 4=AppleLog2, 5=S-Gamut3.Cine, 6=ACES_AP1, 7=V-Gamut, 9=REDWideGamutRGB
     uniform bool uVideoLogEnabled;
     uniform int uVideoLogCurve;
     uniform int uVideoColorSpace;
@@ -1003,6 +1003,9 @@ object Shaders {
         if (curveType == 8) { // ACEScct
             return mix(10.540237 * l + 0.072905536, 0.18955931 * log10(max(l, vec3(1e-6))) + 0.5547945, step(0.0078125, l));
         }
+        if (curveType == 9) { // Log3G10
+            return mix(15.1927 * l + 0.151927, 0.224282 * log10(155.975327 * l + 2.55975327), step(-0.01, l));
+        }
         return l;
     }
 
@@ -1030,6 +1033,9 @@ object Shaders {
         }
         if (colorSpace == 7) { // V-Gamut
             return mat3(0.585196, 0.078589, 0.022794, 0.322642, 0.819627, 0.114217, 0.092162, 0.101784, 0.862989) * rgb;
+        }
+        if (colorSpace == 9) { // REDWideGamutRGB
+            return mat3(0.541973, 0.076993, 0.058875, 0.360148, 0.767969, 0.273495, 0.097891, 0.155019, 0.667533) * rgb;
         }
         return rgb;
     }

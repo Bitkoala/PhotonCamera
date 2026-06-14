@@ -492,7 +492,6 @@ private fun rawColorEngineName(engine: RawColorEngine): String {
         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
-        RawColorEngine.ARRI -> stringResource(R.string.settings_raw_color_engine_arri)
     }
 }
 
@@ -502,7 +501,6 @@ private fun rawColorEngineDescription(engine: RawColorEngine): String {
         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve_description)
         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx_description)
         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film_description)
-        RawColorEngine.ARRI -> stringResource(R.string.settings_raw_color_engine_arri_description)
     }
 }
 

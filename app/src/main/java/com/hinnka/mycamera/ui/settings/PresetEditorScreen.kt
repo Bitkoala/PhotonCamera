@@ -389,7 +389,6 @@ fun PresetEditorScreen(
                         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)
                         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
                         RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
-                        RawColorEngine.ARRI -> stringResource(R.string.settings_raw_color_engine_arri)
                     }
                 }
                 DropdownSettingItem(

@@ -66,6 +66,11 @@ enum class TransferCurve(
         1.0f, 0.0f, 0.18955931f, 0.5547945f, 10.540237f, 0.072905536f,
         0.0078125f, 0.15525114f, 0.4136f, 222.8609f, 0
     ),
+    LOG3G10(
+        10, 9,
+        155.975327f, 2.5597532f, 0.224282f, 0.0f, 15.1927f, 0.151927f,
+        -0.01f, 0.0f, 1.0f / 3.0f, 184.32f, 0
+    ),
     LOGC4(
         5, 5,
         2231.8263f, 64.0f, 0.21524584f, -0.29590839f, 8.80302f, 0.158957f,
@@ -137,6 +142,7 @@ enum class TransferCurve(
         get() = when (this) {
             FLOG2 -> "raw/flog2"
             LOGC4 -> "raw/arri"
+            LOG3G10 -> "raw/red"
             APPLE_LOG -> "raw/apple"
             ACES_CCT -> "raw/aces"
             SLOG3 -> "raw/slog3"
@@ -158,6 +164,7 @@ enum class TransferCurve(
                 "S_LOG3" -> SLOG3
                 "F_LOG2" -> FLOG2
                 "LOG_C" -> LOGC4
+                "LOG_3G10", "RED_LOG3G10" -> LOG3G10
                 else -> entries.firstOrNull { it.name == name } ?: SRGB
             }
         }

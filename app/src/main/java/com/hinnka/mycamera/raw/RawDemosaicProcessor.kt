@@ -16,7 +16,6 @@ import android.opengl.GLUtils
 import android.util.Half
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
-import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
 import com.hinnka.mycamera.lut.ShadowsHighlightsShader
@@ -176,7 +175,6 @@ class RawDemosaicProcessor {
         private const val RAW_AE_BASE_STATS_BINDING = 1
         private const val RAW_AE_TONE_STATS_BINDING = 0
         private const val AGX_BASE_SRGB_TEXTURE_UNIT = 7
-        private const val ARRI_LOGC4_LUT_TEXTURE_UNIT = 8
 
         private val BRADFORD_D65_TO_D50 = floatArrayOf(
             1.0478112f, 0.0228866f, -0.0501270f,
@@ -273,8 +271,6 @@ class RawDemosaicProcessor {
     private var spectralFilmTextureKey: String? = null
     private var agxLutTextureId = 0
     private var agxLutTextureKey: String? = null
-    private var arriLutTextureId = 0
-    private var arriLutTextureKey: String? = null
     private var dummyDcp3DTextureId = 0
     private var dummyDcpToneCurveTextureId = 0
 
@@ -682,20 +678,9 @@ class RawDemosaicProcessor {
             } else {
                 null
             }
-        val arriLut =
-            if (requestedColorEngine == RawColorEngine.ARRI) {
-                ArriColorEngine.loadLogC4ToGamma24Rec709Lut(context)
-            } else {
-                null
-            }
         val colorEngine = when {
             requestedColorEngine == RawColorEngine.AgX && agxLut == null -> {
                 PLog.w(TAG, "AgX LUT unavailable, falling back to AdobeCurve")
-                RawColorEngine.AdobeCurve
-            }
-
-            requestedColorEngine == RawColorEngine.ARRI && arriLut == null -> {
-                PLog.w(TAG, "ARRI LUT unavailable, falling back to AdobeCurve")
                 RawColorEngine.AdobeCurve
             }
 
@@ -1182,7 +1167,6 @@ class RawDemosaicProcessor {
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 spectralFilmLut = spectralFilmLut,
                 agxLut = agxLut,
-                arriLut = arriLut,
                 colorEngine = colorEngine,
                 workingColorSpace = rawWorkingColorSpace,
                 shadowsHighlightsParams = shadowsHighlightsParams
@@ -3753,93 +3737,6 @@ class RawDemosaicProcessor {
         checkGlError("bindAgxCombinedResource")
     }
 
-    private fun uploadArriTexture(lut: ArriLut): Int {
-        val key = "${lut.sourceKey}:${lut.rgbaFloatBuffer.capacity()}"
-        if (arriLutTextureId == 0) {
-            val textures = IntArray(1)
-            GLES30.glGenTextures(1, textures, 0)
-            arriLutTextureId = textures[0]
-            arriLutTextureKey = null
-        }
-        if (arriLutTextureKey == key) {
-            return arriLutTextureId
-        }
-
-        val buffer = lut.rgbaFloatBuffer.duplicate().apply { position(0) }
-
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, arriLutTextureId)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_S,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_T,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_R,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexImage3D(
-            GLES30.GL_TEXTURE_3D,
-            0,
-            GLES30.GL_RGBA16F,
-            lut.size,
-            lut.size,
-            lut.size,
-            0,
-            GLES30.GL_RGBA,
-            GLES30.GL_FLOAT,
-            buffer
-        )
-        arriLutTextureKey = key
-        PLog.d(TAG, "Uploaded ARRI LUT: ${lut.name}, size=${lut.size}")
-        checkGlError("uploadArriTexture")
-        return arriLutTextureId
-    }
-
-    private fun bindArriCombinedResource(arriLut: ArriLut?) {
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(combinedProgram, "uArriLogC4LutTexture"),
-            ARRI_LOGC4_LUT_TEXTURE_UNIT
-        )
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(combinedProgram, "uArriLutSize"),
-            arriLut?.size ?: 1
-        )
-        bindLogC4Uniforms()
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + ARRI_LOGC4_LUT_TEXTURE_UNIT)
-        if (arriLut != null) {
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, uploadArriTexture(arriLut))
-        } else {
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, ensureDummyDcp3DTexture())
-        }
-        checkGlError("bindArriCombinedResource")
-    }
-
-    private fun bindLogC4Uniforms() {
-        val logC4 = TransferCurve.LOGC4
-        GLES30.glUniform4f(
-            GLES30.glGetUniformLocation(combinedProgram, "uLogC4Params0"),
-            logC4.a,
-            logC4.b,
-            logC4.c,
-            logC4.d
-        )
-        GLES30.glUniform4f(
-            GLES30.glGetUniformLocation(combinedProgram, "uLogC4Params1"),
-            logC4.e,
-            logC4.f,
-            logC4.cut1,
-            logC4.cut2
-        )
-    }
-
     /**
      * Combined Processing Pass: ToneMap + LUT + Sharpening
      */
@@ -3849,7 +3746,6 @@ class RawDemosaicProcessor {
         dcpRenderPlan: DcpRenderPlan? = null,
         spectralFilmLut: SpectralFilmLut? = null,
         agxLut: AgxLut? = null,
-        arriLut: ArriLut? = null,
         colorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
         workingColorSpace: ColorSpace = ColorSpace.ProPhoto,
         shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
@@ -3898,9 +3794,6 @@ class RawDemosaicProcessor {
         )
         bindAgxCombinedResource(
             agxLut = if (colorEngine == RawColorEngine.AgX) agxLut else null
-        )
-        bindArriCombinedResource(
-            arriLut = if (colorEngine == RawColorEngine.ARRI) arriLut else null
         )
         GLES30.glUniform1i(
             GLES30.glGetUniformLocation(combinedProgram, "uRawColorEngine"),
@@ -5039,11 +4932,6 @@ class RawDemosaicProcessor {
             GLES30.glDeleteTextures(1, intArrayOf(agxLutTextureId), 0)
             agxLutTextureId = 0
             agxLutTextureKey = null
-        }
-        if (arriLutTextureId != 0) {
-            GLES30.glDeleteTextures(1, intArrayOf(arriLutTextureId), 0)
-            arriLutTextureId = 0
-            arriLutTextureKey = null
         }
         if (dummyDcp3DTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dummyDcp3DTextureId), 0)
         if (dummyDcpToneCurveTextureId != 0) GLES30.glDeleteTextures(

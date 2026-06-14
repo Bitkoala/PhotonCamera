@@ -3472,6 +3472,7 @@ class LutRenderer : GLSurfaceView.Renderer {
             ColorSpace.S_GAMUT3_CINE -> 5
             ColorSpace.ACES_AP1 -> 6
             ColorSpace.VGamut -> 7
+            ColorSpace.RED -> 9
             ColorSpace.FilmLightEGamut -> 0
         }
     }

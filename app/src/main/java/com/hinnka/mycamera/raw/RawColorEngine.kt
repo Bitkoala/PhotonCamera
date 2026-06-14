@@ -28,13 +28,6 @@ enum class RawColorEngine(
         meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
     ),
-    ARRI(
-        shaderId = 3,
-        workingColorSpace = ColorSpace.ARRI4,
-        defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        exposureCompensationDomain = RawExposureCompensationDomain.Linear
-    ),
     SpectralFilm(
         shaderId = 2,
         workingColorSpace = ColorSpace.ProPhoto,
