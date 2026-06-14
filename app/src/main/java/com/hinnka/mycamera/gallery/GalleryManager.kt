@@ -141,16 +141,31 @@ object GalleryManager {
         adjustments: RawDemosaicProcessor.RawAutoAdjustments
     ): MediaMetadata {
         return copy(
+            rawAutoExposure = true,
             rawExposureCompensation = adjustments.exposureCompensation,
             rawHighlightsAdjustment = adjustments.highlights,
             rawShadowsAdjustment = adjustments.shadows
         )
     }
 
+    data class PhotoMetadataUpdate(
+        val photoId: String,
+        val metadata: MediaMetadata
+    )
+
+    private val _photoMetadataUpdatedEvents =
+        MutableSharedFlow<PhotoMetadataUpdate>(extraBufferCapacity = 16)
+    val photoMetadataUpdatedEvents: SharedFlow<PhotoMetadataUpdate> =
+        _photoMetadataUpdatedEvents.asSharedFlow()
+
     private val _photoLibraryChangedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     val photoLibraryChangedEvents: SharedFlow<Unit> = _photoLibraryChangedEvents.asSharedFlow()
     private val hdrWorkLock = Any()
     private val hdrWorkCounts = ConcurrentHashMap<String, Int>()
+
+    private fun notifyPhotoMetadataUpdated(photoId: String, metadata: MediaMetadata) {
+        _photoMetadataUpdatedEvents.tryEmit(PhotoMetadataUpdate(photoId, metadata))
+    }
 
     fun notifyPhotoLibraryChanged() {
         _photoLibraryChangedEvents.tryEmit(Unit)
@@ -3000,7 +3015,9 @@ object GalleryManager {
      */
     suspend fun saveMetadata(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
         return metadataMutex.withLock {
-            saveMetadataInternal(context, photoId, metadata)
+            saveMetadataInternal(context, photoId, metadata).also { saved ->
+                if (saved) notifyPhotoMetadataUpdated(photoId, metadata)
+            }
         }
     }
 
@@ -3018,7 +3035,9 @@ object GalleryManager {
         update: (MediaMetadata) -> MediaMetadata
     ): MediaMetadata? {
         return metadataMutex.withLock {
-            GalleryMediaStore.updateMetadata(context, photoId, update)
+            GalleryMediaStore.updateMetadata(context, photoId, update).also { updated ->
+                if (updated != null) notifyPhotoMetadataUpdated(photoId, updated)
+            }
         }
     }
 

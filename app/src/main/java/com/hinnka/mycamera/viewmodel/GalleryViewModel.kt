@@ -682,6 +682,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
+        viewModelScope.launch {
+            GalleryManager.photoMetadataUpdatedEvents.collect { update ->
+                applyPhotoMetadataUpdateToMemory(update.photoId, update.metadata)
+            }
+        }
+
         // 订阅 ContentRepository 的 StateFlow，结合用户自定义排序
         viewModelScope.launch {
             contentRepository.availableLuts.combine(
@@ -908,10 +914,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun refreshLatestPhoto() {
         viewModelScope.launch {
             val photo = repository.getLatestPhoto()
-            photo?.let {
-                _latestPhoto.value = it
-                if (_photos.value.none { existing -> existing.id == it.id }) {
-                    _photos.value = listOf(it) + _photos.value
+            photo?.let { latest ->
+                _latestPhoto.value = latest
+                _photos.update { current ->
+                    if (current.none { existing -> existing.id == latest.id }) {
+                        listOf(latest) + current
+                    } else {
+                        current.map { existing -> if (existing.id == latest.id) latest else existing }
+                    }
+                }
+                if (!isEditing && currentPhotoMetadataId == latest.id && latest.metadata != null) {
+                    applyMetadataToEditState(latest.metadata)
                 }
             }
             if (!_isInitialized.value) {
@@ -919,6 +932,39 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 StartupTrace.mark("GalleryViewModel.isInitialized set to true")
             }
         }
+    }
+
+    private fun applyPhotoMetadataUpdateToMemory(photoId: String, metadata: MediaMetadata) {
+        _photos.update { current ->
+            current.map { photo ->
+                if (photo.id == photoId) photo.copy(metadata = metadata) else photo
+            }
+        }
+        _latestPhoto.update { latest ->
+            if (latest?.id == photoId) latest.copy(metadata = metadata) else latest
+        }
+
+        val isCurrentPhoto = getCurrentPhoto()?.id == photoId
+        if (!isCurrentPhoto) return
+
+        val previousMetadata = currentMediaMetadata
+        val canRefreshRawDevelopState = rawDevelopEditStateMatches(previousMetadata)
+        currentPhotoMetadataId = photoId
+        currentMediaMetadata = metadata
+
+        if (!isEditing) {
+            applyMetadataToEditState(metadata)
+        } else if (canRefreshRawDevelopState) {
+            applyRawDevelopMetadataToEditState(metadata)
+        }
+    }
+
+    private fun rawDevelopEditStateMatches(metadata: MediaMetadata?): Boolean {
+        if (metadata == null) return false
+        return editRawExposureCompensation.value == (metadata.rawExposureCompensation ?: 0f) &&
+            editRawAutoExposure.value == (metadata.rawAutoExposure ?: true) &&
+            editRawHighlightsAdjustment.value == (metadata.rawHighlightsAdjustment ?: 0f) &&
+            editRawShadowsAdjustment.value == (metadata.rawShadowsAdjustment ?: 0f)
     }
 
     /**
