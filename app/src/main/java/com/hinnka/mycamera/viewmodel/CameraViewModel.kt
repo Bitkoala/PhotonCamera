@@ -203,6 +203,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val HDR_BRACKET_FRAME_COUNT = 3
     }
 
+    private data class HdrBracketFrame(
+        val image: SafeImage,
+        val captureResult: CaptureResult?,
+        val originalIndex: Int,
+        val timestamp: Long
+    )
+
+    private data class HdrBracketFrameOrder(
+        val images: List<SafeImage>,
+        val captureResults: List<CaptureResult?>
+    )
+
     private val cameraController = Camera2Controller(application)
 
 
@@ -4206,10 +4218,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         characteristics: CameraCharacteristics?,
         captureResult: CaptureResult?
     ) {
-        if (images.firstOrNull()?.format?.let(::isRawCaptureFormat) == true) {
+        val orderedFrames = orderHdrBracketFramesByTimestamp(images, captureResults)
+        val orderedImages = orderedFrames.images
+        val orderedCaptureResults = orderedFrames.captureResults
+        if (orderedImages.firstOrNull()?.format?.let(::isRawCaptureFormat) == true) {
             processRawHdrBracket(
-                images = images,
-                captureResults = captureResults,
+                images = orderedImages,
+                captureResults = orderedCaptureResults,
                 zeroEvFrameCount = zeroEvFrameCount,
                 expectedFrameCount = expectedFrameCount,
                 captureInfo = captureInfo,
@@ -4220,14 +4235,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         var imagesHandedToGallery = false
         try {
-            if (images.size != expectedFrameCount) return
+            if (orderedImages.size != expectedFrameCount) return
             val context = getApplication<Application>()
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
             val sharpeningValue = sharpening.firstOrNull() ?: 0f
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
-            val baseImage = images[1]
+            val baseImage = orderedImages[1]
             val useSuperRes = state.value.useMFSR
             val superResScale = if (useSuperRes) 2f else 1.0f
             val captureMode = if (zeroEvFrameCount > 1) "hdr_mfnr" else "hdr_bracket"
@@ -4261,7 +4276,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 var fusedBitmap: Bitmap? = null
                 try {
                     fusedBitmap = GalleryManager.composeHdrBracketPhoto(
-                        images = images,
+                        images = orderedImages,
                         rotation = metadata.rotation,
                         aspectRatio = aspectRatio,
                         shouldMirror = metadata.isMirrored,
@@ -4295,9 +4310,41 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             PLog.e(TAG, "Failed to process HDR bracket", e)
         } finally {
             if (!imagesHandedToGallery) {
-                images.forEach { it.close() }
+                orderedImages.forEach { it.close() }
             }
         }
+    }
+
+    private fun orderHdrBracketFramesByTimestamp(
+        images: List<SafeImage>,
+        captureResults: List<CaptureResult?>
+    ): HdrBracketFrameOrder {
+        val frames = images.mapIndexed { index, image ->
+            val result = captureResults.getOrNull(index)
+            HdrBracketFrame(
+                image = image,
+                captureResult = result,
+                originalIndex = index,
+                timestamp = result?.get(CaptureResult.SENSOR_TIMESTAMP) ?: image.timestamp
+            )
+        }
+        val sortedFrames = frames.sortedWith(
+            compareBy<HdrBracketFrame> { it.timestamp }
+                .thenBy { it.originalIndex }
+        )
+        val sortedOrder = sortedFrames.map { it.originalIndex }
+        val originalOrder = frames.map { it.originalIndex }
+        if (sortedOrder != originalOrder) {
+            PLog.d(
+                TAG,
+                "HDR bracket frames reordered by timestamp: " +
+                        sortedFrames.joinToString { "${it.originalIndex}:${it.timestamp}" }
+            )
+        }
+        return HdrBracketFrameOrder(
+            images = sortedFrames.map { it.image },
+            captureResults = sortedFrames.map { it.captureResult }
+        )
     }
 
     private fun resetHdrBracketCapture(closeImages: Boolean) {

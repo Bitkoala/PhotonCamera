@@ -256,6 +256,49 @@ class Camera2Controller(private val context: Context) {
         return result.get(CaptureResult.SENSOR_TIMESTAMP) ?: startedTimestamp
     }
 
+    private fun shouldPairImageWithCaptureResult(image: SafeImage): Boolean {
+        return image.format == ImageFormat.RAW_SENSOR || _state.value.hdrBracketCapturing
+    }
+
+    private fun processOrBufferImageForCaptureResult(image: SafeImage) {
+        val timestamp = image.timestamp
+        val pendingResult = pendingResults.remove(timestamp)
+        if (pendingResult != null) {
+            processAndTriggerCapture(image, pendingResult)
+        } else {
+            pendingImages.put(timestamp, image)?.close()
+            trimPendingImages()
+        }
+    }
+
+    private fun processOrBufferCaptureResult(result: TotalCaptureResult) {
+        val timestamp = getCaptureTimestamp(result)
+        if (timestamp == null) {
+            PLog.w(TAG, "Capture result missing timestamp, frame=${result.frameNumber}")
+            return
+        }
+
+        val pendingImage = pendingImages.remove(timestamp)
+        if (pendingImage != null) {
+            processAndTriggerCapture(pendingImage, result)
+        } else {
+            pendingResults[timestamp] = result
+            trimPendingResults()
+        }
+    }
+
+    private fun trimPendingImages(maxSize: Int = 20) {
+        if (pendingImages.size <= maxSize) return
+        val oldestKey = pendingImages.keys.minOrNull() ?: return
+        pendingImages.remove(oldestKey)?.close()
+    }
+
+    private fun trimPendingResults(maxSize: Int = 20) {
+        if (pendingResults.size <= maxSize) return
+        val oldestKey = pendingResults.keys.minOrNull() ?: return
+        pendingResults.remove(oldestKey)
+    }
+
     // 快门音效播放回调
     var onPlayShutterSound: (() -> Unit)? = null
 
@@ -951,20 +994,8 @@ class Camera2Controller(private val context: Context) {
                             }
                             val image = trackImage(rawImage)
                             if (image != null) {
-                                if (image.image.format == ImageFormat.RAW_SENSOR) {
-                                    val timestamp = image.timestamp
-                                    val pendingResult = pendingResults.remove(timestamp)
-                                    if (pendingResult != null) {
-                                        processAndTriggerCapture(image, pendingResult)
-                                    } else {
-                                        pendingImages[timestamp] = image
-                                        if (pendingImages.size > 20) {
-                                            val oldestKey = pendingImages.keys.minOrNull()
-                                            if (oldestKey != null) {
-                                                pendingImages.remove(oldestKey)?.close()
-                                            }
-                                        }
-                                    }
+                                if (shouldPairImageWithCaptureResult(image)) {
+                                    processOrBufferImageForCaptureResult(image)
                                 } else {
                                     processAndTriggerCapture(image, null)
                                 }
@@ -1526,8 +1557,9 @@ class Camera2Controller(private val context: Context) {
 
     private fun setZslDisabledIfSupported(builder: CaptureRequest.Builder) {
         if (!isZslControlAvailable()) return
-
-        builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false)
+        if (_state.value.useHdrComposition && !_state.value.useRaw) {
+            builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false)
+        }
     }
 
     private fun isZslControlAvailable(): Boolean {
@@ -3612,11 +3644,11 @@ class Camera2Controller(private val context: Context) {
             val currentState = _state.value
             val manualBaseExposure = resolveHdrBracketManualBaseExposure(currentState)
             val evOffsets = buildList {
-                add(-2f)
+                add(-2.5f)
                 repeat(normalizedZeroEvFrameCount) {
                     add(0f)
                 }
-                add(2f)
+                add(2.5f)
             }
             val requests = evOffsets.mapIndexed { index, evOffset ->
                 device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
@@ -3640,9 +3672,7 @@ class Camera2Controller(private val context: Context) {
                     timestamp: Long,
                     frameNumber: Long
                 ) {
-                    if (isRawCapture) {
-                        pendingCaptureStartedTimestamps[frameNumber] = timestamp
-                    }
+                    pendingCaptureStartedTimestamps[frameNumber] = timestamp
                     PLog.d(TAG, "HDR bracket capture started: frame=$frameNumber")
                 }
 
@@ -3651,15 +3681,7 @@ class Camera2Controller(private val context: Context) {
                     request: CaptureRequest,
                     result: TotalCaptureResult
                 ) {
-                    val timestamp = getCaptureTimestamp(result)
-                    if (timestamp != null && isRawCapture) {
-                        val pendingImage = pendingImages.remove(timestamp)
-                        if (pendingImage != null) {
-                            processAndTriggerCapture(pendingImage, result)
-                        } else {
-                            pendingResults[timestamp] = result
-                        }
-                    }
+                    processOrBufferCaptureResult(result)
                     lastCaptureResult = result
                 }
 
