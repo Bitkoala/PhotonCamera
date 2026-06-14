@@ -107,7 +107,8 @@ class GlesYuvStacker(
             initResources()
             PLog.d(
                 TAG,
-                "GLES stack format=${formatName(inputFormat)} internal=${if (highPrecisionInput) "R16F/RG16F" else "R8/RG8"} flowGrid=${FLOW_GRID_SPACING}px grid=${gridWidth}x${gridHeight}"
+                "GLES stack format=${formatName(inputFormat)} internal=${if (highPrecisionInput) "R16F/RG16F" else "R8/RG8"} " +
+                    "flowGrid=${FLOW_GRID_SPACING}px grid=${gridWidth}x${gridHeight}"
             )
 
             if (!uploadImagePlanes(images.first(), refY, refCbCr, refYStaging, refCbCrStaging, "reference")) {
@@ -671,7 +672,11 @@ class GlesYuvStacker(
         finishFramebufferPass("computeTileMask")
     }
 
-    private fun accumulateFrame(yTexture: Int, cbCrTexture: Int, isReference: Boolean) {
+    private fun accumulateFrame(
+        yTexture: Int,
+        cbCrTexture: Int,
+        isReference: Boolean,
+    ) {
         val outputAccumulator = if (currentAccumulatorTexture == accumulatorTexture) {
             accumulatorScratchTexture
         } else {
@@ -691,7 +696,10 @@ class GlesYuvStacker(
         GLES31.glUniform2i(GLES31.glGetUniformLocation(accumulateProgram, "uGridSize"), gridWidth, gridHeight)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uTileSize"), FLOW_GRID_SPACING)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uIsReference"), if (isReference) 1 else 0)
-        GLES31.glUniform1f(GLES31.glGetUniformLocation(accumulateProgram, "uFrameWeight"), if (isReference) 1.0f else NON_REFERENCE_FRAME_WEIGHT)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(accumulateProgram, "uFrameWeight"),
+            if (isReference) 1.0f else NON_REFERENCE_FRAME_WEIGHT,
+        )
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("accumulateFrame")
         currentAccumulatorTexture = outputAccumulator
@@ -1280,9 +1288,13 @@ class GlesYuvStacker(
                 return texelFetch(uReferenceY, p, 0).r;
             }
 
-            float curY(vec2 pixel) {
+            float curYRaw(vec2 pixel) {
                 vec2 uv = (pixel + vec2(0.5)) / vec2(uImageSize);
                 return texture(uCurrentY, clamp(uv, vec2(0.0), vec2(1.0))).r;
+            }
+
+            float curYNorm(vec2 pixel) {
+                return curYRaw(pixel);
             }
 
             vec2 chromaUv(vec2 pixel) {
@@ -1312,7 +1324,8 @@ class GlesYuvStacker(
                     for (int x = -1; x <= 1; ++x) {
                         ivec2 rp = p + ivec2(x, y);
                         float ry = refY(rp);
-                        float cy = curY(curPixel + vec2(x, y));
+                        vec2 cp = curPixel + vec2(x, y);
+                        float cy = curYNorm(cp);
                         float d = ry - cy;
                         float sigmaNoise = max(uNoiseAlpha * max(ry, 0.05) + uNoiseBeta, 1e-10);
                         float sigma = max(sigmaNoise, 0.0004);
@@ -1455,7 +1468,8 @@ class GlesYuvStacker(
                 vec4 prev = texelFetch(uAccumulatorInput, p, 0);
                 if (uIsReference != 0) {
                     vec3 ycc = sampleYcc(vec2(p));
-                    fragColor = prev + vec4(ycc, 1.0);
+                    float weight = max(uFrameWeight, 1e-6);
+                    fragColor = prev + vec4(ycc * weight, weight);
                     return;
                 }
 
@@ -1483,8 +1497,9 @@ class GlesYuvStacker(
                     for (int x = -1; x <= 1; ++x) {
                         vec2 tap = vec2(x, y);
                         float kw = kernelWeight(tap, kp);
+                        vec3 ycc = sampleYcc(source + tap);
                         float w = baseWeight * kw;
-                        sum += sampleYcc(source + tap) * w;
+                        sum += ycc * w;
                         weight += w;
                     }
                 }
@@ -1571,6 +1586,7 @@ class GlesYuvStacker(
                     );
                     srcP = sourceTexel(src);
                 }
+
                 vec3 ycc = readYcc(srcP);
                 float accumWeight = readWeight(srcP);
 

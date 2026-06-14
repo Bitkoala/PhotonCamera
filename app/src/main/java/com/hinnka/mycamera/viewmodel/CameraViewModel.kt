@@ -4255,8 +4255,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
             val baseImage = orderedImages[1]
-            val useSuperRes = state.value.useMFSR
-            val superResScale = if (useSuperRes) 2f else 1.0f
+            if (state.value.useMFSR) {
+                PLog.w(TAG, "YUV HDR bracket uses Mertens fusion without super resolution")
+            }
+            val useSuperRes = false
+            val superResScale = 1.0f
             val captureMode = if (zeroEvFrameCount > 1) "hdr_mfnr" else "hdr_bracket"
             val metadata = buildPhotoMetadata(
                 width = (baseImage.width.toFloat() * superResScale).roundToInt(),
@@ -4289,6 +4292,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 try {
                     fusedBitmap = GalleryManager.composeHdrBracketPhoto(
                         images = orderedImages,
+                        captureResults = orderedCaptureResults,
+                        zeroEvFrameCount = zeroEvFrameCount,
                         rotation = metadata.rotation,
                         aspectRatio = aspectRatio,
                         shouldMirror = metadata.isMirrored,

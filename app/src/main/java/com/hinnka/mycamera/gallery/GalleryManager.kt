@@ -1621,6 +1621,8 @@ object GalleryManager {
 
     suspend fun composeHdrBracketPhoto(
         images: List<SafeImage>,
+        captureResults: List<CaptureResult?> = emptyList(),
+        zeroEvFrameCount: Int = (images.size - 2).coerceAtLeast(1),
         rotation: Int,
         aspectRatio: AspectRatio,
         shouldMirror: Boolean,
@@ -1634,15 +1636,20 @@ object GalleryManager {
             return@withContext null
         }
 
-        val bitmaps = ArrayList<Bitmap>(images.size)
+        val bitmaps = ArrayList<Bitmap>(3)
         try {
+            if (useSuperResolution) {
+                PLog.w(TAG, "HDR bracket Mertens fusion uses 0EV stacking without super resolution")
+            }
+            if (!useGpuAcceleration) {
+                PLog.w(TAG, "HDR bracket 0EV denoise uses GLES stacker; ignoring disabled GPU acceleration setting")
+            }
             val zeroEvBitmap = processHdrBracketZeroEvFrames(
                 images = images.subList(1, images.lastIndex),
                 rotation = rotation,
                 aspectRatio = aspectRatio,
                 shouldMirror = shouldMirror,
-                useGpuAcceleration = useGpuAcceleration,
-                useSuperResolution = useSuperResolution,
+                useSuperResolution = false,
                 colorSpace = colorSpace
             )
             val targetWidth = zeroEvBitmap.width
@@ -1662,7 +1669,20 @@ object GalleryManager {
                     targetHeight
                 )
             )
-            MertensExposureFusionProcessor.fuse(bitmaps)
+            val exposureProducts = buildHdrMertensExposureProducts(
+                captureResults = captureResults,
+                zeroEvFrameCount = zeroEvFrameCount,
+                frameCount = images.size,
+            )
+            PLog.d(
+                TAG,
+                "Composing HDR with Mertens fusion and validity-aware deghost mask, exposureScales=${formatRelativeExposureScales(exposureProducts)}"
+            )
+            MertensExposureFusionProcessor.fuse(
+                frames = bitmaps,
+                exposureProducts = exposureProducts,
+                enableDeghostMask = true,
+            )
         } catch (e: Exception) {
             images.forEach { it.close() }
             PLog.e(TAG, "Failed to compose HDR bracket photo", e)
@@ -1693,7 +1713,6 @@ object GalleryManager {
         rotation: Int,
         aspectRatio: AspectRatio,
         shouldMirror: Boolean,
-        useGpuAcceleration: Boolean,
         useSuperResolution: Boolean,
         colorSpace: ColorSpace
     ): Bitmap {
@@ -1708,7 +1727,7 @@ object GalleryManager {
                 aspectRatio = aspectRatio,
                 outputPath = null,
                 enableSuperResolution = useSuperResolution,
-                useVulkan = useGpuAcceleration,
+                useVulkan = true,
                 colorSpace = colorSpace
             )
         } finally {
@@ -1722,6 +1741,57 @@ object GalleryManager {
         val scaled = Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
         bitmap.recycle()
         return scaled
+    }
+
+    private fun buildHdrMertensExposureProducts(
+        captureResults: List<CaptureResult?>,
+        zeroEvFrameCount: Int,
+        frameCount: Int,
+    ): FloatArray {
+        val zeroIndices = 1 until (1 + zeroEvFrameCount.coerceAtLeast(1)).coerceAtMost(frameCount - 1)
+        val lowProduct = captureExposureProduct(captureResults.getOrNull(0))
+        val measuredZeroProduct = zeroIndices
+            .mapNotNull { captureExposureProduct(captureResults.getOrNull(it)) }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+            ?.toFloat()
+            ?.takeIf { it.isFinite() && it > 0f }
+        val highProduct = captureExposureProduct(captureResults.getOrNull(frameCount - 1))
+        val zeroProduct = measuredZeroProduct ?: 1f
+        return floatArrayOf(
+            lowProduct ?: zeroProduct * fallbackHdrExposureProduct(0, zeroEvFrameCount, frameCount),
+            zeroProduct,
+            highProduct ?: zeroProduct * fallbackHdrExposureProduct(frameCount - 1, zeroEvFrameCount, frameCount),
+        )
+    }
+
+    private fun formatRelativeExposureScales(exposureProducts: FloatArray): String {
+        val reference = exposureProducts.getOrNull(1)
+            ?.takeIf { it.isFinite() && it > 0f }
+            ?: 1f
+        return exposureProducts.joinToString(prefix = "[", postfix = "]") { product ->
+            "%.2f".format((product / reference).coerceAtLeast(0f))
+        }
+    }
+
+    private fun captureExposureProduct(result: CaptureResult?): Float? {
+        val exposureTime = result?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            ?.takeIf { it > 0L }
+            ?: return null
+        val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+            ?.takeIf { it > 0 }
+            ?: return null
+        val product = exposureTime.toDouble() * iso.toDouble()
+        return product.toFloat().takeIf { it.isFinite() && it > 0f }
+    }
+
+    private fun fallbackHdrExposureProduct(index: Int, zeroEvFrameCount: Int, frameCount: Int): Float {
+        val clampedZeroCount = zeroEvFrameCount.coerceIn(1, (frameCount - 2).coerceAtLeast(1))
+        return when {
+            index == 0 -> Math.pow(2.0, -2.5).toFloat()
+            index in 1..clampedZeroCount -> 1f
+            else -> Math.pow(2.0, 2.5).toFloat()
+        }
     }
 
     private fun mirrorBitmapIfNeeded(bitmap: Bitmap, shouldMirror: Boolean): Bitmap {

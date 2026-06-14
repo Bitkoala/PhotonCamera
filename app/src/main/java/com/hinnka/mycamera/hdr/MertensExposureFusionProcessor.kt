@@ -54,6 +54,8 @@ object MertensExposureFusionProcessor {
         contrastWeight: Float = DEFAULT_CONTRAST_WEIGHT,
         saturationWeight: Float = DEFAULT_SATURATION_WEIGHT,
         exposureWeight: Float = DEFAULT_EXPOSURE_WEIGHT,
+        exposureProducts: FloatArray? = null,
+        enableDeghostMask: Boolean = false,
     ): Bitmap? = withContext(dispatcher) {
         if (frames.size != HDR_FRAME_COUNT) {
             PLog.w(TAG, "Expected $HDR_FRAME_COUNT frames, got ${frames.size}")
@@ -70,12 +72,15 @@ object MertensExposureFusionProcessor {
         var result: Bitmap? = null
         val elapsed = measureTimeMillis {
             result = runCatching {
-                renderFusion(frames, contrastWeight, saturationWeight, exposureWeight)
+                renderFusion(frames, contrastWeight, saturationWeight, exposureWeight, exposureProducts, enableDeghostMask)
             }.onFailure {
                 PLog.e(TAG, "Mertens exposure fusion failed", it)
             }.getOrNull()
         }
-        PLog.d(TAG, "Mertens exposure fusion took ${elapsed}ms, size=${width}x${height}, success=${result != null}")
+        PLog.d(
+            TAG,
+            "Mertens exposure fusion took ${elapsed}ms, size=${width}x${height}, deghostMask=$enableDeghostMask, success=${result != null}"
+        )
         result
     }
 
@@ -84,21 +89,34 @@ object MertensExposureFusionProcessor {
         contrastWeight: Float,
         saturationWeight: Float,
         exposureWeight: Float,
+        exposureProducts: FloatArray?,
+        enableDeghostMask: Boolean,
     ): Bitmap? {
         val width = frames.first().width
         val height = frames.first().height
         val maxLevel = (ln(min(width, height).toFloat()) / ln(2f)).toInt().coerceAtLeast(0)
         val uploads = frames.map { prepareUploadBitmap(it) }
         val inputTextures = uploads.map { uploadBitmapTexture(it.bitmap) }
+        val exposureScales = normalizeExposureProducts(exposureProducts)
         val resultPyramid = ArrayList<RenderTarget>(maxLevel + 1)
         var currentImages = inputTextures.map { TextureLevel(width, height, it, owned = false) }
         var currentWeights: RenderTarget? = null
         var reconstructed: RenderTarget? = null
 
         try {
-            val rawWeights = inputTextures.map { texture ->
+            val referenceTexture = inputTextures[1]
+            val rawWeights = inputTextures.mapIndexed { index, texture ->
                 createRenderTarget(width, height, halfFloat = true).also {
-                    renderWeight(texture, it, contrastWeight, saturationWeight, exposureWeight)
+                    renderWeight(
+                        imageTexture = texture,
+                        referenceTexture = referenceTexture,
+                        target = it,
+                        contrastWeight = contrastWeight,
+                        saturationWeight = saturationWeight,
+                        exposureWeight = exposureWeight,
+                        exposureScale = exposureScales[index],
+                        useDeghostMask = enableDeghostMask && index != 1,
+                    )
                 }
             }
             currentWeights = createRenderTarget(width, height, halfFloat = true)
@@ -193,20 +211,40 @@ object MertensExposureFusionProcessor {
 
     private fun renderWeight(
         imageTexture: Int,
+        referenceTexture: Int,
         target: RenderTarget,
         contrastWeight: Float,
         saturationWeight: Float,
         exposureWeight: Float,
+        exposureScale: Float,
+        useDeghostMask: Boolean,
     ) {
         GLES30.glUseProgram(weightProgram)
         bindTarget(target)
         bindTexture(weightProgram, "uImage", 0, imageTexture)
+        bindTexture(weightProgram, "uReferenceImage", 1, referenceTexture)
         GLES30.glUniform2i(GLES30.glGetUniformLocation(weightProgram, "uImageSize"), target.width, target.height)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(weightProgram, "uContrastWeight"), contrastWeight)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(weightProgram, "uSaturationWeight"), saturationWeight)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(weightProgram, "uExposureWeight"), exposureWeight)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(weightProgram, "uExposureScale"), exposureScale)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(weightProgram, "uUseDeghostMask"), if (useDeghostMask) 1 else 0)
         drawQuad(weightProgram)
         checkGlError("renderWeight")
+    }
+
+    private fun normalizeExposureProducts(exposureProducts: FloatArray?): FloatArray {
+        val reference = exposureProducts
+            ?.getOrNull(1)
+            ?.takeIf { it.isFinite() && it > 0f }
+            ?: 1f
+        return FloatArray(HDR_FRAME_COUNT) { index ->
+            val product = exposureProducts
+                ?.getOrNull(index)
+                ?.takeIf { it.isFinite() && it > 0f }
+                ?: reference
+            (product / reference).coerceIn(1f / 32f, 32f)
+        }
     }
 
     private fun renderNormalizeWeights(rawWeights: List<RenderTarget>, target: RenderTarget) {
@@ -616,10 +654,13 @@ object MertensExposureFusionProcessor {
         in vec2 vTexCoord;
         out vec4 fragColor;
         uniform sampler2D uImage;
+        uniform sampler2D uReferenceImage;
         uniform ivec2 uImageSize;
         uniform float uContrastWeight;
         uniform float uSaturationWeight;
         uniform float uExposureWeight;
+        uniform float uExposureScale;
+        uniform int uUseDeghostMask;
 
         int reflect101(int p, int size) {
             if (size <= 1) return 0;
@@ -635,6 +676,88 @@ object MertensExposureFusionProcessor {
             int y = reflect101(coord.y, uImageSize.y);
             vec3 rgb = texelFetch(uImage, ivec2(x, y), 0).rgb;
             return dot(rgb, vec3(0.299, 0.587, 0.114));
+        }
+
+        float luma(vec3 rgb) {
+            return dot(rgb, vec3(0.299, 0.587, 0.114));
+        }
+
+        float max3(vec3 value) {
+            return max(max(value.r, value.g), value.b);
+        }
+
+        float validity(vec3 rgb) {
+            float y = luma(rgb);
+            float blackGate = smoothstep(0.055, 0.145, y);
+            float whiteGate = 1.0 - smoothstep(0.865, 0.975, max3(rgb));
+            return clamp(blackGate * whiteGate, 0.0, 1.0);
+        }
+
+        float referenceStructure(ivec2 coord) {
+            float c = luma(texelFetch(uReferenceImage, coord, 0).rgb);
+            float l = luma(texelFetch(uReferenceImage, ivec2(reflect101(coord.x - 1, uImageSize.x), coord.y), 0).rgb);
+            float r = luma(texelFetch(uReferenceImage, ivec2(reflect101(coord.x + 1, uImageSize.x), coord.y), 0).rgb);
+            float u = luma(texelFetch(uReferenceImage, ivec2(coord.x, reflect101(coord.y - 1, uImageSize.y)), 0).rgb);
+            float d = luma(texelFetch(uReferenceImage, ivec2(coord.x, reflect101(coord.y + 1, uImageSize.y)), 0).rgb);
+            float gradient = abs(r - l) + abs(d - u);
+            float laplacian = abs(l + r + u + d - 4.0 * c);
+            return smoothstep(0.030, 0.095, gradient + 0.5 * laplacian);
+        }
+
+        float censusMismatch(ivec2 coord, float refCenter, float sideCenter) {
+            float mismatch = 0.0;
+            float count = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    if (x == 0 && y == 0) {
+                        continue;
+                    }
+                    ivec2 p = ivec2(reflect101(coord.x + x, uImageSize.x), reflect101(coord.y + y, uImageSize.y));
+                    float refNeighbor = luma(texelFetch(uReferenceImage, p, 0).rgb);
+                    float sideNeighbor = luma(texelFetch(uImage, p, 0).rgb);
+                    float refRank = refNeighbor > refCenter ? 1.0 : 0.0;
+                    float sideRank = sideNeighbor > sideCenter ? 1.0 : 0.0;
+                    mismatch += abs(refRank - sideRank);
+                    count += 1.0;
+                }
+            }
+            return mismatch / max(count, 1.0);
+        }
+
+        float deghostScoreAt(ivec2 coord) {
+            int x = reflect101(coord.x, uImageSize.x);
+            int y = reflect101(coord.y, uImageSize.y);
+            vec3 side = texelFetch(uImage, ivec2(x, y), 0).rgb;
+            vec3 reference = texelFetch(uReferenceImage, ivec2(x, y), 0).rgb;
+            float scale = clamp(uExposureScale, 0.03125, 32.0);
+
+            float sideLuma = luma(side);
+            float referenceLuma = luma(reference);
+            float comparable = validity(side) * validity(reference) * referenceStructure(ivec2(x, y));
+            if (comparable <= 0.001) {
+                return 0.0;
+            }
+
+            float exposureGap = abs(log2(scale));
+            float logResidual = abs(log(max(sideLuma, 1e-4)) - log(max(referenceLuma, 1e-4)) - log(scale));
+            float logMotion = smoothstep(0.28 + 0.04 * min(exposureGap, 3.0), 0.72, logResidual);
+            float rankMotion = smoothstep(0.32, 0.68, censusMismatch(ivec2(x, y), referenceLuma, sideLuma));
+            float score = max(logMotion, rankMotion);
+            return comparable * score;
+        }
+
+        float computeDeghostAlpha(ivec2 coord) {
+            if (uUseDeghostMask == 0) {
+                return 1.0;
+            }
+            float score = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    score = max(score, deghostScoreAt(coord + ivec2(x, y)));
+                }
+            }
+            float reject = smoothstep(0.48, 0.86, score);
+            return mix(1.0, 0.015, reject);
         }
 
         void main() {
@@ -660,8 +783,8 @@ object MertensExposureFusionProcessor {
             float weight =
                 pow(max(contrast, 0.0), uContrastWeight) *
                 pow(max(saturation, 0.0), uSaturationWeight) *
-                pow(max(wellExposedness, 0.0), uExposureWeight) +
-                1e-12;
+                pow(max(wellExposedness, 0.0), uExposureWeight);
+            weight = weight * computeDeghostAlpha(coord) + 1e-12;
             fragColor = vec4(weight, weight, weight, 1.0);
         }
     """.trimIndent()
