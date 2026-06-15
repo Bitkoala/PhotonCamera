@@ -75,7 +75,7 @@ object RawShaders {
         return when (colorEngine) {
             RawColorEngine.AgX -> combinedFragmentShader(
                 engineUniforms = AGX_COMBINED_UNIFORMS,
-                engineFunctions = "$CUBE_LUT_FUNCTIONS\n$AGX_COMBINED_FUNCTIONS"
+                engineFunctions = AGX_COMBINED_FUNCTIONS
             )
 
             RawColorEngine.AdobeCurve -> combinedFragmentShader(
@@ -84,7 +84,7 @@ object RawShaders {
                     "$CURVE_COMBINED_FUNCTIONS\n$DCP_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS"
             )
 
-            RawColorEngine.SpectralFilm -> combinedFragmentShader(
+            RawColorEngine.Spektrafilm -> combinedFragmentShader(
                 engineUniforms = SPECTRAL_FILM_COMBINED_UNIFORMS,
                 engineFunctions = SPECTRAL_FILM_COMBINED_FUNCTIONS
             )
@@ -185,8 +185,7 @@ object RawShaders {
     """.trimIndent()
 
     private val AGX_COMBINED_UNIFORMS = """
-        uniform sampler3D uAgxBaseSrgbTexture;
-        uniform int uAgxLutSize;
+        uniform mat3 uOutputTransform;
     """.trimIndent()
 
     private val SPECTRAL_FILM_COMBINED_UNIFORMS = """
@@ -447,73 +446,162 @@ object RawShaders {
         }
     """.trimIndent()
 
-    private val CUBE_LUT_FUNCTIONS = """
-        vec3 fetchCubeLut(sampler3D lutTexture, int lutSize, ivec3 coord) {
-            ivec3 maxCoord = ivec3(max(lutSize - 1, 0));
-            return texelFetch(lutTexture, clamp(coord, ivec3(0), maxCoord), 0).rgb;
-        }
-
-        vec3 sampleCubeLut(sampler3D lutTexture, int lutSize, vec3 coord) {
-            if (lutSize <= 1) {
-                return coord;
-            }
-
-            float maxIndex = float(lutSize - 1);
-            vec3 scaled = clamp(coord, vec3(0.0), vec3(1.0)) * maxIndex;
-            ivec3 p0 = ivec3(floor(scaled));
-            ivec3 p1 = min(p0 + ivec3(1), ivec3(lutSize - 1));
-            vec3 f = scaled - vec3(p0);
-
-            vec3 c000 = fetchCubeLut(lutTexture, lutSize, p0);
-            vec3 c100 = fetchCubeLut(lutTexture, lutSize, ivec3(p1.x, p0.y, p0.z));
-            vec3 c010 = fetchCubeLut(lutTexture, lutSize, ivec3(p0.x, p1.y, p0.z));
-            vec3 c001 = fetchCubeLut(lutTexture, lutSize, ivec3(p0.x, p0.y, p1.z));
-            vec3 c110 = fetchCubeLut(lutTexture, lutSize, ivec3(p1.x, p1.y, p0.z));
-            vec3 c101 = fetchCubeLut(lutTexture, lutSize, ivec3(p1.x, p0.y, p1.z));
-            vec3 c011 = fetchCubeLut(lutTexture, lutSize, ivec3(p0.x, p1.y, p1.z));
-            vec3 c111 = fetchCubeLut(lutTexture, lutSize, p1);
-
-            if (f.x >= f.y) {
-                if (f.y >= f.z) {
-                    return c000 + f.x * (c100 - c000) + f.y * (c110 - c100) + f.z * (c111 - c110);
-                } else if (f.x >= f.z) {
-                    return c000 + f.x * (c100 - c000) + f.z * (c101 - c100) + f.y * (c111 - c101);
-                } else {
-                    return c000 + f.z * (c001 - c000) + f.x * (c101 - c001) + f.y * (c111 - c101);
-                }
-            } else {
-                if (f.x >= f.z) {
-                    return c000 + f.y * (c010 - c000) + f.x * (c110 - c010) + f.z * (c111 - c110);
-                } else if (f.y >= f.z) {
-                    return c000 + f.y * (c010 - c000) + f.z * (c011 - c010) + f.x * (c111 - c011);
-                } else {
-                    return c000 + f.z * (c001 - c000) + f.y * (c011 - c001) + f.x * (c111 - c011);
-                }
-            }
-        }
-    """.trimIndent()
-
     private val AGX_COMBINED_FUNCTIONS = """
-        const float AGX_LOG_MIN = -12.47393;
-        const float AGX_LOG_MAX = 12.5260688117;
+        const float DT_AGX_EPSILON = 0.000001;
+        const float DT_AGX_BLACK_EV = -10.0;
+        const float DT_AGX_RANGE_EV = 16.5;
+        const float DT_AGX_CURVE_GAMMA = 2.2;
+        const float DT_AGX_PIVOT_X = 0.6060606061;
+        const float DT_AGX_PIVOT_Y = 0.4586564469;
+        const float DT_AGX_SLOPE = 3.0;
+        const float DT_AGX_INTERCEPT = -1.3595253713;
+        const float DT_AGX_TOE_POWER = 1.5;
+        const float DT_AGX_TOE_SCALE = -0.5020092666;
+        const float DT_AGX_SHOULDER_POWER = 3.3;
+        const float DT_AGX_SHOULDER_SCALE = 0.5544739364;
+        const float DT_AGX_HUE_MIX = 0.6;
 
-        vec3 agxLogEncode(vec3 color) {
-            vec3 safeColor = max(color, vec3(exp2(AGX_LOG_MIN)));
-            return clamp(
-                (log2(safeColor) - vec3(AGX_LOG_MIN)) / (AGX_LOG_MAX - AGX_LOG_MIN),
-                vec3(0.0),
-                vec3(1.0)
+        vec3 agxSanitize(vec3 color) {
+            color.r = isnan(color.r) ? 0.0 : clamp(color.r, -1000000.0, 1000000.0);
+            color.g = isnan(color.g) ? 0.0 : clamp(color.g, -1000000.0, 1000000.0);
+            color.b = isnan(color.b) ? 0.0 : clamp(color.b, -1000000.0, 1000000.0);
+            return color;
+        }
+
+        vec3 agxBaseToRendering(vec3 color) {
+            return vec3(
+                dot(vec3(0.8535098168, 0.0870498824, 0.0594403008), color),
+                dot(vec3(0.1209748385, 0.7561015246, 0.1229236368), color),
+                dot(vec3(0.0964595535, 0.0689548151, 0.8345856314), color)
             );
         }
 
-        vec3 applyEngineTone(vec3 color) {
-            if (uAgxLutSize <= 1) {
-                return max(color, vec3(0.0));
+        vec3 agxRenderingToBase(vec3 color) {
+            return vec3(
+                dot(vec3(1.1203173359, -0.0999545154, -0.0203628205), color),
+                dot(vec3(-0.1213527019, 1.1417155224, -0.0203628205), color),
+                dot(vec3(-0.1213527019, -0.0999545154, 1.2213072173), color)
+            );
+        }
+
+        vec3 agxCompressIntoGamut(vec3 color) {
+            const vec3 luminanceCoeffs = vec3(0.2658180370, 0.5984698605, 0.1357121025);
+            float inputY = dot(color, luminanceCoeffs);
+            float maxRgb = max(color.r, max(color.g, color.b));
+
+            vec3 opponentRgb = vec3(maxRgb) - color;
+            float opponentY = dot(opponentRgb, luminanceCoeffs);
+            float maxOpponent = max(opponentRgb.r, max(opponentRgb.g, opponentRgb.b));
+            float yCompensateNegative = maxOpponent - opponentY + inputY;
+
+            float minRgb = min(color.r, min(color.g, color.b));
+            float offset = max(-minRgb, 0.0);
+            vec3 rgbOffset = color + vec3(offset);
+
+            float maxOffsetRgb = max(rgbOffset.r, max(rgbOffset.g, rgbOffset.b));
+            vec3 opponentOffsetRgb = vec3(maxOffsetRgb) - rgbOffset;
+            float maxInverseOffset = max(
+                opponentOffsetRgb.r,
+                max(opponentOffsetRgb.g, opponentOffsetRgb.b)
+            );
+            float inverseOffsetY = dot(opponentOffsetRgb, luminanceCoeffs);
+            float yNew = dot(rgbOffset, luminanceCoeffs);
+            yNew = maxInverseOffset - inverseOffsetY + yNew;
+
+            float luminanceRatio =
+                (yNew > yCompensateNegative && yNew > DT_AGX_EPSILON)
+                    ? yCompensateNegative / yNew
+                    : 1.0;
+            return luminanceRatio * rgbOffset;
+        }
+
+        float agxLogEncode(float value) {
+            float relativeValue = max(DT_AGX_EPSILON, value / 0.18);
+            return clamp((log2(max(relativeValue, 0.0)) - DT_AGX_BLACK_EV) / DT_AGX_RANGE_EV, 0.0, 1.0);
+        }
+
+        float agxSigmoid(float value, float power) {
+            return value / pow(1.0 + pow(value, power), 1.0 / power);
+        }
+
+        float agxScaledSigmoid(
+            float value,
+            float scale,
+            float slope,
+            float power,
+            float transitionX,
+            float transitionY
+        ) {
+            return scale * agxSigmoid(slope * (value - transitionX) / scale, power) + transitionY;
+        }
+
+        float agxCurve(float value) {
+            float result;
+            if (value < DT_AGX_PIVOT_X) {
+                result = agxScaledSigmoid(
+                    value,
+                    DT_AGX_TOE_SCALE,
+                    DT_AGX_SLOPE,
+                    DT_AGX_TOE_POWER,
+                    DT_AGX_PIVOT_X,
+                    DT_AGX_PIVOT_Y
+                );
+            } else if (value <= DT_AGX_PIVOT_X) {
+                result = DT_AGX_SLOPE * value + DT_AGX_INTERCEPT;
+            } else {
+                result = agxScaledSigmoid(
+                    value,
+                    DT_AGX_SHOULDER_SCALE,
+                    DT_AGX_SLOPE,
+                    DT_AGX_SHOULDER_POWER,
+                    DT_AGX_PIVOT_X,
+                    DT_AGX_PIVOT_Y
+                );
             }
-            vec3 egamut = max(color, vec3(0.0));
-            vec3 agxLog = agxLogEncode(egamut);
-            vec3 rec1886Encoded = sampleCubeLut(uAgxBaseSrgbTexture, uAgxLutSize, agxLog);
-            return pow(max(rec1886Encoded, vec3(0.0)), vec3(2.4));
+            return clamp(result, 0.0, 1.0);
+        }
+
+        vec3 agxRgbToHsv(vec3 color) {
+            vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+            vec4 p = mix(vec4(color.bg, k.wz), vec4(color.gb, k.xy), step(color.b, color.g));
+            vec4 q = mix(vec4(p.xyw, color.r), vec4(color.r, p.yzx), step(p.x, color.r));
+            float d = q.x - min(q.w, q.y);
+            float e = 0.0000000001;
+            return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+        }
+
+        vec3 agxHsvToRgb(vec3 hsv) {
+            vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(hsv.xxx + k.xyz) * 6.0 - k.www);
+            return hsv.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), hsv.y);
+        }
+
+        float agxLerpHue(float originalHue, float processedHue, float mixRatio) {
+            float shortestDistance = processedHue - originalHue - round(processedHue - originalHue);
+            float mixedHue = (1.0 - mixRatio) * shortestDistance + originalHue;
+            return mixedHue - floor(mixedHue);
+        }
+
+        vec3 agxToneMapping(vec3 color) {
+            vec3 hsvBefore = agxRgbToHsv(color);
+            vec3 transformed = vec3(
+                agxCurve(agxLogEncode(color.r)),
+                agxCurve(agxLogEncode(color.g)),
+                agxCurve(agxLogEncode(color.b))
+            );
+            transformed = pow(max(transformed, vec3(0.0)), vec3(DT_AGX_CURVE_GAMMA));
+
+            vec3 hsvAfter = agxRgbToHsv(transformed);
+            hsvAfter.x = agxLerpHue(hsvBefore.x, hsvAfter.x, DT_AGX_HUE_MIX);
+            return agxHsvToRgb(hsvAfter);
+        }
+
+        vec3 applyEngineTone(vec3 color) {
+            vec3 baseRgb = agxCompressIntoGamut(agxSanitize(color));
+            vec3 renderingRgb = agxBaseToRendering(baseRgb);
+            vec3 tonedRenderingRgb = agxToneMapping(renderingRgb);
+            vec3 baseOut = agxRenderingToBase(tonedRenderingRgb);
+            return uOutputTransform * baseOut;
         }
     """.trimIndent()
 
@@ -690,8 +778,28 @@ object RawShaders {
         const float DT_FILMIC_DISPLAY_WHITE = 1.0;
         const float DT_FILMIC_LATITUDE_MIN = 0.6264986897;
         const float DT_FILMIC_LATITUDE_MAX = 0.6265610375;
-        const float DISPLAY_HEADROOM_ROLLOFF_DEPTH = 0.005;
-        const float DISPLAY_HEADROOM_ROLLOFF_RANGE = 0.5;
+        const float DT_FILMIC_Y_1931_TO_2006 = 1.05785528;
+        const float DT_FILMIC_YRG_D65_R = 0.21902143;
+        const float DT_FILMIC_YRG_D65_G = 0.54371398;
+        const float DT_FILMIC_MAX_CHROMA = 1.0e20;
+        const vec3 DT_FILMIC_BT2020_TO_LMS_L = vec3(0.4067763460, 0.6178051991, 0.0458445893);
+        const vec3 DT_FILMIC_BT2020_TO_LMS_M = vec3(0.0677498629, 0.7489671634, 0.1001665160);
+        const vec3 DT_FILMIC_BT2020_TO_LMS_S = vec3(0.0221408642, -0.0153252587, 0.5876294574);
+        const vec3 DT_FILMIC_LMS_TO_BT2020_R = vec3(2.8380181184, -2.3373915374, 0.1770173235);
+        const vec3 DT_FILMIC_LMS_TO_BT2020_G = vec3(-0.2415770666, 1.5294941187, -0.2418685622);
+        const vec3 DT_FILMIC_LMS_TO_BT2020_B = vec3(-0.1132319053, 0.1279577808, 1.6887750778);
+        const vec3 DT_FILMIC_SRGB_TO_LMS_L = vec3(0.2986531876, 0.7060763220, 0.0656966248);
+        const vec3 DT_FILMIC_SRGB_TO_LMS_M = vec3(0.0959000021, 0.7198304285, 0.1011531117);
+        const vec3 DT_FILMIC_SRGB_TO_LMS_S = vec3(0.0224644230, 0.0449176289, 0.5270630110);
+        const vec3 DT_FILMIC_LMS_TO_SRGB_R = vec3(4.8627131007, -4.7893329888, 0.3130405567);
+        const vec3 DT_FILMIC_LMS_TO_SRGB_G = vec3(-0.6262137162, 2.0228185813, -0.3101607577);
+        const vec3 DT_FILMIC_LMS_TO_SRGB_B = vec3(-0.1538905312, 0.0317407724, 1.9103966448);
+        const vec3 DT_FILMIC_LMS_TO_FILMLIGHT_R = vec3(1.08771930, -0.66666667, 0.02061856);
+        const vec3 DT_FILMIC_LMS_TO_FILMLIGHT_G = vec3(-0.08771930, 1.66666667, -0.05154639);
+        const vec3 DT_FILMIC_LMS_TO_FILMLIGHT_B = vec3(0.0, 0.0, 1.03092784);
+        const vec3 DT_FILMIC_FILMLIGHT_TO_LMS_L = vec3(0.95, 0.38, 0.0);
+        const vec3 DT_FILMIC_FILMLIGHT_TO_LMS_M = vec3(0.05, 0.62, 0.03);
+        const vec3 DT_FILMIC_FILMLIGHT_TO_LMS_S = vec3(0.0, 0.0, 0.97);
         const vec3 DT_FILMIC_M1 = vec3(0.08781340895, -0.1315144048, -0.271791843);
         const vec3 DT_FILMIC_M2 = vec3(0.0, 1.387062713, 1.433801098);
         const vec3 DT_FILMIC_M3 = vec3(1.36863996, -1.920153105, 0.0);
@@ -769,27 +877,288 @@ object RawShaders {
             return 0.5 * naiveRgb + 0.5 * maxRgb;
         }
 
-        float displayHeadroomRolloffScalar(float value) {
-            if (value <= 1.0) {
-                return value;
-            }
-
-            float x = (value - 1.0) / DISPLAY_HEADROOM_ROLLOFF_RANGE;
-            return 1.0 - DISPLAY_HEADROOM_ROLLOFF_DEPTH * (1.0 - exp(-x));
+        vec3 darktableFilmicBt2020ToLms(vec3 color) {
+            return vec3(
+                dot(DT_FILMIC_BT2020_TO_LMS_L, color),
+                dot(DT_FILMIC_BT2020_TO_LMS_M, color),
+                dot(DT_FILMIC_BT2020_TO_LMS_S, color)
+            );
         }
 
-        vec3 displayHeadroomRolloff(vec3 color) {
-            float peak = max(color.r, max(color.g, color.b));
-            if (peak <= 1.0) {
-                return color;
+        vec3 darktableFilmicLmsToBt2020(vec3 lms) {
+            return vec3(
+                dot(DT_FILMIC_LMS_TO_BT2020_R, lms),
+                dot(DT_FILMIC_LMS_TO_BT2020_G, lms),
+                dot(DT_FILMIC_LMS_TO_BT2020_B, lms)
+            );
+        }
+
+        vec3 darktableFilmicSrgbToLms(vec3 color) {
+            return vec3(
+                dot(DT_FILMIC_SRGB_TO_LMS_L, color),
+                dot(DT_FILMIC_SRGB_TO_LMS_M, color),
+                dot(DT_FILMIC_SRGB_TO_LMS_S, color)
+            );
+        }
+
+        vec3 darktableFilmicLmsToSrgb(vec3 lms) {
+            return vec3(
+                dot(DT_FILMIC_LMS_TO_SRGB_R, lms),
+                dot(DT_FILMIC_LMS_TO_SRGB_G, lms),
+                dot(DT_FILMIC_LMS_TO_SRGB_B, lms)
+            );
+        }
+
+        vec3 darktableFilmicProfileRgbToLms(vec3 color, bool useSrgb) {
+            return useSrgb ? darktableFilmicSrgbToLms(color) : darktableFilmicBt2020ToLms(color);
+        }
+
+        vec3 darktableFilmicLmsToProfileRgb(vec3 lms, bool useSrgb) {
+            return useSrgb ? darktableFilmicLmsToSrgb(lms) : darktableFilmicLmsToBt2020(lms);
+        }
+
+        vec3 darktableFilmicLmsToFilmlight(vec3 lms) {
+            return vec3(
+                dot(DT_FILMIC_LMS_TO_FILMLIGHT_R, lms),
+                dot(DT_FILMIC_LMS_TO_FILMLIGHT_G, lms),
+                dot(DT_FILMIC_LMS_TO_FILMLIGHT_B, lms)
+            );
+        }
+
+        vec3 darktableFilmicFilmlightToLms(vec3 rgb) {
+            return vec3(
+                dot(DT_FILMIC_FILMLIGHT_TO_LMS_L, rgb),
+                dot(DT_FILMIC_FILMLIGHT_TO_LMS_M, rgb),
+                dot(DT_FILMIC_FILMLIGHT_TO_LMS_S, rgb)
+            );
+        }
+
+        vec3 darktableFilmicLmsToYrg(vec3 lms) {
+            float y = 0.68990272 * lms.x + 0.34832189 * lms.y;
+            float sumLms = lms.x + lms.y + lms.z;
+            vec3 normalizedLms = abs(sumLms) > 1e-8 ? lms / sumLms : vec3(0.0);
+            vec3 filmlightRgb = darktableFilmicLmsToFilmlight(normalizedLms);
+            return vec3(y, filmlightRgb.r, filmlightRgb.g);
+        }
+
+        vec3 darktableFilmicYrgToLms(vec3 yrg) {
+            vec3 filmlightRgb = vec3(yrg.y, yrg.z, 1.0 - yrg.y - yrg.z);
+            vec3 normalizedLms = darktableFilmicFilmlightToLms(filmlightRgb);
+            float denom = 0.68990272 * normalizedLms.x + 0.34832189 * normalizedLms.y;
+            float scale = abs(denom) > 1e-8 ? yrg.x / denom : 0.0;
+            return normalizedLms * scale;
+        }
+
+        vec4 darktableFilmicYrgToYch(vec3 yrg) {
+            float r = yrg.y - DT_FILMIC_YRG_D65_R;
+            float g = yrg.z - DT_FILMIC_YRG_D65_G;
+            float chroma = length(vec2(r, g));
+            float cosH = chroma > 0.0 ? r / chroma : 1.0;
+            float sinH = chroma > 0.0 ? g / chroma : 0.0;
+            return vec4(yrg.x, chroma, cosH, sinH);
+        }
+
+        vec3 darktableFilmicYchToYrg(vec4 ych) {
+            return vec3(
+                ych.x,
+                ych.y * ych.z + DT_FILMIC_YRG_D65_R,
+                ych.y * ych.w + DT_FILMIC_YRG_D65_G
+            );
+        }
+
+        vec4 darktableFilmicProfileRgbToYch(vec3 color, bool useSrgb) {
+            return darktableFilmicYrgToYch(
+                darktableFilmicLmsToYrg(darktableFilmicProfileRgbToLms(color, useSrgb))
+            );
+        }
+
+        vec3 darktableFilmicYchToProfileRgb(vec4 ych, bool useSrgb) {
+            vec3 lms = darktableFilmicYrgToLms(darktableFilmicYchToYrg(ych));
+            return darktableFilmicLmsToProfileRgb(lms, useSrgb);
+        }
+
+        vec4 darktableFilmicDesaturateV4(vec4 ychOriginal, vec4 ychFinal, float saturation) {
+            float chromaOriginal = ychOriginal.y * ychOriginal.x;
+            float chromaFinal = ychFinal.y * ychFinal.x;
+            float deltaChroma = saturation * (chromaOriginal - chromaFinal);
+
+            bool filmicBrightens = ychFinal.x > ychOriginal.x;
+            bool filmicResat = chromaOriginal < chromaFinal;
+            bool filmicDesat = chromaOriginal > chromaFinal;
+            bool userResat = saturation > 0.0;
+            bool userDesat = saturation < 0.0;
+
+            if (filmicBrightens && filmicResat) {
+                chromaFinal = 0.5 * (chromaOriginal + chromaFinal);
+            } else if ((userResat && filmicDesat) || userDesat) {
+                chromaFinal += deltaChroma;
             }
 
-            float rolledPeak = displayHeadroomRolloffScalar(peak);
-            return color * (rolledPeak / max(peak, 1e-6));
+            ychFinal.y = max(chromaFinal / max(ychFinal.x, 1e-8), 0.0);
+            return ychFinal;
+        }
+
+        vec4 darktableFilmicGamutCheckYrg(vec4 ych) {
+            vec3 yrg = darktableFilmicYchToYrg(ych);
+            float maxChroma = max(ych.y, 0.0);
+            float cosH = ych.z;
+            float sinH = ych.w;
+
+            if (yrg.y < 0.0 && abs(cosH) > 1e-8) {
+                maxChroma = min(-DT_FILMIC_YRG_D65_R / cosH, maxChroma);
+            }
+            if (yrg.z < 0.0 && abs(sinH) > 1e-8) {
+                maxChroma = min(-DT_FILMIC_YRG_D65_G / sinH, maxChroma);
+            }
+            if (yrg.y + yrg.z > 1.0 && abs(cosH + sinH) > 1e-8) {
+                maxChroma = min((1.0 - DT_FILMIC_YRG_D65_R - DT_FILMIC_YRG_D65_G) / (cosH + sinH), maxChroma);
+            }
+
+            ych.y = max(maxChroma, 0.0);
+            return ych;
+        }
+
+        float darktableFilmicClipChromaWhiteRaw(vec3 coeffs, float targetWhite, float y, float cosH, float sinH) {
+            float denominatorYCoeff =
+                coeffs.x * (0.979381443298969 * cosH + 0.391752577319588 * sinH) +
+                coeffs.y * (0.0206185567010309 * cosH + 0.608247422680412 * sinH) -
+                coeffs.z * (cosH + sinH);
+            float denominatorTargetTerm =
+                targetWhite * (0.68285981628866 * cosH + 0.482137060515464 * sinH);
+
+            if (abs(denominatorYCoeff) <= 1e-8) {
+                return DT_FILMIC_MAX_CHROMA;
+            }
+
+            float yAsymptote = denominatorTargetTerm / denominatorYCoeff;
+            if (y <= yAsymptote) {
+                return DT_FILMIC_MAX_CHROMA;
+            }
+
+            float denominator = y * denominatorYCoeff - denominatorTargetTerm;
+            if (abs(denominator) <= 1e-8) {
+                return DT_FILMIC_MAX_CHROMA;
+            }
+
+            float numerator = -0.427506877216495 *
+                (y * (coeffs.x + 0.856492345150334 * coeffs.y + 0.554995960637719 * coeffs.z) -
+                    0.988237752433297 * targetWhite);
+            float maxChroma = numerator / denominator;
+            return maxChroma >= 0.0 ? maxChroma : DT_FILMIC_MAX_CHROMA;
+        }
+
+        float darktableFilmicClipChromaWhite(vec3 coeffs, float targetWhite, float y, float cosH, float sinH) {
+            const float eps = 0.001;
+            float maxY = DT_FILMIC_Y_1931_TO_2006 * targetWhite;
+            float deltaY = max(maxY - y, 0.0);
+            float maxChroma;
+            if (deltaY < eps) {
+                maxChroma = deltaY / max(eps * maxY, 1e-8) *
+                    darktableFilmicClipChromaWhiteRaw(coeffs, targetWhite, (1.0 - eps) * maxY, cosH, sinH);
+            } else {
+                maxChroma = darktableFilmicClipChromaWhiteRaw(coeffs, targetWhite, y, cosH, sinH);
+            }
+            return maxChroma >= 0.0 ? maxChroma : DT_FILMIC_MAX_CHROMA;
+        }
+
+        float darktableFilmicClipChromaBlack(vec3 coeffs, float cosH, float sinH) {
+            float denominator =
+                coeffs.x * (0.979381443298969 * cosH + 0.391752577319588 * sinH) +
+                coeffs.y * (0.0206185567010309 * cosH + 0.608247422680412 * sinH) -
+                coeffs.z * (cosH + sinH);
+            if (abs(denominator) <= 1e-8) {
+                return DT_FILMIC_MAX_CHROMA;
+            }
+
+            float numerator = -0.427506877216495 *
+                (coeffs.x + 0.856492345150334 * coeffs.y + 0.554995960637719 * coeffs.z);
+            float maxChroma = numerator / denominator;
+            return maxChroma >= 0.0 ? maxChroma : DT_FILMIC_MAX_CHROMA;
+        }
+
+        float darktableFilmicClipChroma(
+            vec3 rowR,
+            vec3 rowG,
+            vec3 rowB,
+            float targetWhite,
+            float y,
+            float cosH,
+            float sinH,
+            float chroma
+        ) {
+            float chromaWhite = min(
+                min(
+                    darktableFilmicClipChromaWhite(rowR, targetWhite, y, cosH, sinH),
+                    darktableFilmicClipChromaWhite(rowG, targetWhite, y, cosH, sinH)
+                ),
+                darktableFilmicClipChromaWhite(rowB, targetWhite, y, cosH, sinH)
+            );
+            float chromaBlack = min(
+                min(
+                    darktableFilmicClipChromaBlack(rowR, cosH, sinH),
+                    darktableFilmicClipChromaBlack(rowG, cosH, sinH)
+                ),
+                darktableFilmicClipChromaBlack(rowB, cosH, sinH)
+            );
+            return max(min(min(chroma, chromaWhite), chromaBlack), 0.0);
+        }
+
+        vec3 darktableFilmicGamutCheckRgb(vec4 ychIn, bool useSrgb) {
+            vec3 rgbBrightened = darktableFilmicYchToProfileRgb(ychIn, useSrgb);
+            float minPixel = min(rgbBrightened.r, min(rgbBrightened.g, rgbBrightened.b));
+            float blackOffset = max(-minPixel, 0.0);
+            rgbBrightened += vec3(blackOffset);
+
+            vec4 ychBrightened = darktableFilmicProfileRgbToYch(rgbBrightened, useSrgb);
+            float y = clamp(
+                0.5 * (ychIn.x + ychBrightened.x),
+                DT_FILMIC_Y_1931_TO_2006 * DT_FILMIC_DISPLAY_BLACK,
+                DT_FILMIC_Y_1931_TO_2006 * DT_FILMIC_DISPLAY_WHITE
+            );
+
+            vec3 rowR = useSrgb ? DT_FILMIC_LMS_TO_SRGB_R : DT_FILMIC_LMS_TO_BT2020_R;
+            vec3 rowG = useSrgb ? DT_FILMIC_LMS_TO_SRGB_G : DT_FILMIC_LMS_TO_BT2020_G;
+            vec3 rowB = useSrgb ? DT_FILMIC_LMS_TO_SRGB_B : DT_FILMIC_LMS_TO_BT2020_B;
+            float newChroma = darktableFilmicClipChroma(
+                rowR,
+                rowG,
+                rowB,
+                DT_FILMIC_DISPLAY_WHITE,
+                y,
+                ychIn.z,
+                ychIn.w,
+                ychIn.y
+            );
+
+            return clamp(
+                darktableFilmicYchToProfileRgb(vec4(y, newChroma, ychIn.z, ychIn.w), useSrgb),
+                0.0,
+                DT_FILMIC_DISPLAY_WHITE
+            );
+        }
+
+        vec3 darktableFilmicGamutMapV5(vec3 originalColor, vec3 tonedColor) {
+            vec4 ychOriginal = darktableFilmicProfileRgbToYch(originalColor, false);
+            vec4 ychFinal = darktableFilmicProfileRgbToYch(tonedColor, false);
+
+            ychFinal.y = min(ychOriginal.y, ychFinal.y);
+            ychFinal.z = ychOriginal.z;
+            ychFinal.w = ychOriginal.w;
+            ychFinal.x = clamp(
+                ychFinal.x,
+                DT_FILMIC_Y_1931_TO_2006 * DT_FILMIC_DISPLAY_BLACK,
+                DT_FILMIC_Y_1931_TO_2006 * DT_FILMIC_DISPLAY_WHITE
+            );
+            ychFinal = darktableFilmicDesaturateV4(ychOriginal, ychFinal, 0.0);
+            ychFinal = darktableFilmicGamutCheckYrg(ychFinal);
+
+            vec3 srgb = darktableFilmicGamutCheckRgb(ychFinal, true);
+            return darktableFilmicLmsToBt2020(darktableFilmicSrgbToLms(srgb));
         }
 
         vec3 applyEngineTone(vec3 color) {
-            return displayHeadroomRolloff(uOutputTransform * applyDarktableFilmic(color));
+            vec3 toned = applyDarktableFilmic(color);
+            return uOutputTransform * darktableFilmicGamutMapV5(color, toned);
         }
     """.trimIndent()
 

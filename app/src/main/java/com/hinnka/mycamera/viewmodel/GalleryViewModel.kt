@@ -48,7 +48,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -2025,7 +2024,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawColorEngine(mediaData: MediaData, engine: RawColorEngine, onComplete: ((Boolean) -> Unit)? = null) {
         editRawColorEngine.value = engine
-        if (engine == RawColorEngine.SpectralFilm) {
+        if (engine == RawColorEngine.Spektrafilm) {
             if (editRawSpectralFilmStock.value == null) {
                 editRawSpectralFilmStock.value = "kodak_portra_400"
             }

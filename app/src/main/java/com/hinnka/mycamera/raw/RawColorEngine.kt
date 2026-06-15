@@ -14,9 +14,23 @@ enum class RawColorEngine(
     val meteringCompensationEv: Float,
     val exposureCompensationDomain: RawExposureCompensationDomain
 ) {
+    AdobeCurve(
+        shaderId = 0,
+        workingColorSpace = ColorSpace.ProPhoto,
+        defaultExposureCompensationEv = 0f,
+        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Curve
+    ),
+    DarktableFilmic(
+        shaderId = 4,
+        workingColorSpace = ColorSpace.BT2020,
+        defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
     AgX(
         shaderId = 1,
-        workingColorSpace = ColorSpace.FilmLightEGamut,
+        workingColorSpace = ColorSpace.BT2020,
         defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
@@ -28,21 +42,7 @@ enum class RawColorEngine(
         meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
     ),
-    DarktableFilmic(
-        shaderId = 4,
-        workingColorSpace = ColorSpace.BT2020,
-        defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        exposureCompensationDomain = RawExposureCompensationDomain.Linear
-    ),
-    AdobeCurve(
-        shaderId = 0,
-        workingColorSpace = ColorSpace.ProPhoto,
-        defaultExposureCompensationEv = 0f,
-        meteringCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,
-        exposureCompensationDomain = RawExposureCompensationDomain.Curve
-    ),
-    SpectralFilm(
+    Spektrafilm(
         shaderId = 2,
         workingColorSpace = ColorSpace.ProPhoto,
         defaultExposureCompensationEv = RAW_COLOR_ENGINE_METERING_COMPENSATION_EV,

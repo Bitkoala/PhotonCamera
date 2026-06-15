@@ -652,11 +652,11 @@
     <string name="settings_raw_color_engine_adobe_curve">Adobe 曲线</string>
     <string name="settings_raw_color_engine_adobe_curve_description">经典 RAW 曲线流程，可使用 DCP 相机配置。</string>
     <string name="settings_raw_color_engine_agx">AgX</string>
-    <string name="settings_raw_color_engine_agx_description">使用 Blender AgX 成像，并采用更宽的 RAW 工作空间。</string>
-    <string name="settings_raw_color_engine_darktable_sigmoid">Darktable Sigmoid</string>
-    <string name="settings_raw_color_engine_darktable_sigmoid_description">使用 darktable 默认的场景引用 Sigmoid 成像，并采用线性 Rec.2020 工作空间。</string>
-    <string name="settings_raw_color_engine_darktable_filmic">Darktable Filmic</string>
-    <string name="settings_raw_color_engine_darktable_filmic_description">使用 darktable 的场景引用 Filmic RGB 成像，并采用线性 Rec.2020 工作空间。</string>
+    <string name="settings_raw_color_engine_agx_description">使用 Blender AgX 成像，高光过渡柔和。</string>
+    <string name="settings_raw_color_engine_darktable_sigmoid">Sigmoid</string>
+    <string name="settings_raw_color_engine_darktable_sigmoid_description">darktable 的默认场景引用。</string>
+    <string name="settings_raw_color_engine_darktable_filmic">Filmic</string>
+    <string name="settings_raw_color_engine_darktable_filmic_description">偏胶片感成像。</string>
     <string name="settings_raw_color_engine_spectral_film">光谱胶片</string>
     <string name="settings_raw_color_engine_spectral_film_description">模拟胶卷和相纸介质，并支持密度微调。</string>
     <string name="settings_spectral_film">光谱胶片模拟</string>

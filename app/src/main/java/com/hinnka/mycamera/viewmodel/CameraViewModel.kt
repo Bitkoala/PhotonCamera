@@ -1480,12 +1480,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             applyCameraFeatureUpdate(
                 CameraFeatureUpdate(
                     rawColorEngine = SettingValue(engine),
-                    rawSpectralFilmStock = if (engine == RawColorEngine.SpectralFilm && prefs.rawSpectralFilmStock == null) {
+                    rawSpectralFilmStock = if (engine == RawColorEngine.Spektrafilm && prefs.rawSpectralFilmStock == null) {
                         SettingValue("kodak_portra_400")
                     } else {
                         null
                     },
-                    rawSpectralFilmPrint = if (engine == RawColorEngine.SpectralFilm && prefs.rawSpectralFilmPrint == null) {
+                    rawSpectralFilmPrint = if (engine == RawColorEngine.Spektrafilm && prefs.rawSpectralFilmPrint == null) {
                         SettingValue("kodak_portra_endura")
                     } else {
                         null

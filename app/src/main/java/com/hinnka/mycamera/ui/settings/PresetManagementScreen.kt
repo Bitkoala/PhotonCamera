@@ -297,7 +297,7 @@ private fun PresetManagementItem(
                     if (preset.useMFNR) PresetFeatureText("MFNR")
                     if (preset.useHdrComposition) PresetFeatureText("HDR")
                     if (preset.useMFSR) PresetFeatureText("MFSR")
-                    if (rawColorEngine == RawColorEngine.SpectralFilm) PresetFeatureText("FILM")
+                    if (rawColorEngine == RawColorEngine.Spektrafilm) PresetFeatureText("FILM")
                     if (preset.lutId != null) PresetFeatureText("LUT")
                     if (rawColorEngine == RawColorEngine.AdobeCurve && preset.rawDcpId != null) PresetFeatureText("DCP")
                 }

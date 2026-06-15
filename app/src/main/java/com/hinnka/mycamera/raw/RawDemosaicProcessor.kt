@@ -174,8 +174,6 @@ class RawDemosaicProcessor {
         private const val RAW_AE_HISTOGRAM_BINDING = 0
         private const val RAW_AE_BASE_STATS_BINDING = 1
         private const val RAW_AE_TONE_STATS_BINDING = 0
-        private const val AGX_BASE_SRGB_TEXTURE_UNIT = 7
-
         private val BRADFORD_D65_TO_D50 = floatArrayOf(
             1.0478112f, 0.0228866f, -0.0501270f,
             0.0295424f, 0.9904844f, -0.0170491f,
@@ -269,8 +267,6 @@ class RawDemosaicProcessor {
     private var dcpLookTableTextureId = 0
     private var spectralFilmTextureId = 0
     private var spectralFilmTextureKey: String? = null
-    private var agxLutTextureId = 0
-    private var agxLutTextureKey: String? = null
     private var dummyDcp3DTextureId = 0
     private var dummyDcpToneCurveTextureId = 0
 
@@ -659,8 +655,8 @@ class RawDemosaicProcessor {
             } else {
                 null
             }
-        val spectralFilmLut =
-            if (requestedColorEngine == RawColorEngine.SpectralFilm &&
+        val spektrafilmLut =
+            if (requestedColorEngine == RawColorEngine.Spektrafilm &&
                 spectralFilmStock != null && spectralFilmPrint != null
             ) {
                 SpectralFilmProfile.loadCombinedLut(
@@ -672,19 +668,8 @@ class RawDemosaicProcessor {
             } else {
                 null
             }
-        val agxLut =
-            if (requestedColorEngine == RawColorEngine.AgX) {
-                AgXColorEngine.loadBaseSrgbLut(context)
-            } else {
-                null
-            }
         val colorEngine = when {
-            requestedColorEngine == RawColorEngine.AgX && agxLut == null -> {
-                PLog.w(TAG, "AgX LUT unavailable, falling back to AdobeCurve")
-                RawColorEngine.AdobeCurve
-            }
-
-            requestedColorEngine == RawColorEngine.SpectralFilm && spectralFilmLut == null -> {
+            requestedColorEngine == RawColorEngine.Spektrafilm && spektrafilmLut == null -> {
                 PLog.w(TAG, "SpectralFilm LUT unavailable, falling back to AdobeCurve")
                 RawColorEngine.AdobeCurve
             }
@@ -1165,8 +1150,7 @@ class RawDemosaicProcessor {
                 metadata = actualMetadata,
                 inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
-                spectralFilmLut = spectralFilmLut,
-                agxLut = agxLut,
+                spectralFilmLut = spektrafilmLut,
                 colorEngine = colorEngine,
                 workingColorSpace = rawWorkingColorSpace,
                 shadowsHighlightsParams = shadowsHighlightsParams
@@ -3785,74 +3769,6 @@ class RawDemosaicProcessor {
         checkGlError("bindSpectralFilmCombinedResource")
     }
 
-    private fun uploadAgxTexture(lut: AgxLut): Int {
-        val key = "${lut.sourceKey}:${lut.rgbaFloatBuffer.capacity()}"
-        if (agxLutTextureId == 0) {
-            val textures = IntArray(1)
-            GLES30.glGenTextures(1, textures, 0)
-            agxLutTextureId = textures[0]
-            agxLutTextureKey = null
-        }
-        if (agxLutTextureKey == key) {
-            return agxLutTextureId
-        }
-
-        val buffer = lut.rgbaFloatBuffer.duplicate().apply { position(0) }
-
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, agxLutTextureId)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_S,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_T,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexParameteri(
-            GLES30.GL_TEXTURE_3D,
-            GLES30.GL_TEXTURE_WRAP_R,
-            GLES30.GL_CLAMP_TO_EDGE
-        )
-        GLES30.glTexImage3D(
-            GLES30.GL_TEXTURE_3D,
-            0,
-            GLES30.GL_RGBA16F,
-            lut.size,
-            lut.size,
-            lut.size,
-            0,
-            GLES30.GL_RGBA,
-            GLES30.GL_FLOAT,
-            buffer
-        )
-        agxLutTextureKey = key
-        PLog.d(TAG, "Uploaded AgX LUT: ${lut.name}, size=${lut.size}")
-        checkGlError("uploadAgxTexture")
-        return agxLutTextureId
-    }
-
-    private fun bindAgxCombinedResource(program: Int, agxLut: AgxLut?) {
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(program, "uAgxBaseSrgbTexture"),
-            AGX_BASE_SRGB_TEXTURE_UNIT
-        )
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(program, "uAgxLutSize"),
-            agxLut?.size ?: 1
-        )
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + AGX_BASE_SRGB_TEXTURE_UNIT)
-        if (agxLut != null) {
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, uploadAgxTexture(agxLut))
-        } else {
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, ensureDummyDcp3DTexture())
-        }
-        checkGlError("bindAgxCombinedResource")
-    }
-
     /**
      * Combined Processing Pass: ToneMap + LUT + Sharpening
      */
@@ -3861,7 +3777,6 @@ class RawDemosaicProcessor {
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
         spectralFilmLut: SpectralFilmLut? = null,
-        agxLut: AgxLut? = null,
         colorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
         workingColorSpace: ColorSpace = ColorSpace.ProPhoto,
         shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
@@ -3903,8 +3818,8 @@ class RawDemosaicProcessor {
                 bindDcpCombinedResources(program, dcpRenderPlan)
             }
 
-            RawColorEngine.AgX -> bindAgxCombinedResource(program, agxLut)
-            RawColorEngine.SpectralFilm -> bindSpectralFilmCombinedResource(program, spectralFilmLut)
+            RawColorEngine.AgX -> Unit
+            RawColorEngine.Spektrafilm -> bindSpectralFilmCombinedResource(program, spectralFilmLut)
             RawColorEngine.DarktableSigmoid,
             RawColorEngine.DarktableFilmic -> Unit
         }
@@ -5065,11 +4980,6 @@ class RawDemosaicProcessor {
             GLES30.glDeleteTextures(1, intArrayOf(spectralFilmTextureId), 0)
             spectralFilmTextureId = 0
             spectralFilmTextureKey = null
-        }
-        if (agxLutTextureId != 0) {
-            GLES30.glDeleteTextures(1, intArrayOf(agxLutTextureId), 0)
-            agxLutTextureId = 0
-            agxLutTextureKey = null
         }
         if (dummyDcp3DTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(dummyDcp3DTextureId), 0)
         if (dummyDcpToneCurveTextureId != 0) GLES30.glDeleteTextures(

@@ -149,7 +149,7 @@ data class CameraPreset(
                 frameId = "time",
                 useRaw = true,
                 rawDcpId = null,
-                rawColorEngine = RawColorEngine.SpectralFilm.name,
+                rawColorEngine = RawColorEngine.Spektrafilm.name,
                 rawSpectralFilmStock = "kodak_gold_200",
                 rawSpectralFilmPrint = "kodak_2383",
                 rawDROMode = "OFF",

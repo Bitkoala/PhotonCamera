@@ -166,7 +166,7 @@ fun PresetsPanel(
                         ) {
                             val rawColorEngine = RawColorEngine.fromPersistedName(preset.rawColorEngine)
                             FeatureBadge(text = AspectRatio.valueOf(preset.aspectRatio).getDisplayName())
-                            if (rawColorEngine == RawColorEngine.SpectralFilm) {
+                            if (rawColorEngine == RawColorEngine.Spektrafilm) {
                                 FeatureBadge(text = "FILM")
                             } else if (rawColorEngine == RawColorEngine.AdobeCurve && preset.rawDcpId != null) {
                                 FeatureBadge(text = "DCP")

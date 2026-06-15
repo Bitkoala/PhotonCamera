@@ -390,7 +390,7 @@ fun PresetEditorScreen(
                         RawColorEngine.AgX -> stringResource(R.string.settings_raw_color_engine_agx)
                         RawColorEngine.DarktableSigmoid -> stringResource(R.string.settings_raw_color_engine_darktable_sigmoid)
                         RawColorEngine.DarktableFilmic -> stringResource(R.string.settings_raw_color_engine_darktable_filmic)
-                        RawColorEngine.SpectralFilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
+                        RawColorEngine.Spektrafilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
                     }
                 }
                 DropdownSettingItem(
@@ -402,7 +402,7 @@ fun PresetEditorScreen(
                     onOptionSelected = { selectedName ->
                         engineNames.entries.find { it.value == selectedName }?.key?.let { engine ->
                             rawColorEngine = engine
-                            if (engine == RawColorEngine.SpectralFilm) {
+                            if (engine == RawColorEngine.Spektrafilm) {
                                 if (rawSpectralFilmStock.isBlank()) rawSpectralFilmStock = "kodak_portra_400"
                                 if (rawSpectralFilmPrint.isBlank()) rawSpectralFilmPrint = "kodak_2383"
                             }
@@ -432,7 +432,7 @@ fun PresetEditorScreen(
                     )
                 }
 
-                AnimatedVisibility(visible = rawColorEngine == RawColorEngine.SpectralFilm) {
+                AnimatedVisibility(visible = rawColorEngine == RawColorEngine.Spektrafilm) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         val currentStockLabel = SpectralFilmUiInfo.getFilmDisplayName(rawSpectralFilmStock)
                         val stockMap = SpectralFilmUiInfo.availableFilms.associateWith { SpectralFilmUiInfo.getFilmDisplayName(it) }
