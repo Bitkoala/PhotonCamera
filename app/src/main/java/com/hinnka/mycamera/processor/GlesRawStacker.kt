@@ -95,6 +95,7 @@ class GlesRawStacker(
         var outputBuffer: ByteBuffer? = null
         var returned = false
         val startTime = System.currentTimeMillis()
+        val originalThreadPriority = GlesGpuScheduler.lowerCurrentThreadPriority(TAG)
         return try {
             outputBuffer = LargeDirectBuffer.allocate(outputByteCount, "GLES RAW fused Bayer")
                 ?.order(ByteOrder.nativeOrder()) ?: return null
@@ -118,6 +119,7 @@ class GlesRawStacker(
             computeStructureTensor()
             clearAccumulator()
             accumulateFrame(refRaw, isReference = true)
+            GlesGpuScheduler.yieldToUiRenderer()
 
             for (index in 1 until images.size) {
                 images[index].use {
@@ -131,9 +133,11 @@ class GlesRawStacker(
                 computeRobustness()
                 computeTileMask()
                 accumulateFrame(curRaw, isReference = false)
+                GlesGpuScheduler.yieldToUiRenderer()
             }
 
             normalizeOutput()
+            GlesGpuScheduler.yieldToUiRenderer()
             readOutput(outputBuffer)
             outputBuffer.rewind()
             returned = true
@@ -152,6 +156,7 @@ class GlesRawStacker(
         } finally {
             images.forEach { it.close() }
             release()
+            GlesGpuScheduler.restoreCurrentThreadPriority(originalThreadPriority, TAG)
             if (!returned) {
                 LargeDirectBuffer.free(outputBuffer)
             }
@@ -169,28 +174,7 @@ class GlesRawStacker(
         }
         val config = chooseConfig(EGL_OPENGL_ES3_BIT_KHR) ?: chooseConfig(EGL14.EGL_OPENGL_ES2_BIT)
             ?: throw IllegalStateException("No EGL config for GLES")
-        eglContext = EGL14.eglCreateContext(
-            eglDisplay,
-            config,
-            EGL14.EGL_NO_CONTEXT,
-            intArrayOf(
-                EGL14.EGL_CONTEXT_CLIENT_VERSION,
-                3,
-                EGL_CONTEXT_MINOR_VERSION_KHR,
-                1,
-                EGL14.EGL_NONE,
-            ),
-            0,
-        )
-        if (eglContext == EGL14.EGL_NO_CONTEXT) {
-            eglContext = EGL14.eglCreateContext(
-                eglDisplay,
-                config,
-                EGL14.EGL_NO_CONTEXT,
-                intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE),
-                0,
-            )
-        }
+        eglContext = GlesGpuScheduler.createBackgroundContext(eglDisplay, config, TAG)
         if (eglContext == EGL14.EGL_NO_CONTEXT) {
             throw IllegalStateException("eglCreateContext failed: ${EGL14.eglGetError()}")
         }
@@ -752,7 +736,6 @@ class GlesRawStacker(
         private const val TAG = "GlesRawStacker"
 
         private const val EGL_OPENGL_ES3_BIT_KHR = 0x00000040
-        private const val EGL_CONTEXT_MINOR_VERSION_KHR = 0x30FB
         private const val LOCAL_SIZE = 16
         private const val PYRAMID_LEVELS = 4
         private const val ALIGN_LEVEL = 2

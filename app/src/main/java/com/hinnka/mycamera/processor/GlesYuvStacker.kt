@@ -100,6 +100,7 @@ class GlesYuvStacker(
         }
 
         val startTime = System.currentTimeMillis()
+        val originalThreadPriority = GlesGpuScheduler.lowerCurrentThreadPriority(TAG)
         try {
             initEgl()
             ensureGles31()
@@ -121,6 +122,7 @@ class GlesYuvStacker(
             computeStructureTensor(refY)
             clearAccumulator()
             accumulateFrame(refY, refCbCr, isReference = true)
+            GlesGpuScheduler.yieldToUiRenderer()
 
             for (index in 1 until images.size) {
                 if (!uploadImagePlanes(images[index], curY, curCbCr, curYStaging, curCbCrStaging, "frame $index")) {
@@ -133,9 +135,11 @@ class GlesYuvStacker(
                 computeRobustness()
                 computeTileMask()
                 accumulateFrame(curY, curCbCr, isReference = false)
+                GlesGpuScheduler.yieldToUiRenderer()
             }
 
             normalizeOutput()
+            GlesGpuScheduler.yieldToUiRenderer()
             val bitmap = readOutputBitmap() ?: return null
             PLog.i(TAG, "GLES YUV stacking completed in ${System.currentTimeMillis() - startTime}ms")
             return bitmap
@@ -144,6 +148,7 @@ class GlesYuvStacker(
             return null
         } finally {
             release()
+            GlesGpuScheduler.restoreCurrentThreadPriority(originalThreadPriority, TAG)
         }
     }
 
@@ -161,16 +166,7 @@ class GlesYuvStacker(
         val config = chooseConfig(EGL_OPENGL_ES3_BIT_KHR) ?: chooseConfig(EGL14.EGL_OPENGL_ES2_BIT)
             ?: throw IllegalStateException("No EGL config for GLES")
 
-        val contextAttribs31 = intArrayOf(
-            EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
-            EGL_CONTEXT_MINOR_VERSION_KHR, 1,
-            EGL14.EGL_NONE,
-        )
-        eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs31, 0)
-        if (eglContext == EGL14.EGL_NO_CONTEXT) {
-            val contextAttribs3 = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
-            eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs3, 0)
-        }
+        eglContext = GlesGpuScheduler.createBackgroundContext(eglDisplay, config, TAG)
         if (eglContext == EGL14.EGL_NO_CONTEXT) {
             throw IllegalStateException("eglCreateContext failed: ${EGL14.eglGetError()}")
         }
@@ -980,8 +976,6 @@ class GlesYuvStacker(
         private const val TAG = "GlesYuvStacker"
 
         private const val EGL_OPENGL_ES3_BIT_KHR = 0x00000040
-        private const val EGL_CONTEXT_MINOR_VERSION_KHR = 0x30FB
-
         private const val PYRAMID_LEVELS = 4
         private const val ALIGN_LEVEL = 2
         private const val FLOW_GRID_SPACING = 8

@@ -1232,15 +1232,6 @@ class RawDemosaicProcessor {
         initialize()
     }
 
-    private inline fun <T> measureRawGlInitStep(name: String, block: () -> T): T {
-        val start = System.currentTimeMillis()
-        try {
-            return block()
-        } finally {
-            PLog.d(TAG, "RAW GL init $name took: ${System.currentTimeMillis() - start}ms")
-        }
-    }
-
     /**
      * 初始化 EGL 环境
      */
@@ -1250,9 +1241,7 @@ class RawDemosaicProcessor {
         try {
             val initializeStart = System.currentTimeMillis()
             // 获取 EGL Display
-            eglDisplay = measureRawGlInitStep("eglGetDisplay") {
-                EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            }
+            eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
             if (eglDisplay == EGL14.EGL_NO_DISPLAY) {
                 PLog.e(TAG, "Unable to get EGL display")
                 return false
@@ -1260,9 +1249,7 @@ class RawDemosaicProcessor {
 
             // 初始化 EGL
             val version = IntArray(2)
-            val eglInitialized = measureRawGlInitStep("eglInitialize") {
-                EGL14.eglInitialize(eglDisplay, version, 0, version, 1)
-            }
+            val eglInitialized = EGL14.eglInitialize(eglDisplay, version, 0, version, 1)
             if (!eglInitialized) {
                 PLog.e(TAG, "Unable to initialize EGL")
                 return false
@@ -1281,18 +1268,16 @@ class RawDemosaicProcessor {
 
             val configs = arrayOfNulls<EGLConfig>(1)
             val numConfigs = IntArray(1)
-            val configChosen = measureRawGlInitStep("eglChooseConfig") {
-                EGL14.eglChooseConfig(
-                    eglDisplay,
-                    configAttribs,
-                    0,
-                    configs,
-                    0,
-                    1,
-                    numConfigs,
-                    0
-                )
-            }
+            val configChosen = EGL14.eglChooseConfig(
+                eglDisplay,
+                configAttribs,
+                0,
+                configs,
+                0,
+                1,
+                numConfigs,
+                0
+            )
             if (!configChosen) {
                 PLog.e(TAG, "Unable to choose EGL config")
                 return false
@@ -1305,9 +1290,7 @@ class RawDemosaicProcessor {
                 EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
                 EGL14.EGL_NONE
             )
-            eglContext = measureRawGlInitStep("eglCreateContext") {
-                EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-            }
+            eglContext = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
             if (eglContext == EGL14.EGL_NO_CONTEXT) {
                 PLog.e(TAG, "Unable to create EGL context")
                 return false
@@ -1319,27 +1302,21 @@ class RawDemosaicProcessor {
                 EGL14.EGL_HEIGHT, 1,
                 EGL14.EGL_NONE
             )
-            eglSurface = measureRawGlInitStep("eglCreatePbufferSurface") {
-                EGL14.eglCreatePbufferSurface(eglDisplay, config, surfaceAttribs, 0)
-            }
+            eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, config, surfaceAttribs, 0)
             if (eglSurface == EGL14.EGL_NO_SURFACE) {
                 PLog.e(TAG, "Unable to create EGL surface")
                 return false
             }
 
             // 激活上下文
-            val madeCurrent = measureRawGlInitStep("eglMakeCurrent") {
-                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
-            }
+            val madeCurrent = EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
             if (!madeCurrent) {
                 PLog.e(TAG, "Unable to make EGL current")
                 return false
             }
 
             // 初始化着色器和缓冲区
-            measureRawGlInitStep("initShaderProgram") {
-                initShaderProgram()
-            }
+            initShaderProgram()
             if (sharpenProgram == 0 || passthroughProgram == 0 ||
                 chromaDenoiseProgram == 0 ||
                 rcdPopulateProgram == 0 || rcdStep1Program == 0 || rcdStep2Program == 0 ||
@@ -1358,20 +1335,14 @@ class RawDemosaicProcessor {
                 )
                 return false
             }
-            measureRawGlInitStep("initBuffers") {
-                initBuffers()
-            }
+            initBuffers()
 
             // 创建静默遮挡图
-            dummyShadingTextureId = measureRawGlInitStep("createDummyShadingTexture") {
-                createDummyShadingTexture()
-            }
+            dummyShadingTextureId = createDummyShadingTexture()
 
             // Query hardware texture size limit
             val maxTexSizeArr = IntArray(1)
-            measureRawGlInitStep("queryLimits") {
-                GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxTexSizeArr, 0)
-            }
+            GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxTexSizeArr, 0)
             maxTextureSize = maxTexSizeArr[0]
             PLog.d(TAG, "GL_MAX_TEXTURE_SIZE = $maxTextureSize")
             logGlResourceLimits()
@@ -1912,11 +1883,14 @@ class RawDemosaicProcessor {
             GLES31.glDeleteShader(shader)
             return 0
         }
-        PLog.d(
-            TAG,
-            "Compute Shader $name compile ok, chars=${source.length}, " +
-                "took=${System.currentTimeMillis() - compileStart}ms"
-        )
+        val compileEnd = System.currentTimeMillis()
+        if (compileEnd - compileStart > 100) {
+            PLog.d(
+                TAG,
+                "Compute Shader $name compile ok, chars=${source.length}, " +
+                        "took=${System.currentTimeMillis() - compileStart}ms"
+            )
+        }
 
         val program = GLES31.glCreateProgram()
         GLES31.glAttachShader(program, shader)
@@ -1938,10 +1912,13 @@ class RawDemosaicProcessor {
         }
 
         GLES31.glDeleteShader(shader)
-        PLog.d(
-            TAG,
-            "Compute Program $name created: $program, linkTook=${System.currentTimeMillis() - linkStart}ms"
-        )
+        val end = System.currentTimeMillis()
+        if (end - linkStart > 100) {
+            PLog.d(
+                TAG,
+                "Compute Program $name created: $program, linkTook=${end - linkStart}ms"
+            )
+        }
         return program
     }
 
@@ -1963,11 +1940,14 @@ class RawDemosaicProcessor {
             GLES30.glDeleteShader(shader)
             return 0
         }
-        PLog.d(
-            TAG,
-            "Shader $name compile ok, type=$type, chars=${source.length}, " +
-                "took=${System.currentTimeMillis() - compileStart}ms"
-        )
+        val end = System.currentTimeMillis()
+        if (end - compileStart > 100) {
+            PLog.d(
+                TAG,
+                "Shader $name compile ok, type=$type, chars=${source.length}, " +
+                        "took=${end - compileStart}ms"
+            )
+        }
         return shader
     }
 
