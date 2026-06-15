@@ -180,6 +180,8 @@ data class UserPreferences(
     val customLensIds: List<String> = emptyList(), // 自定义镜头 ID，逗号分隔存储
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val preferredMainCameraId: String? = null, // 用户选择的主摄 ID
+    val enableLogicalMultiCameraDiscovery: Boolean = false, // 是否自动探测逻辑多摄物理镜头绑定
+    val logicalCameraBindingWhitelist: List<String> = emptyList(), // 强制启用的逻辑/物理镜头绑定，格式 logical/physical
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
     val referencePhotoUrl: String? = null,
     val deleteExported: Boolean = true,
@@ -344,6 +346,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val CUSTOM_LENS_IDS = stringPreferencesKey("custom_lens_ids")
         private val LENS_ID_BLACKLIST = stringPreferencesKey("lens_id_blacklist")
         private val PREFERRED_MAIN_CAMERA_ID = stringPreferencesKey("preferred_main_camera_id")
+        private val ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY = booleanPreferencesKey("enable_logical_multi_camera_discovery")
+        private val LOGICAL_CAMERA_BINDING_WHITELIST = stringPreferencesKey("logical_camera_binding_whitelist")
         private val HIDDEN_FOCAL_LENGTHS = stringPreferencesKey("hidden_focal_lengths")
         private val USE_HDR_SCREEN_MODE = booleanPreferencesKey("use_hdr_screen_mode")
         private val REFERENCE_PHOTO_URL = stringPreferencesKey("reference_photo_url")
@@ -507,6 +511,10 @@ class UserPreferencesRepository(private val context: Context) {
                 customLensIds = parseLensIds(preferences[CUSTOM_LENS_IDS]),
                 lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
                 preferredMainCameraId = preferences[PREFERRED_MAIN_CAMERA_ID]?.takeIf { it.isNotBlank() },
+                enableLogicalMultiCameraDiscovery = preferences[ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY] ?: false,
+                logicalCameraBindingWhitelist = parseLogicalCameraBindingWhitelist(
+                    preferences[LOGICAL_CAMERA_BINDING_WHITELIST]
+                ),
                 hiddenFocalLengths = preferences[HIDDEN_FOCAL_LENGTHS]
                     ?.split(",")?.filter { it.isNotEmpty() }
                     ?.mapNotNull { it.toFloatOrNull() }
@@ -622,6 +630,34 @@ class UserPreferencesRepository(private val context: Context) {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
+    }
+
+    private fun parseLogicalCameraBindingWhitelist(value: String?): List<String> {
+        if (value.isNullOrBlank()) return emptyList()
+        return normalizeLogicalCameraBindingWhitelist(value.split(","))
+    }
+
+    private fun normalizeLogicalCameraBindingWhitelist(values: Iterable<String>): List<String> {
+        val normalizedBindings = mutableListOf<Pair<String, String>>()
+        values.forEach { value ->
+            val parts = value.trim().split("/", limit = 2)
+            if (parts.size != 2) return@forEach
+
+            val logicalCameraId = parts[0].trim()
+            val physicalCameraId = parts[1].trim()
+            if (logicalCameraId.isEmpty() || physicalCameraId.isEmpty()) {
+                return@forEach
+            }
+
+            val existingIndex = normalizedBindings.indexOfFirst { it.second == physicalCameraId }
+            if (existingIndex >= 0) {
+                normalizedBindings.removeAt(existingIndex)
+            }
+            normalizedBindings.add(logicalCameraId to physicalCameraId)
+        }
+        return normalizedBindings.map { (logicalCameraId, physicalCameraId) ->
+            "$logicalCameraId/$physicalCameraId"
+        }
     }
 
     private fun parseRawLuts(preferences: Preferences): Map<String, String> {
@@ -1144,6 +1180,19 @@ class UserPreferencesRepository(private val context: Context) {
             } else {
                 preferences[PREFERRED_MAIN_CAMERA_ID] = normalizedCameraId
             }
+        }
+    }
+
+    suspend fun saveEnableLogicalMultiCameraDiscovery(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY] = enabled
+        }
+    }
+
+    suspend fun saveLogicalCameraBindingWhitelist(bindings: List<String>) {
+        context.dataStore.edit { preferences ->
+            preferences[LOGICAL_CAMERA_BINDING_WHITELIST] = normalizeLogicalCameraBindingWhitelist(bindings)
+                .joinToString(",")
         }
     }
 

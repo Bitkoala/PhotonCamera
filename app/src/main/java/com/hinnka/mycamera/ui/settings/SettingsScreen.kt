@@ -230,6 +230,8 @@ fun SettingsScreen(
     val customLensIds by viewModel.customLensIds.collectAsState(initial = emptyList())
     val lensIdBlacklist by viewModel.lensIdBlacklist.collectAsState(initial = emptyList())
     val preferredMainCameraId by viewModel.preferredMainCameraId.collectAsState(initial = null)
+    val enableLogicalMultiCameraDiscovery by viewModel.enableLogicalMultiCameraDiscovery.collectAsState(initial = false)
+    val logicalCameraBindingWhitelist by viewModel.logicalCameraBindingWhitelist.collectAsState(initial = emptyList())
     val multiFrameCount by viewModel.multiFrameCount.collectAsState()
     val useMultipleExposure by viewModel.useMultipleExposure.collectAsState()
     val multipleExposureCount by viewModel.multipleExposureCount.collectAsState()
@@ -317,7 +319,12 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(customLensIds, lensIdBlacklist) {
+    LaunchedEffect(
+        customLensIds,
+        lensIdBlacklist,
+        enableLogicalMultiCameraDiscovery,
+        logicalCameraBindingWhitelist
+    ) {
         mainCameraIdOptions = runCatching {
             viewModel.discoverMainCameraIdOptions()
         }.getOrElse {
@@ -860,6 +867,30 @@ fun SettingsScreen(
                         HorizontalDivider(
                             color = Color.White.copy(alpha = 0.1f),
                             modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_logical_multi_camera_discovery),
+                            description = stringResource(R.string.settings_logical_multi_camera_discovery_description),
+                            checked = enableLogicalMultiCameraDiscovery,
+                            onCheckedChange = { viewModel.setEnableLogicalMultiCameraDiscovery(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_logical_camera_binding_whitelist),
+                            description = stringResource(R.string.settings_logical_camera_binding_whitelist_description),
+                            value = logicalCameraBindingWhitelist.joinToString(","),
+                            onValueChange = { viewModel.setLogicalCameraBindingWhitelist(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
 
                         TextInputSettingItem(

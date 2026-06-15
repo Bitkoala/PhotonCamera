@@ -608,6 +608,10 @@
     <string name="settings_main_camera_id">主摄 ID</string>
     <string name="settings_main_camera_id_description">选择将哪个 1x 后置相机 ID 作为主摄。</string>
     <string name="settings_main_camera_id_option">相机 ID %1$s</string>
+    <string name="settings_logical_multi_camera_discovery">逻辑多摄探测</string>
+    <string name="settings_logical_multi_camera_discovery_description">探测逻辑多摄 ID 暴露的物理镜头。默认关闭以提高兼容性。</string>
+    <string name="settings_logical_camera_binding_whitelist">逻辑/物理摄像头白名单</string>
+    <string name="settings_logical_camera_binding_whitelist_description">强制启用类似 0/2、0/3 的逻辑/物理绑定。即使自动探测关闭也会生效。</string>
     <string name="settings_custom_lens_ids">自定义镜头 ID</string>
     <string name="settings_custom_lens_ids_description">手动添加相机 ID，多个 ID 用逗号分隔。检测可用后会加入镜头列表并显示特殊标识。</string>
     <string name="settings_lens_id_blacklist">镜头 ID 黑名单</string>

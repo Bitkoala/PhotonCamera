@@ -76,12 +76,14 @@ class CameraDiscovery(private val context: Context) {
         // 添加前置摄像头
         discoveredCameras.frontCamera?.let { cameras.add(it) }
 
+        val uniqueCameras = removeDuplicatePhysicalCameraEntries(cameras)
+
         PLog.d(TAG, "Camera2 final list:")
-        cameras.forEach { cam ->
+        uniqueCameras.forEach { cam ->
             PLog.d(TAG, "  - ${cam.cameraId}: ${cam.lensType}, intrinsicZoom=${cam.intrinsicZoomRatio}")
         }
 
-        return cameras
+        return uniqueCameras
     }
 
     fun discoverMainCameraIdOptions(): List<String> {
@@ -111,7 +113,11 @@ class CameraDiscovery(private val context: Context) {
             baseIds = getAllCameraIds(includeDuplicateMainCameraIds),
             preferredMainCameraId = preferredMainCameraId
         )
-        val logicalCameraBindings = findLogicalCameraBindings(directCameraIds.toSet())
+        val logicalCameraDiscoveryConfig = loadLogicalCameraDiscoveryConfig()
+        val logicalCameraBindings = findLogicalCameraBindings(
+            publicCameraIdSet = directCameraIds.toSet(),
+            config = logicalCameraDiscoveryConfig
+        )
         // 获取完整的 Camera ID 列表（包括探测的隐藏摄像头和逻辑多摄暴露的物理摄像头）
         val allCameraIds = (directCameraIds + logicalCameraBindings.keys).distinct()
         PLog.d(TAG, "Camera2 discovered IDs: $allCameraIds")
@@ -235,9 +241,33 @@ class CameraDiscovery(private val context: Context) {
         return (baseIds + cameraId).distinct()
     }
 
-    private fun findLogicalCameraBindings(publicCameraIdSet: Set<String>): Map<String, LogicalCameraBinding> {
+    private fun findLogicalCameraBindings(
+        publicCameraIdSet: Set<String>,
+        config: LogicalCameraDiscoveryConfig
+    ): Map<String, LogicalCameraBinding> {
         val bindings = mutableMapOf<String, LogicalCameraBinding>()
 
+        if (config.autoDiscoveryEnabled) {
+            discoverAutomaticLogicalCameraBindings(
+                publicCameraIdSet = publicCameraIdSet,
+                bindings = bindings
+            )
+        } else {
+            PLog.d(TAG, "Logical multi-camera auto discovery disabled")
+        }
+
+        applyForcedLogicalCameraBindings(
+            bindings = bindings,
+            forcedBindings = config.forcedBindings
+        )
+
+        return bindings
+    }
+
+    private fun discoverAutomaticLogicalCameraBindings(
+        publicCameraIdSet: Set<String>,
+        bindings: MutableMap<String, LogicalCameraBinding>
+    ) {
         for (logicalCameraId in cameraManager.cameraIdList) {
             try {
                 val characteristics = cameraManager.getCameraCharacteristics(logicalCameraId)
@@ -262,10 +292,6 @@ class CameraDiscovery(private val context: Context) {
                             physicalCameras.joinToString { "${it.cameraId}:${it.intrinsicZoomRatio}" }
                 )
 
-                val binding = LogicalCameraBinding(
-                    logicalCameraId = logicalCameraId,
-                    physicalCameras = physicalCameras
-                )
                 for (physicalCamera in physicalCameras) {
                     if (publicCameraIdSet.contains(physicalCamera.cameraId)) {
                         PLog.d(
@@ -275,6 +301,10 @@ class CameraDiscovery(private val context: Context) {
                         )
                         continue
                     }
+                    val binding = LogicalCameraBinding(
+                        logicalCameraId = logicalCameraId,
+                        physicalCameras = listOf(physicalCamera)
+                    )
                     PLog.d(
                         TAG,
                         "Add supplemental logical binding for missing physical camera ${physicalCamera.cameraId} " +
@@ -286,8 +316,76 @@ class CameraDiscovery(private val context: Context) {
                 PLog.w(TAG, "Failed to inspect logical camera $logicalCameraId", e)
             }
         }
+    }
 
-        return bindings
+    private fun applyForcedLogicalCameraBindings(
+        bindings: MutableMap<String, LogicalCameraBinding>,
+        forcedBindings: List<LogicalCameraBindingRequest>
+    ) {
+        if (forcedBindings.isEmpty()) return
+
+        for (forcedBinding in forcedBindings) {
+            val binding = createForcedLogicalCameraBinding(forcedBinding) ?: continue
+            val previous = bindings.put(forcedBinding.physicalCameraId, binding)
+            if (previous == null) {
+                PLog.d(
+                    TAG,
+                    "Forced logical binding added: " +
+                            "${forcedBinding.logicalCameraId}/${forcedBinding.physicalCameraId}"
+                )
+            } else {
+                PLog.d(
+                    TAG,
+                    "Forced logical binding overrides ${previous.logicalCameraId}/${forcedBinding.physicalCameraId}: " +
+                            "${forcedBinding.logicalCameraId}/${forcedBinding.physicalCameraId}"
+                )
+            }
+        }
+    }
+
+    private fun createForcedLogicalCameraBinding(
+        request: LogicalCameraBindingRequest
+    ): LogicalCameraBinding? {
+        return try {
+            val logicalCharacteristics = cameraManager.getCameraCharacteristics(request.logicalCameraId)
+            val capabilities = logicalCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            if (capabilities?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) != true) {
+                PLog.w(
+                    TAG,
+                    "Forced logical binding ${request.logicalCameraId}/${request.physicalCameraId} skipped: " +
+                            "logical camera has no logical multi-camera capability"
+                )
+                return null
+            }
+
+            val advertisedPhysicalIds = logicalCharacteristics.physicalCameraIds
+            if (!advertisedPhysicalIds.contains(request.physicalCameraId)) {
+                PLog.w(
+                    TAG,
+                    "Forced logical binding ${request.logicalCameraId}/${request.physicalCameraId} skipped: " +
+                            "physical camera is not advertised by logical camera"
+                )
+                return null
+            }
+
+            val physicalCamera = createPhysicalCameraCandidate(
+                logicalCameraId = request.logicalCameraId,
+                physicalCameraId = request.physicalCameraId
+            ) ?: return null
+
+            LogicalCameraBinding(
+                logicalCameraId = request.logicalCameraId,
+                physicalCameras = listOf(physicalCamera)
+            )
+        } catch (e: Exception) {
+            PLog.w(
+                TAG,
+                "Failed to create forced logical binding " +
+                        "${request.logicalCameraId}/${request.physicalCameraId}",
+                e
+            )
+            null
+        }
     }
 
     private fun putBetterLogicalBinding(
@@ -442,6 +540,45 @@ class CameraDiscovery(private val context: Context) {
             PLog.w(TAG, "Failed to load preferred main camera ID", e)
             null
         }
+    }
+
+    private fun loadLogicalCameraDiscoveryConfig(): LogicalCameraDiscoveryConfig {
+        return try {
+            runBlocking {
+                val preferences = userPreferencesRepository.userPreferences.firstOrNull()
+                LogicalCameraDiscoveryConfig(
+                    autoDiscoveryEnabled = preferences?.enableLogicalMultiCameraDiscovery ?: false,
+                    forcedBindings = parseLogicalCameraBindingRequests(
+                        preferences?.logicalCameraBindingWhitelist ?: emptyList()
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to load logical multi-camera discovery config", e)
+            LogicalCameraDiscoveryConfig()
+        }
+    }
+
+    private fun parseLogicalCameraBindingRequests(
+        values: List<String>
+    ): List<LogicalCameraBindingRequest> {
+        return values
+            .mapNotNull { value ->
+                val parts = value.trim().split("/", limit = 2)
+                if (parts.size != 2) return@mapNotNull null
+
+                val logicalCameraId = parts[0].trim()
+                val physicalCameraId = parts[1].trim()
+                if (logicalCameraId.isEmpty() || physicalCameraId.isEmpty()) {
+                    null
+                } else {
+                    LogicalCameraBindingRequest(
+                        logicalCameraId = logicalCameraId,
+                        physicalCameraId = physicalCameraId
+                    )
+                }
+            }
+            .distinct()
     }
 
     private fun probeCameraIds(
@@ -796,6 +933,41 @@ class CameraDiscovery(private val context: Context) {
         return abs(firstZoomRatio - secondZoomRatio) <= 0.01f
     }
 
+    private fun removeDuplicatePhysicalCameraEntries(cameras: List<CameraInfo>): List<CameraInfo> {
+        val usedPhysicalCameraIds = mutableSetOf<String>()
+        val uniqueCameras = mutableListOf<CameraInfo>()
+
+        for (camera in cameras) {
+            val ownedPhysicalCameraIds = getOwnedPhysicalCameraIds(camera)
+            val duplicatePhysicalCameraId = ownedPhysicalCameraIds.firstOrNull {
+                usedPhysicalCameraIds.contains(it)
+            }
+            if (duplicatePhysicalCameraId != null) {
+                PLog.w(
+                    TAG,
+                    "Skip duplicate physical camera entry ${camera.cameraId}: " +
+                            "physicalId=$duplicatePhysicalCameraId, logical=${camera.logicalCameraId}"
+                )
+                continue
+            }
+
+            uniqueCameras.add(camera)
+            usedPhysicalCameraIds.addAll(ownedPhysicalCameraIds)
+        }
+
+        return uniqueCameras
+    }
+
+    private fun getOwnedPhysicalCameraIds(camera: CameraInfo): List<String> {
+        camera.outputPhysicalCameraId?.let { return listOf(it) }
+
+        if (camera.logicalCameraId != null && camera.physicalCameras.isNotEmpty()) {
+            return camera.physicalCameras.map { it.cameraId }.distinct()
+        }
+
+        return listOf(camera.cameraId)
+    }
+
     /**
      * 创建 CameraInfo
      */
@@ -914,6 +1086,16 @@ class CameraDiscovery(private val context: Context) {
     private data class DiscoveredCameraCandidates(
         val backCameras: List<CameraInfoWithZoom>,
         val frontCamera: CameraInfo?
+    )
+
+    private data class LogicalCameraDiscoveryConfig(
+        val autoDiscoveryEnabled: Boolean = false,
+        val forcedBindings: List<LogicalCameraBindingRequest> = emptyList()
+    )
+
+    private data class LogicalCameraBindingRequest(
+        val logicalCameraId: String,
+        val physicalCameraId: String
     )
 
     private data class LogicalCameraBinding(

@@ -380,6 +380,10 @@
     <string name="settings_main_camera_id">主攝 ID</string>
     <string name="settings_main_camera_id_description">選擇將哪個 1x 後置相機 ID 作為主攝。</string>
     <string name="settings_main_camera_id_option">相機 ID %1$s</string>
+    <string name="settings_logical_multi_camera_discovery">邏輯多攝偵測</string>
+    <string name="settings_logical_multi_camera_discovery_description">偵測邏輯多攝 ID 暴露的物理鏡頭。預設關閉以提高兼容性。</string>
+    <string name="settings_logical_camera_binding_whitelist">邏輯/物理相機白名單</string>
+    <string name="settings_logical_camera_binding_whitelist_description">強制啟用類似 0/2、0/3 的邏輯/物理綁定。即使自動偵測關閉也會生效。</string>
     <string name="settings_custom_lens_ids">自訂鏡頭 ID</string>
     <string name="settings_custom_lens_ids_description">手動新增相機 ID，多個 ID 用逗號分隔。偵測可用後會加入鏡頭列表並顯示特殊標識。</string>
     <string name="settings_lens_id_blacklist">鏡頭 ID 黑名單</string>

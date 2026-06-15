@@ -830,6 +830,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val customLensIds: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.customLensIds }
     val lensIdBlacklist: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.lensIdBlacklist }
     val preferredMainCameraId: Flow<String?> = userPreferencesRepository.userPreferences.map { it.preferredMainCameraId }
+    val enableLogicalMultiCameraDiscovery: Flow<Boolean> =
+        userPreferencesRepository.userPreferences.map { it.enableLogicalMultiCameraDiscovery }
+    val logicalCameraBindingWhitelist: Flow<List<String>> =
+        userPreferencesRepository.userPreferences.map { it.logicalCameraBindingWhitelist }
     val userPreferences: StateFlow<UserPreferences> = userPreferencesRepository.userPreferences
         .stateIn(viewModelScope, SharingStarted.Eagerly, UserPreferences())
     val jpgBaselineLutId: StateFlow<String?> = userPreferencesRepository.userPreferences
@@ -3660,6 +3664,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setPreferredMainCameraId(cameraId: String?) {
         viewModelScope.launch {
             userPreferencesRepository.savePreferredMainCameraId(cameraId)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun setEnableLogicalMultiCameraDiscovery(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveEnableLogicalMultiCameraDiscovery(enabled)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun setLogicalCameraBindingWhitelist(value: String) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveLogicalCameraBindingWhitelist(value.split(","))
             cameraController.refreshCameraList()
         }
     }
