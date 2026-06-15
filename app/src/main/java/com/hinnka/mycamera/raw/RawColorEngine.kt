@@ -54,7 +54,7 @@ enum class RawColorEngine(
     companion object {
         fun fromPersistedName(
             value: String?,
-            fallback: RawColorEngine = AgX
+            fallback: RawColorEngine = AdobeCurve
         ): RawColorEngine {
             return entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: fallback
         }

@@ -268,16 +268,6 @@ fun PresetEditorScreen(
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
 
                 SwitchSettingItem(
-                    title = stringResource(R.string.settings_use_raw),
-                    checked = useRaw,
-                    onCheckedChange = {
-                        useRaw = it
-                    }
-                )
-
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
-
-                SwitchSettingItem(
                     title = stringResource(R.string.settings_use_multi_frame),
                     checked = useMFNR,
                     onCheckedChange = {
@@ -295,15 +285,6 @@ fun PresetEditorScreen(
                     }
                 )
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
-
-                SwitchSettingItem(
-                    title = stringResource(R.string.settings_use_super_resolution),
-                    checked = useMFSR,
-                    onCheckedChange = {
-                        useMFSR = it
-                    }
-                )
             }
 
             if (showColorRecipeSheet) {
@@ -379,11 +360,21 @@ fun PresetEditorScreen(
             }
 
             SettingsSection(
-                title = "RAW",
+                title = stringResource(R.string.baseline_target_raw),
                 isExpandable = true,
                 isExpanded = expandQuickRaw,
                 onToggleExpand = { expandQuickRaw = !expandQuickRaw }
             ) {
+                SwitchSettingItem(
+                    title = stringResource(R.string.settings_use_raw),
+                    checked = useRaw,
+                    onCheckedChange = {
+                        useRaw = it
+                    }
+                )
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+
                 val engineNames = RawColorEngine.entries.associateWith { engine ->
                     when (engine) {
                         RawColorEngine.AdobeCurve -> stringResource(R.string.settings_raw_color_engine_adobe_curve)

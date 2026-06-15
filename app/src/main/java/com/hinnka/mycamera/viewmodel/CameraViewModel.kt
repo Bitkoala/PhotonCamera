@@ -419,7 +419,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             aspectRatio = SettingValue(ratio),
             useRaw = SettingValue(this?.useRaw ?: false),
             useMFNR = SettingValue(this?.useMFNR ?: false),
-            useHdrComposition = SettingValue(this?.useHdrComposition ?: true),
+            useHdrComposition = SettingValue(this?.useHdrComposition ?: false),
             useMFSR = SettingValue(this?.useMFSR ?: false),
             frameId = SettingValue(this?.frameId),
             rawDcpId = SettingValue(this?.rawDcpId),
@@ -896,7 +896,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val useHdrComposition: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useHdrComposition }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val useMultipleExposure: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.useMultipleExposure }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)

@@ -128,7 +128,7 @@ data class UserPreferences(
     val defaultFocalLength: Float = 0f, // 默认焦段 (mm)，0表示不设置
     val zoomDisplayMode: String = "FOCAL_LENGTH",
     val useMFNR: Boolean = false, // 是否使用多帧降噪
-    val useHdrComposition: Boolean = true, // 是否使用 HDR 包围曝光合成
+    val useHdrComposition: Boolean = false, // 是否使用 HDR 包围曝光合成
     val multiFrameCount: Int = MultiFrameConfig.DEFAULT_FRAME_COUNT, // 多帧降噪帧数
     val useMultipleExposure: Boolean = false, // 是否启用多重曝光
     val multipleExposureCount: Int = 2, // 多重曝光张数
@@ -432,7 +432,7 @@ class UserPreferencesRepository(private val context: Context) {
                 defaultFocalLength = preferences[DEFAULT_FOCAL_LENGTH] ?: 0f,
                 zoomDisplayMode = preferences[ZOOM_DISPLAY_MODE] ?: "FOCAL_LENGTH",
                 useMFNR = preferences[USE_MULTI_FRAME] ?: false,
-                useHdrComposition = preferences[USE_HDR_COMPOSITION] ?: true,
+                useHdrComposition = preferences[USE_HDR_COMPOSITION] ?: false,
                 multiFrameCount = preferences[MULTI_FRAME_COUNT]
                     ?.coerceIn(MultiFrameConfig.MIN_FRAME_COUNT, MultiFrameConfig.MAX_FRAME_COUNT)
                     ?: MultiFrameConfig.DEFAULT_FRAME_COUNT,

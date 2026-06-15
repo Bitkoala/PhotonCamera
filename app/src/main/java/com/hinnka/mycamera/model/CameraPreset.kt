@@ -21,7 +21,7 @@ data class CameraPreset(
     val aspectRatio: String = AspectRatio.RATIO_4_3.name,
     val useRaw: Boolean = false,
     val useMFNR: Boolean = false,
-    val useHdrComposition: Boolean = true,
+    val useHdrComposition: Boolean = false,
     val useMFSR: Boolean = false,
     val frameId: String? = null,
     // Quick RAW 功能

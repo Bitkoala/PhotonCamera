@@ -160,6 +160,14 @@ private val RAW_MIN_SHUTTER_SPEED_OPTIONS = listOf(
     1_000_000_000L / 2000,
 )
 
+private fun sanitizeSettingsTonemapMode(mode: String): String {
+    return when (mode) {
+        "REC709" -> "SRGB"
+        "REC709_ACR3" -> "SRGB_ACR3"
+        else -> mode
+    }
+}
+
 private fun openExternalUrl(context: Context, url: String) {
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -230,6 +238,7 @@ fun SettingsScreen(
     val photoQuality by viewModel.photoQuality.collectAsState(initial = 95)
     val useHeicExport by viewModel.useHeicExport.collectAsState(initial = false)
     val tonemapMode by viewModel.tonemapMode.collectAsState()
+    val settingsTonemapMode = remember(tonemapMode) { sanitizeSettingsTonemapMode(tonemapMode) }
     val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val useGpuAcceleration by viewModel.useGpuAcceleration.collectAsState()
     val useP010 by viewModel.useP010.collectAsState()
@@ -313,6 +322,12 @@ fun SettingsScreen(
             viewModel.discoverMainCameraIdOptions()
         }.getOrElse {
             emptyList()
+        }
+    }
+
+    LaunchedEffect(tonemapMode, settingsTonemapMode) {
+        if (settingsTonemapMode != tonemapMode) {
+            viewModel.setTonemapMode(settingsTonemapMode)
         }
     }
 
@@ -1078,11 +1093,9 @@ fun SettingsScreen(
                                 "FAST" to stringResource(R.string.settings_tonemap_mode_fast),
                                 "HIGH_QUALITY" to stringResource(R.string.settings_tonemap_mode_high_quality),
                                 "SRGB" to stringResource(R.string.settings_tonemap_mode_srgb),
-                                "REC709" to stringResource(R.string.settings_tonemap_mode_rec709),
-                                "SRGB_ACR3" to stringResource(R.string.settings_tonemap_mode_srgb_acr3),
-                                "REC709_ACR3" to stringResource(R.string.settings_tonemap_mode_rec709_acr3)
+                                "SRGB_ACR3" to stringResource(R.string.settings_tonemap_mode_srgb_acr3)
                             ),
-                            currentLevel = tonemapMode,
+                            currentLevel = settingsTonemapMode,
                             onLevelSelected = { viewModel.setTonemapMode(it) }
                         )
 
