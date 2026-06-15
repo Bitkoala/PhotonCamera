@@ -1727,7 +1727,7 @@ object GalleryManager {
                 aspectRatio = aspectRatio,
                 outputPath = null,
                 enableSuperResolution = useSuperResolution,
-                useVulkan = true,
+                useGpuAcceleration = true,
                 colorSpace = colorSpace
             )
         } finally {
@@ -2303,7 +2303,7 @@ object GalleryManager {
                     cfaPattern = rawMetadata.cfaPattern,
                     enableSuperResolution = false,
                     superResolutionScale = 1.0f,
-                    useVulkan = useGpuAcceleration,
+                    useGpuAcceleration = useGpuAcceleration,
                     masterBlackLevel = stackBlackLevel,
                     whiteLevel = rawMetadata.whiteLevel.toInt(),
                     whiteBalanceGains = rawMetadata.whiteBalanceGains,

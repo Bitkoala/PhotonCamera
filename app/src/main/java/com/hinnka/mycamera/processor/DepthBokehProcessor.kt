@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Handles the post-processing of the Depth Map for high-quality optical bokeh.
- * This class coordinates the Vulkan compute pipeline for edge refinement (Guided Filter)
+ * This class coordinates the GPU compute pipeline for edge refinement (Guided Filter)
  * and realistic bokeh convolution.
  */
 class DepthBokehProcessor(context: Context) {

@@ -2,8 +2,6 @@ package com.hinnka.mycamera.processor
 
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
-import android.media.Image
-import android.util.Log
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
 import androidx.core.graphics.createBitmap
@@ -11,7 +9,6 @@ import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.LargeDirectBuffer
-import kotlin.math.roundToInt
 
 data class RawStackResult(
     var fusedBayerBuffer: ByteBuffer?,
@@ -30,49 +27,6 @@ data class RawStackResult(
  */
 object MultiFrameStacker {
     private const val TAG = "MultiFrameStacker"
-
-    private data class CachedVulkanRawStacker(
-        val ptr: Long,
-        val width: Int,
-        val height: Int,
-        val enableSuperResolution: Boolean,
-        val superResolutionScale: Float,
-        val blackLevel: FloatArray,
-        val whiteLevel: Int,
-        val wbGains: FloatArray,
-        val noiseModel: FloatArray,
-        val lensShading: FloatArray?,
-        val lensShadingWidth: Int,
-        val lensShadingHeight: Int,
-    ) {
-        fun matches(
-            width: Int,
-            height: Int,
-            enableSuperResolution: Boolean,
-            superResolutionScale: Float,
-            blackLevel: FloatArray,
-            whiteLevel: Int,
-            wbGains: FloatArray,
-            noiseModel: FloatArray,
-            lensShading: FloatArray?,
-            lensShadingWidth: Int,
-            lensShadingHeight: Int,
-        ): Boolean {
-            return this.width == width &&
-                this.height == height &&
-                this.enableSuperResolution == enableSuperResolution &&
-                this.superResolutionScale == superResolutionScale &&
-                this.whiteLevel == whiteLevel &&
-                this.lensShadingWidth == lensShadingWidth &&
-                this.lensShadingHeight == lensShadingHeight &&
-                this.blackLevel.contentEquals(blackLevel) &&
-                this.wbGains.contentEquals(wbGains) &&
-                this.noiseModel.contentEquals(noiseModel) &&
-                this.lensShading.contentEqualsNullable(lensShading)
-        }
-    }
-
-    private var cachedVulkanRawStacker: CachedVulkanRawStacker? = null
 
     init {
         try {
@@ -95,7 +49,7 @@ object MultiFrameStacker {
         aspectRatio: AspectRatio?,
         outputPath: String? = null,
         enableSuperResolution: Boolean = false,
-        useVulkan: Boolean = true,
+        useGpuAcceleration: Boolean = true,
         colorSpace: ColorSpace,
     ): Bitmap? {
         if (images.isEmpty()) return null
@@ -110,14 +64,14 @@ object MultiFrameStacker {
         val targetH = dimensions.height() * scale
 
         val inputFormat = images[0].format
-        if (useVulkan) {
+        if (useGpuAcceleration) {
             if (enableSuperResolution) {
-                PLog.w(TAG, "GLES streaming stacker does not support SR yet; Vulkan/legacy fallback disabled")
+                PLog.w(TAG, "GLES streaming stacker does not support SR yet; GPU fallback disabled")
                 images.forEach { it.close() }
                 return null
             }
             if (!GlesYuvStacker.supportsImageFormat(inputFormat)) {
-                PLog.w(TAG, "GLES streaming stacker does not support image format=$inputFormat; Vulkan/legacy fallback disabled")
+                PLog.w(TAG, "GLES streaming stacker does not support image format=$inputFormat; GPU fallback disabled")
                 images.forEach { it.close() }
                 return null
             }
@@ -138,7 +92,7 @@ object MultiFrameStacker {
                 images.forEach { it.close() }
                 return glesBitmap
             }
-            PLog.w(TAG, "GLES streaming stacker failed; Vulkan/legacy fallback disabled")
+            PLog.w(TAG, "GLES streaming stacker failed; GPU fallback disabled")
             images.forEach { it.close() }
             return null
         }
@@ -195,97 +149,12 @@ object MultiFrameStacker {
     }
 
     @Synchronized
-    fun releaseCachedVulkanRawStacker() {
-        cachedVulkanRawStacker?.let {
-            releaseVulkanRawStackerNative(it.ptr)
-            PLog.i(
-                TAG,
-                "Released cached Vulkan RAW stacker for ${it.width}x${it.height} SR=${it.enableSuperResolution} scale=${it.superResolutionScale}"
-            )
-        }
-        cachedVulkanRawStacker = null
-    }
-
-    private fun obtainVulkanRawStacker(
-        width: Int,
-        height: Int,
-        enableSuperResolution: Boolean,
-        superResolutionScale: Float,
-        blackLevel: FloatArray,
-        whiteLevel: Int,
-        wbGains: FloatArray,
-        noiseModel: FloatArray,
-        lensShading: FloatArray?,
-        lensShadingWidth: Int,
-        lensShadingHeight: Int,
-    ): Long {
-        val cached = cachedVulkanRawStacker
-        if (cached != null &&
-            cached.matches(
-                width, height, enableSuperResolution, superResolutionScale,
-                blackLevel, whiteLevel, wbGains, noiseModel,
-                lensShading, lensShadingWidth, lensShadingHeight
-            )
-        ) {
-            if (resetVulkanRawStackerNative(cached.ptr)) {
-                PLog.d(TAG, "Reusing cached Vulkan RAW stacker")
-                return cached.ptr
-            }
-            PLog.w(TAG, "Failed to reset cached Vulkan RAW stacker, recreating")
-            releaseVulkanRawStackerNative(cached.ptr)
-            cachedVulkanRawStacker = null
-        } else if (cached != null) {
-            releaseVulkanRawStackerNative(cached.ptr)
-            cachedVulkanRawStacker = null
-        }
-
-        val stackerPtr = createVulkanRawStackerNative(
-            width, height, enableSuperResolution, superResolutionScale,
-            blackLevel, whiteLevel, wbGains, noiseModel,
-            lensShading, lensShadingWidth, lensShadingHeight
-        )
-        if (stackerPtr != 0L) {
-            cachedVulkanRawStacker = CachedVulkanRawStacker(
-                ptr = stackerPtr,
-                width = width,
-                height = height,
-                enableSuperResolution = enableSuperResolution,
-                superResolutionScale = superResolutionScale,
-                blackLevel = blackLevel.copyOf(),
-                whiteLevel = whiteLevel,
-                wbGains = wbGains.copyOf(),
-                noiseModel = noiseModel.copyOf(),
-                lensShading = lensShading?.copyOf(),
-                lensShadingWidth = lensShadingWidth,
-                lensShadingHeight = lensShadingHeight,
-            )
-        }
-        return stackerPtr
-    }
-
-    private fun invalidateCachedVulkanRawStacker(stackerPtr: Long) {
-        val cached = cachedVulkanRawStacker
-        if (cached != null && cached.ptr == stackerPtr) {
-            releaseVulkanRawStackerNative(stackerPtr)
-            cachedVulkanRawStacker = null
-        }
-    }
-
-    private fun FloatArray?.contentEqualsNullable(other: FloatArray?): Boolean {
-        return when {
-            this == null && other == null -> true
-            this == null || other == null -> false
-            else -> this.contentEquals(other)
-        }
-    }
-
-    @Synchronized
     fun processBurstRaw(
         images: List<SafeImage>,
         cfaPattern: Int,
         enableSuperResolution: Boolean = false,
         superResolutionScale: Float = 1.5f,
-        useVulkan: Boolean = true,
+        useGpuAcceleration: Boolean = true,
         masterBlackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
         whiteLevel: Int = 1023,
         whiteBalanceGains: FloatArray = floatArrayOf(1f, 1f, 1f, 1f),
@@ -299,69 +168,26 @@ object MultiFrameStacker {
 
         PLog.d(
             TAG,
-            "Starting RAW stacking for ${images.size} frames. Pattern=$cfaPattern SR=$enableSuperResolution scale=$superResolutionScale Vulkan=$useVulkan BL=${masterBlackLevel.joinToString()} WL=$whiteLevel"
+            "Starting RAW stacking for ${images.size} frames. Pattern=$cfaPattern SR=$enableSuperResolution scale=$superResolutionScale GPU=$useGpuAcceleration BL=${masterBlackLevel.joinToString()} WL=$whiteLevel"
         )
         val outputScale = if (enableSuperResolution) superResolutionScale.coerceIn(1.0f, 2.0f) else 1.0f
         val useNativeSuperResolution = outputScale > 1.0f
 
-        if (useVulkan) {
-            val vulkanStackerPtr = obtainVulkanRawStacker(
-                width, height, enableSuperResolution, outputScale,
-                masterBlackLevel, whiteLevel, whiteBalanceGains, noiseModel,
-                lensShading, lensShadingWidth, lensShadingHeight
-            )
-            if (vulkanStackerPtr != 0L) {
-                PLog.i(TAG, "Using Vulkan RAW stacker")
-                var vulkanFusedBayer: ByteBuffer? = null
-                var returnsVulkanFusedBayer = false
-                try {
-                    for (image in images) {
-                        image.use {
-                            if (image.width != width || image.height != height) return@use
-                            val buffer = image.planes[0].buffer
-                            val rowStride = image.planes[0].rowStride
-                            addVulkanRawFrameNative(vulkanStackerPtr, buffer, rowStride, cfaPattern)
-                        }
-                    }
-
-                    val outWidth = (width * outputScale).roundToInt()
-                    val outHeight = (height * outputScale).roundToInt()
-                    val outputByteCount = outWidth.toLong() * outHeight.toLong() * 2L
-                    vulkanFusedBayer = allocateFusedBayerBuffer(outputByteCount, "Vulkan")
-                    if (vulkanFusedBayer == null) {
-                        return null
-                    }
-
-                    val fusedOk = processVulkanRawStackNative(vulkanStackerPtr, vulkanFusedBayer)
-                    if (fusedOk) {
-                        vulkanFusedBayer.rewind()
-                        PLog.i(TAG, "Vulkan RAW stacking completed successfully")
-                        returnsVulkanFusedBayer = true
-                        return RawStackResult(
-                            fusedBayerBuffer = vulkanFusedBayer,
-                            width = outWidth,
-                            height = outHeight,
-                            isNormalizedSensorData = true,
-                            blackLevel = masterBlackLevel.copyOf(),
-                            fusedBayerUsesNativeAllocator = true,
-                        )
-                    } else {
-                        PLog.w(TAG, "Vulkan RAW stacking failed")
-                        invalidateCachedVulkanRawStacker(vulkanStackerPtr)
-                        return null
-                    }
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Vulkan RAW stacking error: ${e.message}", e)
-                    invalidateCachedVulkanRawStacker(vulkanStackerPtr)
-                    return null
-                } finally {
-                    if (!returnsVulkanFusedBayer) {
-                        LargeDirectBuffer.free(vulkanFusedBayer)
-                    }
-                }
-            } else {
-                PLog.w(TAG, "Failed to create Vulkan RAW stacker, falling back to CPU")
-            }
+        if (useGpuAcceleration && !enableSuperResolution) {
+            PLog.i(TAG, "Using GLES RAW stacker")
+            return GlesRawStacker(
+                width = width,
+                height = height,
+                cfaPattern = cfaPattern,
+                blackLevel = masterBlackLevel,
+                whiteLevel = whiteLevel,
+                noiseModel = noiseModel,
+                lensShading = lensShading,
+                lensShadingWidth = lensShadingWidth,
+                lensShadingHeight = lensShadingHeight,
+            ).process(images)
+        } else if (useGpuAcceleration && enableSuperResolution) {
+            PLog.w(TAG, "GLES RAW stacker does not support SR; falling back to CPU RAW stacker")
         }
 
         PLog.i(TAG, "Using CPU RAW stacker")
@@ -455,21 +281,4 @@ object MultiFrameStacker {
     private external fun processRawStackWithBufferNative(stackerPtr: Long, outputBuffer: ByteBuffer)
     private external fun releaseRawStackerNative(stackerPtr: Long)
 
-    // Vulkan RAW Stacker
-    private external fun createVulkanRawStackerNative(
-        width: Int, height: Int, enableSuperRes: Boolean, superResScale: Float,
-        blackLevel: FloatArray, whiteLevel: Int, wbGains: FloatArray, noiseModel: FloatArray,
-        lensShadingMap: FloatArray?, shadingMapWidth: Int, shadingMapHeight: Int
-    ): Long
-
-    private external fun addVulkanRawFrameNative(
-        stackerPtr: Long,
-        rawData: ByteBuffer,
-        rowStride: Int,
-        cfaPattern: Int
-    ): Boolean
-
-    private external fun processVulkanRawStackNative(stackerPtr: Long, outputBuffer: ByteBuffer): Boolean
-    private external fun releaseVulkanRawStackerNative(stackerPtr: Long)
-    private external fun resetVulkanRawStackerNative(stackerPtr: Long): Boolean
 }
