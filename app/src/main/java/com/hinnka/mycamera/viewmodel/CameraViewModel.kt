@@ -201,6 +201,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val TAG = "CameraViewModel"
         private const val HDR_BRACKET_FRAME_COUNT = 3
+        private const val HDR_BRACKET_ZERO_INDEX = 0
+        private const val HDR_BRACKET_LOW_INDEX = 2
     }
 
     private data class HdrBracketFrame(
@@ -4318,7 +4320,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
-            val baseImage = orderedImages[1]
+            val baseImage = orderedImages[HDR_BRACKET_ZERO_INDEX]
             if (state.value.useMFSR) {
                 PLog.w(TAG, "YUV HDR bracket uses Mertens fusion without super resolution")
             }
@@ -4454,7 +4456,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (images.size != expectedFrameCount) return
             val context = getApplication<Application>()
             val chars = characteristics ?: return
-            val lowExposureResult = captureResults.firstOrNull() ?: captureResult ?: return
+            val lowExposureResult = captureResults.getOrNull(HDR_BRACKET_LOW_INDEX) ?: captureResult ?: return
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
             val sharpeningValue = sharpening.firstOrNull() ?: 0f
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
@@ -4490,6 +4492,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     photoId = photoId,
                     images = images,
                     captureResults = captureResults,
+                    zeroEvFrameCount = zeroEvFrameCount,
                     rotation = metadata.rotation,
                     aspectRatio = metadata.ratio ?: state.value.aspectRatio,
                     characteristics = chars,

@@ -79,6 +79,7 @@ class Camera2Controller(private val context: Context) {
         private const val BURST_CAPTURE_BATCH_SIZE = 8
         private const val HDR_BRACKET_BASE_CAPTURE_COUNT = 3
         private const val HDR_BRACKET_SIDE_FRAME_COUNT = 2
+        private const val HDR_BRACKET_SIDE_EV = 2.0f
 
         // 拍照状态机常量
         private const val STATE_PREVIEW = 0 // Showing camera preview.
@@ -3661,13 +3662,7 @@ class Camera2Controller(private val context: Context) {
             }
             val currentState = _state.value
             val manualBaseExposure = resolveHdrBracketManualBaseExposure(currentState)
-            val evOffsets = buildList {
-                add(-2.5f)
-                repeat(normalizedZeroEvFrameCount) {
-                    add(0f)
-                }
-                add(2.5f)
-            }
+            val evOffsets = buildHdrBracketEvOffsets(normalizedZeroEvFrameCount)
             val requests = evOffsets.mapIndexed { index, evOffset ->
                 device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                     addTarget(reader.surface)
@@ -3737,6 +3732,17 @@ class Camera2Controller(private val context: Context) {
             )
             onHdrBracketCaptureFailed?.invoke()
             resetPreviewAfterCapture()
+        }
+    }
+
+    private fun buildHdrBracketEvOffsets(zeroEvFrameCount: Int): List<Float> {
+        return buildList {
+            add(0f)
+            add(HDR_BRACKET_SIDE_EV)
+            add(-HDR_BRACKET_SIDE_EV)
+            repeat((zeroEvFrameCount - 1).coerceAtLeast(0)) {
+                add(0f)
+            }
         }
     }
 

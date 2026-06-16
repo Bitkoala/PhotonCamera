@@ -28,6 +28,7 @@ data class RawHdrFusionResult(
 object RawHdrFusionProcessor {
     private const val TAG = "RawHdrFusion"
     private const val FRAME_COUNT = 3
+    private const val REFERENCE_FRAME_INDEX = 0
     private const val VALUE_DOMAIN_SENSOR = 0
     private const val VALUE_DOMAIN_NORMALIZED_SENSOR_RANGE = 1
 
@@ -657,16 +658,102 @@ object RawHdrFusionProcessor {
             return clamp(shadowGate * highlightGate, 0.0, 1.0);
         }
 
-        float referenceStructure(ivec2 p, int channel) {
-            float c = scaledLinearAt(1, p, channel);
-            float left = scaledLinearAt(1, sameColorCoord(p, ivec2(-2, 0)), channel);
-            float right = scaledLinearAt(1, sameColorCoord(p, ivec2(2, 0)), channel);
-            float up = scaledLinearAt(1, sameColorCoord(p, ivec2(0, -2)), channel);
-            float down = scaledLinearAt(1, sameColorCoord(p, ivec2(0, 2)), channel);
+        float tileGreenScaledAt(int frame, ivec2 p) {
+            ivec2 base = bayerTileBase(p);
+            float sum = 0.0;
+            float count = 0.0;
+            for (int y = 0; y <= 1; y++) {
+                for (int x = 0; x <= 1; x++) {
+                    ivec2 q = clamp(base + ivec2(x, y), ivec2(0), uSize - ivec2(1));
+                    int channel = channelIndex(q);
+                    if (channel == 1 || channel == 2) {
+                        sum += scaledLinearAt(frame, q, channel);
+                        count += 1.0;
+                    }
+                }
+            }
+            return sum / max(count, 1.0);
+        }
+
+        float tileMaxRelativeResidual(int frame, ivec2 p) {
+            ivec2 base = bayerTileBase(p);
+            float residual = 0.0;
+            for (int y = 0; y <= 1; y++) {
+                for (int x = 0; x <= 1; x++) {
+                    ivec2 q = clamp(base + ivec2(x, y), ivec2(0), uSize - ivec2(1));
+                    int channel = channelIndex(q);
+                    float side = scaledLinearAt(frame, q, channel);
+                    float reference = scaledLinearAt(${REFERENCE_FRAME_INDEX}, q, channel);
+                    residual = max(residual, abs(side - reference) / max(max(side, reference), 1e-5));
+                }
+            }
+            return residual;
+        }
+
+        float tileTrust(int frame, ivec2 p) {
+            float signal = tileGreenScaledAt(frame, p);
+            float shadowGate = smoothstep(0.003, 0.025, signal);
+            float highlightGate = frameHighlightGate(frame, p);
+            return clamp(shadowGate * highlightGate, 0.0, 1.0);
+        }
+
+        float referenceTileStructure(ivec2 p) {
+            float c = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p);
+            float left = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p + ivec2(-2, 0));
+            float right = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p + ivec2(2, 0));
+            float up = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p + ivec2(0, -2));
+            float down = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p + ivec2(0, 2));
             float gradient = abs(right - left) + abs(down - up);
             float laplacian = abs(left + right + up + down - 4.0 * c);
-            float referenceNorm = frameNorm(1, p, channel);
-            float sigma = sqrt(noiseVariance(1, referenceNorm, channel));
+            return smoothstep(0.002, 0.018, gradient + 0.5 * laplacian);
+        }
+
+        float tileCensusMismatch(int frame, ivec2 p, float refCenter, float sideCenter) {
+            float mismatch = 0.0;
+            float count = 0.0;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    if (x == 0 && y == 0) {
+                        continue;
+                    }
+                    ivec2 q = p + ivec2(x * 2, y * 2);
+                    float refNeighbor = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, q);
+                    float sideNeighbor = tileGreenScaledAt(frame, q);
+                    float refRank = refNeighbor > refCenter ? 1.0 : 0.0;
+                    float sideRank = sideNeighbor > sideCenter ? 1.0 : 0.0;
+                    mismatch += abs(refRank - sideRank);
+                    count += 1.0;
+                }
+            }
+            return mismatch / max(count, 1.0);
+        }
+
+        float deghostTileScoreAt(int frame, ivec2 p) {
+            float sideSignal = tileGreenScaledAt(frame, p);
+            float referenceSignal = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p);
+            float comparable = tileTrust(frame, p) * tileTrust(${REFERENCE_FRAME_INDEX}, p) * referenceTileStructure(p);
+            if (comparable <= 0.001) {
+                return 0.0;
+            }
+
+            float relativeResidual = abs(sideSignal - referenceSignal) / max(max(sideSignal, referenceSignal), 1e-5);
+            float linearMotion = smoothstep(0.10, 0.34, max(relativeResidual, tileMaxRelativeResidual(frame, p)));
+            float logResidual = abs(log(max(sideSignal, 1e-5)) - log(max(referenceSignal, 1e-5)));
+            float logMotion = smoothstep(0.22, 0.62, logResidual);
+            float rankMotion = smoothstep(0.25, 0.62, tileCensusMismatch(frame, p, referenceSignal, sideSignal));
+            return comparable * max(max(linearMotion, logMotion), rankMotion);
+        }
+
+        float referenceStructure(ivec2 p, int channel) {
+            float c = scaledLinearAt(${REFERENCE_FRAME_INDEX}, p, channel);
+            float left = scaledLinearAt(${REFERENCE_FRAME_INDEX}, sameColorCoord(p, ivec2(-2, 0)), channel);
+            float right = scaledLinearAt(${REFERENCE_FRAME_INDEX}, sameColorCoord(p, ivec2(2, 0)), channel);
+            float up = scaledLinearAt(${REFERENCE_FRAME_INDEX}, sameColorCoord(p, ivec2(0, -2)), channel);
+            float down = scaledLinearAt(${REFERENCE_FRAME_INDEX}, sameColorCoord(p, ivec2(0, 2)), channel);
+            float gradient = abs(right - left) + abs(down - up);
+            float laplacian = abs(left + right + up + down - 4.0 * c);
+            float referenceNorm = frameNorm(${REFERENCE_FRAME_INDEX}, p, channel);
+            float sigma = sqrt(noiseVariance(${REFERENCE_FRAME_INDEX}, referenceNorm, channel));
             float structureFloor = max(0.0015, sigma * 3.0);
             return smoothstep(structureFloor * 2.0, structureFloor * 8.0, gradient + 0.5 * laplacian);
         }
@@ -680,7 +767,7 @@ object RawHdrFusionProcessor {
                         continue;
                     }
                     ivec2 coord = sameColorCoord(p, ivec2(x * 2, y * 2));
-                    float refNeighbor = scaledLinearAt(1, coord, channel);
+                    float refNeighbor = scaledLinearAt(${REFERENCE_FRAME_INDEX}, coord, channel);
                     float sideNeighbor = scaledLinearAt(frame, coord, channel);
                     float refRank = refNeighbor > refCenter ? 1.0 : 0.0;
                     float sideRank = sideNeighbor > sideCenter ? 1.0 : 0.0;
@@ -693,24 +780,24 @@ object RawHdrFusionProcessor {
 
         float deghostScoreAt(int frame, ivec2 p, int channel) {
             float sideNorm = frameNorm(frame, p, channel);
-            float referenceNorm = frameNorm(1, p, channel);
+            float referenceNorm = frameNorm(${REFERENCE_FRAME_INDEX}, p, channel);
             float sideSignal = sideNorm * uExposureScale[frame];
-            float referenceSignal = referenceNorm * uExposureScale[1];
+            float referenceSignal = referenceNorm * uExposureScale[${REFERENCE_FRAME_INDEX}];
 
-            float comparable = captureTrust(frame, p, channel) * captureTrust(1, p, channel) * referenceStructure(p, channel);
+            float comparable = captureTrust(frame, p, channel) * captureTrust(${REFERENCE_FRAME_INDEX}, p, channel) * referenceStructure(p, channel);
             if (comparable <= 0.001) {
                 return 0.0;
             }
 
             float sideVariance = noiseVariance(frame, sideNorm, channel);
-            float referenceVariance = noiseVariance(1, referenceNorm, channel);
+            float referenceVariance = noiseVariance(${REFERENCE_FRAME_INDEX}, referenceNorm, channel);
             float residualSigma = sqrt(sideVariance + referenceVariance);
             float residual = abs(sideSignal - referenceSignal);
             float residualLow = max(0.004, residualSigma * 3.0);
             float residualHigh = max(0.020, residualSigma * 8.0);
             float linearMotion = smoothstep(residualLow, residualHigh, residual);
 
-            float exposureRatio = clamp(uExposureScale[1] / max(uExposureScale[frame], 1e-6), 0.03125, 32.0);
+            float exposureRatio = clamp(uExposureScale[${REFERENCE_FRAME_INDEX}] / max(uExposureScale[frame], 1e-6), 0.03125, 32.0);
             float exposureGap = abs(log2(exposureRatio));
             float logResidual = abs(log(max(sideSignal, 1e-5)) - log(max(referenceSignal, 1e-5)));
             float logMotion = smoothstep(0.28 + 0.04 * min(exposureGap, 3.0), 0.72, logResidual);
@@ -720,17 +807,17 @@ object RawHdrFusionProcessor {
         }
 
         float computeDeghostAlpha(int frame, ivec2 p, int channel) {
-            if (uUseDeghostMask == 0 || frame == 1) {
+            if (uUseDeghostMask == 0 || frame == ${REFERENCE_FRAME_INDEX}) {
                 return 1.0;
             }
             float score = 0.0;
             for (int y = -1; y <= 1; y++) {
                 for (int x = -1; x <= 1; x++) {
-                    score = max(score, deghostScoreAt(frame, sameColorCoord(p, ivec2(x * 2, y * 2)), channel));
+                    score = max(score, deghostTileScoreAt(frame, p + ivec2(x * 2, y * 2)));
                 }
             }
-            float reject = smoothstep(0.48, 0.86, score);
-            return mix(1.0, 0.015, reject);
+            float reject = smoothstep(0.30, 0.70, score);
+            return mix(1.0, 0.0, reject);
         }
 
         float frameWeight(int frame, ivec2 p, int channel, out float scaledSignal) {
@@ -771,7 +858,7 @@ object RawHdrFusionProcessor {
             if (weightSum > 0.000001) {
                 fused = (s0 * w0 + s1 * w1 + s2 * w2) / weightSum;
             } else {
-                fused = (s0 + s1 + s2) / 3.0;
+                fused = s0;
             }
 
             fused = clamp(fused, 0.0, 1.0);

@@ -86,7 +86,17 @@ object GalleryManager {
     private const val DETAIL_HDR_FILE = "detail_hdr.jpg"
     private const val MULTIPLE_EXPOSURE_DIR = "multiple_exposure_sessions"
     private const val MULTIPLE_EXPOSURE_PREVIEW_FILE = "preview.jpg"
-    private const val RAW_HDR_DNG_BASELINE_EXPOSURE_EV_FALLBACK = 2.5f
+    private const val RAW_HDR_DNG_BASELINE_EXPOSURE_EV_FALLBACK = 2.0f
+    private const val HDR_BRACKET_ZERO_INDEX = 0
+    private const val HDR_BRACKET_HIGH_INDEX = 1
+    private const val HDR_BRACKET_LOW_INDEX = 2
+    private const val HDR_BRACKET_SIDE_EV = 2.0
+
+    private data class HdrBracketFrameSet<T>(
+        val zeroEvFrames: List<T>,
+        val highFrame: T,
+        val lowFrame: T
+    )
 
     data class VideoRecordInfo(
         val uri: Uri,
@@ -1619,6 +1629,34 @@ object GalleryManager {
         composeAverageBitmap(getMultipleExposureFrameFiles(context, sessionId), null)
     }
 
+    private fun <T> splitHdrBracketFrames(frames: List<T>, zeroEvFrameCount: Int): HdrBracketFrameSet<T> {
+        val zeroFrameEnd = (HDR_BRACKET_LOW_INDEX + zeroEvFrameCount.coerceAtLeast(1))
+            .coerceAtMost(frames.size)
+        val zeroEvFrames = buildList {
+            add(frames[HDR_BRACKET_ZERO_INDEX])
+            if (zeroFrameEnd > HDR_BRACKET_LOW_INDEX + 1) {
+                addAll(frames.subList(HDR_BRACKET_LOW_INDEX + 1, zeroFrameEnd))
+            }
+        }
+        return HdrBracketFrameSet(
+            zeroEvFrames = zeroEvFrames,
+            highFrame = frames[HDR_BRACKET_HIGH_INDEX],
+            lowFrame = frames[HDR_BRACKET_LOW_INDEX]
+        )
+    }
+
+    private fun hdrBracketZeroFrameIndices(zeroEvFrameCount: Int, frameCount: Int): List<Int> {
+        if (frameCount <= 0) return emptyList()
+        val zeroFrameEnd = (HDR_BRACKET_LOW_INDEX + zeroEvFrameCount.coerceAtLeast(1))
+            .coerceAtMost(frameCount)
+        return buildList {
+            add(HDR_BRACKET_ZERO_INDEX)
+            for (index in (HDR_BRACKET_LOW_INDEX + 1) until zeroFrameEnd) {
+                add(index)
+            }
+        }
+    }
+
     suspend fun composeHdrBracketPhoto(
         images: List<SafeImage>,
         captureResults: List<CaptureResult?> = emptyList(),
@@ -1644,8 +1682,9 @@ object GalleryManager {
             if (!useGpuAcceleration) {
                 PLog.w(TAG, "HDR bracket 0EV denoise uses GLES stacker; ignoring disabled GPU acceleration setting")
             }
+            val frameSet = splitHdrBracketFrames(images, zeroEvFrameCount)
             val zeroEvBitmap = processHdrBracketZeroEvFrames(
-                images = images.subList(1, images.lastIndex),
+                images = frameSet.zeroEvFrames,
                 rotation = rotation,
                 aspectRatio = aspectRatio,
                 shouldMirror = shouldMirror,
@@ -1654,17 +1693,17 @@ object GalleryManager {
             )
             val targetWidth = zeroEvBitmap.width
             val targetHeight = zeroEvBitmap.height
+            bitmaps.add(zeroEvBitmap)
             bitmaps.add(
                 scaleHdrSideFrameIfNeeded(
-                    processHdrBracketSideFrame(images.first(), rotation, aspectRatio, shouldMirror),
+                    processHdrBracketSideFrame(frameSet.highFrame, rotation, aspectRatio, shouldMirror),
                     targetWidth,
                     targetHeight
                 )
             )
-            bitmaps.add(zeroEvBitmap)
             bitmaps.add(
                 scaleHdrSideFrameIfNeeded(
-                    processHdrBracketSideFrame(images.last(), rotation, aspectRatio, shouldMirror),
+                    processHdrBracketSideFrame(frameSet.lowFrame, rotation, aspectRatio, shouldMirror),
                     targetWidth,
                     targetHeight
                 )
@@ -1748,25 +1787,25 @@ object GalleryManager {
         zeroEvFrameCount: Int,
         frameCount: Int,
     ): FloatArray {
-        val zeroIndices = 1 until (1 + zeroEvFrameCount.coerceAtLeast(1)).coerceAtMost(frameCount - 1)
-        val lowProduct = captureExposureProduct(captureResults.getOrNull(0))
+        val zeroIndices = hdrBracketZeroFrameIndices(zeroEvFrameCount, frameCount)
         val measuredZeroProduct = zeroIndices
             .mapNotNull { captureExposureProduct(captureResults.getOrNull(it)) }
             .takeIf { it.isNotEmpty() }
             ?.average()
             ?.toFloat()
             ?.takeIf { it.isFinite() && it > 0f }
-        val highProduct = captureExposureProduct(captureResults.getOrNull(frameCount - 1))
         val zeroProduct = measuredZeroProduct ?: 1f
+        val highProduct = captureExposureProduct(captureResults.getOrNull(HDR_BRACKET_HIGH_INDEX))
+        val lowProduct = captureExposureProduct(captureResults.getOrNull(HDR_BRACKET_LOW_INDEX))
         return floatArrayOf(
-            lowProduct ?: zeroProduct * fallbackHdrExposureProduct(0, zeroEvFrameCount, frameCount),
             zeroProduct,
-            highProduct ?: zeroProduct * fallbackHdrExposureProduct(frameCount - 1, zeroEvFrameCount, frameCount),
+            highProduct ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_HIGH_INDEX),
+            lowProduct ?: zeroProduct * fallbackHdrExposureProduct(HDR_BRACKET_LOW_INDEX),
         )
     }
 
     private fun formatRelativeExposureScales(exposureProducts: FloatArray): String {
-        val reference = exposureProducts.getOrNull(1)
+        val reference = exposureProducts.getOrNull(HDR_BRACKET_ZERO_INDEX)
             ?.takeIf { it.isFinite() && it > 0f }
             ?: 1f
         return exposureProducts.joinToString(prefix = "[", postfix = "]") { product ->
@@ -1785,12 +1824,11 @@ object GalleryManager {
         return product.toFloat().takeIf { it.isFinite() && it > 0f }
     }
 
-    private fun fallbackHdrExposureProduct(index: Int, zeroEvFrameCount: Int, frameCount: Int): Float {
-        val clampedZeroCount = zeroEvFrameCount.coerceIn(1, (frameCount - 2).coerceAtLeast(1))
+    private fun fallbackHdrExposureProduct(index: Int): Float {
         return when {
-            index == 0 -> Math.pow(2.0, -2.5).toFloat()
-            index in 1..clampedZeroCount -> 1f
-            else -> Math.pow(2.0, 2.5).toFloat()
+            index == HDR_BRACKET_HIGH_INDEX -> Math.pow(2.0, HDR_BRACKET_SIDE_EV).toFloat()
+            index == HDR_BRACKET_LOW_INDEX -> Math.pow(2.0, -HDR_BRACKET_SIDE_EV).toFloat()
+            else -> 1f
         }
     }
 
@@ -2225,6 +2263,7 @@ object GalleryManager {
         photoId: String,
         images: List<SafeImage>,
         captureResults: List<CaptureResult?>,
+        zeroEvFrameCount: Int = (images.size - 2).coerceAtLeast(1),
         rotation: Int,
         aspectRatio: AspectRatio,
         characteristics: CameraCharacteristics,
@@ -2270,12 +2309,13 @@ object GalleryManager {
                 closeRemainingImages()
                 return@withContext false
             }
-            val lowImage = images.first()
-            val zeroEvImages = images.subList(1, images.lastIndex)
-            val highImage = images.last()
-            val lowResult = captureResults.getOrNull(0) ?: lowExposureCaptureResult
-            val zeroResult = captureResults.getOrNull(1) ?: lowExposureCaptureResult
-            val highResult = captureResults.lastOrNull() ?: lowExposureCaptureResult
+            val frameSet = splitHdrBracketFrames(images, zeroEvFrameCount)
+            val zeroEvImages = frameSet.zeroEvFrames
+            val highImage = frameSet.highFrame
+            val lowImage = frameSet.lowFrame
+            val zeroResult = captureResults.getOrNull(HDR_BRACKET_ZERO_INDEX) ?: lowExposureCaptureResult
+            val highResult = captureResults.getOrNull(HDR_BRACKET_HIGH_INDEX) ?: lowExposureCaptureResult
+            val lowResult = captureResults.getOrNull(HDR_BRACKET_LOW_INDEX) ?: lowExposureCaptureResult
 
             val rawMetadata = RawMetadata.create(
                 lowImage.width,
@@ -2341,22 +2381,22 @@ object GalleryManager {
             )
 
             val fusionFrames = listOf(
-                rawHdrFrameFromImage(
-                    image = lowImage,
-                    captureResult = lowResult,
-                    onUploaded = { closeImagesNow(listOf(lowImage)) }
-                ),
                 zeroFrame,
                 rawHdrFrameFromImage(
                     image = highImage,
                     captureResult = highResult,
                     onUploaded = { closeImagesNow(listOf(highImage)) }
+                ),
+                rawHdrFrameFromImage(
+                    image = lowImage,
+                    captureResult = lowResult,
+                    onUploaded = { closeImagesNow(listOf(lowImage)) }
                 )
             )
             val fusionInputImages = buildList {
-                add(lowImage)
                 if (zeroEvStackResult == null) add(zeroEvImages.first())
                 add(highImage)
+                add(lowImage)
             }
             if (fusionFrames.any { it.width != rawMetadata.width || it.height != rawMetadata.height }) {
                 PLog.e(
@@ -2382,7 +2422,7 @@ object GalleryManager {
             val fusedBayerBuffer = fusionResult.fusedBayerBuffer ?: return@withContext false
             val rawHdrBaselineExposureEv = calculateRawHdrDngBaselineExposureEv(
                 referenceResult = zeroResult,
-                captureResults = listOf(lowResult, zeroResult, highResult)
+                captureResults = listOf(zeroResult, highResult, lowResult)
             )
             val dngWritten = try {
                 trySaveStackedRawDng(

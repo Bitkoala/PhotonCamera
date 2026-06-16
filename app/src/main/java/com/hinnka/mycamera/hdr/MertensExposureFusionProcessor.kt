@@ -25,6 +25,7 @@ import kotlin.system.measureTimeMillis
 object MertensExposureFusionProcessor {
     private const val TAG = "MertensExposureFusion"
     private const val HDR_FRAME_COUNT = 3
+    private const val REFERENCE_FRAME_INDEX = 0
     private const val DEFAULT_CONTRAST_WEIGHT = 1.0f
     private const val DEFAULT_SATURATION_WEIGHT = 1.0f
     private const val DEFAULT_EXPOSURE_WEIGHT = 1.0f
@@ -104,7 +105,7 @@ object MertensExposureFusionProcessor {
         var reconstructed: RenderTarget? = null
 
         try {
-            val referenceTexture = inputTextures[1]
+            val referenceTexture = inputTextures[REFERENCE_FRAME_INDEX]
             val rawWeights = inputTextures.mapIndexed { index, texture ->
                 createRenderTarget(width, height, halfFloat = true).also {
                     renderWeight(
@@ -115,7 +116,7 @@ object MertensExposureFusionProcessor {
                         saturationWeight = saturationWeight,
                         exposureWeight = exposureWeight,
                         exposureScale = exposureScales[index],
-                        useDeghostMask = enableDeghostMask && index != 1,
+                        useDeghostMask = enableDeghostMask && index != REFERENCE_FRAME_INDEX,
                     )
                 }
             }
@@ -235,7 +236,7 @@ object MertensExposureFusionProcessor {
 
     private fun normalizeExposureProducts(exposureProducts: FloatArray?): FloatArray {
         val reference = exposureProducts
-            ?.getOrNull(1)
+            ?.getOrNull(REFERENCE_FRAME_INDEX)
             ?.takeIf { it.isFinite() && it > 0f }
             ?: 1f
         return FloatArray(HDR_FRAME_COUNT) { index ->
@@ -741,8 +742,11 @@ object MertensExposureFusionProcessor {
             float exposureGap = abs(log2(scale));
             float logResidual = abs(log(max(sideLuma, 1e-4)) - log(max(referenceLuma, 1e-4)) - log(scale));
             float logMotion = smoothstep(0.28 + 0.04 * min(exposureGap, 3.0), 0.72, logResidual);
+            float expectedSide = referenceLuma * scale;
+            float linearResidual = abs(sideLuma - expectedSide) / max(max(sideLuma, expectedSide), 1e-4);
+            float linearMotion = smoothstep(0.12, 0.42, linearResidual);
             float rankMotion = smoothstep(0.32, 0.68, censusMismatch(ivec2(x, y), referenceLuma, sideLuma));
-            float score = max(logMotion, rankMotion);
+            float score = max(max(linearMotion, logMotion), rankMotion);
             return comparable * score;
         }
 
@@ -756,8 +760,8 @@ object MertensExposureFusionProcessor {
                     score = max(score, deghostScoreAt(coord + ivec2(x, y)));
                 }
             }
-            float reject = smoothstep(0.48, 0.86, score);
-            return mix(1.0, 0.015, reject);
+            float reject = smoothstep(0.36, 0.76, score);
+            return mix(1.0, 0.0, reject);
         }
 
         void main() {
