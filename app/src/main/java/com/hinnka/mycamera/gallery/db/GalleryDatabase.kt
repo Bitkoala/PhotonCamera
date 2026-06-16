@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [GalleryMediaEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 @androidx.room.TypeConverters(GalleryConverters::class)
@@ -73,6 +73,12 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawCfaCorrectionMode TEXT DEFAULT 'Default'")
+            }
+        }
+
         fun getInstance(context: Context): GalleryDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -88,7 +94,8 @@ abstract class GalleryDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
-                        MIGRATION_8_9
+                        MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
                     .build()
                     .also { INSTANCE = it }

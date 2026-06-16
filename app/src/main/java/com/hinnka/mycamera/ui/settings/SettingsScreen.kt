@@ -117,6 +117,7 @@ import com.hinnka.mycamera.gallery.HeicExportEncoder
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
+import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
@@ -285,6 +286,7 @@ fun SettingsScreen(
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
+    val rawCfaCorrectionMode by viewModel.rawCfaCorrectionMode.collectAsState()
     val rawColorEngine by viewModel.rawColorEngine.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
@@ -1508,6 +1510,37 @@ fun SettingsScreen(
                         description = stringResource(R.string.settings_export_dng_with_raw_export_description),
                         checked = exportDngWithRawExport,
                         onCheckedChange = { viewModel.setExportDngWithRawExport(it) }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = Color.White.copy(alpha = 0.1f)
+                    )
+
+                    val rawCfaCorrectionTitle = state.getCurrentCameraInfo()?.let { info ->
+                        stringResource(
+                            R.string.settings_raw_cfa_correction_with_lens,
+                            info.cameraId,
+                            info.focalLength35mmEquivalent.roundToInt()
+                        )
+                    } ?: stringResource(R.string.settings_raw_cfa_correction)
+
+                    QualityLevelSetting(
+                        title = rawCfaCorrectionTitle,
+                        description = stringResource(R.string.settings_raw_cfa_correction_description),
+                        levels = listOf(
+                            RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_cfa_correction_default),
+                            RawCfaCorrection.MODE_2X2_RGGB to stringResource(R.string.settings_cfa_correction_2x2_rggb),
+                            RawCfaCorrection.MODE_2X2_GRBG to stringResource(R.string.settings_cfa_correction_2x2_grbg),
+                            RawCfaCorrection.MODE_2X2_GBRG to stringResource(R.string.settings_cfa_correction_2x2_gbrg),
+                            RawCfaCorrection.MODE_2X2_BGGR to stringResource(R.string.settings_cfa_correction_2x2_bggr),
+                            RawCfaCorrection.MODE_4X4_RGGB to stringResource(R.string.settings_cfa_correction_4x4_rggb),
+                            RawCfaCorrection.MODE_4X4_GRBG to stringResource(R.string.settings_cfa_correction_4x4_grbg),
+                            RawCfaCorrection.MODE_4X4_GBRG to stringResource(R.string.settings_cfa_correction_4x4_gbrg),
+                            RawCfaCorrection.MODE_4X4_BGGR to stringResource(R.string.settings_cfa_correction_4x4_bggr)
+                        ),
+                        currentLevel = rawCfaCorrectionMode,
+                        onLevelSelected = { viewModel.setRawCfaCorrectionMode(it) }
                     )
 
                     HorizontalDivider(

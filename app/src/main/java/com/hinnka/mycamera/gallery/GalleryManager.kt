@@ -33,6 +33,7 @@ import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
+import com.hinnka.mycamera.utils.DngCfaPatternPatcher
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
@@ -1313,7 +1314,7 @@ object GalleryManager {
                 tempDngFile.delete()
                 return@withContext
             }
-            patchSavedDngBlackLevel(tempDngFile, metadata)
+            patchSavedDngCorrections(tempDngFile, metadata)
             if (dngFile.exists()) {
                 dngFile.delete()
             }
@@ -2090,10 +2091,20 @@ object GalleryManager {
                     "RAW stack black level override mode=${metadata.rawBlackLevelMode} value=${stackBlackLevel.joinToString()}"
                 )
             }
+            val stackCfaPattern = RawProcessor.resolveCfaPatternForMode(
+                defaultCfaPattern = rawMetadata.cfaPattern,
+                cfaCorrectionMode = metadata.rawCfaCorrectionMode
+            )
+            if (stackCfaPattern != rawMetadata.cfaPattern) {
+                PLog.d(
+                    TAG,
+                    "RAW stack CFA override mode=${metadata.rawCfaCorrectionMode} cfa=${rawMetadata.cfaPattern}->$stackCfaPattern"
+                )
+            }
 
             var currentUseSuperResolution = useSuperResolution
             var rawStackResult = MultiFrameStacker.processBurstRaw(
-                images, rawMetadata.cfaPattern,
+                images, stackCfaPattern,
                 currentUseSuperResolution,
                 superResolutionScale,
                 useGpuAcceleration,
@@ -2336,11 +2347,21 @@ object GalleryManager {
                     "RAW HDR black level override mode=${metadata.rawBlackLevelMode} value=${stackBlackLevel.joinToString()}"
                 )
             }
+            val stackCfaPattern = RawProcessor.resolveCfaPatternForMode(
+                defaultCfaPattern = rawMetadata.cfaPattern,
+                cfaCorrectionMode = metadata.rawCfaCorrectionMode
+            )
+            if (stackCfaPattern != rawMetadata.cfaPattern) {
+                PLog.d(
+                    TAG,
+                    "RAW HDR CFA override mode=${metadata.rawCfaCorrectionMode} cfa=${rawMetadata.cfaPattern}->$stackCfaPattern"
+                )
+            }
 
             if (zeroEvImages.size > 1) {
                 zeroEvStackResult = MultiFrameStacker.processBurstRaw(
                     images = zeroEvImages,
-                    cfaPattern = rawMetadata.cfaPattern,
+                    cfaPattern = stackCfaPattern,
                     enableSuperResolution = false,
                     superResolutionScale = 1.0f,
                     useGpuAcceleration = useGpuAcceleration,
@@ -2409,7 +2430,7 @@ object GalleryManager {
 
             val fusionResult = RawHdrFusionProcessor.fuse(
                 frames = fusionFrames,
-                cfaPattern = rawMetadata.cfaPattern,
+                cfaPattern = stackCfaPattern,
                 blackLevel = stackBlackLevel,
                 whiteLevel = rawMetadata.whiteLevel.toInt(),
                 noiseModel = rawMetadata.noiseProfile,
@@ -2717,6 +2738,7 @@ object GalleryManager {
                     customWriter = true,
                     blackLevelMode = null,
                     customBlackLevel = null,
+                    cfaCorrectionMode = metadata.rawCfaCorrectionMode,
                     baselineExposureEv = baselineExposureEv
                 )
             }
@@ -2753,7 +2775,15 @@ object GalleryManager {
         return true
     }
 
-    private fun patchSavedDngBlackLevel(dngFile: File, metadata: MediaMetadata) {
+    fun patchDngCorrections(context: Context, photoId: String, metadata: MediaMetadata): Boolean {
+        val dngFile = getDngFile(context, photoId)
+        if (!dngFile.exists() || dngFile.length() <= 0L) {
+            return false
+        }
+        return patchSavedDngCorrections(dngFile, metadata)
+    }
+
+    private fun patchSavedDngCorrections(dngFile: File, metadata: MediaMetadata): Boolean {
         val patched = DngBlackLevelPatcher.patchFromMode(
             file = dngFile,
             mode = metadata.rawBlackLevelMode,
@@ -2762,6 +2792,14 @@ object GalleryManager {
         if (patched) {
             PLog.d(TAG, "Applied DNG BlackLevel correction (${metadata.rawBlackLevelMode}) to ${dngFile.name}")
         }
+        val cfaPatched = DngCfaPatternPatcher.patchFromMode(
+            file = dngFile,
+            mode = metadata.rawCfaCorrectionMode
+        )
+        if (cfaPatched) {
+            PLog.d(TAG, "Applied DNG CFA correction (${metadata.rawCfaCorrectionMode}) to ${dngFile.name}")
+        }
+        return patched || cfaPatched
     }
 
 

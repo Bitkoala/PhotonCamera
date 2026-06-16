@@ -113,6 +113,9 @@ private data class PreviewRenderSignature(
     val editRawBlackPointCorrection: Float,
     val editRawWhitePointCorrection: Float,
     val editRawDROMode: String,
+    val editRawBlackLevelMode: String,
+    val editRawCustomBlackLevel: Float,
+    val editRawCfaCorrectionMode: String,
     val editRawDcpId: String?,
     val editRawColorEngine: String,
     val editRawBaselineLutId: String?,
@@ -191,6 +194,9 @@ fun GalleryEditScreen(
     val editRawBlackPointCorrection by viewModel.editRawBlackPointCorrection.collectAsState()
     val editRawWhitePointCorrection by viewModel.editRawWhitePointCorrection.collectAsState()
     val editRawDROMode by viewModel.editRawDROMode.collectAsState()
+    val editRawBlackLevelMode by viewModel.editRawBlackLevelMode.collectAsState()
+    val editRawCustomBlackLevel by viewModel.editRawCustomBlackLevel.collectAsState()
+    val editRawCfaCorrectionMode by viewModel.editRawCfaCorrectionMode.collectAsState()
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
     val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
     val editRawBaselineRecipeParams by viewModel.editRawBaselineRecipeParams.collectAsState()
@@ -256,6 +262,9 @@ fun GalleryEditScreen(
             editRawBlackPointCorrection = editRawBlackPointCorrection,
             editRawWhitePointCorrection = editRawWhitePointCorrection,
             editRawDROMode = editRawDROMode,
+            editRawBlackLevelMode = editRawBlackLevelMode,
+            editRawCustomBlackLevel = editRawCustomBlackLevel,
+            editRawCfaCorrectionMode = editRawCfaCorrectionMode,
             editRawDcpId = editRawDcpId,
             editRawColorEngine = editRawColorEngine.name,
             editRawBaselineLutId = editRawBaselineLutId,
@@ -1092,6 +1101,9 @@ fun GalleryEditScreen(
                                         rawShadowsAdjustment = editRawShadowsAdjustment,
                                         rawBlackPointCorrection = editRawBlackPointCorrection,
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
+                                        rawBlackLevelMode = editRawBlackLevelMode,
+                                        rawCustomBlackLevel = editRawCustomBlackLevel,
+                                        rawCfaCorrectionMode = editRawCfaCorrectionMode,
                                         rawColorEngine = editRawColorEngine,
                                         spectralFilmSelection = editRawSpectralFilmStock?.let { stock ->
                                             SpectralFilmSelection(
@@ -1153,6 +1165,21 @@ fun GalleryEditScreen(
                                         onRawWhitePointCorrectionChange = {
                                             viewModel.saveRawWhitePointCorrectionValue(currentPhoto, it)
                                         },
+                                        onRawBlackLevelModeChange = {
+                                            viewModel.saveRawBlackLevelMode(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
+                                        onRawCustomBlackLevelChange = {
+                                            viewModel.saveRawCustomBlackLevel(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
+                                        onRawCfaCorrectionModeChange = {
+                                            viewModel.saveRawCfaCorrectionMode(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
                                         onRawColorEngineChange = {
                                             viewModel.saveRawColorEngine(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
@@ -1177,6 +1204,7 @@ fun GalleryEditScreen(
                                         onOpenBaselineLutSheet = {
                                             showRawBaselineLutSelectorSheet = true
                                         },
+                                        showDngMetadataControls = true,
                                         contentMode = RawEditPanelContentMode.FULL,
                                         modifier = Modifier.fillMaxWidth()
                                     )

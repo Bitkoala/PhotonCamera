@@ -5,7 +5,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
-import com.hinnka.mycamera.raw.RawMetadata
+import com.hinnka.mycamera.raw.RawCfaCorrection
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -20,11 +20,6 @@ import kotlin.math.roundToLong
 
 object SuperResolutionDngWriter {
     private const val TAG = "SuperResolutionDngWriter"
-
-    private const val LSC_RED = 0
-    private const val LSC_GREEN_EVEN = 1
-    private const val LSC_GREEN_ODD = 2
-    private const val LSC_BLUE = 3
 
     private const val TYPE_BYTE = 1
     private const val TYPE_ASCII = 2
@@ -213,14 +208,14 @@ object SuperResolutionDngWriter {
             add(short(TAG_PLANAR_CONFIGURATION, 1))
             add(ascii(TAG_SOFTWARE, "PhotonMGC"))
             add(ascii(TAG_DATETIME, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())))
-            add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, intArrayOf(2, 2)))
-            add(byteArray(TAG_CFA_PATTERN, cfaPatternBytes(cfaPattern)))
+            add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
+            add(byteArray(TAG_CFA_PATTERN, RawCfaCorrection.cfaPatternBytes(cfaPattern)))
             add(byteArray(TAG_DNG_VERSION, byteArrayOf(1, 4, 0, 0)))
             add(byteArray(TAG_DNG_BACKWARD_VERSION, byteArrayOf(1, 1, 0, 0)))
             add(ascii(TAG_UNIQUE_CAMERA_MODEL, cameraModel))
             add(byteArray(TAG_CFA_PLANE_COLOR, byteArrayOf(0, 1, 2)))
             add(short(TAG_CFA_LAYOUT, 1))
-            add(shortArray(TAG_BLACK_LEVEL_REPEAT_DIM, intArrayOf(2, 2)))
+            add(shortArray(TAG_BLACK_LEVEL_REPEAT_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
             add(rationalArray(TAG_BLACK_LEVEL, blackLevelByCfaPosition(cfaPattern, blackLevel).map { it.toDouble() }))
             add(long(TAG_WHITE_LEVEL, whiteLevel.coerceAtLeast(1).toLong()))
             add(rationalArray(TAG_DEFAULT_SCALE, listOf(defaultScaleX, defaultScaleY)))
@@ -325,22 +320,15 @@ object SuperResolutionDngWriter {
         ).joinToString(" ").ifBlank { "PhotonMGC Camera" }
     }
 
-    private fun cfaPatternBytes(cfaPattern: Int): ByteArray {
-        return when (cfaPattern) {
-            RawMetadata.CFA_GRBG -> byteArrayOf(1, 0, 2, 1)
-            RawMetadata.CFA_GBRG -> byteArrayOf(1, 2, 0, 1)
-            RawMetadata.CFA_BGGR -> byteArrayOf(2, 1, 1, 0)
-            else -> byteArrayOf(0, 1, 1, 2)
-        }
-    }
-
     private fun blackLevelByCfaPosition(cfaPattern: Int, blackLevel: FloatArray): List<Float> {
         fun channel(index: Int): Float = blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
-        return when (cfaPattern) {
-            RawMetadata.CFA_GRBG -> listOf(channel(1), channel(0), channel(3), channel(2))
-            RawMetadata.CFA_GBRG -> listOf(channel(2), channel(3), channel(0), channel(1))
-            RawMetadata.CFA_BGGR -> listOf(channel(3), channel(2), channel(1), channel(0))
-            else -> listOf(channel(0), channel(1), channel(2), channel(3))
+        val dim = RawCfaCorrection.repeatPatternDim(cfaPattern)
+        return buildList(dim[0] * dim[1]) {
+            for (y in 0 until dim[0]) {
+                for (x in 0 until dim[1]) {
+                    add(channel(RawCfaCorrection.channelIndexForPixel(cfaPattern, x, y)))
+                }
+            }
         }
     }
 
@@ -354,12 +342,15 @@ object SuperResolutionDngWriter {
             ?: return null
         if (lensShadingMap.columnCount <= 0 || lensShadingMap.rowCount <= 0) return null
 
+        val dim = RawCfaCorrection.repeatPatternDim(cfaPattern)
+        val opcodeCount = dim[0] * dim[1]
         val opcodes = ByteArrayOutputStream()
-        opcodes.write(beUInt(4))
-        val parities = arrayOf(0 to 0, 0 to 1, 1 to 0, 1 to 1)
-        for ((top, left) in parities) {
-            val channel = channelForCfaPosition(cfaPattern, left, top)
-            opcodes.write(buildGainMapOpcode(lensShadingMap, channel, top, left, width, height))
+        opcodes.write(beUInt(opcodeCount.toLong()))
+        for (top in 0 until dim[0]) {
+            for (left in 0 until dim[1]) {
+                val channel = RawCfaCorrection.channelIndexForPixel(cfaPattern, left, top)
+                opcodes.write(buildGainMapOpcode(lensShadingMap, channel, top, left, dim[0], dim[1], width, height))
+            }
         }
         return opcodes.toByteArray()
     }
@@ -369,6 +360,8 @@ object SuperResolutionDngWriter {
         channel: Int,
         top: Int,
         left: Int,
+        rowPitch: Int,
+        colPitch: Int,
         width: Int,
         height: Int,
     ): ByteArray {
@@ -379,8 +372,8 @@ object SuperResolutionDngWriter {
         payload.write(beInt(width))
         payload.write(beUInt(0))
         payload.write(beUInt(1))
-        payload.write(beUInt(2))
-        payload.write(beUInt(2))
+        payload.write(beUInt(rowPitch.toLong()))
+        payload.write(beUInt(colPitch.toLong()))
         payload.write(beUInt(lensShadingMap.rowCount.toLong()))
         payload.write(beUInt(lensShadingMap.columnCount.toLong()))
         payload.write(beDouble(if (lensShadingMap.rowCount > 1) 1.0 / (lensShadingMap.rowCount - 1).toDouble() else 1.0))
@@ -402,35 +395,6 @@ object SuperResolutionDngWriter {
         opcode.write(beUInt(payload.size().toLong()))
         opcode.write(payload.toByteArray())
         return opcode.toByteArray()
-    }
-
-    private fun channelForCfaPosition(cfaPattern: Int, xParity: Int, yParity: Int): Int {
-        return when (cfaPattern) {
-            RawMetadata.CFA_GRBG -> when {
-                yParity == 0 && xParity == 0 -> LSC_GREEN_EVEN
-                yParity == 0 && xParity == 1 -> LSC_RED
-                yParity == 1 && xParity == 0 -> LSC_BLUE
-                else -> LSC_GREEN_ODD
-            }
-            RawMetadata.CFA_GBRG -> when {
-                yParity == 0 && xParity == 0 -> LSC_GREEN_ODD
-                yParity == 0 && xParity == 1 -> LSC_BLUE
-                yParity == 1 && xParity == 0 -> LSC_RED
-                else -> LSC_GREEN_EVEN
-            }
-            RawMetadata.CFA_BGGR -> when {
-                yParity == 0 && xParity == 0 -> LSC_BLUE
-                yParity == 0 && xParity == 1 -> LSC_GREEN_ODD
-                yParity == 1 && xParity == 0 -> LSC_GREEN_EVEN
-                else -> LSC_RED
-            }
-            else -> when {
-                yParity == 0 && xParity == 0 -> LSC_RED
-                yParity == 0 && xParity == 1 -> LSC_GREEN_EVEN
-                yParity == 1 && xParity == 0 -> LSC_GREEN_ODD
-                else -> LSC_BLUE
-            }
-        }
     }
 
     private fun asShotNeutral(captureResult: CaptureResult): List<Double> {

@@ -26,6 +26,7 @@ import android.graphics.Bitmap
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.raw.RawColorEngine
 import com.hinnka.mycamera.raw.SpectralFilmSelection
@@ -54,6 +55,9 @@ fun RawEditPanel(
     rawShadowsAdjustment: Float,
     rawBlackPointCorrection: Float,
     rawWhitePointCorrection: Float,
+    rawBlackLevelMode: String = RawCfaCorrection.MODE_DEFAULT,
+    rawCustomBlackLevel: Float = 0f,
+    rawCfaCorrectionMode: String = RawCfaCorrection.MODE_DEFAULT,
     rawColorEngine: RawColorEngine,
     spectralFilmSelection: SpectralFilmSelection?,
     spectralFilmPrint: String?,
@@ -67,12 +71,16 @@ fun RawEditPanel(
     onRawShadowsAdjustmentChange: (Float) -> Unit,
     onRawBlackPointCorrectionChange: (Float) -> Unit,
     onRawWhitePointCorrectionChange: (Float) -> Unit,
+    onRawBlackLevelModeChange: (String) -> Unit = {},
+    onRawCustomBlackLevelChange: (Float) -> Unit = {},
+    onRawCfaCorrectionModeChange: (String) -> Unit = {},
     onRawColorEngineChange: (RawColorEngine) -> Unit,
     onSpectralFilmSelectionChange: (SpectralFilmSelection?) -> Unit,
     onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
     onAdjustmentEnd: () -> Unit,
     onOpenBaselineLutSheet: (() -> Unit)? = null,
+    showDngMetadataControls: Boolean = false,
     contentMode: RawEditPanelContentMode = RawEditPanelContentMode.FULL,
     modifier: Modifier = Modifier
 ) {
@@ -260,7 +268,150 @@ fun RawEditPanel(
                 },
                 onValueChangeFinished = onAdjustmentEnd
             )
+            if (showDngMetadataControls) {
+                RawChoiceSetting(
+                    title = stringResource(R.string.settings_raw_black_level_correction),
+                    description = stringResource(R.string.settings_raw_black_level_correction_description),
+                    levels = listOf(
+                        RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_black_level_default),
+                        "0" to "0",
+                        "16" to "16",
+                        "64" to "64",
+                        "256" to "256",
+                        "512" to "512",
+                        "Custom" to stringResource(R.string.settings_black_level_custom)
+                    ),
+                    currentLevel = rawBlackLevelMode,
+                    onLevelSelected = onRawBlackLevelModeChange
+                )
+                if (rawBlackLevelMode == "Custom") {
+                    RawNumberInputSetting(
+                        title = stringResource(R.string.settings_black_level_custom),
+                        value = rawCustomBlackLevel,
+                        onValueChange = onRawCustomBlackLevelChange
+                    )
+                }
+                RawChoiceSetting(
+                    title = stringResource(R.string.settings_raw_cfa_correction),
+                    description = stringResource(R.string.settings_raw_cfa_correction_description),
+                    levels = listOf(
+                        RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_cfa_correction_default),
+                        RawCfaCorrection.MODE_2X2_RGGB to stringResource(R.string.settings_cfa_correction_2x2_rggb),
+                        RawCfaCorrection.MODE_2X2_GRBG to stringResource(R.string.settings_cfa_correction_2x2_grbg),
+                        RawCfaCorrection.MODE_2X2_GBRG to stringResource(R.string.settings_cfa_correction_2x2_gbrg),
+                        RawCfaCorrection.MODE_2X2_BGGR to stringResource(R.string.settings_cfa_correction_2x2_bggr),
+                        RawCfaCorrection.MODE_4X4_RGGB to stringResource(R.string.settings_cfa_correction_4x4_rggb),
+                        RawCfaCorrection.MODE_4X4_GRBG to stringResource(R.string.settings_cfa_correction_4x4_grbg),
+                        RawCfaCorrection.MODE_4X4_GBRG to stringResource(R.string.settings_cfa_correction_4x4_gbrg),
+                        RawCfaCorrection.MODE_4X4_BGGR to stringResource(R.string.settings_cfa_correction_4x4_bggr)
+                    ),
+                    currentLevel = rawCfaCorrectionMode,
+                    onLevelSelected = onRawCfaCorrectionModeChange
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun RawChoiceSetting(
+    title: String,
+    description: String,
+    levels: List<Pair<String, String>>,
+    currentLevel: String,
+    onLevelSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Normal
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = description,
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 13.sp,
+            lineHeight = 18.sp
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            levels.forEach { (level, label) ->
+                val selected = currentLevel == level
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.1f))
+                        .clickable { onLevelSelected(level) }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RawNumberInputSetting(
+    title: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var text by remember(value) {
+        mutableStateOf(if (value == 0f) "" else value.toString())
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Normal
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = text,
+            onValueChange = { input ->
+                text = input
+                input.toFloatOrNull()?.let(onValueChange)
+            },
+            singleLine = true,
+            textStyle = LocalTextStyle.current.copy(color = Color.White),
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = Color.White,
+                focusedBorderColor = Color(0xFFFF6B35),
+                unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent
+            )
+        )
     }
 }
 

@@ -10,6 +10,7 @@ import android.util.Log
 import android.util.Size
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.SafeImage
+import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import java.io.File
@@ -50,6 +51,10 @@ object RawProcessor {
         return overrideBlackLevel?.let { level ->
             FloatArray(defaultBlackLevel.size.coerceAtLeast(4)) { level }
         } ?: defaultBlackLevel.copyOf()
+    }
+
+    fun resolveCfaPatternForMode(defaultCfaPattern: Int, cfaCorrectionMode: String?): Int {
+        return RawCfaCorrection.resolveCfaPattern(defaultCfaPattern, cfaCorrectionMode)
     }
 
     /**
@@ -175,15 +180,22 @@ object RawProcessor {
         customWriter: Boolean = false,
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
+        cfaCorrectionMode: String? = null,
         baselineExposureEv: Float = 0f,
     ): Boolean {
+        val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
+        val hasCfaOverride = RawCfaCorrection.isOverrideMode(cfaCorrectionMode)
+        if (hasCfaOverride && resolvedCfaPattern != cfaPattern) {
+            PLog.d(TAG, "RAW DNG CFA override mode=$cfaCorrectionMode cfa=$cfaPattern->$resolvedCfaPattern")
+        }
+
         val orientation = when (rotation) {
             90 -> ExifInterface.ORIENTATION_ROTATE_90
             180 -> ExifInterface.ORIENTATION_ROTATE_180
             270 -> ExifInterface.ORIENTATION_ROTATE_270
             else -> ExifInterface.ORIENTATION_NORMAL
         }
-        if (customWriter || !canDngCreatorWriteBuffer(width, height, characteristics)) {
+        if (customWriter || hasCfaOverride || !canDngCreatorWriteBuffer(width, height, characteristics)) {
             PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height}")
             return SuperResolutionDngWriter.write(
                 outputStream = outputStream,
@@ -193,7 +205,7 @@ object RawProcessor {
                 characteristics = characteristics,
                 captureResult = captureResult,
                 orientation = orientation,
-                cfaPattern = cfaPattern,
+                cfaPattern = resolvedCfaPattern,
                 blackLevel = blackLevel,
                 whiteLevel = whiteLevel,
                 valueDomain = valueDomain,
@@ -217,7 +229,7 @@ object RawProcessor {
                     rawBuffer = dngInputBuffer,
                     width = width,
                     height = height,
-                    cfaPattern = cfaPattern,
+                    cfaPattern = resolvedCfaPattern,
                     blackLevel = blackLevel,
                     whiteLevel = whiteLevel
                 )
@@ -244,9 +256,8 @@ object RawProcessor {
         val output = rawBuffer.order(ByteOrder.nativeOrder()).asShortBuffer()
         var index = 0
         for (y in 0 until height) {
-            val rowParity = y and 1
             for (x in 0 until width) {
-                val channelIndex = getRggbChannelIndex(x and 1, rowParity, cfaPattern)
+                val channelIndex = RawCfaCorrection.channelIndexForPixel(cfaPattern, x, y)
                 val encoded = output.get(index).toInt() and 0xFFFF
                 val channelBlackLevel = blackLevel.getOrElse(channelIndex) { 0f }
                 val channelWhiteLevel = whiteLevel.coerceAtLeast(channelBlackLevel.toInt() + 1)
@@ -273,40 +284,6 @@ object RawProcessor {
             return true
         }
         return false
-    }
-
-    private fun getRggbChannelIndex(xParity: Int, yParity: Int, cfaPattern: Int): Int {
-        return when (cfaPattern) {
-            RawMetadata.CFA_RGGB -> when {
-                yParity == 0 && xParity == 0 -> 0
-                yParity == 0 && xParity == 1 -> 1
-                yParity == 1 && xParity == 0 -> 2
-                else -> 3
-            }
-
-            RawMetadata.CFA_GRBG -> when {
-                yParity == 0 && xParity == 0 -> 1
-                yParity == 0 && xParity == 1 -> 0
-                yParity == 1 && xParity == 0 -> 3
-                else -> 2
-            }
-
-            RawMetadata.CFA_GBRG -> when {
-                yParity == 0 && xParity == 0 -> 2
-                yParity == 0 && xParity == 1 -> 3
-                yParity == 1 && xParity == 0 -> 0
-                else -> 1
-            }
-
-            RawMetadata.CFA_BGGR -> when {
-                yParity == 0 && xParity == 0 -> 3
-                yParity == 0 && xParity == 1 -> 2
-                yParity == 1 && xParity == 0 -> 1
-                else -> 0
-            }
-
-            else -> 0
-        }
     }
 
     private fun buildDngThumbnail(source: Bitmap?): Bitmap? {

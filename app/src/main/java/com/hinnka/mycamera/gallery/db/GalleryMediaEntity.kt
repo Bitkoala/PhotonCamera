@@ -108,6 +108,7 @@ data class GalleryMediaEntity(
     val aiDenoiseStrength: Float?,
     val rawBlackLevelMode: String?,
     val rawCustomBlackLevel: Float?,
+    val rawCfaCorrectionMode: String?,
     val rawDROEnabled: Boolean?,
     val cameraId: String?,
     val applyEffectsToVideo: Boolean,
