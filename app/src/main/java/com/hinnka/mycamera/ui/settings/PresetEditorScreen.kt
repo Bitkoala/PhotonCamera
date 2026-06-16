@@ -401,25 +401,31 @@ fun PresetEditorScreen(
                     }
                 )
 
-                if (rawColorEngine == RawColorEngine.AdobeCurve) {
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
 
-                    val defaultDcpName = stringResource(R.string.none)
-                    val currentDcp = availableDcps.find { it.id == rawDcpId }
-                    val currentDcpName = currentDcp?.getName() ?: defaultDcpName
-                    DropdownSettingItem(
-                        title = stringResource(R.string.raw_dcp_title),
-                        value = currentDcpName,
-                        options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
-                        isLoading = false,
-                        onExpanded = {},
-                        onOptionSelected = { selectedName ->
-                            rawDcpId = if (selectedName == defaultDcpName) {
-                                null
-                            } else {
-                                availableDcps.find { it.getName() == selectedName }?.id
-                            }
+                val defaultDcpName = stringResource(R.string.none)
+                val currentDcp = availableDcps.find { it.id == rawDcpId }
+                val currentDcpName = currentDcp?.getName() ?: defaultDcpName
+                DropdownSettingItem(
+                    title = stringResource(R.string.raw_dcp_title),
+                    value = currentDcpName,
+                    options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
+                    isLoading = false,
+                    onExpanded = {},
+                    onOptionSelected = { selectedName ->
+                        rawDcpId = if (selectedName == defaultDcpName) {
+                            null
+                        } else {
+                            availableDcps.find { it.getName() == selectedName }?.id
                         }
+                    }
+                )
+                if (rawColorEngine != RawColorEngine.AdobeCurve && rawDcpId != null) {
+                    Text(
+                        text = stringResource(R.string.raw_dcp_non_adobe_curve_warning),
+                        color = Color(0xFFFFC36A).copy(alpha = 0.9f),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
                     )
                 }
 

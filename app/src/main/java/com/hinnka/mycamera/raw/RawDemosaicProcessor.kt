@@ -33,10 +33,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.ShortBuffer
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 import android.opengl.Matrix as GlMatrix
@@ -327,6 +329,38 @@ class RawDemosaicProcessor {
         val shadows: Float
     )
 
+    private data class ProfileExposureUniforms(
+        val exposureEv: Float,
+        val useRamp: Boolean,
+        val linearGain: Float,
+        val rampSlope: Float,
+        val rampBlack: Float,
+        val rampRadius: Float,
+        val rampQScale: Float,
+        val toneEnabled: Boolean,
+        val toneSlope: Float,
+        val toneA: Float,
+        val toneB: Float,
+        val toneC: Float
+    ) {
+        companion object {
+            val NEUTRAL = ProfileExposureUniforms(
+                exposureEv = 0f,
+                useRamp = false,
+                linearGain = 1f,
+                rampSlope = 1f,
+                rampBlack = 0f,
+                rampRadius = 0f,
+                rampQScale = 0f,
+                toneEnabled = false,
+                toneSlope = 1f,
+                toneA = 0f,
+                toneB = 1f,
+                toneC = 0f
+            )
+        }
+    }
+
     private fun SceneStats.toRenderPlan(): RawRenderPlan {
         return RawRenderPlan(
             sceneNormalizationGain = exposureGain,
@@ -595,15 +629,16 @@ class RawDemosaicProcessor {
         var actualRotation = rotation
         var dngRawDataCleanup: DngRawData? = null
         val requestedColorEngine = rawColorEngine
-        val rawWorkingColorSpace = requestedColorEngine.workingColorSpace
+        val hasDcpSelection = dcpRenderPlan != null || rawDcpId != null
+        val profileWorkingColorSpace = ColorSpace.ProPhoto
 
         if (dngFile != null) {
             val dngRawData = processDngNative(
                 dngFile.absolutePath,
-                rawWorkingColorSpace.xr, rawWorkingColorSpace.yr,
-                rawWorkingColorSpace.xg, rawWorkingColorSpace.yg,
-                rawWorkingColorSpace.xb, rawWorkingColorSpace.yb,
-                rawWorkingColorSpace.xw, rawWorkingColorSpace.yw,
+                profileWorkingColorSpace.xr, profileWorkingColorSpace.yr,
+                profileWorkingColorSpace.xg, profileWorkingColorSpace.yg,
+                profileWorkingColorSpace.xb, profileWorkingColorSpace.yb,
+                profileWorkingColorSpace.xw, profileWorkingColorSpace.yw,
                 rawAutoWhiteBalanceEstimate
             )
             if (dngRawData == null) {
@@ -634,32 +669,12 @@ class RawDemosaicProcessor {
             return@withContext null
         }
 
-        val resolvedDcpRenderPlan =
-            if (requestedColorEngine == RawColorEngine.AdobeCurve) {
-                dcpRenderPlan ?: rawDcpId?.let { dcpId ->
-                    val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps()
-                        .firstOrNull { it.id == dcpId }
-                    if (dcpInfo == null) {
-                        PLog.w(TAG, "RAW DCP not found: $dcpId")
-                        null
-                    } else {
-                        DcpProfileParser.resolveRenderPlan(
-                            context,
-                            dcpInfo,
-                            actualMetadata,
-                            rawWorkingColorSpace
-                        ).also { plan ->
-                            if (plan == null) {
-                                PLog.w(TAG, "Failed to resolve RAW DCP render plan: $dcpId")
-                            } else {
-                                PLog.d(TAG, "Resolved RAW DCP plan: ${plan.profileName}")
-                            }
-                        }
-                    }
-                }
-            } else {
-                null
-            }
+        val resolvedDcpRenderPlan = resolveRawDcpRenderPlan(
+            context = context,
+            providedDcpRenderPlan = dcpRenderPlan,
+            rawDcpId = rawDcpId,
+            metadata = actualMetadata
+        )
         val spektrafilmLut =
             if (requestedColorEngine == RawColorEngine.Spektrafilm &&
                 spectralFilmStock != null && spectralFilmPrint != null
@@ -681,11 +696,42 @@ class RawDemosaicProcessor {
 
             else -> requestedColorEngine
         }
+        val useDcpToneCurve = requestedColorEngine == RawColorEngine.AdobeCurve
+        val applyDcpBaselineExposureOffset = resolvedDcpRenderPlan != null && useDcpToneCurve
+        val engineWorkingColorSpace = colorEngine.workingColorSpace
+        val profileToEngineTransform = computeWorkingToOutputTransform(
+            profileWorkingColorSpace,
+            engineWorkingColorSpace
+        )
+        val linearColorCorrectionMatrix = resolveLinearColorCorrectionMatrix(
+            metadata = actualMetadata,
+            dcpRenderPlan = resolvedDcpRenderPlan
+        )
+        logRawDcpPipeline(
+            hasDcpSelection = hasDcpSelection,
+            rawDcpId = rawDcpId,
+            requestedColorEngine = requestedColorEngine,
+            colorEngine = colorEngine,
+            dcpRenderPlan = resolvedDcpRenderPlan,
+            profileWorkingColorSpace = profileWorkingColorSpace,
+            engineWorkingColorSpace = engineWorkingColorSpace,
+            profileToEngineTransform = profileToEngineTransform,
+            useDcpToneCurve = useDcpToneCurve,
+            applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
+        )
+        if (resolvedDcpRenderPlan != null && !useDcpToneCurve) {
+            PLog.d(
+                TAG,
+                "RAW DCP Adobe tone features disabled for colorEngine=$requestedColorEngine: " +
+                    "toneCurve=false baselineExposureOffset=false"
+            )
+        }
 
         PLog.d(
             TAG,
             "Processing RAW image: ${actualWidth}x${actualHeight}, " +
-                "colorEngine=$colorEngine workingColorSpace=$rawWorkingColorSpace"
+                "colorEngine=$colorEngine profileSpace=$profileWorkingColorSpace " +
+                "engineWorkingSpace=$engineWorkingColorSpace"
         )
 
         try {
@@ -982,12 +1028,6 @@ class RawDemosaicProcessor {
             }
             }
 
-            val linearExposureGain = computeLinearExposureGain(
-                actualMetadata,
-                0f,
-                resolvedDcpRenderPlan
-            )
-
             // 复用 RAW AE 的线性 metering 分布统计，AE 与 Shadows/Highlights 使用同一份结果。
             val meteringResult = resolveRawAutoExposureEv(
                 context = context,
@@ -995,7 +1035,10 @@ class RawDemosaicProcessor {
                 sourceTextureId = demosaicTextureId,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
+                colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
+                applyDcpBaselineExposureOffset = false,
+                applyDngBaselineExposure = false,
                 meteringCompensationEv = colorEngine.meteringCompensationEv,
                 useDepthWeighting = rawAutoExposure
             )
@@ -1010,8 +1053,17 @@ class RawDemosaicProcessor {
             } else {
                 rawExposureCompensation
             }
-            val renderExposureCompensation =
-                effectiveExposureCompensation + colorEngine.defaultExposureCompensationEv
+            val engineDefaultExposureCompensation = colorEngine.defaultExposureCompensationEv
+            val profileExposureCompensation =
+                effectiveExposureCompensation + engineDefaultExposureCompensation
+            val profileExposureUniforms = computeProfileExposureUniforms(
+                metadata = actualMetadata,
+                profileExposureCompensation = profileExposureCompensation,
+                dcpRenderPlan = resolvedDcpRenderPlan,
+                applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
+                useRamp = useDcpToneCurve
+            )
+            val linearExposureGain = 2.0f.pow(profileExposureUniforms.exposureEv)
             val shadowsHighlightsParams = if (useAutoDevelopAdjustments) {
                 ShadowsHighlightsParams(
                     highlights = meteringResult.highlights,
@@ -1048,10 +1100,13 @@ class RawDemosaicProcessor {
                     "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
                     "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
                     "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
-                    "renderEv=$renderExposureCompensation"
+                    "profileExposureEv=${profileExposureUniforms.exposureEv} " +
+                    "dngBaselineExposure=${actualMetadata.baselineExposure} " +
+                    "dcpBaselineExposureOffsetApplied=$applyDcpBaselineExposureOffset"
             )
 
-            // 运行 linearRcdProgram 将 CCM & Exposure 应用在已解马赛克的浮点 RCD 图像上
+            // 运行 linearRcdProgram 将相机矩阵应用在已解马赛克的浮点 RCD 图像上。
+            // 曝光按 dng_sdk 顺序在后续 ProPhoto profile 阶段通过 ramp/tone 处理。
             checkGlError("Before LinearRcdPass")
 
             renderLinearRcdPass(
@@ -1060,10 +1115,13 @@ class RawDemosaicProcessor {
                 targetFramebufferId = linearOutputFramebufferId,
                 viewportWidth = actualWidth,
                 viewportHeight = actualHeight,
-                rawExposureCompensation = renderExposureCompensation,
+                rawExposureCompensation = 0f,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
+                colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
+                applyDcpBaselineExposureOffset = false,
+                applyDngBaselineExposure = false,
                 label = "LinearRcdPass"
             )
 
@@ -1159,9 +1217,12 @@ class RawDemosaicProcessor {
                 metadata = actualMetadata,
                 inputTextureId = outputTexture,
                 dcpRenderPlan = resolvedDcpRenderPlan,
+                useDcpToneCurve = useDcpToneCurve,
+                profileExposureUniforms = profileExposureUniforms,
                 spectralFilmLut = spektrafilmLut,
                 colorEngine = colorEngine,
-                workingColorSpace = rawWorkingColorSpace,
+                outputWorkingColorSpace = engineWorkingColorSpace,
+                profileToEngineTransform = profileToEngineTransform,
                 shadowsHighlightsParams = shadowsHighlightsParams
             )
             if (!combinedRendered) {
@@ -3852,6 +3913,54 @@ class RawDemosaicProcessor {
         checkGlError("bindDcpCombinedResources")
     }
 
+    private fun bindProfileExposureUniforms(program: Int, exposure: ProfileExposureUniforms) {
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureLinearGain"),
+            exposure.linearGain
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(program, "uProfileExposureRampEnabled"),
+            if (exposure.useRamp) 1 else 0
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureRampSlope"),
+            exposure.rampSlope
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureRampBlack"),
+            exposure.rampBlack
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureRampRadius"),
+            exposure.rampRadius
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureRampQScale"),
+            exposure.rampQScale
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(program, "uProfileExposureToneEnabled"),
+            if (exposure.toneEnabled) 1 else 0
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureToneSlope"),
+            exposure.toneSlope
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureToneA"),
+            exposure.toneA
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureToneB"),
+            exposure.toneB
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureToneC"),
+            exposure.toneC
+        )
+        checkGlError("bindProfileExposureUniforms")
+    }
+
     private fun uploadSpectralFilmTexture(lut: SpectralFilmLut): Int {
         val key = "${lut.sourceKey}:${lut.size}:${lut.values.size}"
         if (spectralFilmTextureId == 0) {
@@ -3931,14 +4040,17 @@ class RawDemosaicProcessor {
         metadata: RawMetadata,
         inputTextureId: Int = demosaicTextureId,
         dcpRenderPlan: DcpRenderPlan? = null,
+        useDcpToneCurve: Boolean = true,
         spectralFilmLut: SpectralFilmLut? = null,
         colorEngine: RawColorEngine = RawColorEngine.AdobeCurve,
-        workingColorSpace: ColorSpace = ColorSpace.ProPhoto,
+        outputWorkingColorSpace: ColorSpace = ColorSpace.ProPhoto,
+        profileToEngineTransform: FloatArray = identityMatrix3x3(),
+        profileExposureUniforms: ProfileExposureUniforms = ProfileExposureUniforms.NEUTRAL,
         shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
         viewportWidth: Int = metadata.width,
         viewportHeight: Int = metadata.height
     ): Boolean {
-        val outputTransform = computeWorkingToOutputTransform(workingColorSpace, ColorSpace.SRGB)
+        val outputTransform = computeWorkingToOutputTransform(outputWorkingColorSpace, ColorSpace.SRGB)
         val program = getOrCreateCombinedProgram(colorEngine)
         if (program == 0) {
             PLog.e(TAG, "Unable to create combined program for colorEngine=$colorEngine")
@@ -3965,12 +4077,17 @@ class RawDemosaicProcessor {
         )
         bindShadowsHighlightsUniforms(program, shadowsHighlightsParams)
         checkGlError("renderCombinedPass base uniforms")
+        bindDcpCombinedResources(program, dcpRenderPlan)
+        bindProfileExposureUniforms(program, profileExposureUniforms)
 
         when (colorEngine) {
             RawColorEngine.AdobeCurve -> {
-                val baseCurve = dcpRenderPlan?.toneCurveLut ?: ACR3Curve.samples()
+                val baseCurve = if (useDcpToneCurve) {
+                    dcpRenderPlan?.toneCurveLut ?: ACR3Curve.samples()
+                } else {
+                    ACR3Curve.samples()
+                }
                 bindCurveCombinedResource(program, baseCurve)
-                bindDcpCombinedResources(program, dcpRenderPlan)
             }
 
             RawColorEngine.AgX -> Unit
@@ -3982,6 +4099,10 @@ class RawDemosaicProcessor {
         GLES30.glUniformMatrix3fv(
             GLES30.glGetUniformLocation(program, "uOutputTransform"),
             1, false, transposeMatrix3x3(outputTransform), 0
+        )
+        GLES30.glUniformMatrix3fv(
+            GLES30.glGetUniformLocation(program, "uProfileToEngineTransform"),
+            1, false, transposeMatrix3x3(profileToEngineTransform), 0
         )
 
         val identityMatrix = FloatArray(16)
@@ -4230,13 +4351,190 @@ class RawDemosaicProcessor {
         checkGlError("renderSharpenPass")
     }
 
+    private fun resolveRawDcpRenderPlan(
+        context: Context,
+        providedDcpRenderPlan: DcpRenderPlan?,
+        rawDcpId: String?,
+        metadata: RawMetadata
+    ): DcpRenderPlan? {
+        providedDcpRenderPlan?.let { plan ->
+            PLog.d(TAG, "Using provided RAW DCP plan: ${plan.profileName}")
+            return plan
+        }
+
+        val dcpId = rawDcpId ?: return null
+        val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps()
+            .firstOrNull { it.id == dcpId }
+        if (dcpInfo == null) {
+            PLog.w(TAG, "RAW DCP not found: $dcpId")
+            return null
+        }
+
+        return DcpProfileParser.resolveRenderPlan(
+            context,
+            dcpInfo,
+            metadata,
+            ColorSpace.ProPhoto
+        ).also { plan ->
+            if (plan == null) {
+                PLog.w(TAG, "Failed to resolve RAW DCP render plan: $dcpId")
+            } else {
+                PLog.d(TAG, "Resolved RAW DCP plan in ProPhoto: ${plan.profileName}")
+            }
+        }
+    }
+
+    private fun resolveLinearColorCorrectionMatrix(
+        metadata: RawMetadata,
+        dcpRenderPlan: DcpRenderPlan?
+    ): FloatArray {
+        return dcpRenderPlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix
+    }
+
+    private fun logRawDcpPipeline(
+        hasDcpSelection: Boolean,
+        rawDcpId: String?,
+        requestedColorEngine: RawColorEngine,
+        colorEngine: RawColorEngine,
+        dcpRenderPlan: DcpRenderPlan?,
+        profileWorkingColorSpace: ColorSpace,
+        engineWorkingColorSpace: ColorSpace,
+        profileToEngineTransform: FloatArray,
+        useDcpToneCurve: Boolean,
+        applyDcpBaselineExposureOffset: Boolean
+    ) {
+        if (!hasDcpSelection) return
+
+        val planSpace = dcpRenderPlan?.workingColorSpace
+        if (planSpace != null && planSpace != ColorSpace.ProPhoto) {
+            PLog.w(TAG, "RAW DCP render plan is not ProPhoto: planSpace=$planSpace")
+        }
+        val hueSatEnabled = dcpRenderPlan?.hueSatMap?.isValid == true
+        val lookEnabled = dcpRenderPlan?.lookTable?.isValid == true
+        val toneCurveEnabled = useDcpToneCurve && dcpRenderPlan?.toneCurveLut != null
+        val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
+            dcpRenderPlan?.baselineExposureOffset ?: 0f
+        } else {
+            0f
+        }
+        val matrixSource = if (dcpRenderPlan != null) "DCP" else "metadata-fallback"
+        PLog.d(
+            TAG,
+            "RAW DCP pipeline: id=${rawDcpId ?: "provided"} " +
+                "profile=${dcpRenderPlan?.profileName ?: "none"} " +
+                "matrixSource=$matrixSource planSpace=$planSpace " +
+                "profileSpace=$profileWorkingColorSpace engineSpace=$engineWorkingColorSpace " +
+                "requestedEngine=$requestedColorEngine actualEngine=$colorEngine " +
+                "profileMapsBeforeEngine=true " +
+                "hueSat=$hueSatEnabled look=$lookEnabled " +
+                "toneCurve=$toneCurveEnabled baselineExposureOffset=$dcpBaselineExposureOffset " +
+                "profileToEngine=${formatMatrix3x3(profileToEngineTransform)}"
+        )
+    }
+
+    private fun formatMatrix3x3(matrix: FloatArray): String {
+        if (matrix.size != 9) return "invalid"
+        return matrix.joinToString(prefix = "[", postfix = "]") { value ->
+            String.format(Locale.US, "%.4f", value)
+        }
+    }
+
+    private fun computeProfileExposureUniforms(
+        metadata: RawMetadata,
+        profileExposureCompensation: Float,
+        dcpRenderPlan: DcpRenderPlan?,
+        applyDcpBaselineExposureOffset: Boolean,
+        useRamp: Boolean
+    ): ProfileExposureUniforms {
+        val dngBaselineExposure = if (metadata.baselineExposure.isFinite()) {
+            metadata.baselineExposure
+        } else {
+            0f
+        }
+        val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
+            dcpRenderPlan?.baselineExposureOffset ?: 0f
+        } else {
+            0f
+        }
+        val exposureEv = profileExposureCompensation + dngBaselineExposure + dcpBaselineExposureOffset
+        val linearGain = 2.0f.pow(exposureEv)
+        if (!useRamp) {
+            return ProfileExposureUniforms(
+                exposureEv = exposureEv,
+                useRamp = false,
+                linearGain = linearGain,
+                rampSlope = 1f,
+                rampBlack = 0f,
+                rampRadius = 0f,
+                rampQScale = 0f,
+                toneEnabled = false,
+                toneSlope = 1f,
+                toneA = 0f,
+                toneB = 1f,
+                toneC = 0f
+            )
+        }
+        val positiveExposureEv = max(0f, exposureEv)
+        val white = 1f / 2.0f.pow(positiveExposureEv)
+        val black = 0f
+        val slope = 1f / max(white - black, 1e-6f)
+        val radius = min(0.5f * black, (1f / 16f) / max(slope, 1e-6f))
+        val qScale = if (radius > 0f) slope / (4f * radius) else 0f
+
+        if (exposureEv >= 0f) {
+            return ProfileExposureUniforms(
+                exposureEv = exposureEv,
+                useRamp = true,
+                linearGain = linearGain,
+                rampSlope = slope,
+                rampBlack = black,
+                rampRadius = radius,
+                rampQScale = qScale,
+                toneEnabled = false,
+                toneSlope = 1f,
+                toneA = 0f,
+                toneB = 1f,
+                toneC = 0f
+            )
+        }
+
+        val toneSlope = 2.0f.pow(exposureEv)
+        val toneA = (16f / 9f) * (1f - toneSlope)
+        val toneB = toneSlope - 0.5f * toneA
+        val toneC = 1f - toneA - toneB
+        return ProfileExposureUniforms(
+            exposureEv = exposureEv,
+            useRamp = true,
+            linearGain = linearGain,
+            rampSlope = slope,
+            rampBlack = black,
+            rampRadius = radius,
+            rampQScale = qScale,
+            toneEnabled = true,
+            toneSlope = toneSlope,
+            toneA = toneA,
+            toneB = toneB,
+            toneC = toneC
+        )
+    }
+
     private fun computeLinearExposureGain(
         metadata: RawMetadata,
         rawExposureCompensation: Float,
-        dcpRenderPlan: DcpRenderPlan?
+        dcpRenderPlan: DcpRenderPlan?,
+        applyDcpBaselineExposureOffset: Boolean,
+        applyDngBaselineExposure: Boolean
     ): Float {
-        val normalizationGain = ExposureNormalization.compute(metadata)
-        val dcpBaselineExposureOffset = dcpRenderPlan?.baselineExposureOffset ?: 0f
+        val normalizationGain = if (applyDngBaselineExposure) {
+            ExposureNormalization.compute(metadata)
+        } else {
+            1f
+        }
+        val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
+            dcpRenderPlan?.baselineExposureOffset ?: 0f
+        } else {
+            0f
+        }
         return normalizationGain * 2.0f.pow(rawExposureCompensation + dcpBaselineExposureOffset)
     }
 
@@ -4249,7 +4547,10 @@ class RawDemosaicProcessor {
         rawExposureCompensation: Float,
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
+        colorCorrectionMatrix: FloatArray,
         dcpRenderPlan: DcpRenderPlan?,
+        applyDcpBaselineExposureOffset: Boolean,
+        applyDngBaselineExposure: Boolean,
         label: String
     ) {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFramebufferId)
@@ -4262,9 +4563,7 @@ class RawDemosaicProcessor {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(linearRcdProgram, "uDemosaickedTexture"), 0)
 
-        val transposedCCM = transposeMatrix3x3(
-            dcpRenderPlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix
-        )
+        val transposedCCM = transposeMatrix3x3(colorCorrectionMatrix)
         GLES30.glUniformMatrix3fv(
             GLES30.glGetUniformLocation(linearRcdProgram, "uColorCorrectionMatrix"),
             1,
@@ -4272,7 +4571,13 @@ class RawDemosaicProcessor {
             transposedCCM,
             0
         )
-        val exposureGain = computeLinearExposureGain(metadata, rawExposureCompensation, dcpRenderPlan)
+        val exposureGain = computeLinearExposureGain(
+            metadata,
+            rawExposureCompensation,
+            dcpRenderPlan,
+            applyDcpBaselineExposureOffset,
+            applyDngBaselineExposure
+        )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(linearRcdProgram, "uExposureGain"), exposureGain)
 
         val blackPoint = rawBlackPointCorrection.coerceIn(0f, 0.99f)
@@ -4302,7 +4607,10 @@ class RawDemosaicProcessor {
         sourceTextureId: Int,
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
+        colorCorrectionMatrix: FloatArray,
         dcpRenderPlan: DcpRenderPlan?,
+        applyDcpBaselineExposureOffset: Boolean,
+        applyDngBaselineExposure: Boolean,
         meteringCompensationEv: Float,
         useDepthWeighting: Boolean = true
     ): MeteringSystem.MeteringResult {
@@ -4319,7 +4627,10 @@ class RawDemosaicProcessor {
                 rawExposureCompensation = 0f,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
+                colorCorrectionMatrix = colorCorrectionMatrix,
                 dcpRenderPlan = dcpRenderPlan,
+                applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
+                applyDngBaselineExposure = applyDngBaselineExposure,
                 label = "LinearMeteringPass"
             )
             var bitmap: Bitmap? = null

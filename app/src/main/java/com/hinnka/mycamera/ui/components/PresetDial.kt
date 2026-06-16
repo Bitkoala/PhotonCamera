@@ -168,7 +168,8 @@ fun PresetsPanel(
                             FeatureBadge(text = AspectRatio.valueOf(preset.aspectRatio).getDisplayName())
                             if (rawColorEngine == RawColorEngine.Spektrafilm) {
                                 FeatureBadge(text = "FILM")
-                            } else if (rawColorEngine == RawColorEngine.AdobeCurve && preset.rawDcpId != null) {
+                            }
+                            if (preset.rawDcpId != null) {
                                 FeatureBadge(text = "DCP")
                             } else if (preset.lutId != null) {
                                 FeatureBadge(text = "LUT")

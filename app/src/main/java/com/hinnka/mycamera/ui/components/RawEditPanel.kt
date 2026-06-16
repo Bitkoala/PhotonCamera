@@ -109,16 +109,15 @@ fun RawEditPanel(
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (rawColorEngine == RawColorEngine.AdobeCurve) {
-            RawDcpSelector(
-                selectedDcpId = selectedDcpId,
-                availableDcps = availableDcps,
-                onSelectDcp = onSelectDcp,
-                onImportDcp = onImportDcp,
-                onDeleteDcp = onDeleteDcp
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-        }
+        RawDcpSelector(
+            selectedDcpId = selectedDcpId,
+            availableDcps = availableDcps,
+            showNonAdobeCurveWarning = rawColorEngine != RawColorEngine.AdobeCurve,
+            onSelectDcp = onSelectDcp,
+            onImportDcp = onImportDcp,
+            onDeleteDcp = onDeleteDcp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (rawColorEngine == RawColorEngine.Spektrafilm) {
             val isPositiveFilm = SpectralFilmUiInfo.isPositiveFilm(spectralFilmSelection?.id)
@@ -709,6 +708,7 @@ private fun RawColorEngineItem(
 fun RawDcpSelector(
     selectedDcpId: String?,
     availableDcps: List<DcpInfo>,
+    showNonAdobeCurveWarning: Boolean = false,
     onSelectDcp: (String?) -> Unit,
     onImportDcp: () -> Unit,
     onDeleteDcp: (DcpInfo) -> Unit
@@ -742,6 +742,15 @@ fun RawDcpSelector(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (showNonAdobeCurveWarning && selectedDcpId != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.raw_dcp_non_adobe_curve_warning),
+                    color = Color(0xFFFFC36A).copy(alpha = 0.9f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(16.dp))
@@ -781,6 +790,15 @@ fun RawDcpSelector(
                             fontSize = 14.sp
                         )
                     }
+                }
+                if (showNonAdobeCurveWarning) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.raw_dcp_non_adobe_curve_warning),
+                        color = Color(0xFFFFC36A).copy(alpha = 0.9f),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 androidx.compose.foundation.lazy.LazyColumn(

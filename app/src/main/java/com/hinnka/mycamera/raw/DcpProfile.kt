@@ -86,6 +86,7 @@ data class DcpProfile(
 
 data class DcpRenderPlan(
     val profileName: String,
+    val workingColorSpace: ColorSpace,
     val baselineExposureOffset: Float,
     val colorCorrectionMatrix: FloatArray,
     val hueSatMap: DcpHueSatMap?,
@@ -152,6 +153,7 @@ object DcpProfileParser {
         } ?: metadata.colorCorrectionMatrix
         return DcpRenderPlan(
             profileName = profile.profileName,
+            workingColorSpace = workingColorSpace,
             baselineExposureOffset = profile.baselineExposureOffset,
             colorCorrectionMatrix = selectedMatrix,
             hueSatMap = selectedHueSat,

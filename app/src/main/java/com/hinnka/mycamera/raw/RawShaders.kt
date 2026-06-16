@@ -81,7 +81,7 @@ object RawShaders {
             RawColorEngine.AdobeCurve -> combinedFragmentShader(
                 engineUniforms = ADOBE_COMBINED_UNIFORMS,
                 engineFunctions =
-                    "$CURVE_COMBINED_FUNCTIONS\n$DCP_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS"
+                    "$CURVE_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS"
             )
 
             RawColorEngine.Spektrafilm -> combinedFragmentShader(
@@ -116,8 +116,10 @@ object RawShaders {
         uniform vec2 uTexelSize;
         uniform float uHighlights;
         uniform float uShadows;
+        uniform mat3 uProfileToEngineTransform;
         
         $engineUniforms
+        $DCP_PROFILE_COMBINED_UNIFORMS
 
         vec3 linearToSrgb(vec3 color) {
             vec3 clampedColor = max(color, vec3(0.0));
@@ -131,26 +133,33 @@ object RawShaders {
             );
         }
 
+        $DCP_COMBINED_FUNCTIONS
         $engineFunctions
+
+        vec3 prepareEngineInput(vec3 color) {
+            color = applyDcpMaps(color);
+            color = uProfileToEngineTransform * color;
+            return color;
+        }
 
         vec3 sampleToneSource(vec2 uv) {
             vec3 sampleColor = texture(uInputTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
-            return applyEngineTone(sampleColor);
+            return applyEngineTone(prepareEngineInput(sampleColor));
         }
 
         vec3 shRgbToXyz(vec3 rgb) {
             return mat3(
-                0.7976749, 0.2880402, 0.0000000,
-                0.1351917, 0.7118741, 0.0000000,
-                0.0313534, 0.0000857, 0.8252100
+                0.4360747, 0.2225045, 0.0139322,
+                0.3850649, 0.7168786, 0.0971045,
+                0.1430804, 0.0606169, 0.7141733
             ) * rgb;
         }
 
         vec3 shXyzToRgb(vec3 xyz) {
             return mat3(
-                1.3459433, -0.5445989, 0.0000000,
-               -0.2556075,  1.5081673, 0.0000000,
-               -0.0511118,  0.0205351, 1.2118128
+                 3.1338561, -0.9787684,  0.0719453,
+                -1.6168667,  1.9161415, -0.2289914,
+                -0.4906146,  0.0334540,  1.4052427
             ) * xyz;
         }
 
@@ -158,6 +167,7 @@ object RawShaders {
 
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
+            color = prepareEngineInput(color);
             color = applyEngineTone(color);
             color = applyShadowsHighlights(color, vTexCoord);
             color = linearToSrgb(color);
@@ -171,17 +181,31 @@ object RawShaders {
 
     private val ADOBE_COMBINED_UNIFORMS = """
         uniform sampler2D uCurveTexture;
-        uniform sampler3D uDcpHueSatTexture;
-        uniform sampler3D uDcpLookTableTexture;
         uniform mat3 uOutputTransform;
         uniform float uCurveSize;
         uniform bool uCurveEnabled;
+    """.trimIndent()
+
+    private val DCP_PROFILE_COMBINED_UNIFORMS = """
+        uniform sampler3D uDcpHueSatTexture;
+        uniform sampler3D uDcpLookTableTexture;
         uniform bool uDcpHueSatEnabled;
         uniform bool uDcpLookTableEnabled;
         uniform ivec3 uDcpHueSatDivisions;
         uniform ivec3 uDcpLookTableDivisions;
         uniform int uDcpHueSatEncoding;
         uniform int uDcpLookTableEncoding;
+        uniform float uProfileExposureLinearGain;
+        uniform bool uProfileExposureRampEnabled;
+        uniform float uProfileExposureRampSlope;
+        uniform float uProfileExposureRampBlack;
+        uniform float uProfileExposureRampRadius;
+        uniform float uProfileExposureRampQScale;
+        uniform bool uProfileExposureToneEnabled;
+        uniform float uProfileExposureToneSlope;
+        uniform float uProfileExposureToneA;
+        uniform float uProfileExposureToneB;
+        uniform float uProfileExposureToneC;
     """.trimIndent()
 
     private val AGX_COMBINED_UNIFORMS = """
@@ -250,8 +274,17 @@ object RawShaders {
     """.trimIndent()
 
     private val DCP_COMBINED_FUNCTIONS = """
+        const float PROFILE_HIGHLIGHT_SHOULDER_START = 0.58;
+        const float PROFILE_HIGHLIGHT_SHOULDER_SOFTNESS = 0.30;
+        const float PROFILE_HIGHLIGHT_NEUTRAL_BLEND_MAX = 0.71;
+        const float PROFILE_HIGHLIGHT_NEUTRAL_BLEND_POWER = 1.91;
+
+        float pinDcpValue(float value) {
+            return clamp(value, 0.0, 1.0);
+        }
+
         float encodeValue(float value, int encoding) {
-            value = clamp(value, 0.0, 1.0);
+            value = pinDcpValue(value);
             if (encoding == 1) {
                 return linearToSrgb(vec3(value)).r;
             }
@@ -259,7 +292,7 @@ object RawShaders {
         }
 
         float decodeValue(float value, int encoding) {
-            value = clamp(value, 0.0, 1.0);
+            value = pinDcpValue(value);
             if (encoding == 1) {
                 vec3 srgb = max(vec3(value), vec3(0.0));
                 bvec3 useHigh = greaterThan(srgb, vec3(0.04045));
@@ -387,61 +420,115 @@ object RawShaders {
 
             vec3 hsv = rgbToDcpHsv(color);
             vec3 tableHsv = hsv;
+            float vEncoded = hsv.z;
             if (encoding == 1 && divisions.z > 1) {
-                tableHsv.z = linearToSrgb(vec3(hsv.z)).r;
+                vEncoded = encodeValue(hsv.z, encoding);
+                tableHsv.z = vEncoded;
             }
 
-            vec3 lookupHsv = vec3(tableHsv.x, tableHsv.y, clamp(tableHsv.z, 0.0, 1.0));
+            vec3 lookupHsv = vec3(tableHsv.x, tableHsv.y, pinDcpValue(tableHsv.z));
             vec3 modify = sampleDcpMap(tableTexture, divisions, lookupHsv);
             hsv.x = mod(hsv.x + (modify.x * 6.0 / 360.0), 6.0);
-            hsv.y = hsv.y * modify.y;
+            hsv.y = pinDcpValue(hsv.y * modify.y);
+            vEncoded = pinDcpValue(vEncoded * modify.z);
             if (encoding == 1) {
-                float encodedValue = max(tableHsv.z * modify.z, 0.0);
-                hsv.z = srgbToLinear(vec3(encodedValue)).r;
+                hsv.z = decodeValue(vEncoded, encoding);
             } else {
-                hsv.z = hsv.z * modify.z;
+                hsv.z = vEncoded;
             }
-            hsv.y = max(hsv.y, 0.0);
-            hsv.z = max(hsv.z, 0.0);
 
             return dcpHsvToRgb(hsv);
         }
 
-        vec3 applyDcpMaps(vec3 color) {
+        float applyProfileExposureRampValue(float value) {
+            float black = uProfileExposureRampBlack;
+            float radius = uProfileExposureRampRadius;
+            if (value <= black - radius) {
+                return 0.0;
+            }
+            if (value >= black + radius) {
+                return max((value - black) * uProfileExposureRampSlope, 0.0);
+            }
+            float y = value - (black - radius);
+            return uProfileExposureRampQScale * y * y;
+        }
+
+        vec3 applyProfileExposureRamp(vec3 color) {
+            if (!uProfileExposureRampEnabled) {
+                return color * uProfileExposureLinearGain;
+            }
+            vec3 ramped = vec3(
+                applyProfileExposureRampValue(color.r),
+                applyProfileExposureRampValue(color.g),
+                applyProfileExposureRampValue(color.b)
+            );
+            float peak = max(ramped.r, max(ramped.g, ramped.b));
+            if (peak <= PROFILE_HIGHLIGHT_SHOULDER_START) {
+                return ramped;
+            }
+            float shoulderInput = peak - PROFILE_HIGHLIGHT_SHOULDER_START;
+            float shoulderAmount = shoulderInput / (shoulderInput + PROFILE_HIGHLIGHT_SHOULDER_SOFTNESS);
+            float compressedPeak = PROFILE_HIGHLIGHT_SHOULDER_START +
+                (1.0 - PROFILE_HIGHLIGHT_SHOULDER_START) *
+                shoulderAmount;
+            vec3 compressed = ramped * (compressedPeak / max(peak, 1e-6));
+            float neutralBlend = PROFILE_HIGHLIGHT_NEUTRAL_BLEND_MAX *
+                pow(shoulderAmount, PROFILE_HIGHLIGHT_NEUTRAL_BLEND_POWER);
+            return mix(compressed, vec3(compressedPeak), neutralBlend);
+        }
+
+        float applyProfileExposureToneValue(float value) {
+            if (!uProfileExposureToneEnabled) {
+                return value;
+            }
+            if (value <= 0.25) {
+                return value * uProfileExposureToneSlope;
+            }
+            return (uProfileExposureToneA * value + uProfileExposureToneB) * value +
+                uProfileExposureToneC;
+        }
+
+        vec3 applyProfileExposureTone(vec3 color) {
+            if (!uProfileExposureRampEnabled) {
+                return color;
+            }
+            return vec3(
+                applyProfileExposureToneValue(color.r),
+                applyProfileExposureToneValue(color.g),
+                applyProfileExposureToneValue(color.b)
+            );
+        }
+
+        vec3 applyDcpHueSatMap(vec3 color) {
             if (uDcpHueSatEnabled) {
                 color = applyDcpHsvMap(color, uDcpHueSatTexture, uDcpHueSatDivisions, uDcpHueSatEncoding);
             }
+            return color;
+        }
+
+        vec3 applyDcpLookTable(vec3 color) {
             if (uDcpLookTableEnabled) {
                 color = applyDcpHsvMap(color, uDcpLookTableTexture, uDcpLookTableDivisions, uDcpLookTableEncoding);
+            }
+            return color;
+        }
+
+        vec3 applyDcpMaps(vec3 color) {
+            color = applyDcpHueSatMap(color);
+            if (uProfileExposureRampEnabled) {
+                color = applyProfileExposureRamp(color);
+                color = applyDcpLookTable(color);
+                color = applyProfileExposureTone(color);
+            } else {
+                color = applyDcpLookTable(color);
+                color = applyProfileExposureRamp(color);
             }
             return color;
         }
     """.trimIndent()
 
     private val ADOBE_COMBINED_FUNCTIONS = """
-        const float ADOBE_PBR_NEUTRAL_START_COMPRESSION = 0.76;
-        const float ADOBE_PBR_NEUTRAL_DESATURATION = 0.15;
-
-        vec3 applyAdobePreCurveHighlightCompression(vec3 color) {
-            vec3 positiveColor = max(color, vec3(0.0));
-            float peak = max(positiveColor.r, max(positiveColor.g, positiveColor.b));
-            if (peak <= ADOBE_PBR_NEUTRAL_START_COMPRESSION) {
-                return positiveColor;
-            }
-
-            float compressionRange = 1.0 - ADOBE_PBR_NEUTRAL_START_COMPRESSION;
-            float newPeak = 1.0 - compressionRange * compressionRange /
-                (peak + compressionRange - ADOBE_PBR_NEUTRAL_START_COMPRESSION);
-            vec3 compressed = positiveColor * (newPeak / max(peak, 1e-6));
-            float desaturation = 1.0 - 1.0 / (
-                ADOBE_PBR_NEUTRAL_DESATURATION * max(peak - newPeak, 0.0) + 1.0
-            );
-            return mix(compressed, vec3(newPeak), desaturation);
-        }
-
         vec3 applyEngineTone(vec3 color) {
-            color = applyDcpMaps(color);
-            color = applyAdobePreCurveHighlightCompression(color);
             color = applyAdobeCurve(color);
             return uOutputTransform * color;
         }
