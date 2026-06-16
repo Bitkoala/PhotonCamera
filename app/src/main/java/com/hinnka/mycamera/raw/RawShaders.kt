@@ -419,28 +419,29 @@ object RawShaders {
     """.trimIndent()
 
     private val ADOBE_COMBINED_FUNCTIONS = """
-        float proPhotoLuminance(vec3 color) {
-            return max(dot(color, vec3(0.2880402, 0.7118741, 0.0000857)), 1e-5);
-        }
+        const float ADOBE_PBR_NEUTRAL_START_COMPRESSION = 0.76;
+        const float ADOBE_PBR_NEUTRAL_DESATURATION = 0.15;
 
-        float highlightRolloffLuma(float luma) {
-            const float rolloffStart = 0.2;
-            const float rolloffRange = 1.0 - rolloffStart;
-            if (luma <= rolloffStart) return luma;
+        vec3 applyAdobePreCurveHighlightCompression(vec3 color) {
+            vec3 positiveColor = max(color, vec3(0.0));
+            float peak = max(positiveColor.r, max(positiveColor.g, positiveColor.b));
+            if (peak <= ADOBE_PBR_NEUTRAL_START_COMPRESSION) {
+                return positiveColor;
+            }
 
-            float x = (luma - rolloffStart) / rolloffRange;
-            return 1.0 - rolloffRange / (1.0 + x);
-        }
-
-        vec3 highlightRolloff(vec3 color) {
-            float luma = proPhotoLuminance(color);
-            float newLuma = highlightRolloffLuma(luma);
-            return color * (newLuma / max(luma, 1e-6));
+            float compressionRange = 1.0 - ADOBE_PBR_NEUTRAL_START_COMPRESSION;
+            float newPeak = 1.0 - compressionRange * compressionRange /
+                (peak + compressionRange - ADOBE_PBR_NEUTRAL_START_COMPRESSION);
+            vec3 compressed = positiveColor * (newPeak / max(peak, 1e-6));
+            float desaturation = 1.0 - 1.0 / (
+                ADOBE_PBR_NEUTRAL_DESATURATION * max(peak - newPeak, 0.0) + 1.0
+            );
+            return mix(compressed, vec3(newPeak), desaturation);
         }
 
         vec3 applyEngineTone(vec3 color) {
             color = applyDcpMaps(color);
-            color = highlightRolloff(color);
+            color = applyAdobePreCurveHighlightCompression(color);
             color = applyAdobeCurve(color);
             return uOutputTransform * color;
         }

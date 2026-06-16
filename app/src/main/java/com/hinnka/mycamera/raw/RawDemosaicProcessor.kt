@@ -3851,18 +3851,9 @@ class RawDemosaicProcessor {
                 TAG,
                 "RAW Shadows/Highlights uniforms: " +
                     "uHighlightsLoc=$highlightsLocation uShadowsLoc=$shadowsLocation " +
-                    "highlights=${params.highlights} shadows=${params.shadows} " +
-                    "curveWhitePoint=${params.curveWhitePoint}"
+                    "highlights=${params.highlights} shadows=${params.shadows}"
             )
         }
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(program, "uCurveWhitePoint"),
-            params.curveWhitePoint
-        )
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(program, "uCurveShoulderStart"),
-            0.4f
-        )
     }
 
     private fun logProgramLinkResult(
