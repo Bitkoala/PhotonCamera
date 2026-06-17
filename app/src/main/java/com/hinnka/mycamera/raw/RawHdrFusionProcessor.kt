@@ -688,7 +688,7 @@ object RawHdrFusionProcessor {
         }
 
         float frameTileMaxNorm(int frame, ivec2 p) {
-            ivec2 base = bayerTileBase(p);
+            ivec2 base = bayerTileBase(clamp(p, ivec2(0), uSize - ivec2(1)));
             float maxNorm = 0.0;
             for (int y = 0; y <= 1; y++) {
                 for (int x = 0; x <= 1; x++) {
@@ -749,7 +749,7 @@ object RawHdrFusionProcessor {
         }
 
         float tileGreenScaledAt(int frame, ivec2 p) {
-            ivec2 base = bayerTileBase(p);
+            ivec2 base = bayerTileBase(clamp(p, ivec2(0), uSize - ivec2(1)));
             float sum = 0.0;
             float count = 0.0;
             for (int y = 0; y <= 1; y++) {
@@ -766,7 +766,7 @@ object RawHdrFusionProcessor {
         }
 
         float tileMaxRelativeResidual(int frame, ivec2 p) {
-            ivec2 base = bayerTileBase(p);
+            ivec2 base = bayerTileBase(clamp(p, ivec2(0), uSize - ivec2(1)));
             float residual = 0.0;
             for (int y = 0; y <= 1; y++) {
                 for (int x = 0; x <= 1; x++) {
@@ -915,8 +915,10 @@ object RawHdrFusionProcessor {
             if (uUseDeghostMask == 0 || frame == ${REFERENCE_FRAME_INDEX}) {
                 return 1.0;
             }
-            float score = fastTileDeghostScore(frame, p);
-            float reject = smoothstep(0.36, 0.76, score);
+            float tileScore = fastTileDeghostScore(frame, p);
+            float channelScore = deghostScoreAt(frame, p, channel);
+            float score = max(tileScore, channelScore);
+            float reject = smoothstep(0.3, 0.7, score);
             return mix(1.0, 0.0, reject);
         }
 
