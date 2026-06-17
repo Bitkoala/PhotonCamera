@@ -31,6 +31,11 @@ object RawHdrFusionProcessor {
     private const val REFERENCE_FRAME_INDEX = 0
     private const val VALUE_DOMAIN_SENSOR = 0
     private const val VALUE_DOMAIN_NORMALIZED_SENSOR_RANGE = 1
+    private const val SHADOW_LONG_EXPOSURE_RECOVERY_START = 0.08f
+    private const val SHADOW_LONG_EXPOSURE_RECOVERY_END = 0.40f
+    private const val SHADOW_LONG_EXPOSURE_TARGET_WEIGHT = 0.90f
+    private const val RAW_BYTES_PER_PIXEL = 2
+    private const val RGBA_BYTES_PER_PIXEL = 4
 
     data class InputFrame(
         val rawBuffer: ByteBuffer,
@@ -80,6 +85,13 @@ object RawHdrFusionProcessor {
         val exposureScales = FloatArray(FRAME_COUNT) { index ->
             (baseExposure / exposureProducts[index]).toFloat().coerceIn(0.0001f, 1.0f)
         }
+        val longExposureFrameIndex = exposureProducts.indices.maxByOrNull { exposureProducts[it] }
+            ?: REFERENCE_FRAME_INDEX
+        val longExposureBiasStrength = if (exposureProducts[longExposureFrameIndex] > baseExposure * 1.05) {
+            1.0f
+        } else {
+            0.0f
+        }
         val normalizedBlackLevel = FloatArray(4) { index ->
             blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
         }
@@ -102,6 +114,8 @@ object RawHdrFusionProcessor {
                     blackLevel = normalizedBlackLevel,
                     whiteLevel = whiteLevel,
                     exposureScales = exposureScales,
+                    longExposureFrameIndex = longExposureFrameIndex,
+                    longExposureBiasStrength = longExposureBiasStrength,
                     noiseModel = normalizedNoiseModel,
                     enableDeghostMask = enableDeghostMask,
                 )
@@ -111,7 +125,9 @@ object RawHdrFusionProcessor {
             PLog.d(
                 TAG,
                 "RAW HDR fusion took ${elapsed}ms, size=${width}x$height, deghostMask=$enableDeghostMask, " +
-                        "exposureScales=${exposureScales.joinToString()}, valueDomains=${frames.joinToString { it.valueDomain.toString() }}"
+                        "exposureScales=${exposureScales.joinToString()}, " +
+                        "longExposureFrame=$longExposureFrameIndex, shadowLongExposureBias=$longExposureBiasStrength, " +
+                        "valueDomains=${frames.joinToString { it.valueDomain.toString() }}"
             )
             RawHdrFusionResult(
                 fusedBayerBuffer = outputBuffer,
@@ -140,14 +156,19 @@ object RawHdrFusionProcessor {
         blackLevel: FloatArray,
         whiteLevel: Int,
         exposureScales: FloatArray,
+        longExposureFrameIndex: Int,
+        longExposureBiasStrength: Float,
         noiseModel: FloatArray,
         enableDeghostMask: Boolean,
     ) {
-        val inputTextures = frames.map { uploadRawTexture(it) }
+        var inputTextures: List<Int> = emptyList()
         var target: RenderTarget? = null
         val previousState = captureRenderState()
         try {
             applyRawRenderState()
+            val uploadElapsed = measureTimeMillis {
+                inputTextures = frames.map { uploadRawTexture(it) }
+            }
             target = createRawRenderTarget(frames.first().width, frames.first().height)
             GLES30.glUseProgram(fusionProgram)
             bindTarget(target)
@@ -168,6 +189,14 @@ object RawHdrFusionProcessor {
                 exposureScales,
                 0
             )
+            GLES30.glUniform1i(
+                GLES30.glGetUniformLocation(fusionProgram, "uLongExposureFrame"),
+                longExposureFrameIndex
+            )
+            GLES30.glUniform1f(
+                GLES30.glGetUniformLocation(fusionProgram, "uLongExposureShadowBias"),
+                longExposureBiasStrength
+            )
             val valueDomains = frames.map { it.valueDomain }.toIntArray()
             GLES30.glUniform1iv(
                 GLES30.glGetUniformLocation(fusionProgram, "uValueDomain[0]"),
@@ -184,9 +213,18 @@ object RawHdrFusionProcessor {
                 GLES30.glGetUniformLocation(fusionProgram, "uUseDeghostMask"),
                 if (enableDeghostMask) 1 else 0
             )
-            drawQuad(fusionProgram)
-            checkGlError("renderFusion")
-            readRawTarget(target, outputBuffer)
+            val drawSubmitElapsed = measureTimeMillis {
+                drawQuad(fusionProgram)
+                checkGlError("renderFusion")
+            }
+            val readbackElapsed = measureTimeMillis {
+                readRawTarget(target, outputBuffer)
+            }
+            PLog.d(
+                TAG,
+                "RAW HDR fusion stages: upload=${uploadElapsed}ms, drawSubmit=${drawSubmitElapsed}ms, " +
+                    "readbackSync=${readbackElapsed}ms, target=${target.formatLabel}"
+            )
         } finally {
             inputTextures.forEach { GLES30.glDeleteTextures(1, intArrayOf(it), 0) }
             target?.release()
@@ -231,6 +269,36 @@ object RawHdrFusionProcessor {
     }
 
     private fun createRawRenderTarget(width: Int, height: Int): RenderTarget {
+        createRawRenderTarget(
+            width = width,
+            height = height,
+            internalFormat = GLES30.GL_RG8,
+            format = GLES30.GL_RG,
+            type = GLES30.GL_UNSIGNED_BYTE,
+            bytesPerPixel = RAW_BYTES_PER_PIXEL,
+            formatLabel = "RG8"
+        )?.let { return it }
+        PLog.w(TAG, "RAW HDR RG8 target unavailable; falling back to RGBA8 readback")
+        return createRawRenderTarget(
+            width = width,
+            height = height,
+            internalFormat = GLES30.GL_RGBA,
+            format = GLES30.GL_RGBA,
+            type = GLES30.GL_UNSIGNED_BYTE,
+            bytesPerPixel = RGBA_BYTES_PER_PIXEL,
+            formatLabel = "RGBA8"
+        ) ?: throw IllegalStateException("Incomplete RAW HDR render target for RG8 and RGBA8")
+    }
+
+    private fun createRawRenderTarget(
+        width: Int,
+        height: Int,
+        internalFormat: Int,
+        format: Int,
+        type: Int,
+        bytesPerPixel: Int,
+        formatLabel: String,
+    ): RenderTarget? {
         val textures = IntArray(1)
         GLES30.glGenTextures(1, textures, 0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textures[0])
@@ -241,12 +309,12 @@ object RawHdrFusionProcessor {
         GLES30.glTexImage2D(
             GLES30.GL_TEXTURE_2D,
             0,
-            GLES30.GL_RGBA,
+            internalFormat,
             width,
             height,
             0,
-            GLES30.GL_RGBA,
-            GLES30.GL_UNSIGNED_BYTE,
+            format,
+            type,
             null
         )
 
@@ -264,18 +332,34 @@ object RawHdrFusionProcessor {
         if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
             GLES30.glDeleteTextures(1, textures, 0)
             GLES30.glDeleteFramebuffers(1, framebuffers, 0)
-            throw IllegalStateException("Incomplete RAW HDR render target: 0x${Integer.toHexString(status)}")
+            return null
         }
-        checkGlError("createRawRenderTarget")
-        return RenderTarget(width, height, textures[0], framebuffers[0])
+        checkGlError("createRawRenderTarget-$formatLabel")
+        return RenderTarget(width, height, textures[0], framebuffers[0], format, type, bytesPerPixel, formatLabel)
     }
 
     private fun readRawTarget(target: RenderTarget, outputBuffer: ByteBuffer) {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, target.framebufferId)
         GLES30.glViewport(0, 0, target.width, target.height)
         GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
-        val packedByteCount = target.width.toLong() * target.height.toLong() * 4L
-        val packed = LargeDirectBuffer.allocate(packedByteCount, "RAW HDR packed RGBA readback")
+        if (target.bytesPerPixel == RAW_BYTES_PER_PIXEL) {
+            outputBuffer.clear()
+            GLES30.glReadPixels(
+                0,
+                0,
+                target.width,
+                target.height,
+                target.readFormat,
+                target.readType,
+                outputBuffer
+            )
+            checkGlError("readRawTarget-${target.formatLabel}")
+            outputBuffer.rewind()
+            return
+        }
+
+        val packedByteCount = target.width.toLong() * target.height.toLong() * RGBA_BYTES_PER_PIXEL.toLong()
+        val packed = LargeDirectBuffer.allocate(packedByteCount, "RAW HDR packed RGBA fallback readback")
             ?: throw IllegalStateException("Failed to allocate RAW HDR packed readback buffer")
         try {
             packed.clear()
@@ -284,8 +368,8 @@ object RawHdrFusionProcessor {
                 0,
                 target.width,
                 target.height,
-                GLES30.GL_RGBA,
-                GLES30.GL_UNSIGNED_BYTE,
+                target.readFormat,
+                target.readType,
                 packed
             )
             checkGlError("readRawTarget")
@@ -308,7 +392,7 @@ object RawHdrFusionProcessor {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, target.framebufferId)
         GLES30.glDrawBuffers(1, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0), 0)
         GLES30.glViewport(0, 0, target.width, target.height)
-        GLES30.glClearBufferuiv(GLES30.GL_COLOR, 0, intArrayOf(0, 0, 0, 0), 0)
+        GLES30.glClearBufferfv(GLES30.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
     }
 
     private fun captureRenderState(): RenderState {
@@ -471,6 +555,10 @@ object RawHdrFusionProcessor {
         val height: Int,
         val textureId: Int,
         val framebufferId: Int,
+        val readFormat: Int,
+        val readType: Int,
+        val bytesPerPixel: Int,
+        val formatLabel: String,
     ) {
         private var released = false
 
@@ -540,6 +628,8 @@ object RawHdrFusionProcessor {
         uniform float uBlackLevel[4];
         uniform float uWhiteLevel;
         uniform float uExposureScale[3];
+        uniform int uLongExposureFrame;
+        uniform float uLongExposureShadowBias;
         uniform int uValueDomain[3];
         uniform vec2 uNoiseModel;
         uniform int uUseDeghostMask;
@@ -806,21 +896,31 @@ object RawHdrFusionProcessor {
             return comparable * score;
         }
 
+        float fastTileDeghostScore(int frame, ivec2 p) {
+            float sideSignal = tileGreenScaledAt(frame, p);
+            float referenceSignal = tileGreenScaledAt(${REFERENCE_FRAME_INDEX}, p);
+            float comparable = tileTrust(frame, p) * tileTrust(${REFERENCE_FRAME_INDEX}, p) * referenceTileStructure(p);
+            if (comparable <= 0.001) {
+                return 0.0;
+            }
+
+            float relativeResidual = abs(sideSignal - referenceSignal) / max(max(sideSignal, referenceSignal), 1e-5);
+            float linearMotion = smoothstep(0.12, 0.42, max(relativeResidual, tileMaxRelativeResidual(frame, p)));
+            float logResidual = abs(log(max(sideSignal, 1e-5)) - log(max(referenceSignal, 1e-5)));
+            float logMotion = smoothstep(0.28, 0.72, logResidual);
+            return comparable * max(linearMotion, logMotion);
+        }
+
         float computeDeghostAlpha(int frame, ivec2 p, int channel) {
             if (uUseDeghostMask == 0 || frame == ${REFERENCE_FRAME_INDEX}) {
                 return 1.0;
             }
-            float score = 0.0;
-            for (int y = -1; y <= 1; y++) {
-                for (int x = -1; x <= 1; x++) {
-                    score = max(score, deghostTileScoreAt(frame, p + ivec2(x * 2, y * 2)));
-                }
-            }
-            float reject = smoothstep(0.30, 0.70, score);
+            float score = fastTileDeghostScore(frame, p);
+            float reject = smoothstep(0.36, 0.76, score);
             return mix(1.0, 0.0, reject);
         }
 
-        float frameWeight(int frame, ivec2 p, int channel, out float scaledSignal) {
+        float frameWeight(int frame, ivec2 p, int channel, out float scaledSignal, out float reliability) {
             float norm = frameNorm(frame, p, channel);
             float scale = uExposureScale[frame];
             scaledSignal = norm * scale;
@@ -837,9 +937,30 @@ object RawHdrFusionProcessor {
             float variance = max(0.0000001, (uNoiseModel.x * sensorSignal + uNoiseModel.y) / (sensorRange * sensorRange));
             float scaledVariance = variance * scale * scale;
             float wiener = (scaledSignal * scaledSignal) / (scaledSignal * scaledSignal + scaledVariance + 0.000001);
+            float snr = scaledSignal / max(sqrt(scaledVariance), 0.000001);
+            float deghostAlpha = computeDeghostAlpha(frame, p, channel);
+            reliability = clamp(smoothstep(2.0, 6.0, snr) * highlightGate * deghostAlpha, 0.0, 1.0);
 
             return clipWeight * (0.25 + centered) * (0.2 + contrast) * (0.25 + wiener) *
-                computeDeghostAlpha(frame, p, channel);
+                deghostAlpha;
+        }
+
+        float selectFrameValue(int frame, float v0, float v1, float v2) {
+            if (frame == 0) return v0;
+            if (frame == 1) return v1;
+            return v2;
+        }
+
+        float longExposureShadowPreference(float mertensFused, float longTrust) {
+            if (uLongExposureShadowBias <= 0.0) {
+                return 0.0;
+            }
+            float recovery = 1.0 - smoothstep(
+                ${SHADOW_LONG_EXPOSURE_RECOVERY_START},
+                ${SHADOW_LONG_EXPOSURE_RECOVERY_END},
+                mertensFused
+            );
+            return clamp(recovery * longTrust * uLongExposureShadowBias, 0.0, 1.0);
         }
 
         void main() {
@@ -849,18 +970,52 @@ object RawHdrFusionProcessor {
             float s0;
             float s1;
             float s2;
-            float w0 = frameWeight(0, p, channel, s0);
-            float w1 = frameWeight(1, p, channel, s1);
-            float w2 = frameWeight(2, p, channel, s2);
+            float t0;
+            float t1;
+            float t2;
+            float w0 = frameWeight(0, p, channel, s0, t0);
+            float w1 = frameWeight(1, p, channel, s1, t1);
+            float w2 = frameWeight(2, p, channel, s2, t2);
             float weightSum = w0 + w1 + w2;
 
-            float fused;
+            float n0;
+            float n1;
+            float n2;
             if (weightSum > 0.000001) {
-                fused = (s0 * w0 + s1 * w1 + s2 * w2) / weightSum;
+                n0 = w0 / weightSum;
+                n1 = w1 / weightSum;
+                n2 = w2 / weightSum;
             } else {
-                fused = s0;
+                n0 = 1.0;
+                n1 = 0.0;
+                n2 = 0.0;
             }
 
+            float mertensFused = s0 * n0 + s1 * n1 + s2 * n2;
+            float longTrust = selectFrameValue(uLongExposureFrame, t0, t1, t2);
+            float shadowPreference = longExposureShadowPreference(mertensFused, longTrust);
+            float longWeight = selectFrameValue(uLongExposureFrame, n0, n1, n2);
+            float targetLongWeight = mix(
+                longWeight,
+                max(longWeight, ${SHADOW_LONG_EXPOSURE_TARGET_WEIGHT}),
+                shadowPreference
+            );
+            float otherScale = (1.0 - targetLongWeight) / max(1.0 - longWeight, 0.000001);
+            if (uLongExposureFrame == 0) {
+                n0 = targetLongWeight;
+                n1 *= otherScale;
+                n2 *= otherScale;
+            } else if (uLongExposureFrame == 1) {
+                n0 *= otherScale;
+                n1 = targetLongWeight;
+                n2 *= otherScale;
+            } else {
+                n0 *= otherScale;
+                n1 *= otherScale;
+                n2 = targetLongWeight;
+            }
+
+            float fused = s0 * n0 + s1 * n1 + s2 * n2;
             fused = clamp(fused, 0.0, 1.0);
             uint raw = uint(floor(fused * 65535.0 + 0.5));
             uint lo = raw & 255u;
