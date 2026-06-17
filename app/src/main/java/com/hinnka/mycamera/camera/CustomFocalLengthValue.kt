@@ -66,7 +66,7 @@ object CustomFocalLengthValue {
     ): Float? {
         if (value == 0f) return null
         if (isZoomRatio(value)) {
-            val baseZoom = ratioBaseCamera?.intrinsicZoomRatio?.takeIf { it > 0f } ?: 1f
+            val baseZoom = ratioBaseCamera?.displayIntrinsicZoomRatio?.takeIf { it > 0f } ?: 1f
             return baseZoom * zoomRatio(value)
         }
         val baseFocalLength = mainCamera?.focalLength35mmEquivalent ?: return null

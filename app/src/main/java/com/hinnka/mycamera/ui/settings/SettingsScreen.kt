@@ -104,11 +104,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.CameraInfo
 import com.hinnka.mycamera.camera.CustomFocalLengthValue
+import com.hinnka.mycamera.camera.IszLensConfig
 import com.hinnka.mycamera.camera.LensType
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.VendorCaptureKey
 import com.hinnka.mycamera.camera.VendorCaptureSettings
+import com.hinnka.mycamera.camera.VendorCaptureSettingsByLens
 import com.hinnka.mycamera.camera.VendorCaptureValueType
 import com.hinnka.mycamera.data.AiFocusTargetMode
 import com.hinnka.mycamera.data.VolumeKeyAction
@@ -235,6 +238,7 @@ fun SettingsScreen(
     val defaultFocalLength by viewModel.defaultFocalLength.collectAsState(initial = 0f)
     val customLensIds by viewModel.customLensIds.collectAsState(initial = emptyList())
     val lensIdBlacklist by viewModel.lensIdBlacklist.collectAsState(initial = emptyList())
+    val iszLensConfigs by viewModel.iszLensConfigs.collectAsState(initial = emptyList())
     val preferredMainCameraId by viewModel.preferredMainCameraId.collectAsState(initial = null)
     val enableLogicalMultiCameraDiscovery by viewModel.enableLogicalMultiCameraDiscovery.collectAsState(initial = false)
     val logicalCameraBindingWhitelist by viewModel.logicalCameraBindingWhitelist.collectAsState(initial = emptyList())
@@ -306,6 +310,7 @@ fun SettingsScreen(
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
     var aiFocusScoreThresholdUi by remember(aiFocusScoreThreshold) { mutableStateOf(aiFocusScoreThreshold) }
     var showAspectRatioDialog by remember { mutableStateOf(false) }
+    var showAddIszLensDialog by remember { mutableStateOf(false) }
     var backupOperation by remember { mutableStateOf<BackupOperation?>(null) }
 
     LaunchedEffect(
@@ -820,6 +825,20 @@ fun SettingsScreen(
                             onFocalLengthSelected = { viewModel.setDefaultFocalLength(it) }
                         )
 
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        NavigationSettingItem(
+                            title = stringResource(R.string.settings_add_isz_lens),
+                            description = stringResource(
+                                R.string.settings_add_isz_lens_description,
+                                iszLensConfigs.size
+                            ),
+                            onClick = { showAddIszLensDialog = true }
+                        )
+
                         if (mainCameraIdOptions.size > 1) {
                             HorizontalDivider(
                                 color = Color.White.copy(alpha = 0.1f),
@@ -1038,33 +1057,6 @@ fun SettingsScreen(
                             ),
                             currentLevel = edgeLevel,
                             onLevelSelected = { viewModel.setEdgeLevel(it) }
-                        )
-
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-
-                        val currentVendorCaptureLensId = state.currentCameraId
-                        val currentVendorCaptureLensName = state.getCurrentCameraInfo()?.let { info ->
-                            val prefix = when (info.lensFacing) {
-                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> stringResource(R.string.rear_camera)
-                                android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> stringResource(R.string.front_camera)
-                                else -> stringResource(R.string.camera)
-                            }
-                            "$prefix ${info.cameraId}"
-                        } ?: if (currentVendorCaptureLensId.isNotBlank()) {
-                            currentVendorCaptureLensId
-                        } else {
-                            stringResource(R.string.current_camera)
-                        }
-                        VendorCaptureSettingsPanel(
-                            currentLensId = currentVendorCaptureLensId,
-                            currentLensName = currentVendorCaptureLensName,
-                            settings = vendorCaptureSettingsByLens.settingsFor(currentVendorCaptureLensId),
-                            onSettingsChange = {
-                                viewModel.setVendorCaptureSettings(currentVendorCaptureLensId, it)
-                            }
                         )
 
                         HorizontalDivider(
@@ -2021,6 +2013,20 @@ fun SettingsScreen(
                     Text(stringResource(R.string.cancel))
                 }
             }
+        )
+    }
+
+    if (showAddIszLensDialog) {
+        AddIszLensDialog(
+            availableCameras = state.availableCameras,
+            iszLensConfigs = iszLensConfigs,
+            vendorCaptureSettingsByLens = vendorCaptureSettingsByLens,
+            onAddLens = { baseCameraId, iszZoomRatio, isMacro, settings ->
+                viewModel.addIszLensConfig(baseCameraId, iszZoomRatio, isMacro, settings)
+                showAddIszLensDialog = false
+            },
+            onRemoveLens = { viewModel.removeIszLensConfig(it) },
+            onDismiss = { showAddIszLensDialog = false }
         )
     }
 
@@ -3112,6 +3118,236 @@ private fun PremiumCard(
 /**
  * 图像质量等级设置（通用组件）
  */
+@Composable
+private fun AddIszLensDialog(
+    availableCameras: List<CameraInfo>,
+    iszLensConfigs: List<IszLensConfig>,
+    vendorCaptureSettingsByLens: VendorCaptureSettingsByLens,
+    onAddLens: (String, Float, Boolean, VendorCaptureSettings) -> Unit,
+    onRemoveLens: (IszLensConfig) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val baseLensCandidates = availableCameras.filter {
+        it.lensType != LensType.FRONT &&
+            it.lensType != LensType.BACK_MACRO &&
+            !it.isVirtualIszLens
+    }
+    var selectedBaseCameraId by remember(baseLensCandidates) {
+        mutableStateOf(baseLensCandidates.firstOrNull()?.cameraId.orEmpty())
+    }
+    var selectedIszZoomRatio by remember { mutableStateOf(1f) }
+    var isMacroLens by remember { mutableStateOf(false) }
+    var settings by remember {
+        mutableStateOf(
+            VendorCaptureSettings(emptyMap())
+        )
+    }
+
+    LaunchedEffect(baseLensCandidates) {
+        if (baseLensCandidates.none { it.cameraId == selectedBaseCameraId }) {
+            selectedBaseCameraId = baseLensCandidates.firstOrNull()?.cameraId.orEmpty()
+        }
+    }
+
+    val selectedBaseCamera = baseLensCandidates.firstOrNull { it.cameraId == selectedBaseCameraId }
+    val selectedBaseLabel = selectedBaseCamera?.let { iszBaseLensLabel(it) }.orEmpty()
+    val baseLensLabels = baseLensCandidates.map { it.cameraId to iszBaseLensLabel(it) }
+    val virtualLensId = IszLensConfig.createVirtualCameraId(selectedBaseCameraId, selectedIszZoomRatio)
+    val virtualLensName = selectedBaseCamera?.let {
+        stringResource(
+            R.string.settings_isz_virtual_lens_name,
+            iszBaseLensLabel(it),
+            IszLensConfig.displayRatioLabel(selectedIszZoomRatio),
+            IszLensConfig.displayRatioLabel(it.displayIntrinsicZoomRatio * selectedIszZoomRatio)
+        )
+    } ?: virtualLensId
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = { Text(stringResource(R.string.settings_add_isz_lens)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                if (baseLensCandidates.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.settings_isz_lens_no_physical_lens),
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                } else {
+                    DropdownSettingItem(
+                        title = stringResource(R.string.settings_isz_base_lens),
+                        description = stringResource(R.string.settings_isz_base_lens_description),
+                        value = selectedBaseLabel,
+                        options = baseLensLabels.map { it.second },
+                        isLoading = false,
+                        onExpanded = {},
+                        onOptionSelected = { label ->
+                            baseLensLabels.firstOrNull { it.second == label }?.let {
+                                selectedBaseCameraId = it.first
+                            }
+                        }
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
+                    QualityLevelSetting(
+                        title = stringResource(R.string.settings_isz_zoom_ratio),
+                        description = stringResource(R.string.settings_isz_zoom_ratio_description),
+                        levels = listOf(1f, 2f, 4f)
+                            .map { it to IszLensConfig.displayRatioLabel(it) },
+                        currentLevel = selectedIszZoomRatio,
+                        onLevelSelected = { selectedIszZoomRatio = it }
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
+                    SwitchSettingItem(
+                        title = stringResource(R.string.settings_isz_macro_lens),
+                        description = stringResource(R.string.settings_isz_macro_lens_description),
+                        checked = isMacroLens,
+                        onCheckedChange = { isMacroLens = it }
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
+                    VendorCaptureSettingsPanel(
+                        currentLensId = virtualLensId,
+                        currentLensName = virtualLensName,
+                        settings = settings,
+                        onSettingsChange = { settings = it }
+                    )
+                }
+
+                if (iszLensConfigs.isNotEmpty()) {
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
+                    Text(
+                        text = stringResource(R.string.settings_isz_added_lenses),
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Normal,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    iszLensConfigs.forEach { config ->
+                        val baseCamera = availableCameras.firstOrNull { it.cameraId == config.baseCameraId }
+                        val baseName = baseCamera?.let { iszBaseLensLabel(it) } ?: config.baseCameraId
+                        val displayRatio = baseCamera?.let {
+                            IszLensConfig.displayRatioLabel(it.displayIntrinsicZoomRatio * config.iszZoomRatio)
+                        } ?: IszLensConfig.displayRatioLabel(config.iszZoomRatio)
+                        val lensKind = stringResource(
+                            if (config.isMacro) {
+                                R.string.settings_isz_lens_kind_macro
+                            } else {
+                                R.string.settings_isz_lens_kind_normal
+                            }
+                        )
+                        ExistingIszLensRow(
+                            title = stringResource(
+                                R.string.settings_isz_existing_lens_title,
+                                baseName,
+                                IszLensConfig.displayRatioLabel(config.iszZoomRatio)
+                            ),
+                            description = stringResource(
+                                R.string.settings_isz_existing_lens_description,
+                                config.virtualCameraId,
+                                displayRatio,
+                                lensKind,
+                                vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId).values.size
+                            ),
+                            onRemove = { onRemoveLens(config) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onAddLens(selectedBaseCameraId, selectedIszZoomRatio, isMacroLens, settings) },
+                enabled = selectedBaseCameraId.isNotBlank()
+            ) {
+                Text(stringResource(R.string.settings_isz_add_lens_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun ExistingIszLensRow(
+    title: String,
+    description: String,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = description,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+
+        IconButton(onClick = onRemove) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.delete),
+                tint = Color.White.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun iszBaseLensLabel(camera: CameraInfo): String {
+    val prefix = when (camera.lensFacing) {
+        android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> stringResource(R.string.rear_camera)
+        android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> stringResource(R.string.front_camera)
+        else -> stringResource(R.string.camera)
+    }
+    val focalLength = if (camera.focalLength35mmEquivalent > 0) {
+        stringResource(R.string.settings_isz_lens_focal_length, camera.focalLength35mmEquivalent.roundToInt())
+    } else {
+        stringResource(R.string.settings_isz_lens_unknown_focal_length)
+    }
+    return stringResource(R.string.settings_isz_lens_label, prefix, camera.cameraId, focalLength)
+}
+
 @Composable
 private fun VendorCaptureSettingsPanel(
     currentLensId: String,

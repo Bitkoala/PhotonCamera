@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.CustomFocalLengthValue
+import com.hinnka.mycamera.camera.IszLensConfig
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.camera.VendorCaptureSettings
@@ -184,6 +185,7 @@ data class UserPreferences(
     val customFocalLengths: List<Float> = emptyList(), // 自定义焦段/倍率，正数为35mm等效焦段，负数为精确倍率
     val customLensIds: List<String> = emptyList(), // 自定义镜头 ID，逗号分隔存储
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
+    val iszLensConfigs: List<IszLensConfig> = emptyList(), // 用户新增的 ISZ 虚拟镜头
     val preferredMainCameraId: String? = null, // 用户选择的主摄 ID
     val enableLogicalMultiCameraDiscovery: Boolean = false, // 是否自动探测逻辑多摄物理镜头绑定
     val logicalCameraBindingWhitelist: List<String> = emptyList(), // 强制启用的逻辑/物理镜头绑定，格式 logical/physical
@@ -352,6 +354,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val CUSTOM_FOCAL_LENGTHS = stringPreferencesKey("custom_focal_lengths")
         private val CUSTOM_LENS_IDS = stringPreferencesKey("custom_lens_ids")
         private val LENS_ID_BLACKLIST = stringPreferencesKey("lens_id_blacklist")
+        private val ISZ_LENS_CONFIGS = stringPreferencesKey("isz_lens_configs")
         private val PREFERRED_MAIN_CAMERA_ID = stringPreferencesKey("preferred_main_camera_id")
         private val ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY = booleanPreferencesKey("enable_logical_multi_camera_discovery")
         private val LOGICAL_CAMERA_BINDING_WHITELIST = stringPreferencesKey("logical_camera_binding_whitelist")
@@ -521,6 +524,7 @@ class UserPreferencesRepository(private val context: Context) {
                     ?: listOf(35f, 50f, 85f, 200f),
                 customLensIds = parseLensIds(preferences[CUSTOM_LENS_IDS]),
                 lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
+                iszLensConfigs = IszLensConfig.deserializeList(preferences[ISZ_LENS_CONFIGS]),
                 preferredMainCameraId = preferences[PREFERRED_MAIN_CAMERA_ID]?.takeIf { it.isNotBlank() },
                 enableLogicalMultiCameraDiscovery = preferences[ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY] ?: false,
                 logicalCameraBindingWhitelist = parseLogicalCameraBindingWhitelist(
@@ -1204,6 +1208,19 @@ class UserPreferencesRepository(private val context: Context) {
                 .filter { it.isNotEmpty() }
                 .distinct()
                 .joinToString(",")
+        }
+    }
+
+    suspend fun saveIszLensConfigs(configs: List<IszLensConfig>) {
+        context.dataStore.edit { preferences ->
+            val sanitizedConfigs = configs
+                .filter { it.baseCameraId.isNotBlank() && it.iszZoomRatio >= 1f }
+                .distinctBy { it.virtualCameraId }
+            if (sanitizedConfigs.isEmpty()) {
+                preferences.remove(ISZ_LENS_CONFIGS)
+            } else {
+                preferences[ISZ_LENS_CONFIGS] = IszLensConfig.serializeList(sanitizedConfigs)
+            }
         }
     }
 

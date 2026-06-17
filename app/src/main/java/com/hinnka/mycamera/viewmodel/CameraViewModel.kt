@@ -757,9 +757,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     var zoomRatioByMain by mutableFloatStateOf(1f)
     var isZooming by mutableStateOf(false)
     val globalMinZoom: Float
-        get() = state.value.availableCameras.filter { it.lensType != LensType.FRONT }.minOfOrNull { it.minZoom * it.intrinsicZoomRatio } ?: 1f
+        get() = state.value.availableCameras.filter { it.lensType != LensType.FRONT }.minOfOrNull { it.minZoom * it.displayIntrinsicZoomRatio } ?: 1f
     val globalMaxZoom: Float
-        get() = state.value.availableCameras.filter { it.lensType != LensType.FRONT }.maxOfOrNull { it.maxZoom * it.intrinsicZoomRatio } ?: 20f
+        get() = state.value.availableCameras.filter { it.lensType != LensType.FRONT }.maxOfOrNull { it.maxZoom * it.displayIntrinsicZoomRatio } ?: 20f
 
     // 付费弹窗状态
     var showPaymentDialog by mutableStateOf(false)
@@ -836,6 +836,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val hiddenFocalLengths: Flow<List<Float>> = userPreferencesRepository.userPreferences.map { it.hiddenFocalLengths }
     val customLensIds: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.customLensIds }
     val lensIdBlacklist: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.lensIdBlacklist }
+    val iszLensConfigs: Flow<List<IszLensConfig>> = userPreferencesRepository.userPreferences.map { it.iszLensConfigs }
     val preferredMainCameraId: Flow<String?> = userPreferencesRepository.userPreferences.map { it.preferredMainCameraId }
     val enableLogicalMultiCameraDiscovery: Flow<Boolean> =
         userPreferencesRepository.userPreferences.map { it.enableLogicalMultiCameraDiscovery }
@@ -2296,8 +2297,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun setCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?) {
-        val intrinsicZoomRatio = cameraInfo?.intrinsicZoomRatio ?: 1.0f
-        cameraController.setZoomRatio(ratio / intrinsicZoomRatio)
+        val displayIntrinsicZoomRatio = cameraInfo?.displayIntrinsicZoomRatio ?: 1.0f
+        cameraController.setZoomRatio(ratio / displayIntrinsicZoomRatio)
     }
 
     /**
@@ -3376,10 +3377,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // 添加各个镜头的固有变焦比例
         cameras.filter(filter).forEach { camera ->
-            if (camera.intrinsicZoomRatio > 0) {
+            val displayZoomRatio = camera.displayIntrinsicZoomRatio
+            if (displayZoomRatio > 0) {
                 // 避免添加极其接近的变焦倍率（例如 1.0 和 1.0006）
-                if (stops.none { abs(it - camera.intrinsicZoomRatio) < 0.01f }) {
-                    stops.add(camera.intrinsicZoomRatio)
+                if (stops.none { abs(it - displayZoomRatio) < 0.01f }) {
+                    stops.add(displayZoomRatio)
                 }
             }
         }
@@ -3446,7 +3448,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         mainCamera: CameraInfo,
         hiddenFocalLengths: List<Float> = emptyList()
     ) {
-        val mainZoom = mainCamera.intrinsicZoomRatio
+        val mainZoom = mainCamera.displayIntrinsicZoomRatio
         val hasSmallerLens = lensZoomStops.any { it < mainZoom - 0.01f }
         val minimumZoom = mainCamera.minZoom * mainZoom
 
@@ -3477,12 +3479,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameras.filter { if (currentLensType == LensType.FRONT) it.lensType == LensType.FRONT else (it.lensType != LensType.FRONT && it.lensType != LensType.BACK_MACRO) }
         if (zoomableCameras.isEmpty()) return null
         val candidates = zoomableCameras
-            .filter { it.intrinsicZoomRatio <= targetZoom + 0.01f }
-        val bestZoom = candidates.maxOfOrNull { it.intrinsicZoomRatio }
-            ?: zoomableCameras.minOfOrNull { it.intrinsicZoomRatio }
+            .filter { it.displayIntrinsicZoomRatio <= targetZoom + 0.01f }
+        val bestZoom = candidates.maxOfOrNull { it.displayIntrinsicZoomRatio }
+            ?: zoomableCameras.minOfOrNull { it.displayIntrinsicZoomRatio }
             ?: return null
-        val tiedCandidates = candidates.filter { abs(it.intrinsicZoomRatio - bestZoom) <= 0.01f }
-            .ifEmpty { zoomableCameras.filter { abs(it.intrinsicZoomRatio - bestZoom) <= 0.01f } }
+        val tiedCandidates = candidates.filter { abs(it.displayIntrinsicZoomRatio - bestZoom) <= 0.01f }
+            .ifEmpty { zoomableCameras.filter { abs(it.displayIntrinsicZoomRatio - bestZoom) <= 0.01f } }
         return tiedCandidates.firstOrNull { it.cameraId == currentCameraId }
             ?: tiedCandidates.firstOrNull()
     }
@@ -3706,6 +3708,41 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 .filter { it.isNotEmpty() }
                 .distinct()
             userPreferencesRepository.saveLensIdBlacklist(lensIds)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun addIszLensConfig(
+        baseCameraId: String,
+        iszZoomRatio: Float,
+        isMacro: Boolean,
+        settings: VendorCaptureSettings
+    ) {
+        viewModelScope.launch {
+            val normalizedBaseCameraId = baseCameraId.trim()
+            if (normalizedBaseCameraId.isEmpty() || iszZoomRatio < 1f) return@launch
+
+            val config = IszLensConfig(normalizedBaseCameraId, iszZoomRatio, isMacro)
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val updatedConfigs = (prefs.iszLensConfigs
+                .filterNot { it.virtualCameraId == config.virtualCameraId } + config)
+                .distinctBy { it.virtualCameraId }
+            userPreferencesRepository.saveIszLensConfigs(updatedConfigs)
+            userPreferencesRepository.saveVendorCaptureSettingsForLens(config.virtualCameraId, settings)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun removeIszLensConfig(config: IszLensConfig) {
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
+            val updatedConfigs = prefs.iszLensConfigs
+                .filterNot { it.virtualCameraId == config.virtualCameraId }
+            userPreferencesRepository.saveIszLensConfigs(updatedConfigs)
+            userPreferencesRepository.saveVendorCaptureSettingsForLens(
+                config.virtualCameraId,
+                VendorCaptureSettings.Empty
+            )
             cameraController.refreshCameraList()
         }
     }

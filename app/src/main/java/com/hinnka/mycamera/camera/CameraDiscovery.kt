@@ -67,8 +67,9 @@ class CameraDiscovery(private val context: Context) {
             preferredMainCameraId = preferredMainCameraId
         )
 
+        val iszVirtualCameras = createIszVirtualCameraCandidates(discoveredCameras.backCameras)
         val classifiedBackCameras = classifyBackCameras(
-            cameras = discoveredCameras.backCameras,
+            cameras = discoveredCameras.backCameras + iszVirtualCameras,
             preferredMainCameraId = preferredMainCameraId
         )
         cameras.addAll(classifiedBackCameras)
@@ -80,7 +81,11 @@ class CameraDiscovery(private val context: Context) {
 
         PLog.d(TAG, "Camera2 final list:")
         uniqueCameras.forEach { cam ->
-            PLog.d(TAG, "  - ${cam.cameraId}: ${cam.lensType}, intrinsicZoom=${cam.intrinsicZoomRatio}")
+            PLog.d(
+                TAG,
+                "  - ${cam.cameraId}: ${cam.lensType}, intrinsicZoom=${cam.intrinsicZoomRatio}, " +
+                        "displayZoom=${cam.displayIntrinsicZoomRatio}"
+            )
         }
 
         return uniqueCameras
@@ -461,6 +466,49 @@ class CameraDiscovery(private val context: Context) {
         }
     }
 
+    private fun createIszVirtualCameraCandidates(
+        baseCameras: List<CameraInfoWithZoom>
+    ): List<CameraInfoWithZoom> {
+        val configs = loadIszLensConfigs()
+        if (configs.isEmpty()) return emptyList()
+
+        val baseCameraById = baseCameras.associateBy { it.info.cameraId }
+        return configs.mapNotNull { config ->
+            val baseCamera = baseCameraById[config.baseCameraId]
+            if (baseCamera == null) {
+                PLog.w(TAG, "ISZ virtual lens skipped: base camera ${config.baseCameraId} is unavailable")
+                return@mapNotNull null
+            }
+
+            val displayZoomRatio = baseCamera.intrinsicZoomRatio * config.iszZoomRatio
+            val virtualInfo = baseCamera.info.copy(
+                cameraId = config.virtualCameraId,
+                logicalCameraId = baseCamera.info.getOpenCameraId(),
+                focalLength = baseCamera.info.focalLength * config.iszZoomRatio,
+                focalLength35mmEquivalent = baseCamera.info.focalLength35mmEquivalent * config.iszZoomRatio,
+                intrinsicZoomRatio = baseCamera.info.intrinsicZoomRatio,
+                displayIntrinsicZoomRatio = displayZoomRatio,
+                isCustomLensId = false,
+                isVirtualIszLens = true,
+                isVirtualIszMacroLens = config.isMacro,
+                baseCameraId = baseCamera.info.cameraId,
+                iszZoomRatio = config.iszZoomRatio
+            )
+
+            PLog.d(
+                TAG,
+                "Add ISZ virtual lens ${virtualInfo.cameraId}: base=${config.baseCameraId}, " +
+                        "apiIntrinsic=${virtualInfo.intrinsicZoomRatio}, displayZoom=$displayZoomRatio, " +
+                        "isMacro=${config.isMacro}"
+            )
+            CameraInfoWithZoom(
+                info = virtualInfo,
+                intrinsicZoomRatio = displayZoomRatio,
+                isMacro = config.isMacro
+            )
+        }
+    }
+
     private fun loadCustomLensIds(): List<String> {
         return try {
             runBlocking {
@@ -468,6 +516,17 @@ class CameraDiscovery(private val context: Context) {
             }
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to load custom lens IDs", e)
+            emptyList()
+        }
+    }
+
+    private fun loadIszLensConfigs(): List<IszLensConfig> {
+        return try {
+            runBlocking {
+                userPreferencesRepository.userPreferences.firstOrNull()?.iszLensConfigs ?: emptyList()
+            }
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to load ISZ lens configs", e)
             emptyList()
         }
     }
@@ -849,6 +908,9 @@ class CameraDiscovery(private val context: Context) {
             ?: return cameras
 
         return cameras.map { camera ->
+            if (camera.isMacro && camera.info.isVirtualIszMacroLens) {
+                return@map camera
+            }
             if (!camera.isMacro || !isSameFocalLength(getComparableFocalLength(camera), shortestFocalLength)) {
                 camera
             } else {
@@ -921,6 +983,8 @@ class CameraDiscovery(private val context: Context) {
     }
 
     private fun shouldReplaceSameFocalCamera(existing: CameraInfo, candidate: CameraInfo): Boolean {
+        if (!existing.isVirtualIszLens && candidate.isVirtualIszLens) return true
+        if (existing.isVirtualIszLens != candidate.isVirtualIszLens) return false
         if (!existing.isCustomLensId && candidate.isCustomLensId) return true
         if (existing.isCustomLensId != candidate.isCustomLensId) return false
 
@@ -959,6 +1023,8 @@ class CameraDiscovery(private val context: Context) {
     }
 
     private fun getOwnedPhysicalCameraIds(camera: CameraInfo): List<String> {
+        if (camera.isVirtualIszLens) return listOf(camera.cameraId)
+
         camera.outputPhysicalCameraId?.let { return listOf(it) }
 
         if (camera.logicalCameraId != null && camera.physicalCameras.isNotEmpty()) {

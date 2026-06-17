@@ -664,8 +664,16 @@ class Camera2Controller(private val context: Context) {
         PLog.d(TAG, "Discovered ${cameras.size} cameras:")
         PLog.d(TAG, "发现 ${cameras.size} 个摄像头")
         cameras.forEach { cam ->
-            PLog.d(TAG, "  - ${cam.cameraId}: ${cam.lensType}, intrinsicZoom=${cam.intrinsicZoomRatio}")
-            PLog.d(TAG, "摄像头: ${cam.cameraId}, 类型: ${cam.lensType}, 变焦: ${cam.intrinsicZoomRatio}")
+            PLog.d(
+                TAG,
+                "  - ${cam.cameraId}: ${cam.lensType}, intrinsicZoom=${cam.intrinsicZoomRatio}, " +
+                        "displayZoom=${cam.displayIntrinsicZoomRatio}"
+            )
+            PLog.d(
+                TAG,
+                "摄像头: ${cam.cameraId}, 类型: ${cam.lensType}, 变焦: ${cam.displayIntrinsicZoomRatio}, " +
+                        "提交倍率基准: ${cam.intrinsicZoomRatio}"
+            )
         }
 
         // 默认选择主摄
@@ -690,14 +698,19 @@ class Camera2Controller(private val context: Context) {
         discoverCameras(preferredCameraId = currentCameraId.takeIf { it.isNotEmpty() })
     }
 
+    private fun getCurrentOpenCameraId(): String {
+        val state = _state.value
+        return state.getCurrentCameraInfo()?.getOpenCameraId() ?: state.currentCameraId
+    }
+
     private fun refreshVideoCapabilities(characteristics: CameraCharacteristics? = null): Size {
-        val currentCameraId = _state.value.currentCameraId
-        if (currentCameraId.isEmpty()) {
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty()) {
             return _state.value.currentPreviewSize
         }
 
         val resolvedCharacteristics = try {
-            characteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(currentCameraId)
+            characteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to load video capabilities", e)
             return _state.value.currentPreviewSize
@@ -786,7 +799,7 @@ class Camera2Controller(private val context: Context) {
 
         try {
             try {
-                cachedCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
+                cachedCharacteristics = cameraManager.getCameraCharacteristics(openCameraId)
 
                 // 缓存固定属性（传感器方向、镜头朝向、硬件级别）
                 // 这些值在相机生命周期内不会改变，避免在每帧预览中重复获取
@@ -870,7 +883,7 @@ class Camera2Controller(private val context: Context) {
                 val resolvedVideoPreviewSize = refreshVideoCapabilities(cachedCharacteristics)
                 previewSize = when (captureMode) {
                     CaptureMode.VIDEO -> resolvedVideoPreviewSize
-                    CaptureMode.PHOTO -> CameraUtils.getFixedPreviewSize(context, cameraId, _state.value.aspectRatio)
+                    CaptureMode.PHOTO -> CameraUtils.getFixedPreviewSize(context, openCameraId, _state.value.aspectRatio)
                 }
                 surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
 
@@ -879,7 +892,7 @@ class Camera2Controller(private val context: Context) {
                 }
 
                 PLog.i(
-                    TAG, "Camera characteristics cached - ID: $cameraId, Level: $hardwareLevelName, " +
+                    TAG, "Camera characteristics cached - selected=$cameraId, open=$openCameraId, Level: $hardwareLevelName, " +
                             "ManualSensor: $isManualSensorSupported, ManualPost: $isManualPostProcessingSupported, " +
                             "RAW: $isRawSupported, P010: $isP010Supported, AF modes: ${availableAfModes.joinToString()}"
                 )
@@ -910,21 +923,21 @@ class Camera2Controller(private val context: Context) {
                 val aspectRatio = state.value.aspectRatio
                 val effectivelyUseRaw = state.value.useRaw && isRawSupported
                 val rawCaptureSize = if (effectivelyUseRaw) {
-                    CameraUtils.getRawCaptureSize(context, cameraId)
+                    CameraUtils.getRawCaptureSize(context, openCameraId)
                 } else {
                     null
                 }
                 val captureSize = if (rawCaptureSize != null) {
                     rawCaptureSize
                 } else if (effectivelyUseRaw) {
-                    PLog.w(TAG, "RAW requested for camera $cameraId but no RAW_SENSOR output size was reported")
+                    PLog.w(TAG, "RAW requested for camera $cameraId (open=$openCameraId) but no RAW_SENSOR output size was reported")
                     CameraUtils.getBestCaptureSize(
                         context,
-                        cameraId,
+                        openCameraId,
                         aspectRatio
                     )
                 } else {
-                    CameraUtils.getBestCaptureSize(context, cameraId, aspectRatio)
+                    CameraUtils.getBestCaptureSize(context, openCameraId, aspectRatio)
                 }
                 val forceStandardPhysicalOutput = outputPhysicalCameraId != null
                 val captureFormat = if (rawCaptureSize != null) {
@@ -1699,7 +1712,7 @@ class Camera2Controller(private val context: Context) {
             if (isCapture && state.captureMode == CaptureMode.PHOTO) {
                 try {
                     val characteristics =
-                        cachedCharacteristics ?: cameraManager.getCameraCharacteristics(state.currentCameraId)
+                        cachedCharacteristics ?: cameraManager.getCameraCharacteristics(getCurrentOpenCameraId())
                     val availableFpsRanges =
                         characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
                     val lowestFpsRange = availableFpsRanges?.minByOrNull { it.upper }
@@ -1974,11 +1987,11 @@ class Camera2Controller(private val context: Context) {
      * 应用变焦设置
      */
     private fun applyZoomSettings(builder: CaptureRequest.Builder, state: CameraState) {
-        val cameraId = state.currentCameraId
-        if (cameraId.isEmpty() || state.zoomRatio <= 1f) return
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty() || state.zoomRatio <= 1f) return
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
 
             val centerX = activeRect.width() / 2
@@ -2575,11 +2588,11 @@ class Camera2Controller(private val context: Context) {
      * 只有 FULL 或 LEVEL_3 级别的设备才支持 COLOR_CORRECTION_GAINS
      */
     private fun supportsManualWhiteBalance(): Boolean {
-        val cameraId = _state.value.currentCameraId
-        if (cameraId.isEmpty()) return false
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty()) return false
 
         return try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
             val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
 
             val isSupported =
@@ -2601,11 +2614,11 @@ class Camera2Controller(private val context: Context) {
      * 获取当前相机支持的 AWB 模式列表
      */
     private fun getSupportedAwbModes(): IntArray {
-        val cameraId = _state.value.currentCameraId
-        if (cameraId.isEmpty()) return intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty()) return intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
 
         return try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
             characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
                 ?: intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
         } catch (e: Exception) {
@@ -2973,11 +2986,11 @@ class Camera2Controller(private val context: Context) {
      * 注意：Camera2 的变焦通过 SCALER_CROP_REGION 实现
      */
     fun setZoomRatio(ratio: Float) {
-        val cameraId = _state.value.currentCameraId
-        if (cameraId.isEmpty()) return
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty()) return
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
@@ -3168,15 +3181,15 @@ class Camera2Controller(private val context: Context) {
         normY: Float,
         source: FocusPointSource = FocusPointSource.AI,
     ) {
-        val cameraId = _state.value.currentCameraId
-        if (cameraId.isEmpty()) return
+        val openCameraId = getCurrentOpenCameraId()
+        if (openCameraId.isEmpty()) return
 
         // 重置场景变化检测状态（新的对焦覆盖旧的）
         isFocusLockedWaitingForSceneChange = false
         sceneChangeFrameCount = 0
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
             val sensorOrientation = getSensorOrientation()
             val lensFacing = getLensFacing()
@@ -4096,7 +4109,7 @@ class Camera2Controller(private val context: Context) {
         longitude: Double? = null,
         effectiveCharacteristics: CameraCharacteristics? = null
     ): CaptureInfo {
-        val cameraId = _state.value.currentCameraId
+        val openCameraId = getCurrentOpenCameraId()
         val zoomRatio = _state.value.zoomRatio
 
         // 从 CameraCharacteristics 获取镜头固定信息
@@ -4105,7 +4118,7 @@ class Camera2Controller(private val context: Context) {
         var focalLength35mm: Int? = null
 
         try {
-            val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
 
             // 光圈值（取第一个可用光圈）
             val apertures = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
@@ -4135,7 +4148,7 @@ class Camera2Controller(private val context: Context) {
             focalLength = it * zoomRatio
             // 重新计算35mm等效焦距
             try {
-                val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(cameraId)
+                val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
                 focalLength35mm = calculate35mmEquivalent(characteristics)?.times(zoomRatio)?.roundToInt()
             } catch (e: Exception) {
                 // 忽略

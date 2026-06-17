@@ -99,7 +99,7 @@ fun ZoomControlBar(
                         camera.lensType != LensType.FRONT && camera.lensType != LensType.BACK_MACRO
                     }
             }
-            .map { it.intrinsicZoomRatio }
+            .map { it.displayIntrinsicZoomRatio }
     }
     val zoomStops = viewModel.allZoomStops(lensZoomStops, mainCamera, currentCamera, customFocalLengths, hiddenFocalLengths)
 
@@ -109,10 +109,10 @@ fun ZoomControlBar(
 
     val cameraState by viewModel.state.collectAsState()
     val minZoom = remember(cameraState.availableCameras) {
-        cameraState.availableCameras.filter { it.lensType != LensType.FRONT }.minOfOrNull { it.minZoom * it.intrinsicZoomRatio } ?: 1f
+        cameraState.availableCameras.filter { it.lensType != LensType.FRONT }.minOfOrNull { it.minZoom * it.displayIntrinsicZoomRatio } ?: 1f
     }
     val maxZoom = remember(cameraState.availableCameras) {
-        cameraState.availableCameras.filter { it.lensType != LensType.FRONT }.maxOfOrNull { it.maxZoom * it.intrinsicZoomRatio } ?: 20f
+        cameraState.availableCameras.filter { it.lensType != LensType.FRONT }.maxOfOrNull { it.maxZoom * it.displayIntrinsicZoomRatio } ?: 20f
     }
 
     var isContinuousZooming by remember { mutableStateOf(false) }

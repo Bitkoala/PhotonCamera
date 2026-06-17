@@ -171,10 +171,15 @@ data class CameraInfo(
     val focalLength35mmEquivalent: Float = 0f,  // 35mm等效焦距
     val zoomSteps: List<Float> = listOf(1f),  // 可用的变焦档位 (如 [0.5, 1.0, 2.0])
     val intrinsicZoomRatio: Float = 1f,  // 固有变焦比例 (CameraX 1.3.0+)
+    val displayIntrinsicZoomRatio: Float = intrinsicZoomRatio, // 用户可见固有倍率，ISZ 虚拟镜头会高于底层提交倍率
     val hardwareLevel: Int = -1,  // 硬件支持级别
     val supportsManualProcessing: Boolean = false, // 是否支持手动处理（关闭系统锐化/降噪）
     val supportsRaw: Boolean = false, // 是否支持 RAW 格式
     val isCustomLensId: Boolean = false, // 是否来自用户手动添加的镜头 ID
+    val isVirtualIszLens: Boolean = false, // 是否为用户创建的 ISZ 虚拟镜头
+    val isVirtualIszMacroLens: Boolean = false, // ISZ 虚拟镜头是否强制识别为微距
+    val baseCameraId: String? = null, // 虚拟镜头对应的真实物理镜头 ID
+    val iszZoomRatio: Float = 1f, // ISZ 虚拟倍率
     val minimumFocusDistance: Float = 0f // 最小对焦距离 (diopters, 0 = infinity only)
 ) {
     fun getOpenCameraId(): String = logicalCameraId ?: cameraId
