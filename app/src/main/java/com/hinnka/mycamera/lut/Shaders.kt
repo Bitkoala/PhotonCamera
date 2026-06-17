@@ -633,41 +633,7 @@ object Shaders {
         return dot(color, W);
     }
 
-    vec3 prepareToneSample(vec3 sampleColor) {
-        vec3 prepared = sampleColor;
-        if (uIsHlgInput) {
-            prepared = hlgToLinear(prepared);
-            prepared = linearToSrgb(prepared);
-        }
-        if (abs(uExposure) > 0.001) {
-            prepared = applyExposureInLinearSpace(prepared, uExposure);
-        }
-        return sanitizeColor(prepared);
-    }
-
-    vec3 sampleToneSource(vec2 uv) {
-        return prepareToneSample(texture(uCameraTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb);
-    }
-
-    vec3 shRgbToXyz(vec3 rgb) {
-        vec3 linearRgb = srgbToLinear(rgb);
-        return mat3(
-            0.4360747, 0.2225045, 0.0139322,
-            0.3850649, 0.7168786, 0.0971045,
-            0.1430804, 0.0606169, 0.7141733
-        ) * linearRgb;
-    }
-
-    vec3 shXyzToRgb(vec3 xyz) {
-        vec3 linearRgb = mat3(
-             3.1338561, -0.9787684,  0.0719453,
-            -1.6168667,  1.9161415, -0.2289914,
-            -0.4906146,  0.0334540,  1.4052427
-        ) * xyz;
-        return linearToSrgb(linearRgb);
-    }
-
-    ${ShadowsHighlightsShader.GLSL}
+    ${PreviewShadowsHighlightsShader.GLSL}
 
     float hash12(vec2 p) {
         vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -1096,8 +1062,8 @@ object Shaders {
                 color.rgb = sanitizeColor(color.rgb);
             }
 
-            // 2. 高光/阴影调整：RT 风格 tonal width + 局部 base mask，避免线性乘法洗白全图
-            color.rgb = applyShadowsHighlights(color.rgb, uvCoord);
+            // 2. 高光/阴影调整：预览使用轻量单像素版本，避免部分设备编译局部 Lab shader 卡死。
+            color.rgb = applyPreviewShadowsHighlights(color.rgb);
             color.rgb = sanitizeColor(color.rgb);
 
             // 计算基础亮度，后续复用
