@@ -109,6 +109,8 @@ object MeteringSystem {
         val compensatedP90: Float,
         val compensatedP99: Float,
         val baselineExposure: Float,
+        val baselineExposureScale: Float,
+        val autoExposureScale: Float,
         val targetLuma: Float,
         val meteringCompensationEv: Float,
         val midToneLuma: Float,
@@ -181,36 +183,49 @@ object MeteringSystem {
             logMax = stats.histogramLogMax
         )
 
-        val highlightAnchorGain = maxOf(1f, clipHigh) / clipHigh.coerceAtLeast(0.01f)
-        val midToneGain = targetLuma / midToneLuma.coerceAtLeast(LUMA_FLOOR)
-        val dynamicRangeGap = evDifference(clipHigh, clipLow)
+        val baselineExposureScale = exposureScaleFromEv(baselineExposure)
+        val meteringClipLow = (clipLow * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringP05 = (p05 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringP25 = (p25 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringP75 = (p75 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringP90 = (p90 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringP99 = (p99 * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringClipHigh = (clipHigh * baselineExposureScale).coerceIn(0f, MAX_LINEAR_LUMA)
+        val meteringMidToneLuma = (midToneLuma * baselineExposureScale).coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
+
+        val highlightAnchorGain = maxOf(1f, meteringClipHigh) / meteringClipHigh.coerceAtLeast(0.01f)
+        val midToneGain = targetLuma / meteringMidToneLuma.coerceAtLeast(LUMA_FLOOR)
+        val dynamicRangeGap = evDifference(meteringClipHigh, meteringClipLow)
         val extra = smoothStep(4f, 12f, dynamicRangeGap)
         val adaptiveGain = lerp(midToneGain * 1.2f, highlightAnchorGain * 1.1f, extra)
-        val rawMeteredEv = log2(adaptiveGain.coerceIn(0.25f, 4.0f))
-        val compensatedExposureScale = exp2(rawMeteredEv)
+        val autoExposureScale = adaptiveGain.coerceIn(0.25f, 4.0f)
+        val rawMeteredEv = log2(autoExposureScale)
+        val compensatedExposureScale = baselineExposureScale * autoExposureScale
 
         val sampleStep = calculateMertensToneSampleStep(stats.sampleCount)
         return GpuRawAutoExposurePlan(
             compensatedExposureScale = compensatedExposureScale,
             sampleStep = sampleStep,
-            clipLow = clipLow,
-            clipHigh = clipHigh,
-            p05 = p05,
-            p25 = p25,
-            p75 = p75,
-            p90 = p90,
-            p99 = p99,
-            compensatedClipLow = (clipLow * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedClipHigh = (clipHigh * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedP05 = (p05 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedP25 = (p25 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedP75 = (p75 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedP90 = (p90 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
-            compensatedP99 = (p99 * compensatedExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            clipLow = meteringClipLow,
+            clipHigh = meteringClipHigh,
+            p05 = meteringP05,
+            p25 = meteringP25,
+            p75 = meteringP75,
+            p90 = meteringP90,
+            p99 = meteringP99,
+            compensatedClipLow = (meteringClipLow * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedClipHigh = (meteringClipHigh * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedP05 = (meteringP05 * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedP25 = (meteringP25 * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedP75 = (meteringP75 * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedP90 = (meteringP90 * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
+            compensatedP99 = (meteringP99 * autoExposureScale).coerceIn(0f, MAX_LINEAR_LUMA),
             baselineExposure = baselineExposure,
+            baselineExposureScale = baselineExposureScale,
+            autoExposureScale = autoExposureScale,
             targetLuma = targetLuma,
             meteringCompensationEv = safeMeteringCompensationEv,
-            midToneLuma = midToneLuma,
+            midToneLuma = meteringMidToneLuma,
             midToneGain = midToneGain,
             highlightAnchorGain = highlightAnchorGain,
             adaptiveGain = adaptiveGain,
@@ -253,7 +268,8 @@ object MeteringSystem {
             TAG,
             "${plan.tag}: clipLow=${plan.clipLow} clipHigh=${plan.clipHigh} " +
                 "p05=${plan.p05} p25=${plan.p25} p75=${plan.p75} p90=${plan.p90} p99=${plan.p99} " +
-                "compScale=${plan.compensatedExposureScale} " +
+                "baselineScale=${plan.baselineExposureScale} autoScale=${plan.autoExposureScale} " +
+                "finalScale=${plan.compensatedExposureScale} " +
                 "compClipLow=${plan.compensatedClipLow} compClipHigh=${plan.compensatedClipHigh} " +
                 "compP05=${plan.compensatedP05} compP25=${plan.compensatedP25} " +
                 "compP75=${plan.compensatedP75} compP90=${plan.compensatedP90} compP99=${plan.compensatedP99} " +
@@ -467,6 +483,14 @@ object MeteringSystem {
 
     private fun exp2(value: Float): Float {
         return exp(value * ln(2.0)).toFloat()
+    }
+
+    private fun exposureScaleFromEv(ev: Float): Float {
+        return if (ev.isFinite()) {
+            exp2(ev.coerceIn(-MAX_METERING_COMPENSATION_EV, MAX_METERING_COMPENSATION_EV))
+        } else {
+            1f
+        }
     }
 
     private fun resolveDisplayTargetLuma(meteringCompensationEv: Float): Float {
