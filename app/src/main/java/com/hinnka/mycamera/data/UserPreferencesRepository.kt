@@ -555,13 +555,12 @@ class UserPreferencesRepository(private val context: Context) {
         if (value.isNullOrEmpty()) return emptyMap()
         return value.split(",")
             .mapNotNull { entry ->
-                val parts = entry.split(":")
-                if (parts.size == 2) {
-                    val cameraId = parts[0]
-                    val offset = parts[1].toIntOrNull()
-                    if (offset != null && offset in listOf(0, 90, 180, 270)) {
-                        cameraId to offset
-                    } else null
+                val separatorIndex = entry.lastIndexOf(":")
+                if (separatorIndex <= 0 || separatorIndex == entry.lastIndex) return@mapNotNull null
+                val cameraId = entry.substring(0, separatorIndex)
+                val offset = entry.substring(separatorIndex + 1).toIntOrNull()
+                if (offset != null && offset in listOf(0, 90, 180, 270)) {
+                    cameraId to offset
                 } else null
             }
             .toMap()
@@ -580,10 +579,9 @@ class UserPreferencesRepository(private val context: Context) {
         if (value.isNullOrEmpty()) return emptyMap()
         return value.split(",")
             .mapNotNull { entry ->
-                val parts = entry.split(":")
-                if (parts.size == 2) {
-                    parts[0] to parts[1]
-                } else null
+                val separatorIndex = entry.lastIndexOf(":")
+                if (separatorIndex <= 0 || separatorIndex == entry.lastIndex) return@mapNotNull null
+                entry.substring(0, separatorIndex) to entry.substring(separatorIndex + 1)
             }
             .toMap()
     }
@@ -596,13 +594,11 @@ class UserPreferencesRepository(private val context: Context) {
         if (value.isNullOrEmpty()) return emptyMap()
         return value.split(",")
             .mapNotNull { entry ->
-                val parts = entry.split(":")
-                if (parts.size == 2) {
-                    val floatValue = parts[1].toFloatOrNull()
-                    if (floatValue != null) {
-                        parts[0] to floatValue
-                    } else null
-                } else null
+                val separatorIndex = entry.lastIndexOf(":")
+                if (separatorIndex <= 0 || separatorIndex == entry.lastIndex) return@mapNotNull null
+                val key = entry.substring(0, separatorIndex)
+                val floatValue = entry.substring(separatorIndex + 1).toFloatOrNull()
+                if (floatValue != null) key to floatValue else null
             }
             .toMap()
     }
