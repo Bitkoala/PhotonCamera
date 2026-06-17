@@ -3,6 +3,7 @@ package com.hinnka.mycamera.processor
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.graphics.ImageFormat
+import android.media.Image
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
@@ -62,6 +63,10 @@ class GlesYuvStacker(
     private var curCbCrStaging = 0
     private var planarUStaging = 0
     private var planarVStaging = 0
+    private var planarUStagingWidth = 0
+    private var planarVStagingWidth = 0
+    private var planarStagingHeight = 0
+    private var planarStagingInternalFormat = 0
     private var kernelTexture = 0
     private var flowTexture = 0
     private var flowScratchTexture = 0
@@ -96,6 +101,10 @@ class GlesYuvStacker(
         }
         if (images.any { it.format != inputFormat }) {
             PLog.w(TAG, "Mixed YUV formats in one stack are not supported")
+            return null
+        }
+        if (images.any { it.width != width || it.height != height }) {
+            PLog.w(TAG, "Mixed YUV frame sizes in one stack are not supported")
             return null
         }
 
@@ -315,6 +324,9 @@ class GlesYuvStacker(
         val cbPlane = planes[1]
         val crPlane = planes[2]
 
+        if (!validateDirectPlaneUpload(yPlane, width, height, 1, "$label Y")) {
+            return false
+        }
         uploadTextureData(
             texture = yTexture,
             width = width,
@@ -327,44 +339,16 @@ class GlesYuvStacker(
         )
 
         return when (cbPlane.pixelStride) {
-            2 -> {
-                uploadTextureData(
-                    texture = cbCrTexture,
-                    width = chromaWidth,
-                    height = chromaHeight,
-                    format = GLES30.GL_RG,
-                    type = GLES30.GL_UNSIGNED_BYTE,
-                    rowLength = max(1, cbPlane.rowStride / 2),
-                    buffer = cbPlane.buffer,
-                    label = "$label CbCr",
-                )
-                true
-            }
-            1 -> {
-                ensurePlanarStaging(GLES30.GL_R8)
-                uploadTextureData(
-                    texture = planarUStaging,
-                    width = chromaWidth,
-                    height = chromaHeight,
-                    format = GLES30.GL_RED,
-                    type = GLES30.GL_UNSIGNED_BYTE,
-                    rowLength = cbPlane.rowStride,
-                    buffer = cbPlane.buffer,
-                    label = "$label Cb",
-                )
-                uploadTextureData(
-                    texture = planarVStaging,
-                    width = chromaWidth,
-                    height = chromaHeight,
-                    format = GLES30.GL_RED,
-                    type = GLES30.GL_UNSIGNED_BYTE,
-                    rowLength = crPlane.rowStride,
-                    buffer = crPlane.buffer,
-                    label = "$label Cr",
-                )
-                convertPlanarChroma8(cbCrTexture, label)
-                true
-            }
+            1, 2 -> uploadStridedChromaPlanes(
+                cbPlane = cbPlane,
+                crPlane = crPlane,
+                outputTexture = cbCrTexture,
+                sampleBytes = 1,
+                internalFormat = GLES30.GL_R8,
+                format = GLES30.GL_RED,
+                type = GLES30.GL_UNSIGNED_BYTE,
+                label = label,
+            )
             else -> {
                 PLog.w(TAG, "$label unsupported YUV_420_888 chroma pixelStride=${cbPlane.pixelStride}")
                 false
@@ -389,6 +373,9 @@ class GlesYuvStacker(
             PLog.w(TAG, "$label missing P010 staging textures")
             return false
         }
+        if (!validateDirectPlaneUpload(yPlane, width, height, 2, "$label P010 Y")) {
+            return false
+        }
 
         uploadTextureData(
             texture = yStagingTexture,
@@ -404,6 +391,18 @@ class GlesYuvStacker(
 
         return when (cbPlane.pixelStride) {
             4 -> {
+                if (!canUploadInterleavedChroma(cbPlane, sampleBytes = 2, channelCount = 2, "$label P010 CbCr")) {
+                    return uploadStridedChromaPlanes(
+                        cbPlane = cbPlane,
+                        crPlane = crPlane,
+                        outputTexture = cbCrTexture,
+                        sampleBytes = 2,
+                        internalFormat = GLES30.GL_R16UI,
+                        format = GLES30.GL_RED_INTEGER,
+                        type = GLES30.GL_UNSIGNED_SHORT,
+                        label = "$label P010",
+                    )
+                }
                 uploadTextureData(
                     texture = cbCrStagingTexture,
                     width = chromaWidth,
@@ -417,36 +416,205 @@ class GlesYuvStacker(
                 convertP010Chroma(cbCrStagingTexture, cbCrTexture, label)
                 true
             }
-            2 -> {
-                ensurePlanarStaging(GLES30.GL_R16UI)
-                uploadTextureData(
-                    texture = planarUStaging,
-                    width = chromaWidth,
-                    height = chromaHeight,
-                    format = GLES30.GL_RED_INTEGER,
-                    type = GLES30.GL_UNSIGNED_SHORT,
-                    rowLength = max(1, cbPlane.rowStride / 2),
-                    buffer = cbPlane.buffer,
-                    label = "$label P010 Cb",
-                )
-                uploadTextureData(
-                    texture = planarVStaging,
-                    width = chromaWidth,
-                    height = chromaHeight,
-                    format = GLES30.GL_RED_INTEGER,
-                    type = GLES30.GL_UNSIGNED_SHORT,
-                    rowLength = max(1, crPlane.rowStride / 2),
-                    buffer = crPlane.buffer,
-                    label = "$label P010 Cr",
-                )
-                convertPlanarChroma16(cbCrTexture, label)
-                true
-            }
+            2 -> uploadStridedChromaPlanes(
+                cbPlane = cbPlane,
+                crPlane = crPlane,
+                outputTexture = cbCrTexture,
+                sampleBytes = 2,
+                internalFormat = GLES30.GL_R16UI,
+                format = GLES30.GL_RED_INTEGER,
+                type = GLES30.GL_UNSIGNED_SHORT,
+                label = "$label P010",
+            )
             else -> {
                 PLog.w(TAG, "$label unsupported P010 chroma pixelStride=${cbPlane.pixelStride}")
                 false
             }
         }
+    }
+
+    private fun validateDirectPlaneUpload(
+        plane: Image.Plane,
+        planeWidth: Int,
+        planeHeight: Int,
+        sampleBytes: Int,
+        label: String,
+    ): Boolean {
+        if (plane.pixelStride != sampleBytes) {
+            PLog.w(TAG, "$label unsupported pixelStride=${plane.pixelStride}, expected=$sampleBytes")
+            return false
+        }
+        return validatePlaneBuffer(plane, planeWidth, planeHeight, sampleBytes, plane.pixelStride, label)
+    }
+
+    private fun canUploadInterleavedChroma(
+        plane: Image.Plane,
+        sampleBytes: Int,
+        channelCount: Int,
+        label: String,
+    ): Boolean {
+        val interleavedPixelBytes = sampleBytes * channelCount
+        if (plane.rowStride < chromaWidth * interleavedPixelBytes ||
+            plane.rowStride % interleavedPixelBytes != 0
+        ) {
+            PLog.w(
+                TAG,
+                "$label cannot use interleaved upload row=${plane.rowStride} pixel=${plane.pixelStride}"
+            )
+            return false
+        }
+        val requiredBytes = (chromaHeight - 1).toLong() * plane.rowStride +
+            chromaWidth.toLong() * interleavedPixelBytes
+        val availableBytes = plane.buffer.duplicate().apply { position(0) }.limit().toLong()
+        if (requiredBytes > availableBytes) {
+            PLog.w(
+                TAG,
+                "$label interleaved buffer too small required=$requiredBytes available=$availableBytes"
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun validatePlaneBuffer(
+        plane: Image.Plane,
+        planeWidth: Int,
+        planeHeight: Int,
+        sampleBytes: Int,
+        pixelStride: Int,
+        label: String,
+    ): Boolean {
+        if (planeWidth <= 0 || planeHeight <= 0 || sampleBytes <= 0) {
+            PLog.w(TAG, "$label invalid plane dimensions ${planeWidth}x$planeHeight sampleBytes=$sampleBytes")
+            return false
+        }
+        if (plane.rowStride <= 0 || pixelStride < sampleBytes) {
+            PLog.w(TAG, "$label invalid stride row=${plane.rowStride} pixel=$pixelStride sampleBytes=$sampleBytes")
+            return false
+        }
+        val requiredBytes = (planeHeight - 1).toLong() * plane.rowStride +
+            (planeWidth - 1).toLong() * pixelStride +
+            sampleBytes.toLong()
+        val availableBytes = plane.buffer.duplicate().apply { position(0) }.limit().toLong()
+        if (requiredBytes > availableBytes) {
+            PLog.w(
+                TAG,
+                "$label plane buffer too small required=$requiredBytes available=$availableBytes " +
+                    "row=${plane.rowStride} pixel=$pixelStride size=${planeWidth}x$planeHeight"
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun uploadStridedChromaPlanes(
+        cbPlane: Image.Plane,
+        crPlane: Image.Plane,
+        outputTexture: Int,
+        sampleBytes: Int,
+        internalFormat: Int,
+        format: Int,
+        type: Int,
+        label: String,
+    ): Boolean {
+        if (cbPlane.pixelStride % sampleBytes != 0 || crPlane.pixelStride % sampleBytes != 0) {
+            PLog.w(
+                TAG,
+                "$label unsupported chroma pixel stride cb=${cbPlane.pixelStride} cr=${crPlane.pixelStride} sampleBytes=$sampleBytes"
+            )
+            return false
+        }
+        val cbStep = cbPlane.pixelStride / sampleBytes
+        val crStep = crPlane.pixelStride / sampleBytes
+        val cbUploadWidth = (chromaWidth - 1) * cbStep + 1
+        val crUploadWidth = (chromaWidth - 1) * crStep + 1
+        if (!validatePlaneRowsUpload(cbPlane, cbUploadWidth, chromaHeight, sampleBytes, "$label Cb")) {
+            return false
+        }
+        if (!validatePlaneRowsUpload(crPlane, crUploadWidth, chromaHeight, sampleBytes, "$label Cr")) {
+            return false
+        }
+        if (!ensurePlanarStaging(internalFormat, cbUploadWidth, crUploadWidth, chromaHeight)) {
+            return false
+        }
+
+        uploadTextureData(
+            texture = planarUStaging,
+            width = cbUploadWidth,
+            height = chromaHeight,
+            format = format,
+            type = type,
+            rowLength = max(1, cbPlane.rowStride / sampleBytes),
+            buffer = cbPlane.buffer,
+            label = "$label Cb",
+        )
+        uploadTextureData(
+            texture = planarVStaging,
+            width = crUploadWidth,
+            height = chromaHeight,
+            format = format,
+            type = type,
+            rowLength = max(1, crPlane.rowStride / sampleBytes),
+            buffer = crPlane.buffer,
+            label = "$label Cr",
+        )
+        if (sampleBytes == 1) {
+            convertPlanarChroma8(outputTexture, label, cbStep, crStep, cbUploadWidth, crUploadWidth)
+        } else {
+            convertPlanarChroma16(outputTexture, label, cbStep, crStep, cbUploadWidth, crUploadWidth)
+        }
+        return true
+    }
+
+    private fun validatePlaneRowsUpload(
+        plane: Image.Plane,
+        uploadWidth: Int,
+        uploadHeight: Int,
+        sampleBytes: Int,
+        label: String,
+    ): Boolean {
+        if (plane.rowStride <= 0 || plane.rowStride % sampleBytes != 0 || uploadWidth <= 0 || uploadHeight <= 0) {
+            PLog.w(TAG, "$label invalid upload row=${plane.rowStride} width=$uploadWidth height=$uploadHeight")
+            return false
+        }
+        val rowLength = plane.rowStride / sampleBytes
+        if (uploadWidth > rowLength) {
+            PLog.w(TAG, "$label upload width=$uploadWidth exceeds rowLength=$rowLength")
+            return false
+        }
+        val requiredBytes = (uploadHeight - 1).toLong() * plane.rowStride +
+            uploadWidth.toLong() * sampleBytes
+        val availableBytes = plane.buffer.duplicate().apply { position(0) }.limit().toLong()
+        if (requiredBytes > availableBytes) {
+            PLog.w(TAG, "$label upload buffer too small required=$requiredBytes available=$availableBytes")
+            return false
+        }
+        return true
+    }
+
+    private fun ensurePlanarStaging(
+        internalFormat: Int,
+        cbTextureWidth: Int,
+        crTextureWidth: Int,
+        textureHeight: Int,
+    ): Boolean {
+        if (planarUStaging != 0 && planarVStaging != 0) {
+            val matches = planarStagingInternalFormat == internalFormat &&
+                planarUStagingWidth == cbTextureWidth &&
+                planarVStagingWidth == crTextureWidth &&
+                planarStagingHeight == textureHeight
+            if (!matches) {
+                PLog.w(TAG, "Changing GLES chroma staging layout in one stack is not supported")
+            }
+            return matches
+        }
+        planarUStaging = createTexture2D(cbTextureWidth, textureHeight, internalFormat, GLES30.GL_NEAREST)
+        planarVStaging = createTexture2D(crTextureWidth, textureHeight, internalFormat, GLES30.GL_NEAREST)
+        planarUStagingWidth = cbTextureWidth
+        planarVStagingWidth = crTextureWidth
+        planarStagingHeight = textureHeight
+        planarStagingInternalFormat = internalFormat
+        return true
     }
 
     private fun uploadTextureData(
@@ -480,14 +648,6 @@ class GlesYuvStacker(
         checkGlError("uploadTextureData $label")
     }
 
-    private fun ensurePlanarStaging(internalFormat: Int) {
-        if (planarUStaging != 0 && planarVStaging != 0) {
-            return
-        }
-        planarUStaging = createTexture2D(chromaWidth, chromaHeight, internalFormat, GLES30.GL_NEAREST)
-        planarVStaging = createTexture2D(chromaWidth, chromaHeight, internalFormat, GLES30.GL_NEAREST)
-    }
-
     private fun convertP010Luma(inputTexture: Int, outputTexture: Int, label: String) {
         bindFramebufferOutput(outputTexture, "convertP010Luma $label")
         GLES30.glViewport(0, 0, width, height)
@@ -508,24 +668,44 @@ class GlesYuvStacker(
         finishFramebufferPass("convertP010Chroma $label")
     }
 
-    private fun convertPlanarChroma8(outputTexture: Int, label: String) {
+    private fun convertPlanarChroma8(
+        outputTexture: Int,
+        label: String,
+        cbStep: Int,
+        crStep: Int,
+        cbTextureWidth: Int,
+        crTextureWidth: Int,
+    ) {
         bindFramebufferOutput(outputTexture, "convertPlanarChroma8 $label")
         GLES30.glViewport(0, 0, chromaWidth, chromaHeight)
         GLES30.glUseProgram(planarChroma8Program)
         bindTexture(planarChroma8Program, "uCb", 0, planarUStaging)
         bindTexture(planarChroma8Program, "uCr", 1, planarVStaging)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma8Program, "uSize"), chromaWidth, chromaHeight)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma8Program, "uCbSize"), cbTextureWidth, chromaHeight)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma8Program, "uCrSize"), crTextureWidth, chromaHeight)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(planarChroma8Program, "uCbStep"), cbStep)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(planarChroma8Program, "uCrStep"), crStep)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("convertPlanarChroma8 $label")
     }
 
-    private fun convertPlanarChroma16(outputTexture: Int, label: String) {
+    private fun convertPlanarChroma16(
+        outputTexture: Int,
+        label: String,
+        cbStep: Int,
+        crStep: Int,
+        cbTextureWidth: Int,
+        crTextureWidth: Int,
+    ) {
         bindFramebufferOutput(outputTexture, "convertPlanarChroma16 $label")
         GLES30.glViewport(0, 0, chromaWidth, chromaHeight)
         GLES30.glUseProgram(planarChroma16Program)
         bindTexture(planarChroma16Program, "uCb", 0, planarUStaging)
         bindTexture(planarChroma16Program, "uCr", 1, planarVStaging)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma16Program, "uSize"), chromaWidth, chromaHeight)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma16Program, "uCbSize"), cbTextureWidth, chromaHeight)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(planarChroma16Program, "uCrSize"), crTextureWidth, chromaHeight)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(planarChroma16Program, "uCbStep"), cbStep)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(planarChroma16Program, "uCrStep"), crStep)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("convertPlanarChroma16 $label")
     }
@@ -1054,12 +1234,17 @@ class GlesYuvStacker(
             precision highp float;
             uniform sampler2D uCb;
             uniform sampler2D uCr;
-            uniform ivec2 uSize;
+            uniform ivec2 uCbSize;
+            uniform ivec2 uCrSize;
+            uniform int uCbStep;
+            uniform int uCrStep;
             out vec2 outCbCr;
 
             void main() {
-                ivec2 p = clamp(ivec2(gl_FragCoord.xy), ivec2(0), uSize - ivec2(1));
-                outCbCr = vec2(texelFetch(uCb, p, 0).r, texelFetch(uCr, p, 0).r);
+                ivec2 p = ivec2(gl_FragCoord.xy);
+                ivec2 cbP = clamp(ivec2(p.x * uCbStep, p.y), ivec2(0), uCbSize - ivec2(1));
+                ivec2 crP = clamp(ivec2(p.x * uCrStep, p.y), ivec2(0), uCrSize - ivec2(1));
+                outCbCr = vec2(texelFetch(uCb, cbP, 0).r, texelFetch(uCr, crP, 0).r);
             }
         """.trimIndent()
 
@@ -1069,14 +1254,19 @@ class GlesYuvStacker(
             precision highp usampler2D;
             uniform usampler2D uCb;
             uniform usampler2D uCr;
-            uniform ivec2 uSize;
+            uniform ivec2 uCbSize;
+            uniform ivec2 uCrSize;
+            uniform int uCbStep;
+            uniform int uCrStep;
             out vec2 outCbCr;
 
             void main() {
-                ivec2 p = clamp(ivec2(gl_FragCoord.xy), ivec2(0), uSize - ivec2(1));
+                ivec2 p = ivec2(gl_FragCoord.xy);
+                ivec2 cbP = clamp(ivec2(p.x * uCbStep, p.y), ivec2(0), uCbSize - ivec2(1));
+                ivec2 crP = clamp(ivec2(p.x * uCrStep, p.y), ivec2(0), uCrSize - ivec2(1));
                 outCbCr = vec2(
-                    float(texelFetch(uCb, p, 0).r),
-                    float(texelFetch(uCr, p, 0).r)
+                    float(texelFetch(uCb, cbP, 0).r),
+                    float(texelFetch(uCr, crP, 0).r)
                 ) * (1.0 / 65535.0);
             }
         """.trimIndent()
