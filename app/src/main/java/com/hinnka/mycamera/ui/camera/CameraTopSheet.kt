@@ -425,25 +425,6 @@ fun CameraTopSheet(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                SectionLabel(title = stringResource(R.string.quick_shot_resolution_title))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val quickShotResolutions = quickShotCapabilities.availableResolutions
-                        .ifEmpty { listOf(quickShotResolution) }
-                    quickShotResolutions.forEach { resolution ->
-                        VideoOptionChip(
-                            title = quickShotResolutionLabel(resolution),
-                            selected = quickShotResolution == resolution,
-                            onClick = { onQuickShotResolutionChange(resolution) }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)

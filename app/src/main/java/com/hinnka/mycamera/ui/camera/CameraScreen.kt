@@ -1961,8 +1961,8 @@ private fun CaptureModeSwitcher(
         val knobWidth = 48.dp
         val knobOffset by animateDpAsState(
             targetValue = when (captureMode) {
-                CaptureMode.PHOTO -> 0.dp
-                CaptureMode.QUICK_SHOT -> 48.dp
+                CaptureMode.QUICK_SHOT -> 0.dp
+                CaptureMode.PHOTO -> 48.dp
                 CaptureMode.VIDEO -> 96.dp
             },
             animationSpec = tween(durationMillis = 220),
@@ -1981,19 +1981,19 @@ private fun CaptureModeSwitcher(
             verticalAlignment = Alignment.CenterVertically
         ) {
             ModeSwitcherItem(
-                icon = Icons.Default.CameraAlt,
-                selected = captureMode == CaptureMode.PHOTO,
-                enabled = enabled,
-                contentDescription = stringResource(R.string.capture_mode_photo),
-                onClick = { onModeSelected(CaptureMode.PHOTO) },
-                modifier = Modifier.weight(1f)
-            )
-            ModeSwitcherItem(
                 icon = Icons.Default.Bolt,
                 selected = captureMode == CaptureMode.QUICK_SHOT,
                 enabled = enabled,
                 contentDescription = stringResource(R.string.capture_mode_quick_shot),
                 onClick = { onModeSelected(CaptureMode.QUICK_SHOT) },
+                modifier = Modifier.weight(1f)
+            )
+            ModeSwitcherItem(
+                icon = Icons.Default.CameraAlt,
+                selected = captureMode == CaptureMode.PHOTO,
+                enabled = enabled,
+                contentDescription = stringResource(R.string.capture_mode_photo),
+                onClick = { onModeSelected(CaptureMode.PHOTO) },
                 modifier = Modifier.weight(1f)
             )
             ModeSwitcherItem(

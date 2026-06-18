@@ -202,27 +202,9 @@ private fun QuickShotTopBar(
             )
         }
 
-        IconButton(onClick = onTimerToggle) {
-            if (timerSeconds > 0) {
-                Text(
-                    text = "${timerSeconds}s",
-                    color = Color.Yellow,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.autoRotate()
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Timer,
-                    contentDescription = stringResource(R.string.timer),
-                    modifier = Modifier.size(20.dp).autoRotate(),
-                    tint = Color.White
-                )
-            }
-        }
-
         IconButton(
             onClick = onQuickShotResolutionClick,
+            modifier = Modifier.size(64.dp, 48.dp),
             enabled = quickShotCapabilities.availableResolutions.size > 1
         ) {
             Text(

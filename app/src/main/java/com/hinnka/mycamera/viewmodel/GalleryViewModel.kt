@@ -1486,7 +1486,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         }
                     }
                     val sourceUri = metadata?.sourceUri
-                    if (metadata?.mediaType == MediaType.VIDEO && metadata.isImported != true && !sourceUri.isNullOrBlank()) {
+                    val shouldDeleteSourceUri = metadata != null &&
+                        !metadata.isImported &&
+                        !sourceUri.isNullOrBlank() &&
+                        (metadata.mediaType == MediaType.VIDEO || metadata.captureMode == "quick_shot")
+                    if (shouldDeleteSourceUri) {
                         try {
                             allExportedUris.add(sourceUri.toUri())
                         } catch (e: Exception) {
@@ -2399,11 +2403,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 val isSystem = selectedTab == GalleryTab.SYSTEM
+                val sourceBackedUri = photo.sourceUri ?: finalMetadata.sourceUri?.toUri()
+                val canLoadExternalUri = isSystem || sourceBackedUri != null
+                val externalUri = sourceBackedUri ?: photo.uri
 
                 // 2. 原始底图缓存（按 maxEdge 加载，快速预览走小尺寸，正式预览走高分辨率）
                 val currentBitmap = bitmap ?: if (showOrigin) {
                     GalleryManager.loadOriginalBitmap(context, photo.id, maxEdge, isSystem)
-                        ?: if (isSystem) GalleryManager.loadBitmap(context, photo.uri, maxEdge, isSystem) else null
+                        ?: if (canLoadExternalUri) GalleryManager.loadBitmap(context, externalUri, maxEdge, isSystem) else null
                 } else {
                     val bokehFile = GalleryManager.getBokehFile(context, photo.id)
                     when {
@@ -2414,7 +2421,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             maxEdge
                         )
                         else -> GalleryManager.loadOriginalBitmap(context, photo.id, maxEdge)
-                    } ?: if (isSystem) GalleryManager.loadBitmap(context, photo.uri, maxEdge) else null
+                    } ?: if (canLoadExternalUri) GalleryManager.loadBitmap(context, externalUri, maxEdge, isSystem) else null
                 } ?: return@withContext null
 
                 // 只在全分辨率路径下缓存原始底图（避免低分辨率污染 origin 缓存）

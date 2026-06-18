@@ -6,6 +6,7 @@ import android.graphics.ColorSpace
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Environment
+import android.provider.OpenableColumns
 import androidx.core.net.toUri
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.gallery.GalleryManager
@@ -163,6 +164,11 @@ object GalleryMediaStore {
         val dngFile = File(photoDir, DNG_FILE)
         val yuvFile = File(photoDir, YUV_FILE)
         val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
+        val sourceOnlySize = if (!photoFile.exists()) {
+            metadata.sourceUri?.let { runCatching { queryContentSize(context, Uri.parse(it)) }.getOrNull() } ?: 0L
+        } else {
+            0L
+        }
         val isVideo = metadata.mediaType == MediaType.VIDEO
         val dateAdded = if (isVideo) {
             photoDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
@@ -175,7 +181,7 @@ object GalleryMediaStore {
             id = photoId,
             mediaType = metadata.mediaType.name,
             dateAdded = dateAdded,
-            size = if (photoFile.exists()) photoFile.length() else 0L,
+            size = if (photoFile.exists()) photoFile.length() else sourceOnlySize,
             photoPath = photoFile.absolutePath,
             thumbnailPath = thumbnailFile.absolutePath,
             videoPath = videoFile.absolutePath,
@@ -308,7 +314,24 @@ object GalleryMediaStore {
             )
         }
 
-        if (!photoFile.exists()) return null
+        if (!photoFile.exists()) {
+            val resolvedSourceUri = sourceUri?.let(Uri::parse) ?: return null
+            return MediaData(
+                id = id,
+                uri = resolvedSourceUri,
+                thumbnailUri = thumbnailUri,
+                displayName = resolvedSourceUri.lastPathSegment ?: "image_$id",
+                dateAdded = dateAdded,
+                size = size,
+                width = width,
+                height = height,
+                mediaType = MediaType.IMAGE,
+                mimeType = mimeType ?: "image/jpeg",
+                sourceUri = resolvedSourceUri,
+                isBurstPhoto = hasBurstPhotos(photoDir),
+                metadata = metadata
+            )
+        }
         val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
         return MediaData(
             id = id,
@@ -430,5 +453,17 @@ object GalleryMediaStore {
     private fun hasBurstPhotos(photoDir: File): Boolean {
         val burstDir = File(photoDir, BURST_DIR)
         return burstDir.exists() && (burstDir.listFiles()?.isNotEmpty() == true)
+    }
+
+    private fun queryContentSize(context: Context, uri: Uri): Long {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (sizeColumn >= 0 && cursor.moveToFirst()) {
+                return cursor.getLong(sizeColumn)
+            }
+        }
+        return context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            descriptor.statSize
+        } ?: 0L
     }
 }

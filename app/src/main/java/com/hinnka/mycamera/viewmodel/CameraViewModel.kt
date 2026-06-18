@@ -4231,6 +4231,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 exposureBias = currentState.exposureBias,
             )
             val spectralFilmSettings = resolveRawSpectralFilmSettings(userPrefs)
+            val captureInfo = cameraController.rebuildCaptureInfo(
+                result = null,
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                latitude = currentState.latitude,
+                longitude = currentState.longitude
+            )
+            val computationalAperture = if (currentState.isVirtualApertureEnabled) {
+                currentState.virtualAperture
+            } else {
+                null
+            }
 
             val metadata = MediaMetadata(
                 lutId = if (storeRenderedLookMetadata) currentLutId.value else null,
@@ -4265,17 +4277,43 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 height = bitmap.height,
                 ratio = ratio,
                 rotation = 0,
-                deviceModel = Build.MODEL,
-                brand = Build.MANUFACTURER,
-                dateTaken = System.currentTimeMillis(),
-                latitude = currentState.latitude,
-                longitude = currentState.longitude,
+                deviceModel = captureInfo.model,
+                brand = captureInfo.make,
+                dateTaken = captureInfo.captureTime,
+                latitude = captureInfo.latitude,
+                longitude = captureInfo.longitude,
+                altitude = captureInfo.altitude,
+                iso = captureInfo.iso,
+                shutterSpeed = captureInfo.formatExposureTime(),
+                focalLength = captureInfo.formatFocalLength(),
+                focalLength35mm = captureInfo.formatFocalLength35mm(),
+                aperture = captureInfo.formatAperture(),
                 exposureBias = currentState.exposureBias,
                 droMode = droMode.value,
                 isMirrored = shouldMirror,
+                colorSpace = captureInfo.colorSpace,
                 dynamicRangeProfile = currentState.currentDynamicRangeProfile,
+                computationalAperture = computationalAperture,
+                focusPointX = currentState.focusPoint?.first,
+                focusPointY = currentState.focusPoint?.second,
                 captureMode = metadataCaptureMode
             )
+
+            if (metadataCaptureMode == "quick_shot") {
+                val photoId = GalleryManager.saveQuickShotBitmapToSystemGallery(
+                    context = context,
+                    metadata = metadata,
+                    bitmap = bitmap,
+                    photoQuality = photoQualityValue
+                )
+                if (photoId == null) {
+                    PLog.e(TAG, "Failed to save quick-shot bitmap capture to system gallery")
+                    return
+                }
+                PLog.d(TAG, "Quick-shot bitmap capture saved to system gallery: $photoId")
+                _imageSavedEvent.emit(Unit)
+                return
+            }
 
             val photoId = GalleryManager.preparePhoto(
                 context,
@@ -4330,6 +4368,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 isRawCapture = false,
                 exposureBias = currentState.exposureBias,
             )
+            val captureInfo = cameraController.rebuildCaptureInfo(
+                result = null,
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                latitude = currentState.latitude,
+                longitude = currentState.longitude
+            )
+            val computationalAperture = if (currentState.isVirtualApertureEnabled) {
+                currentState.virtualAperture
+            } else {
+                null
+            }
 
             if (GalleryManager.loadMetadata(context, photoId) == null) {
                 val metadata = MediaMetadata(
@@ -4365,15 +4415,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     height = bitmap.height,
                     ratio = currentState.aspectRatio,
                     rotation = 0,
-                    deviceModel = Build.MODEL,
-                    brand = Build.MANUFACTURER,
-                    dateTaken = System.currentTimeMillis(),
-                    latitude = currentState.latitude,
-                    longitude = currentState.longitude,
+                    deviceModel = captureInfo.model,
+                    brand = captureInfo.make,
+                    dateTaken = captureInfo.captureTime,
+                    latitude = captureInfo.latitude,
+                    longitude = captureInfo.longitude,
+                    altitude = captureInfo.altitude,
+                    iso = captureInfo.iso,
+                    shutterSpeed = captureInfo.formatExposureTime(),
+                    focalLength = captureInfo.formatFocalLength(),
+                    focalLength35mm = captureInfo.formatFocalLength35mm(),
+                    aperture = captureInfo.formatAperture(),
                     exposureBias = currentState.exposureBias,
                     droMode = droMode.value,
                     isMirrored = shouldMirror,
+                    colorSpace = captureInfo.colorSpace,
                     dynamicRangeProfile = currentState.currentDynamicRangeProfile,
+                    computationalAperture = computationalAperture,
+                    focusPointX = currentState.focusPoint?.first,
+                    focusPointY = currentState.focusPoint?.second,
                     captureMode = "quick_shot"
                 )
 

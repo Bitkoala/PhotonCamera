@@ -1025,6 +1025,109 @@ object GalleryManager {
         }
     }
 
+    suspend fun saveQuickShotBitmapToSystemGallery(
+        context: Context,
+        metadata: MediaMetadata,
+        bitmap: Bitmap,
+        photoQuality: Int,
+        photoId: String = UUID.randomUUID().toString()
+    ): String? = withContext(Dispatchers.IO) {
+        val date = metadata.dateTaken ?: System.currentTimeMillis()
+        val baseFilename = "PhotonCamera_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(date))}"
+        val photoDir = getPhotoDir(context, photoId, true)
+        var exportedUri: Uri? = null
+        var tempFile: File? = null
+        try {
+            val shouldPreferHeic = ContentRepository.getInstance(context)
+                .userPreferencesRepository
+                .userPreferences
+                .firstOrNull()
+                ?.useHeicExport ?: false
+            val captureInfo = metadata.toCaptureInfo().copy(
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height
+            )
+
+            var extension = "jpg"
+            var mimeType = "image/jpeg"
+            var encodedFile: File? = null
+            if (shouldPreferHeic) {
+                val heicFile = File(context.cacheDir, "temp_quick_shot_${System.nanoTime()}.${HeicExportEncoder.EXTENSION}")
+                val exifData = ExifWriter.buildExifBlock(context.cacheDir, captureInfo)
+                val heicSaved = exifData != null && HeicExportEncoder.write(
+                    bitmap = bitmap,
+                    outputFile = heicFile,
+                    quality = photoQuality,
+                    exifData = exifData
+                )
+                if (heicSaved) {
+                    extension = HeicExportEncoder.EXTENSION
+                    mimeType = HeicExportEncoder.MIME_TYPE
+                    encodedFile = heicFile
+                } else {
+                    heicFile.delete()
+                    PLog.w(TAG, "Quick-shot HEIC save failed or unsupported, falling back to JPEG")
+                }
+            }
+
+            if (encodedFile == null) {
+                val jpegFile = File(context.cacheDir, "temp_quick_shot_${System.nanoTime()}.jpg")
+                FileOutputStream(jpegFile).use { outputStream ->
+                    writeFinalJpeg(bitmap, outputStream, photoQuality)
+                }
+                ExifWriter.writeExif(jpegFile, captureInfo)
+                encodedFile = jpegFile
+            }
+            tempFile = encodedFile
+            val filename = "$baseFilename.$extension"
+
+            val destination = resolvePhotoExportDestination(context)
+            exportedUri = exportFileToConfiguredPhotoStorage(
+                context = context,
+                destination = destination,
+                collectionUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                displayName = filename,
+                mimeType = mimeType,
+                sourceFile = encodedFile
+            )
+            val uri = exportedUri ?: run {
+                photoDir.deleteRecursively()
+                return@withContext null
+            }
+
+            generateThumbnail(bitmap, getThumbnailFile(context, photoId))
+            val savedMetadata = metadata.copy(
+                mediaType = MediaType.IMAGE,
+                sourceUri = uri.toString(),
+                exportedUris = emptyList(),
+                mimeType = mimeType,
+                width = bitmap.width,
+                height = bitmap.height,
+                captureMode = metadata.captureMode ?: "quick_shot"
+            )
+            val metadataSaved = saveMetadata(context, photoId, savedMetadata)
+            if (!metadataSaved) {
+                discardPhotoExportUri(context, uri)
+                photoDir.deleteRecursively()
+                return@withContext null
+            }
+            photoDir.setLastModified(date)
+            notifyPhotoLibraryChanged()
+            PLog.d(
+                TAG,
+                "Quick-shot bitmap saved directly to system gallery: $uri, photoId=$photoId, mimeType=$mimeType"
+            )
+            photoId
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to save quick-shot bitmap to system gallery", e)
+            exportedUri?.let { discardPhotoExportUri(context, it) }
+            photoDir.deleteRecursively()
+            null
+        } finally {
+            tempFile?.delete()
+        }
+    }
+
     private suspend fun exportEncodedPhotoToMediaStore(
         context: Context,
         id: String,
@@ -3251,7 +3354,11 @@ object GalleryManager {
         return buildList {
             addAll(metadata?.exportedUris ?: emptyList())
             val sourceUri = metadata?.sourceUri
-            if (metadata?.mediaType == MediaType.VIDEO && metadata.isImported != true && !sourceUri.isNullOrBlank()) {
+            val shouldDeleteSourceUri = metadata != null &&
+                !metadata.isImported &&
+                !sourceUri.isNullOrBlank() &&
+                (metadata.mediaType == MediaType.VIDEO || metadata.captureMode == "quick_shot")
+            if (shouldDeleteSourceUri) {
                 add(sourceUri)
             }
         }
