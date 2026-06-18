@@ -1290,18 +1290,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             deletePendingIntent = pendingIntent
             PLog.d(TAG, "Set delete pending intent for photo ${photo.id}")
         } else {
-            // 没有导出的照片，直接删除应用内照片
-            deletePhotoOnlyInternal(photo)
+            // 没有需要系统确认的 MediaStore 项，直接删除 SAF 导出文件和应用内照片
+            deletePhotoOnlyInternal(photo, deleteExportedDocuments = true)
         }
     }
 
     /**
      * 仅删除应用内部照片（不删除系统相册）
      */
-    private fun deletePhotoOnlyInternal(photo: MediaData) {
+    private fun deletePhotoOnlyInternal(
+        photo: MediaData,
+        deleteExportedDocuments: Boolean = false
+    ) {
         viewModelScope.launch {
             val context = getApplication<Application>()
             val success = withContext(Dispatchers.IO) {
+                if (deleteExportedDocuments) {
+                    GalleryManager.deleteExportedDocumentUris(context, photo.id)
+                }
                 GalleryManager.deletePhotoOnly(context, photo.id)
             }
             if (success) {
@@ -1344,6 +1350,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val context = getApplication<Application>()
             val success = withContext(Dispatchers.IO) {
+                GalleryManager.deleteExportedDocumentUris(context, photo.id)
                 GalleryManager.deletePhotoOnly(context, photo.id)
             }
             if (success) {
@@ -1489,22 +1496,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
 
-            val validExportedUris = allExportedUris.filter { it.scheme == "content" }
-
-            if (validExportedUris.isNotEmpty()) {
-                // 有导出的照片，需要用户确认
-                try {
-                    val pendingIntent = MediaStore.createDeleteRequest(
-                        context.contentResolver,
-                        validExportedUris
-                    )
+            if (allExportedUris.isNotEmpty()) {
+                // MediaStore 导出项需要系统确认；SAF 文档会在最终删除时直接处理
+                val pendingIntent = GalleryManager.createDeleteRequest(context, allExportedUris)
+                if (pendingIntent != null) {
                     pendingDeletePhotos = toDelete
                     batchDeletePendingIntent = pendingIntent
                     PLog.d(TAG, "Set batch delete pending intent for ${toDelete.size} photos")
-                } catch (e: Exception) {
-                    PLog.w(TAG, "Failed to create batch delete request", e)
-                    // 创建请求失败，直接删除应用内照片
-                    deleteBatchPhotosOnlyInternal(toDelete)
+                } else {
+                    // 没有需要系统确认的 MediaStore 项，直接删除应用内照片
+                    deleteBatchPhotosOnlyInternal(toDelete, deleteExportedDocuments = true)
                 }
             } else {
                 // 没有导出的照片，直接删除应用内照片
@@ -1516,7 +1517,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /**
      * 仅删除应用内部照片（批量，不删除系统相册）
      */
-    private fun deleteBatchPhotosOnlyInternal(photos: List<MediaData>) {
+    private fun deleteBatchPhotosOnlyInternal(
+        photos: List<MediaData>,
+        deleteExportedDocuments: Boolean = false
+    ) {
         viewModelScope.launch {
             val context = getApplication<Application>()
             var deletedCount = 0
@@ -1524,6 +1528,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
             withContext(Dispatchers.IO) {
                 photos.forEach { photo ->
+                    if (deleteExportedDocuments) {
+                        GalleryManager.deleteExportedDocumentUris(context, photo.id)
+                    }
                     val success = GalleryManager.deletePhotoOnly(context, photo.id)
                     if (success) {
                         deletedCount++
@@ -1568,6 +1575,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
                 withContext(Dispatchers.IO) {
                     photos.forEach { photo ->
+                        GalleryManager.deleteExportedDocumentUris(context, photo.id)
                         val success = GalleryManager.deletePhotoOnly(context, photo.id)
                         if (success) {
                             deletedCount++

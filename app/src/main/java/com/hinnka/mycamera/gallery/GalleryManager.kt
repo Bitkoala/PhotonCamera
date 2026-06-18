@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.gallery
 
 import android.app.PendingIntent
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.*
@@ -15,6 +16,7 @@ import android.provider.MediaStore
 import androidx.core.graphics.createBitmap
 import androidx.exifinterface.media.ExifInterface
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.HdrBracketConfig
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.gallery.db.GalleryMediaStore
 import com.hinnka.mycamera.hdr.GainmapResult
@@ -89,11 +91,9 @@ object GalleryManager {
     private const val DETAIL_HDR_FILE = "detail_hdr.jpg"
     private const val MULTIPLE_EXPOSURE_DIR = "multiple_exposure_sessions"
     private const val MULTIPLE_EXPOSURE_PREVIEW_FILE = "preview.jpg"
-    private const val RAW_HDR_DNG_BASELINE_EXPOSURE_EV_FALLBACK = 2.0f
     private const val HDR_BRACKET_ZERO_INDEX = 0
     private const val HDR_BRACKET_HIGH_INDEX = 1
     private const val HDR_BRACKET_LOW_INDEX = 2
-    private const val HDR_BRACKET_SIDE_EV = 2.0
 
     private data class HdrBracketFrameSet<T>(
         val zeroEvFrames: List<T>,
@@ -1930,9 +1930,10 @@ object GalleryManager {
     }
 
     private fun fallbackHdrExposureProduct(index: Int): Float {
+        val sideEv = HdrBracketConfig.SIDE_EV.toDouble()
         return when {
-            index == HDR_BRACKET_HIGH_INDEX -> Math.pow(2.0, HDR_BRACKET_SIDE_EV).toFloat()
-            index == HDR_BRACKET_LOW_INDEX -> Math.pow(2.0, -HDR_BRACKET_SIDE_EV).toFloat()
+            index == HDR_BRACKET_HIGH_INDEX -> Math.pow(2.0, sideEv).toFloat()
+            index == HDR_BRACKET_LOW_INDEX -> Math.pow(2.0, -sideEv).toFloat()
             else -> 1f
         }
     }
@@ -2643,13 +2644,13 @@ object GalleryManager {
     ): Float {
         val referenceProduct = rawExposureProduct(referenceResult)
             .takeIf { it.isFinite() && it > 0.0 }
-            ?: return RAW_HDR_DNG_BASELINE_EXPOSURE_EV_FALLBACK
+            ?: return HdrBracketConfig.SIDE_EV
         val baseProduct = captureResults
             .mapNotNull { result ->
                 rawExposureProduct(result).takeIf { it.isFinite() && it > 0.0 }
             }
             .minOrNull()
-            ?: return RAW_HDR_DNG_BASELINE_EXPOSURE_EV_FALLBACK
+            ?: return HdrBracketConfig.SIDE_EV
         val baselineExposureEv = if (baseProduct < referenceProduct) {
             (ln(referenceProduct / baseProduct) / ln(2.0)).toFloat()
         } else {
@@ -3176,6 +3177,122 @@ object GalleryManager {
         }
     }
 
+    private fun isMediaStoreItemUri(uri: Uri): Boolean {
+        if (uri.scheme != "content" || uri.authority != MediaStore.AUTHORITY) return false
+        return runCatching {
+            ContentUris.parseId(uri)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun deleteDocumentExportUri(context: Context, uri: Uri): Boolean {
+        return runCatching {
+            DocumentsContract.deleteDocument(context.contentResolver, uri)
+        }.onSuccess { deleted ->
+            if (deleted) {
+                PLog.d(TAG, "Deleted exported document URI: $uri")
+            } else {
+                PLog.w(TAG, "Document provider refused to delete exported URI: $uri")
+            }
+        }.onFailure { e ->
+            PLog.e(TAG, "Failed to delete exported document URI: $uri", e)
+        }.getOrDefault(false)
+    }
+
+    private fun collectExportedDeleteUriStrings(metadata: MediaMetadata?): List<String> {
+        return buildList {
+            addAll(metadata?.exportedUris ?: emptyList())
+            val sourceUri = metadata?.sourceUri
+            if (metadata?.mediaType == MediaType.VIDEO && metadata.isImported != true && !sourceUri.isNullOrBlank()) {
+                add(sourceUri)
+            }
+        }
+    }
+
+    private fun parseDeleteUris(uriStrings: Collection<String>, logContext: String): List<Uri> {
+        return uriStrings.mapNotNull { uriString ->
+            try {
+                Uri.parse(uriString)
+            } catch (e: Exception) {
+                PLog.e(TAG, "Invalid delete URI for $logContext: $uriString", e)
+                null
+            }
+        }
+    }
+
+    private fun deleteDocumentExportUris(
+        context: Context,
+        uris: Collection<Uri>,
+        logContext: String
+    ): Int {
+        var deletedCount = 0
+        uris.distinctBy { it.toString() }.forEach { uri ->
+            if (uri.scheme == "content" &&
+                !isMediaStoreItemUri(uri) &&
+                DocumentsContract.isDocumentUri(context, uri)
+            ) {
+                if (deleteDocumentExportUri(context, uri)) {
+                    deletedCount++
+                }
+            }
+        }
+        if (deletedCount > 0) {
+            PLog.d(TAG, "Deleted $deletedCount exported document URIs for $logContext")
+        }
+        return deletedCount
+    }
+
+    private fun createMediaStoreDeleteRequest(
+        context: Context,
+        uris: Collection<Uri>,
+        logContext: String
+    ): PendingIntent? {
+        if (uris.isEmpty()) return null
+
+        val mediaStoreUris = mutableListOf<Uri>()
+        uris.distinctBy { it.toString() }.forEach { uri ->
+            when {
+                isMediaStoreItemUri(uri) -> mediaStoreUris.add(uri)
+                uri.scheme == "content" && DocumentsContract.isDocumentUri(context, uri) -> {
+                    PLog.d(TAG, "Skipping document URI in MediaStore delete request for $logContext: $uri")
+                }
+                uri.scheme == "content" -> {
+                    PLog.w(TAG, "Ignoring non-MediaStore delete URI for $logContext: $uri")
+                }
+                else -> {
+                    PLog.w(TAG, "Ignoring non-content delete URI for $logContext: $uri")
+                }
+            }
+        }
+
+        if (mediaStoreUris.isEmpty()) {
+            return null
+        }
+
+        return try {
+            MediaStore.createDeleteRequest(context.contentResolver, mediaStoreUris)
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to create MediaStore delete request for $logContext", e)
+            null
+        }
+    }
+
+    fun createDeleteRequest(context: Context, uris: Collection<Uri>): PendingIntent? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            PLog.w(TAG, "createDeleteRequest requires Android 11+")
+            return null
+        }
+        return createMediaStoreDeleteRequest(context, uris, "exported media")
+    }
+
+    suspend fun deleteExportedDocumentUris(context: Context, photoId: String): Int {
+        return withContext(Dispatchers.IO) {
+            val metadata = loadMetadata(context, photoId)
+            val uris = parseDeleteUris(collectExportedDeleteUriStrings(metadata), "photo: $photoId")
+            deleteDocumentExportUris(context, uris, "photo: $photoId")
+        }
+    }
+
     /**
      * 创建删除系统相册照片的请求（弹出确认对话框）
      *
@@ -3193,13 +3310,7 @@ object GalleryManager {
             val metadata = runBlocking {
                 loadMetadata(context, photoId)
             }
-            val exportedUris = buildList {
-                addAll(metadata?.exportedUris ?: emptyList())
-                val sourceUri = metadata?.sourceUri
-                if (metadata?.mediaType == MediaType.VIDEO && metadata.isImported != true && !sourceUri.isNullOrBlank()) {
-                    add(sourceUri)
-                }
-            }
+            val exportedUris = collectExportedDeleteUriStrings(metadata)
 
             if (exportedUris.isEmpty()) {
                 PLog.d(TAG, "No exported URIs to delete for photo: $photoId")
@@ -3207,25 +3318,14 @@ object GalleryManager {
             }
 
             // 将字符串 URI 转换为 Uri 对象列表，并过滤非法 URI
-            val uriList = exportedUris.mapNotNull { uriString ->
-                try {
-                    val uri = Uri.parse(uriString)
-                    if (uri.scheme == "content") uri else {
-                        PLog.w(TAG, "Ignoring non-content URI: $uriString")
-                        null
-                    }
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Invalid URI: $uriString", e)
-                    null
-                }
-            }
+            val uriList = parseDeleteUris(exportedUris, "photo: $photoId")
 
             if (uriList.isEmpty()) {
                 return null
             }
 
             // 创建删除请求（会弹出系统确认对话框）
-            MediaStore.createDeleteRequest(context.contentResolver, uriList)
+            createMediaStoreDeleteRequest(context, uriList, "photo: $photoId")
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create delete request for photo: $photoId", e)
             null
