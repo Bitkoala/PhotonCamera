@@ -13,6 +13,7 @@ import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
 import com.hinnka.mycamera.raw.DenoiseProfileShaders
+import com.hinnka.mycamera.raw.RawShaders
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
@@ -66,6 +67,7 @@ class LutImageProcessor {
     private var bitmapDenoiseNlmFinishProgram = 0
     private var bitmapDenoisePassthroughProgram = 0
     private var bitmapChromaDenoiseProgram = 0
+    private var lutSharpenProgram = 0
 
     private val bitmapDenoiseTexId = IntArray(2)
     private val bitmapDenoiseFboId = IntArray(2)
@@ -73,6 +75,10 @@ class LutImageProcessor {
     private var bitmapDenoiseNlmBufferPixels = 0
     private var bitmapDenoiseWidth = 0
     private var bitmapDenoiseHeight = 0
+    private var lutSharpenTextureId = 0
+    private var lutSharpenFboId = 0
+    private var lutSharpenWidth = 0
+    private var lutSharpenHeight = 0
 
     // HDF (Highlight Diffusion) 光晕效果资源
     private var hdfExtractBlurHProgram = 0
@@ -149,10 +155,6 @@ class LutImageProcessor {
     private var uLchChromaAdjustmentsLoc = 0
     private var uLchLightnessAdjustmentsLoc = 0
     private var uPrimaryCalibrationMatrixLoc = 0
-
-    // 后期处理参数 Uniform 位置（仅拍摄和后期编辑时生效）
-    private var uSharpeningLoc = 0
-    private var uTexelSizeLoc = 0  // 用于卷积计算
 
     // 曲线纹理
     private var curveTextureId = 0
@@ -788,9 +790,6 @@ class LutImageProcessor {
 
         // 设置色散参数
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uChromaticAberration"), chromaticAberration)
-
-        // 设置后期处理参数
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uSharpening"), sharpening)
         GLES30.glUniform2f(GLES30.glGetUniformLocation(program, "uTexelSize"), 1.0f / width, 1.0f / height)
 
         // 设置 MVP 矩阵
@@ -825,10 +824,14 @@ class LutImageProcessor {
         if (positionHandle >= 0) GLES30.glDisableVertexAttribArray(positionHandle)
         if (texCoordHandle >= 0) GLES30.glDisableVertexAttribArray(texCoordHandle)
 
-        val readFramebufferId = if (bloom > 0.001f && renderLdrBloom(outputTextureId, width, height, bloom)) {
+        val sharpened = sharpening > 0f && renderLutSharpenPass(outputTextureId, width, height, sharpening)
+        val postSharpenTextureId = if (sharpened) lutSharpenTextureId else outputTextureId
+        val postSharpenFramebufferId = if (sharpened) lutSharpenFboId else framebufferId
+
+        val readFramebufferId = if (bloom > 0.001f && renderLdrBloom(postSharpenTextureId, width, height, bloom)) {
             bloomOutputFboId
         } else {
-            framebufferId
+            postSharpenFramebufferId
         }
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, readFramebufferId)
@@ -886,6 +889,8 @@ class LutImageProcessor {
         )
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
 
         // 创建帧缓冲
         val fbos = IntArray(1)
@@ -919,6 +924,7 @@ class LutImageProcessor {
         }
         outputFramebufferWidth = 0
         outputFramebufferHeight = 0
+        releaseLutSharpenFramebuffer()
     }
 
     private fun obtainReadbackBuffer(pixelSize: Int): ByteBuffer {
@@ -1078,9 +1084,6 @@ class LutImageProcessor {
         uLchChromaAdjustmentsLoc = GLES30.glGetUniformLocation(shaderProgram, "uLchChromaAdjustments")
         uLchLightnessAdjustmentsLoc = GLES30.glGetUniformLocation(shaderProgram, "uLchLightnessAdjustments")
         uPrimaryCalibrationMatrixLoc = GLES30.glGetUniformLocation(shaderProgram, "uPrimaryCalibrationMatrix")
-
-        uSharpeningLoc = GLES30.glGetUniformLocation(shaderProgram, "uSharpening")
-        uTexelSizeLoc = GLES30.glGetUniformLocation(shaderProgram, "uTexelSize")
     }
 
     private fun initBitmapDenoiseProfilePrograms() {
@@ -1090,13 +1093,15 @@ class LutImageProcessor {
         bitmapDenoiseNlmFinishProgram = compileComputeProgram(DenoiseProfileShaders.FINISH_V2, "BitmapDenoise_NLM_FinishV2")
         bitmapDenoisePassthroughProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, TEXTURE_PASSTHROUGH_SHADER, "BitmapDenoise_Passthrough")
         bitmapChromaDenoiseProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.PASS_CHROMA_DENOISE, "BitmapChromaDenoise_BM3DPass0")
+        lutSharpenProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, RawShaders.SHARPEN_FRAGMENT_SHADER, "LutSharpen")
         PLog.d(
             TAG,
             "Bitmap denoiseprofile programs initialized: pre=$bitmapDenoisePreconditionProgram " +
                 "init=$bitmapDenoiseNlmInitProgram fusedAccu=$bitmapDenoiseNlmFusedAccuProgram " +
                 "finish=$bitmapDenoiseNlmFinishProgram " +
                 "pass=$bitmapDenoisePassthroughProgram " +
-                "chroma=$bitmapChromaDenoiseProgram"
+                "chroma=$bitmapChromaDenoiseProgram " +
+                "sharpen=$lutSharpenProgram"
         )
     }
 
@@ -1262,6 +1267,130 @@ class LutImageProcessor {
             0
         )
         drawQuad(bitmapDenoisePassthroughProgram)
+    }
+
+    private fun setupLutSharpenFramebuffer(width: Int, height: Int): Boolean {
+        if (lutSharpenFboId != 0 &&
+            lutSharpenTextureId != 0 &&
+            lutSharpenWidth == width &&
+            lutSharpenHeight == height
+        ) {
+            return true
+        }
+
+        releaseLutSharpenFramebuffer()
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        lutSharpenTextureId = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutSharpenTextureId)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGBA,
+            width,
+            height,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            null
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val framebuffers = IntArray(1)
+        GLES30.glGenFramebuffers(1, framebuffers, 0)
+        lutSharpenFboId = framebuffers[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, lutSharpenFboId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            lutSharpenTextureId,
+            0
+        )
+
+        val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            PLog.e(TAG, "LUT sharpen FBO incomplete: $status")
+            releaseLutSharpenFramebuffer()
+            return false
+        }
+
+        lutSharpenWidth = width
+        lutSharpenHeight = height
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        return true
+    }
+
+    private fun renderLutSharpenPass(
+        sourceTextureId: Int,
+        width: Int,
+        height: Int,
+        sharpening: Float
+    ): Boolean {
+        if (lutSharpenProgram == 0 || sharpening <= 0f || !setupLutSharpenFramebuffer(width, height)) {
+            return false
+        }
+
+        val identityMatrix = FloatArray(16)
+        android.opengl.Matrix.setIdentityM(identityMatrix, 0)
+
+        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glUseProgram(lutSharpenProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, lutSharpenFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(lutSharpenProgram, "uInputTexture"), 0)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(lutSharpenProgram, "uTexelSize"),
+            1.0f / width,
+            1.0f / height
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(lutSharpenProgram, "uSharpening"),
+            sharpening
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(lutSharpenProgram, "uRadius"),
+            RawShaders.DEFAULT_USM_RADIUS
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(lutSharpenProgram, "uThreshold"),
+            RawShaders.DEFAULT_USM_THRESHOLD
+        )
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(lutSharpenProgram, "uMVPMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        drawQuad(lutSharpenProgram)
+
+        val error = GLES30.glGetError()
+        if (error != GLES30.GL_NO_ERROR) {
+            PLog.e(TAG, "renderLutSharpenPass: glError $error")
+            return false
+        }
+        return true
+    }
+
+    private fun releaseLutSharpenFramebuffer() {
+        if (lutSharpenFboId != 0) {
+            GLES30.glDeleteFramebuffers(1, intArrayOf(lutSharpenFboId), 0)
+            lutSharpenFboId = 0
+        }
+        if (lutSharpenTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(lutSharpenTextureId), 0)
+            lutSharpenTextureId = 0
+        }
+        lutSharpenWidth = 0
+        lutSharpenHeight = 0
     }
 
     private data class BitmapDenoiseParams(
@@ -2096,10 +2225,15 @@ class LutImageProcessor {
         if (bitmapDenoiseNlmFinishProgram != 0) GLES31.glDeleteProgram(bitmapDenoiseNlmFinishProgram)
         if (bitmapDenoisePassthroughProgram != 0) GLES30.glDeleteProgram(bitmapDenoisePassthroughProgram)
         if (bitmapChromaDenoiseProgram != 0) GLES30.glDeleteProgram(bitmapChromaDenoiseProgram)
+        if (lutSharpenProgram != 0) {
+            GLES30.glDeleteProgram(lutSharpenProgram)
+            lutSharpenProgram = 0
+        }
         for (i in 0..1) {
             if (bitmapDenoiseTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(bitmapDenoiseTexId[i]), 0)
             if (bitmapDenoiseFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(bitmapDenoiseFboId[i]), 0)
         }
+        releaseLutSharpenFramebuffer()
         if (bitmapDenoiseNlmU2BufferId != 0) {
             GLES31.glDeleteBuffers(1, intArrayOf(bitmapDenoiseNlmU2BufferId), 0)
             bitmapDenoiseNlmU2BufferId = 0
@@ -2234,9 +2368,6 @@ class LutImageProcessor {
             
             // 色散效果
             uniform float uChromaticAberration; // 0.0 ~ 1.0 (色散强度)
-            
-            // 后期处理参数
-            uniform float uSharpening;
             uniform vec2 uTexelSize;
             
             // 辅助函数：亮度计算
@@ -2965,24 +3096,6 @@ class LutImageProcessor {
                     color.rgb += vec3(softLuma) * (uSoftLight * 0.025);
                     color.rgb = (color.rgb - 0.5) * (1.0 - uSoftLight * 0.05) + 0.5;
                 }
-	                
-	                // --- 4. 锐化 ---
-                if (uSharpening > 0.0) {
-                    // 使用基于亮度的 Unsharp Mask，避免色彩污染
-                    vec3 inputColor = sampleImage(uvCoord).rgb;
-                    float inputLuma = getLuma(inputColor);
-
-                    float neighborsLuma = 0.0;
-                    neighborsLuma += getLuma(sampleImage(uvCoord + vec2(-uTexelSize.x, 0.0)).rgb);
-                    neighborsLuma += getLuma(sampleImage(uvCoord + vec2(uTexelSize.x, 0.0)).rgb);
-                    neighborsLuma += getLuma(sampleImage(uvCoord + vec2(0.0, -uTexelSize.y)).rgb);
-                    neighborsLuma += getLuma(sampleImage(uvCoord + vec2(0.0, uTexelSize.y)).rgb);
-                    float blurLuma = neighborsLuma * 0.25;
-
-                    float detail = inputLuma - blurLuma;
-                    color.rgb += detail * uSharpening * 2.0;
-                }
-
                 fragColor = clamp(color, 0.0, 1.0);
             }
         """.trimIndent()

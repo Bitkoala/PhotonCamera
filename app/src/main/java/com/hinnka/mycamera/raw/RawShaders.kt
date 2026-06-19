@@ -13,6 +13,9 @@ import com.hinnka.mycamera.lut.ShadowsHighlightsShader
  * 5. Gamma 校正 (sRGB)
  */
 object RawShaders {
+    const val DEFAULT_USM_RADIUS = 2.0f
+    const val DEFAULT_USM_AMOUNT = 0.5f
+    const val DEFAULT_USM_THRESHOLD = 0.005f
 
     /**
      * 顶点着色器 - 简单的全屏四边形渲染

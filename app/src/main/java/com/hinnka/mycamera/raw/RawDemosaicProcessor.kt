@@ -314,9 +314,9 @@ class RawDemosaicProcessor {
     private var lensShadingTextureId = 0
     private var dummyShadingTextureId = 0
 
-    private val defaultUsmRadius = 2.0f
-    private val defaultUsmAmount = 0.5f
-    private val defaultUsmThreshold = 0.005f
+    private val defaultUsmRadius = RawShaders.DEFAULT_USM_RADIUS
+    private val defaultUsmAmount = RawShaders.DEFAULT_USM_AMOUNT
+    private val defaultUsmThreshold = RawShaders.DEFAULT_USM_THRESHOLD
 
     data class SceneStats(
         val exposureGain: Float,

@@ -116,7 +116,7 @@ private data class PreviewRenderSignature(
     val editRawCustomBlackLevel: Float,
     val editRawCfaCorrectionMode: String,
     val editRawDcpId: String?,
-    val editRawColorEngine: String,
+    val editRawRenderingEngine: String,
     val editRawBaselineLutId: String?,
     val editRawBaselineRecipeParams: ColorRecipeParams?,
     val editComputationalAperture: Float?,
@@ -238,7 +238,7 @@ fun GalleryEditScreen(
     )
     var previewRenderRequestId by remember { mutableLongStateOf(0L) }
 
-    fun currentPreviewSignature(): PreviewRenderSignature? {
+    fun currentPreviewSignature(fast: Boolean = false): PreviewRenderSignature? {
         val photo = currentPhoto ?: return null
         return PreviewRenderSignature(
             photoId = photo.id,
@@ -251,23 +251,23 @@ fun GalleryEditScreen(
             editFrameId = editFrameId,
             editFrameCustomProperties = editFrameCustomProperties.toMap(),
             editSharpening = editSharpening,
-            editNoiseReduction = editNoiseReduction,
-            editChromaNoiseReduction = editChromaNoiseReduction,
-            editRawExposureCompensation = editRawExposureCompensation,
-            editRawAutoExposure = editRawAutoExposure,
-            editRawHighlightsAdjustment = editRawHighlightsAdjustment,
-            editRawShadowsAdjustment = editRawShadowsAdjustment,
-            editRawBlackPointCorrection = editRawBlackPointCorrection,
-            editRawWhitePointCorrection = editRawWhitePointCorrection,
-            editRawDROMode = editRawDROMode,
-            editRawBlackLevelMode = editRawBlackLevelMode,
-            editRawCustomBlackLevel = editRawCustomBlackLevel,
-            editRawCfaCorrectionMode = editRawCfaCorrectionMode,
-            editRawDcpId = editRawDcpId,
-            editRawColorEngine = editRawColorEngine.name,
+            editNoiseReduction = if (fast) 0f else editNoiseReduction,
+            editChromaNoiseReduction = if (fast) 0f else editChromaNoiseReduction,
+            editRawExposureCompensation = if (fast) 0f else editRawExposureCompensation,
+            editRawAutoExposure = if (fast) false else editRawAutoExposure,
+            editRawHighlightsAdjustment = if (fast) 0f else editRawHighlightsAdjustment,
+            editRawShadowsAdjustment = if (fast) 0f else editRawShadowsAdjustment,
+            editRawBlackPointCorrection = if (fast) 0f else editRawBlackPointCorrection,
+            editRawWhitePointCorrection = if (fast) 0f else editRawWhitePointCorrection,
+            editRawDROMode = if (fast) "" else editRawDROMode,
+            editRawBlackLevelMode = if (fast) "" else editRawBlackLevelMode,
+            editRawCustomBlackLevel = if (fast) 0f else editRawCustomBlackLevel,
+            editRawCfaCorrectionMode = if (fast) "" else editRawCfaCorrectionMode,
+            editRawDcpId = if (fast) null else editRawDcpId,
+            editRawRenderingEngine = if (fast) "" else editRawColorEngine.name,
             editRawBaselineLutId = editRawBaselineLutId,
             editRawBaselineRecipeParams = editRawBaselineRecipeParams,
-            editComputationalAperture = editComputationalAperture,
+            editComputationalAperture = if (fast) 0f else editComputationalAperture,
             editFocusX = editFocusX,
             editFocusY = editFocusY,
             showOrigin = showOrigin,
@@ -339,7 +339,7 @@ fun GalleryEditScreen(
         val photo = currentPhoto ?: return@LaunchedEffect
         if (photo.isVideo) return@LaunchedEffect
         snapshotFlow {
-            currentPreviewSignature()
+            currentPreviewSignature(true)
         }
             .filter { it != null }
             .conflate()
