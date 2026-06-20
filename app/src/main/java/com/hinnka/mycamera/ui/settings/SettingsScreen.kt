@@ -1973,13 +1973,9 @@ fun SettingsScreen(
 
                     // 帮助与关于
                     val isGoogleFlavor = BuildConfig.FLAVOR == "google"
-                    val communityGroupUrl = if (isGoogleFlavor) TELEGRAM_GROUP_URL else QQ_GROUP_URL
+                    val communityGroupUrl = TELEGRAM_GROUP_URL
                     val communityGroupDescription = stringResource(
-                        if (isGoogleFlavor) {
-                            R.string.settings_community_group_telegram_description
-                        } else {
-                            R.string.settings_community_group_qq_description
-                        }
+                        R.string.settings_community_group_telegram_description
                     )
 
                     SettingsSection(title = stringResource(R.string.settings_section_help_about)) {
