@@ -245,6 +245,7 @@ fun SettingsScreen(
     val showGrid = state.showGrid
     val shutterSoundEnabled by viewModel.shutterSoundEnabled.collectAsState(initial = true)
     val vibrationEnabled by viewModel.vibrationEnabled.collectAsState(initial = true)
+    val keepScreenOn by viewModel.keepScreenOn.collectAsState(initial = false)
     val volumeKeyAction by viewModel.volumeKeyAction.collectAsState()
     val topSheetAspectRatios by viewModel.topSheetAspectRatios.collectAsState()
     val customAspectRatios by viewModel.customAspectRatios.collectAsState()
@@ -1922,6 +1923,18 @@ fun SettingsScreen(
                             description = stringResource(R.string.settings_vibration_description),
                             checked = vibrationEnabled,
                             onCheckedChange = { viewModel.setVibrationEnabled(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_keep_screen_on),
+                            description = stringResource(R.string.settings_keep_screen_on_description),
+                            checked = keepScreenOn,
+                            onCheckedChange = { viewModel.setKeepScreenOn(it) }
                         )
 
                         HorizontalDivider(

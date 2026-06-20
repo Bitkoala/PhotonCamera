@@ -138,6 +138,8 @@
     <string name="settings_shutter_sound_description">拍照時播放快門聲音</string>
     <string name="settings_vibration">拍攝震動</string>
     <string name="settings_vibration_description">拍照時產生震動回饋</string>
+    <string name="settings_keep_screen_on">螢幕常亮</string>
+    <string name="settings_keep_screen_on_description">開啟後使用相機時保持螢幕常亮；錄影時會始終保持螢幕常亮。</string>
     <string name="settings_volume_key_action">音量鍵功能</string>
     <string name="settings_volume_key_action_description">設定音量鍵在拍攝時的操作</string>
     <string name="settings_mirror_front_camera">自拍鏡像</string>

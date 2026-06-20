@@ -94,6 +94,8 @@
     <string name="settings_shutter_sound_description">Mainkan suara saat mengambil foto</string>
     <string name="settings_vibration">Getaran</string>
     <string name="settings_vibration_description">Bergetar saat mengambil foto</string>
+    <string name="settings_keep_screen_on">Layar Tetap Menyala</string>
+    <string name="settings_keep_screen_on_description">Menjaga layar tetap aktif saat menggunakan kamera. Perekaman video selalu membuatnya tetap aktif.</string>
     <string name="settings_volume_key_action">Aksi Tombol Volume</string>
     <string name="settings_volume_key_action_description">Pilih aksi tombol volume saat pengambilan</string>
     <string name="settings_volume_key_action_none">Kontrol Volume</string>

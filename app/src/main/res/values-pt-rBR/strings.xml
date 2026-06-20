@@ -95,6 +95,8 @@
     <string name="settings_shutter_sound_description">Reproduzir som ao tirar uma foto</string>
     <string name="settings_vibration">Vibração</string>
     <string name="settings_vibration_description">Vibrar ao tirar uma foto</string>
+    <string name="settings_keep_screen_on">Manter tela ligada</string>
+    <string name="settings_keep_screen_on_description">Mantém a tela ativa ao usar a câmera. A gravação de vídeo sempre mantém a tela ativa.</string>
     <string name="settings_volume_key_action">Ação das Teclas de Volume</string>
     <string name="settings_volume_key_action_description">Escolha o que as teclas de volume fazem durante a captura</string>
     <string name="settings_volume_key_action_none">Controle de Volume</string>

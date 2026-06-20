@@ -94,6 +94,8 @@
     <string name="settings_shutter_sound_description">撮影時に音を鳴らします</string>
     <string name="settings_vibration">バイブレーション</string>
     <string name="settings_vibration_description">撮影時に振動させます</string>
+    <string name="settings_keep_screen_on">画面を常にオン</string>
+    <string name="settings_keep_screen_on_description">カメラ使用中は画面を点灯したままにします。動画録画中は常に点灯したままになります。</string>
     <string name="settings_volume_key_action">音量キーの動作</string>
     <string name="settings_volume_key_action_description">撮影中の音量キーの役割を選択します</string>
     <string name="settings_volume_key_action_none">音量調節</string>

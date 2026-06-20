@@ -786,6 +786,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             .stateIn(viewModelScope, SharingStarted.Eagerly, 0.5f)
     val shutterSoundEnabled: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.shutterSoundEnabled }
     val vibrationEnabled: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.vibrationEnabled }
+    val keepScreenOn: Flow<Boolean> = userPreferencesRepository.userPreferences.map { it.keepScreenOn }
     val volumeKeyAction: StateFlow<VolumeKeyAction> =
         userPreferencesRepository.userPreferences.map { it.volumeKeyAction }
             .stateIn(viewModelScope, SharingStarted.Eagerly, initialValue = VolumeKeyAction.NONE)
@@ -3455,6 +3456,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setVibrationEnabled(enabled: Boolean) {
         viewModelScope.launch {
             userPreferencesRepository.saveVibrationEnabled(enabled)
+        }
+    }
+
+    /**
+     * 设置是否保持屏幕常亮
+     */
+    fun setKeepScreenOn(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveKeepScreenOn(enabled)
         }
     }
 

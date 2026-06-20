@@ -232,6 +232,8 @@
     <string name="settings_shutter_sound_description">Play sound when taking a photo</string>
     <string name="settings_vibration">Vibration</string>
     <string name="settings_vibration_description">Vibrate when taking a photo</string>
+    <string name="settings_keep_screen_on">Keep Screen On</string>
+    <string name="settings_keep_screen_on_description">Keep the screen awake while using the camera. Video recording always keeps it awake.</string>
     <string name="settings_volume_key_action">Volume Key Action</string>
     <string name="settings_volume_key_action_description">Choose what volume keys do during capture</string>
     <string name="settings_mirror_front_camera">Selfie Mirror</string>

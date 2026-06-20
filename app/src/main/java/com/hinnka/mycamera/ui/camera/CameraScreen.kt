@@ -167,6 +167,7 @@ fun CameraScreen(
     val latestPhoto by galleryViewModel.latestPhoto.collectAsState()
     val showLevelIndicator by viewModel.showLevelIndicator.collectAsState(initial = false)
     val focusPeakingEnabled by viewModel.focusPeakingEnabled.collectAsState(initial = true)
+    val keepScreenOn by viewModel.keepScreenOn.collectAsState(initial = false)
     val currentLutId by viewModel.currentLutId.collectAsState()
     val currentRecipeParams by viewModel.currentRecipeParams.collectAsState()
     val lutSelectorMode by viewModel.lutSelectorMode.collectAsState()
@@ -478,8 +479,10 @@ fun CameraScreen(
         }
     }
 
-    DisposableEffect(activity, state.videoRecordingState.isRecording) {
-        if (state.videoRecordingState.isRecording) {
+    val shouldKeepScreenOn = keepScreenOn || state.videoRecordingState.isRecording
+
+    DisposableEffect(activity, shouldKeepScreenOn) {
+        if (shouldKeepScreenOn) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

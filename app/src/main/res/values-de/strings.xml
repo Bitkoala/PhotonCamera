@@ -94,6 +94,8 @@
     <string name="settings_shutter_sound_description">Ton beim Fotografieren abspielen</string>
     <string name="settings_vibration">Vibration</string>
     <string name="settings_vibration_description">Vibration beim Fotografieren</string>
+    <string name="settings_keep_screen_on">Bildschirm eingeschaltet lassen</string>
+    <string name="settings_keep_screen_on_description">Hält den Bildschirm beim Verwenden der Kamera wach. Videoaufnahmen halten ihn immer wach.</string>
     <string name="settings_volume_key_action">Lautstärketasten-Aktion</string>
     <string name="settings_volume_key_action_description">Wählen Sie, was die Lautstärketasten bei der Aufnahme bewirken</string>
     <string name="settings_volume_key_action_none">Lautstärkeregelung</string>

@@ -219,6 +219,8 @@
     <string name="settings_shutter_sound_description">เล่นเสียงเมื่อถ่ายภาพ</string>
     <string name="settings_vibration">การสั่น</string>
     <string name="settings_vibration_description">สั่นเมื่อถ่ายภาพ</string>
+    <string name="settings_keep_screen_on">เปิดหน้าจอไว้เสมอ</string>
+    <string name="settings_keep_screen_on_description">ให้หน้าจอเปิดอยู่เสมอขณะใช้งานกล้อง การบันทึกวิดีโอจะเปิดหน้าจอไว้เสมอ</string>
     <string name="settings_volume_key_action">การทำงานของปุ่มปรับระดับเสียง</string>
     <string name="settings_volume_key_action_description">เลือกการทำงานของปุ่มปรับระดับเสียงขณะถ่ายภาพ</string>
     <string name="settings_mirror_front_camera">กระจกเซลฟี่</string>

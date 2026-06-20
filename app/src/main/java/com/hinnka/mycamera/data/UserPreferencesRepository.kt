@@ -119,6 +119,7 @@ data class UserPreferences(
     val aiFocusScoreThreshold: Float = 0.5f,
     val shutterSoundEnabled: Boolean = true,  // 快门声音
     val vibrationEnabled: Boolean = true,  // 拍摄震动
+    val keepScreenOn: Boolean = false,  // 屏幕常亮
     val volumeKeyAction: VolumeKeyAction = VolumeKeyAction.CAPTURE,  // 音量键操作
     val autoSaveAfterCapture: Boolean = true,  // 自动保存
     val photoSavePath: PhotoSavePath = PhotoSavePath.DCIM_PHOTON,
@@ -290,6 +291,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val AI_FOCUS_SCORE_THRESHOLD = floatPreferencesKey("ai_focus_score_threshold")
         private val SHUTTER_SOUND_ENABLED = booleanPreferencesKey("shutter_sound_enabled")
         private val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
+        private val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         private val VOLUME_KEY_ACTION = stringPreferencesKey("volume_key_action")
         private val AUTO_SAVE_AFTER_CAPTURE = booleanPreferencesKey("auto_save_after_capture")
         private val PHOTO_SAVE_PATH = stringPreferencesKey("photo_save_path")
@@ -454,6 +456,7 @@ class UserPreferencesRepository(private val context: Context) {
                 aiFocusScoreThreshold = (preferences[AI_FOCUS_SCORE_THRESHOLD] ?: 0.5f).coerceIn(0.05f, 0.95f),
                 shutterSoundEnabled = preferences[SHUTTER_SOUND_ENABLED] ?: true,
                 vibrationEnabled = preferences[VIBRATION_ENABLED] ?: true,
+                keepScreenOn = preferences[KEEP_SCREEN_ON] ?: false,
                 volumeKeyAction = VolumeKeyAction.valueOf(
                     preferences[VOLUME_KEY_ACTION] ?: VolumeKeyAction.CAPTURE.name
                 ),
@@ -1031,6 +1034,15 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveVibrationEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[VIBRATION_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * 保存是否保持屏幕常亮
+     */
+    suspend fun saveKeepScreenOn(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEEP_SCREEN_ON] = enabled
         }
     }
 

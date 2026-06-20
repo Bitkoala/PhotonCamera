@@ -95,6 +95,8 @@
     <string name="settings_shutter_sound_description">사진 촬영 시 소리 재생</string>
     <string name="settings_vibration">진동</string>
     <string name="settings_vibration_description">사진 촬영 시 진동</string>
+    <string name="settings_keep_screen_on">화면 항상 켜기</string>
+    <string name="settings_keep_screen_on_description">카메라 사용 중 화면이 꺼지지 않게 합니다. 동영상 녹화 중에는 항상 화면을 켜 둡니다.</string>
     <string name="settings_volume_key_action">볼륨 키 동작</string>
     <string name="settings_volume_key_action_description">촬영 중 볼륨 키의 동작을 선택합니다</string>
     <string name="settings_volume_key_action_none">볼륨 조절</string>
