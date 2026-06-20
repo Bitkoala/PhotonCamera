@@ -802,6 +802,7 @@
     <string name="metering_mode">การวัดแสง</string>
     <string name="metering_spot">การวัดแสงเฉพาะจุด</string>
     <string name="metering_center_weighted">โฟกัสตรงกลาง</string>
+    <string name="metering_system_default">ค่าเริ่มต้นของระบบ</string>
     <string name="metering_average">การวัดแสงเฉลี่ย</string>
     <string name="metering_highlight_priority">เน้นลำดับความสำคัญ</string>
     <string name="frame_editor_text_type_filter_name">ชื่อตัวกรอง</string>

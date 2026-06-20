@@ -51,7 +51,7 @@ fun CameraPreviewGL(
     focusPointSource: FocusPointSource = FocusPointSource.MANUAL,
     isFocusing: Boolean,
     focusSuccess: Boolean?,
-    meteringMode: MeteringMode = MeteringMode.CENTER_WEIGHTED,
+    meteringMode: MeteringMode = MeteringMode.SYSTEM_DEFAULT,
     onSurfaceTextureReady: (SurfaceTexture) -> Unit,
     onSurfaceDestroyed: () -> Unit,
     onTap: (Float, Float, Int, Int) -> Unit,

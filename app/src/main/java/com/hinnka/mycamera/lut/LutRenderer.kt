@@ -393,7 +393,7 @@ class LutRenderer : GLSurfaceView.Renderer {
     var focusPoint: PointF? = null
 
     @Volatile
-    var meteringMode: MeteringMode = MeteringMode.CENTER_WEIGHTED
+    var meteringMode: MeteringMode = MeteringMode.SYSTEM_DEFAULT
 
     @Volatile
     var aperture: Float = 0f
@@ -3083,9 +3083,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         val (weightCenter, weightEdge, radiusSq) = when (mode) {
             MeteringMode.SPOT -> Triple(100.0, 0.0, (METERING_SIZE * METERING_SIZE) / 64.0)   // 绝对统治权重，半径 METERING_SIZE/8
             MeteringMode.CENTER_WEIGHTED -> Triple(20.0, 1.0, (METERING_SIZE * METERING_SIZE) / 16.0) // 统治级权重，半径 METERING_SIZE/4
+            MeteringMode.SYSTEM_DEFAULT -> Triple(1.0, 1.0, 0.0) // 不按对焦点或中心加权
             MeteringMode.AVERAGE -> Triple(1.0, 1.0, 0.0)  // 所有像素等权
             MeteringMode.HIGHLIGHT_PRIORITY -> Triple(2.0, 1.0, (METERING_SIZE * METERING_SIZE) / 8.0) // 大区域，亮部加权在下方处理
         }
+        val useUniformWeight = mode == MeteringMode.SYSTEM_DEFAULT || mode == MeteringMode.AVERAGE
 
         for (y in 0 until METERING_SIZE) {
             for (x in 0 until METERING_SIZE) {
@@ -3100,7 +3102,7 @@ class LutRenderer : GLSurfaceView.Renderer {
                 lumaGrid[y * METERING_SIZE + x] = luma
 
                 // 权重计算
-                val spatialWeight = if (mode == MeteringMode.AVERAGE) {
+                val spatialWeight = if (useUniformWeight) {
                     weightEdge
                 } else if (focus != null) {
                     val fx = focus.x * METERING_SIZE

@@ -911,6 +911,7 @@ class Camera2Controller(private val context: Context) {
                 isFlashSupported = cachedCharacteristics?.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
                 maxAfRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0
                 maxAeRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
+                val maxAwbRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AWB) ?: 0
                 availableAfModes =
                     cachedCharacteristics?.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
                 availableEdgeModes =
@@ -980,7 +981,9 @@ class Camera2Controller(private val context: Context) {
                 PLog.i(
                     TAG, "Camera characteristics cached - selected=$cameraId, open=$openCameraId, Level: $hardwareLevelName, " +
                             "ManualSensor: $isManualSensorSupported, ManualPost: $isManualPostProcessingSupported, " +
-                            "RAW: $isRawSupported, P010: $isP010Supported, AF modes: ${availableAfModes.joinToString()}"
+                            "RAW: $isRawSupported, P010: $isP010Supported, " +
+                            "MaxRegions(AF/AE/AWB): $maxAfRegions/$maxAeRegions/$maxAwbRegions, " +
+                            "AF modes: ${availableAfModes.joinToString()}"
                 )
 
                 val selectableNrModes = buildSelectableNoiseReductionModes(availableNoiseReductionModes)
@@ -2874,15 +2877,22 @@ class Camera2Controller(private val context: Context) {
     /**
      * 根据当前测光模式设置默认 AE 区域
      *
-     * 点测光和中央重点模式在画面中心（或对焦点）设置加权区域；
-     * 平均测光模式清除 AE 区域，使用硬件默认全画面测光。
+     * 系统默认模式清除自定义 AE 区域，由 Camera2/设备自行决定测光行为；
+     * 点测光和高光优先模式设置加权区域；
+     * 平均测光模式设置全画面 AE 区域。
      */
     private fun applyMeteringRegions() {
-        if (maxAeRegions <= 0) return
         val builder = previewRequestBuilder ?: return
+        val mode = _state.value.meteringMode
+
+        if (mode == MeteringMode.SYSTEM_DEFAULT) {
+            clearCustomAeRegions(builder)
+            return
+        }
+
+        if (maxAeRegions <= 0) return
         val characteristics = cachedCharacteristics ?: return
         val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-        val mode = _state.value.meteringMode
 
         if (mode == MeteringMode.AVERAGE) {
             val fullRegion = MeteringRectangle(activeRect, MeteringRectangle.METERING_WEIGHT_MAX)
@@ -2925,6 +2935,8 @@ class Camera2Controller(private val context: Context) {
                 MeteringMode.SPOT -> 0.03f
                 MeteringMode.CENTER_WEIGHTED -> 0.2f
                 MeteringMode.HIGHLIGHT_PRIORITY -> 0.08f
+                MeteringMode.SYSTEM_DEFAULT,
+                MeteringMode.AVERAGE -> return
             }
             val regionSize = (activeRect.width() * regionSizeFraction).toInt()
 
@@ -2944,6 +2956,10 @@ class Camera2Controller(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply metering regions", e)
         }
+    }
+
+    private fun clearCustomAeRegions(builder: CaptureRequest.Builder) {
+        builder.set(CaptureRequest.CONTROL_AE_REGIONS, null)
     }
 
     /**
@@ -3499,34 +3515,43 @@ class Camera2Controller(private val context: Context) {
             )
             val afRegion = MeteringRectangle(afRect, MeteringRectangle.METERING_WEIGHT_MAX)
 
-            // 2. AE 区域：根据测光模式决定
-            val aeRegion = if (_state.value.meteringMode == MeteringMode.AVERAGE) {
-                // 平均测光模式下，点击屏幕仅改变对焦点，测光区域强制保持全屏平均
-                MeteringRectangle(activeRect, MeteringRectangle.METERING_WEIGHT_MAX)
-            } else {
-                val aeSizeFraction = when (_state.value.meteringMode) {
-                    MeteringMode.SPOT -> 0.03f
-                    MeteringMode.CENTER_WEIGHTED -> 0.2f
-                    MeteringMode.HIGHLIGHT_PRIORITY -> 0.08f
-                    else -> 0.1f
+            // 2. AE 区域：根据测光模式决定；系统默认模式不随点按写入 AE 区域
+            val meteringMode = _state.value.meteringMode
+            val aeRegion = when (meteringMode) {
+                MeteringMode.SYSTEM_DEFAULT -> null
+                MeteringMode.AVERAGE -> {
+                    // 平均测光模式下，点击屏幕仅改变对焦点，测光区域强制保持全屏平均
+                    MeteringRectangle(activeRect, MeteringRectangle.METERING_WEIGHT_MAX)
                 }
-                val aeSize = (activeRect.width() * aeSizeFraction).toInt()
-                val aeRect = android.graphics.Rect(
-                    (focusX - aeSize).coerceAtLeast(0),
-                    (focusY - aeSize).coerceAtLeast(0),
-                    (focusX + aeSize).coerceAtMost(activeRect.width()),
-                    (focusY + aeSize).coerceAtMost(activeRect.height())
-                )
-                MeteringRectangle(aeRect, MeteringRectangle.METERING_WEIGHT_MAX)
+                MeteringMode.SPOT,
+                MeteringMode.CENTER_WEIGHTED,
+                MeteringMode.HIGHLIGHT_PRIORITY -> {
+                    val aeSizeFraction = when (meteringMode) {
+                        MeteringMode.SPOT -> 0.03f
+                        MeteringMode.CENTER_WEIGHTED -> 0.2f
+                        MeteringMode.HIGHLIGHT_PRIORITY -> 0.08f
+                        else -> 0.1f
+                    }
+                    val aeSize = (activeRect.width() * aeSizeFraction).toInt()
+                    val aeRect = android.graphics.Rect(
+                        (focusX - aeSize).coerceAtLeast(0),
+                        (focusY - aeSize).coerceAtLeast(0),
+                        (focusX + aeSize).coerceAtMost(activeRect.width()),
+                        (focusY + aeSize).coerceAtMost(activeRect.height())
+                    )
+                    MeteringRectangle(aeRect, MeteringRectangle.METERING_WEIGHT_MAX)
+                }
             }
 
-            PLog.d(TAG, "Focus: UI($normalizedX, $normalizedY) -> Sensor($finalX, $finalY), mode=${_state.value.meteringMode}")
+            PLog.d(TAG, "Focus: UI($normalizedX, $normalizedY) -> Sensor($finalX, $finalY), mode=$meteringMode")
 
             previewRequestBuilder?.apply {
                 if (maxAfRegions > 0) {
                     set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(afRegion))
                 }
-                if (maxAeRegions > 0) {
+                if (meteringMode == MeteringMode.SYSTEM_DEFAULT) {
+                    clearCustomAeRegions(this)
+                } else if (maxAeRegions > 0 && aeRegion != null) {
                     set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(aeRegion))
                 }
                 val afMode = CaptureRequest.CONTROL_AF_MODE_AUTO

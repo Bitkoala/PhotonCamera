@@ -574,6 +574,7 @@
     <string name="metering_mode">測光</string>
     <string name="metering_spot">點測光</string>
     <string name="metering_center_weighted">中央重點</string>
+    <string name="metering_system_default">系統預設</string>
     <string name="metering_average">平均測光</string>
     <string name="metering_highlight_priority">高光優先</string>
     <string name="frame_editor_text_type_filter_name">滤镜名称</string>

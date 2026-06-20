@@ -205,6 +205,7 @@ fun CameraTopSheet(
                     val meteringLabel = when (meteringMode) {
                         MeteringMode.SPOT -> stringResource(R.string.metering_spot)
                         MeteringMode.CENTER_WEIGHTED -> stringResource(R.string.metering_center_weighted)
+                        MeteringMode.SYSTEM_DEFAULT -> stringResource(R.string.metering_system_default)
                         MeteringMode.AVERAGE -> stringResource(R.string.metering_average)
                         MeteringMode.HIGHLIGHT_PRIORITY -> stringResource(R.string.metering_highlight_priority)
                     }
@@ -213,7 +214,8 @@ fun CameraTopSheet(
                         value = meteringLabel,
                         onClick = {
                             val next = when (meteringMode) {
-                                MeteringMode.SPOT -> MeteringMode.CENTER_WEIGHTED
+                                MeteringMode.SPOT -> MeteringMode.SYSTEM_DEFAULT
+                                MeteringMode.SYSTEM_DEFAULT -> MeteringMode.CENTER_WEIGHTED
                                 MeteringMode.CENTER_WEIGHTED -> MeteringMode.AVERAGE
                                 MeteringMode.AVERAGE -> MeteringMode.HIGHLIGHT_PRIORITY
                                 MeteringMode.HIGHLIGHT_PRIORITY -> MeteringMode.SPOT
@@ -433,6 +435,7 @@ fun CameraTopSheet(
                     val meteringLabel = when (meteringMode) {
                         MeteringMode.SPOT -> stringResource(R.string.metering_spot)
                         MeteringMode.CENTER_WEIGHTED -> stringResource(R.string.metering_center_weighted)
+                        MeteringMode.SYSTEM_DEFAULT -> stringResource(R.string.metering_system_default)
                         MeteringMode.AVERAGE -> stringResource(R.string.metering_average)
                         MeteringMode.HIGHLIGHT_PRIORITY -> stringResource(R.string.metering_highlight_priority)
                     }
@@ -441,7 +444,8 @@ fun CameraTopSheet(
                         value = meteringLabel,
                         onClick = {
                             val next = when (meteringMode) {
-                                MeteringMode.SPOT -> MeteringMode.CENTER_WEIGHTED
+                                MeteringMode.SPOT -> MeteringMode.SYSTEM_DEFAULT
+                                MeteringMode.SYSTEM_DEFAULT -> MeteringMode.CENTER_WEIGHTED
                                 MeteringMode.CENTER_WEIGHTED -> MeteringMode.AVERAGE
                                 MeteringMode.AVERAGE -> MeteringMode.HIGHLIGHT_PRIORITY
                                 MeteringMode.HIGHLIGHT_PRIORITY -> MeteringMode.SPOT

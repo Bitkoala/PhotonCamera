@@ -128,7 +128,7 @@ data class UserPreferences(
     val edgeLevel: Int = 1, // 锐化等级：0=Off, 1=Fast, 2=High Quality, 3=Real-time
     val vendorCaptureSettingsByLens: VendorCaptureSettingsByLens = VendorCaptureSettingsByLens.Empty,
     val useRaw: Boolean = false,                // 使用 RAW 格式拍摄
-    val meteringMode: MeteringMode = MeteringMode.CENTER_WEIGHTED, // 测光模式
+    val meteringMode: MeteringMode = MeteringMode.SYSTEM_DEFAULT, // 测光模式
     val sharpening: Float = 0f,              // 0.0 ~ 1.0 锐化强度
     val noiseReduction: Float = 0f,         // 0.0 ~ 1.0 降噪强度
     val chromaNoiseReduction: Float = 0f,   // 0.0 ~ 1.0 减少杂色强度
@@ -470,7 +470,7 @@ class UserPreferencesRepository(private val context: Context) {
                 ),
                 useRaw = preferences[USE_RAW] ?: false,
                 meteringMode = MeteringMode.valueOf(
-                    preferences[METERING_MODE] ?: MeteringMode.CENTER_WEIGHTED.name
+                    preferences[METERING_MODE] ?: MeteringMode.SYSTEM_DEFAULT.name
                 ),
                 // 软件处理参数
                 sharpening = preferences[SHARPENING] ?: 0f,

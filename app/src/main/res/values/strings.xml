@@ -880,6 +880,7 @@
     <string name="metering_mode">Metering</string>
     <string name="metering_spot">Spot</string>
     <string name="metering_center_weighted">Center Weighted</string>
+    <string name="metering_system_default">System Default</string>
     <string name="metering_average">Average</string>
     <string name="metering_highlight_priority">Highlight</string>
     <string name="frame_editor_text_type_filter_name">Filter Name</string>
