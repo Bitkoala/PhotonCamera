@@ -1153,8 +1153,6 @@ fun GalleryEditScreen(
                                         onRawAutoExposureChange = {
                                             if (it) {
                                                 viewModel.saveRawExposureCompensationValue(currentPhoto, 0f)
-                                                viewModel.saveRawHighlightsAdjustmentValue(currentPhoto, 0f)
-                                                viewModel.saveRawShadowsAdjustmentValue(currentPhoto, 0f)
                                             }
                                             viewModel.saveRawAutoExposureValue(currentPhoto, it) {
                                                 requestRawPreviewRefresh()

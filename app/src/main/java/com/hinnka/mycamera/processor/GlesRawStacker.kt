@@ -1643,6 +1643,28 @@ class GlesRawStacker(
                 return m;
             }
 
+            float tileSensorMean(ivec2 samplePos) {
+                ivec2 base = samplePos - ivec2(samplePos.x & 1, samplePos.y & 1);
+                float sum = 0.0;
+                for (int y = 0; y <= 1; ++y) {
+                    for (int x = 0; x <= 1; ++x) {
+                        sum += rawSensorNormAt(base + ivec2(x, y));
+                    }
+                }
+                return sum * 0.25;
+            }
+
+            float highlightClipAlpha(ivec2 samplePos) {
+                float pixel = rawSensorNormAt(samplePos);
+                float tile = tileSensorMax(samplePos);
+                float tileMean = tileSensorMean(samplePos);
+                float pixelClip = smoothstep(0.90, 0.985, pixel);
+                float tileMeanGate = smoothstep(0.68, 0.88, tileMean);
+                float edgeProtect = smoothstep(0.30, 0.10, tile - pixel);
+                float tileClip = smoothstep(0.91, 0.995, tile) * tileMeanGate * edgeProtect;
+                return clamp(max(pixelClip, 0.62 * tileClip), 0.0, 1.0);
+            }
+
             float fetchSameColor(ivec2 lattice, ivec2 offset, int bayerIndex) {
                 lattice = clamp(lattice, ivec2(0), uPlaneSize - ivec2(1));
                 return rawNormAt(offset + lattice * 2, bayerIndex);
@@ -1704,7 +1726,7 @@ class GlesRawStacker(
                 if (uIsReference != 0) {
                     value = rawNormAt(p, bayerIndex);
                     if (uHdrMode != 0) {
-                        clipAlpha = smoothstep(0.90, 0.985, tileSensorMax(p));
+                        clipAlpha = highlightClipAlpha(p);
                     }
                 } else {
                     vec2 flow = flowAt(planePos);
@@ -1736,7 +1758,7 @@ class GlesRawStacker(
                     }
                     value = sumValue / max(sumWeight, 1e-5);
                     ivec2 sourceSample = offset + ivec2(round(sourcePlane)) * 2;
-                    clipAlpha = uHdrMode != 0 ? smoothstep(0.90, 0.985, tileSensorMax(sourceSample)) : 0.0;
+                    clipAlpha = uHdrMode != 0 ? highlightClipAlpha(sourceSample) : 0.0;
                     float highlightSuppression = 1.0 - 0.62 * smoothstep(0.78, 0.98, value);
                     if (uHdrMode != 0) {
                         highlightSuppression *= 1.0 - clipAlpha;
@@ -1819,6 +1841,59 @@ class GlesRawStacker(
                 return clamp(norm * uShortExposureScale, 0.0, 1.0);
             }
 
+            float referenceSensorNorm(ivec2 p) {
+                p = clamp(p, ivec2(0), uImageSize - ivec2(1));
+                int bayerIndex = bayerIndexAt(uCfaPattern, p);
+                float raw = float(texelFetch(uReferenceRaw, p, 0).r);
+                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
+            }
+
+            float shortSensorNorm(ivec2 p) {
+                p = clamp(p, ivec2(0), uImageSize - ivec2(1));
+                int bayerIndex = bayerIndexAt(uCfaPattern, p);
+                float raw = float(texelFetch(uShortRaw, p, 0).r);
+                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
+            }
+
+            float referenceTileSensorMax(ivec2 p) {
+                ivec2 base = p - ivec2(p.x & 1, p.y & 1);
+                float m = 0.0;
+                for (int y = 0; y <= 1; ++y) {
+                    for (int x = 0; x <= 1; ++x) {
+                        m = max(m, referenceSensorNorm(base + ivec2(x, y)));
+                    }
+                }
+                return m;
+            }
+
+            float referenceTileSensorMean(ivec2 p) {
+                ivec2 base = p - ivec2(p.x & 1, p.y & 1);
+                float sum = 0.0;
+                for (int y = 0; y <= 1; ++y) {
+                    for (int x = 0; x <= 1; ++x) {
+                        sum += referenceSensorNorm(base + ivec2(x, y));
+                    }
+                }
+                return sum * 0.25;
+            }
+
+            float highlightEdgeProtect(float pixel, float tileMax) {
+                return smoothstep(0.30, 0.10, tileMax - pixel);
+            }
+
+            float directRecoveryMask(ivec2 p) {
+                float pixel = referenceSensorNorm(p);
+                float tile = referenceTileSensorMax(p);
+                float tileMean = referenceTileSensorMean(p);
+                float pixelClip = smoothstep(0.90, 0.985, pixel);
+                float tileMeanGate = smoothstep(0.68, 0.88, tileMean);
+                float tileClip = smoothstep(0.91, 0.995, tile) * tileMeanGate * highlightEdgeProtect(pixel, tile);
+                float shortValid = 1.0 - smoothstep(0.985, 0.999, shortSensorNorm(p));
+                return clamp(max(pixelClip, 0.68 * tileClip) * shortValid, 0.0, 1.0);
+            }
+
             vec4 readAccum(ivec2 p) {
                 p = clamp(p, ivec2(0), uImageSize - ivec2(1));
                 return texelFetch(uAccumulator, p, 0);
@@ -1848,7 +1923,14 @@ class GlesRawStacker(
                 if (uHdrMode != 0) {
                     float normalConfidence = smoothstep(0.04, 0.35, a.g);
                     float clipRatio = a.a / max(a.a + a.g, 1e-5);
-                    recoveryMix = smoothstep(0.35, 0.82, clipRatio);
+                    float referencePixel = referenceSensorNorm(p);
+                    float referenceTile = referenceTileSensorMax(p);
+                    float refTileMean = referenceTileSensorMean(p);
+                    float highlightGate = smoothstep(0.62, 0.86, referencePixel) *
+                        smoothstep(0.66, 0.86, refTileMean) *
+                        highlightEdgeProtect(referencePixel, referenceTile);
+                    float clipRatioMask = smoothstep(0.22, 0.70, clipRatio) * highlightGate;
+                    recoveryMix = max(clipRatioMask, directRecoveryMask(p));
                     fused = mix(reference, fused, normalConfidence);
                     fused = mix(fused, shortRecoveryNorm(p, bayerIndex), recoveryMix);
                 }
