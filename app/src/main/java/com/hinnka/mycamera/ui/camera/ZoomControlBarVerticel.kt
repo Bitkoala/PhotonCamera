@@ -105,6 +105,23 @@ fun ZoomControlBarVerticel(
     var replacedStopIndex by remember { mutableIntStateOf(-1) }
     var originalStopRatio by remember { mutableFloatStateOf(0f) }
 
+    fun closeContinuousZoomBar() {
+        if (!isContinuousZooming) {
+            return
+        }
+
+        isContinuousZooming = false
+
+        val settlement = settleContinuousZoomStop(
+            zoomStops = zoomStops,
+            zoomRatio = internalZoomRatio
+        )
+        customZoomStop = settlement.customZoomStop
+        replacedStopIndex = settlement.replacedStopIndex
+        originalStopRatio = settlement.originalStopRatio
+        settlement.snapZoomStop?.let(onZoomChange)
+    }
+
     // 当不处于拖拽状态且没有临时档位时，或者处于外部变焦（Pinch）过程中，同步外部变焦值
     LaunchedEffect(zoomRatio, isDragging, isContinuousZooming, viewModel.isZooming) {
         if (viewModel.isZooming || (!isDragging && !isContinuousZooming && customZoomStop == null)) {
@@ -133,21 +150,8 @@ fun ZoomControlBarVerticel(
     LaunchedEffect(isContinuousZooming, lastInteractionTime, isDragging, viewModel.isZooming) {
         if (isContinuousZooming && !isDragging && !viewModel.isZooming) {
             delay(2000)
-            isContinuousZooming = false
-
-            // 找到距离当前倍率最近的已有档位索引
-            val closestIndex = zoomStops.indices.minByOrNull { abs(zoomStops[it] - internalZoomRatio) } ?: -1
-            if (closestIndex != -1) {
-                val closestStop = zoomStops[closestIndex]
-                if (abs(closestStop - internalZoomRatio) > 0.05f) {
-                    customZoomStop = internalZoomRatio
-                    replacedStopIndex = closestIndex
-                    originalStopRatio = closestStop
-                } else {
-                    onZoomChange(closestStop)
-                    customZoomStop = null
-                    replacedStopIndex = -1
-                }
+            if (isContinuousZooming && !isDragging && !viewModel.isZooming) {
+                closeContinuousZoomBar()
             }
         }
     }
@@ -185,14 +189,22 @@ fun ZoomControlBarVerticel(
                         }
                     },
                     onDragEnd = {
+                        val shouldCloseContinuousZoomBar = isContinuousZooming && !viewModel.isZooming
                         isDragging = false
                         dragAccumulated = 0f
                         lastInteractionTime = System.currentTimeMillis()
+                        if (shouldCloseContinuousZoomBar) {
+                            closeContinuousZoomBar()
+                        }
                     },
                     onDragCancel = {
+                        val shouldCloseContinuousZoomBar = isContinuousZooming && !viewModel.isZooming
                         isDragging = false
                         dragAccumulated = 0f
                         lastInteractionTime = System.currentTimeMillis()
+                        if (shouldCloseContinuousZoomBar) {
+                            closeContinuousZoomBar()
+                        }
                     }
                 )
             },
