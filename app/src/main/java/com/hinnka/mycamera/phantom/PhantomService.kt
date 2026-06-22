@@ -5,9 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RectF
 import android.hardware.display.DisplayManager
 import android.net.Uri
@@ -18,7 +20,6 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
-import android.graphics.Rect
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.Image
@@ -125,6 +126,7 @@ import java.io.FileOutputStream
 import kotlin.io.copyTo
 import kotlin.io.inputStream
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.use
 
 class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryOwner {
@@ -132,6 +134,14 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
     private companion object {
         const val TAG = "GhostService"
         const val MIN_IMPORT_SIZE = 1024 * 1024L
+        const val MIN_PHANTOM_SHORT_SIDE = 1080
+    }
+
+    private data class ImageResolution(
+        val width: Int,
+        val height: Int
+    ) {
+        val shortSide: Int = min(width, height)
     }
 
     data class ProcessingInfo(
@@ -190,6 +200,8 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 MediaStore.MediaColumns.IS_PENDING,
                 MediaStore.MediaColumns.IS_TRASHED,
                 MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.WIDTH,
+                MediaStore.MediaColumns.HEIGHT,
             )
 
             try {
@@ -204,6 +216,8 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     val isTrashedIndex = cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
                     val relativePathIndex =
                         cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                    val widthIndex = cursor.getColumnIndex(MediaStore.MediaColumns.WIDTH)
+                    val heightIndex = cursor.getColumnIndex(MediaStore.MediaColumns.HEIGHT)
 
                     val name = if (nameIndex != -1) cursor.getString(nameIndex) else "Unknown"
                     val isPending = if (pendingIndex != -1) cursor.getInt(pendingIndex) else 0
@@ -213,6 +227,8 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     val isTrashed = if (isTrashedIndex != -1) cursor.getInt(isTrashedIndex) else 0
                     val relativePath =
                         if (relativePathIndex != -1) cursor.getString(relativePathIndex) else ""
+                    val width = if (widthIndex != -1) cursor.getInt(widthIndex) else 0
+                    val height = if (heightIndex != -1) cursor.getInt(heightIndex) else 0
 
                     if (isPending != 0) return
                     if (isTrashed != 0) return
@@ -229,7 +245,10 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         val dir = File(Environment.getExternalStorageDirectory(), relativePath)
                         File(dir, name).absolutePath
                     }
-                    PLog.d(TAG, "Content changed detected: ${uri.lastPathSegment} $name size=$size")
+                    PLog.d(
+                        TAG,
+                        "Content changed detected: ${uri.lastPathSegment} $name size=$size resolution=${width}x${height}"
+                    )
                     if (activePhotoProcessPaths.contains(path)) {
                         PLog.d(TAG, "Ignore change for $path because phantom export is already running")
                         return
@@ -240,6 +259,18 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         try {
                             delay(200L)
                             if (!isActive) return@launch
+
+                            val resolution = withContext(Dispatchers.IO) {
+                                resolveImageResolution(uri, width, height)
+                            }
+                            if (!isActive) return@launch
+                            if (resolution != null && resolution.shortSide <= MIN_PHANTOM_SHORT_SIDE) {
+                                PLog.d(
+                                    TAG,
+                                    "Ignore change for $path because short side ${resolution.shortSide}px <= ${MIN_PHANTOM_SHORT_SIDE}px (${resolution.width}x${resolution.height})"
+                                )
+                                return@launch
+                            }
 
                             // 在延迟后再次检查，此时上一个任务可能已经更新了 processingInfo
                             val info = processingInfo
@@ -274,6 +305,34 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             } catch (e: Exception) {
                 PLog.e(TAG, "Error querying content: $uri", e)
             }
+        }
+    }
+
+    private fun resolveImageResolution(
+        uri: Uri,
+        mediaStoreWidth: Int,
+        mediaStoreHeight: Int
+    ): ImageResolution? {
+        if (mediaStoreWidth > 0 && mediaStoreHeight > 0) {
+            return ImageResolution(mediaStoreWidth, mediaStoreHeight)
+        }
+
+        return try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                BitmapFactory.decodeStream(inputStream, null, options)
+            }
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                ImageResolution(options.outWidth, options.outHeight)
+            } else {
+                PLog.d(TAG, "Image resolution unavailable for $uri")
+                null
+            }
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to read image resolution: $uri", e)
+            null
         }
     }
 
