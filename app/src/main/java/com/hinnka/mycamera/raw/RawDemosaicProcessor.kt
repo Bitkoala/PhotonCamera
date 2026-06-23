@@ -162,6 +162,7 @@ class RawDemosaicProcessor {
         private const val RAW_HDR_HIGHLIGHT_START = 0.72f
         private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
         private const val RAW_HIDDEN_CHROMA_DENOISE_BASE = 0.5f
+        private const val PROFILE_GAIN_TABLE_TEXTURE_UNIT = 2
         private const val RCD_RAW_TEXTURE_UNIT = 0
         private const val RCD_LENS_SHADING_TEXTURE_UNIT = 1
         private const val RCD_OUTPUT_IMAGE_UNIT = 0
@@ -1151,7 +1152,10 @@ class RawDemosaicProcessor {
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 applyDcpBaselineExposureOffset = false,
-                applyDngBaselineExposure = hasProfileGainTableMap,
+                // MeteringSystem applies DNG BaselineExposure when it builds the AE plan.
+                // Keep the metering pass in scene-linear RAW space so HDR PGTM does not
+                // alter the histogram used to choose exposure.
+                applyDngBaselineExposure = false,
                 meteringCompensationEv = colorEngine.meteringCompensationEv,
                 useDepthWeighting = rawAutoExposure
             )
@@ -1712,9 +1716,9 @@ class RawDemosaicProcessor {
             int i0 = int(floor(clampedIndex));
             int i1 = min(i0 + 1, pointCount - 1);
             float t = clampedIndex - float(i0);
-            int baseX = tableX * pointCount;
-            float g0 = texelFetch(uProfileGainTableMap, ivec2(baseX + i0, tableY), 0).r;
-            float g1 = texelFetch(uProfileGainTableMap, ivec2(baseX + i1, tableY), 0).r;
+            int tableRow = tableY * max(uProfileGainTableSize.x, 1) + tableX;
+            float g0 = texelFetch(uProfileGainTableMap, ivec2(i0, tableRow), 0).r;
+            float g1 = texelFetch(uProfileGainTableMap, ivec2(i1, tableRow), 0).r;
             return mix(g0, g1, t);
         }
 
@@ -4938,15 +4942,19 @@ class RawDemosaicProcessor {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
             return
         }
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + PROFILE_GAIN_TABLE_TEXTURE_UNIT)
         val textureId = ensureProfileGainTableTexture(profileGainTableMap)
         if (textureId == 0) {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
             return
         }
 
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + PROFILE_GAIN_TABLE_TEXTURE_UNIT)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainTableMap"), 2)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(program, "uProfileGainTableMap"),
+            PROFILE_GAIN_TABLE_TEXTURE_UNIT
+        )
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 1)
         GLES30.glUniform3i(
             GLES30.glGetUniformLocation(program, "uProfileGainTableSize"),
@@ -4992,8 +5000,8 @@ class RawDemosaicProcessor {
             profileGainTableTextureId = 0
             profileGainTableTextureSource = null
         }
-        val textureWidth = profileGainTableMap.mapPointsH * profileGainTableMap.mapPointsN
-        val textureHeight = profileGainTableMap.mapPointsV
+        val textureWidth = profileGainTableMap.mapPointsN
+        val textureHeight = profileGainTableMap.mapPointsH * profileGainTableMap.mapPointsV
         if (textureWidth <= 0 || textureHeight <= 0 ||
             textureWidth > maxTextureSize || textureHeight > maxTextureSize
         ) {
@@ -5011,9 +5019,17 @@ class RawDemosaicProcessor {
             .allocateDirect(profileGainTableMap.gains.size * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
-            .put(profileGainTableMap.gains)
+        var gainMin = Float.POSITIVE_INFINITY
+        var gainMax = Float.NEGATIVE_INFINITY
+        profileGainTableMap.gains.forEach { rawGain ->
+            val gain = rawGain.takeIf { it.isFinite() } ?: 1f
+            gainMin = min(gainMin, gain)
+            gainMax = max(gainMax, gain)
+            buffer.put(gain)
+        }
         buffer.position(0)
 
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + PROFILE_GAIN_TABLE_TEXTURE_UNIT)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         GLES30.glTexImage2D(
             GLES30.GL_TEXTURE_2D,
@@ -5038,7 +5054,9 @@ class RawDemosaicProcessor {
         PLog.d(
             TAG,
             "ProfileGainTableMap texture uploaded: ${profileGainTableMap.mapPointsH}x" +
-                "${profileGainTableMap.mapPointsV}x${profileGainTableMap.mapPointsN} tag=${profileGainTableMap.sourceTag}"
+                "${profileGainTableMap.mapPointsV}x${profileGainTableMap.mapPointsN} " +
+                "texture=${textureWidth}x${textureHeight} format=R32F " +
+                "gainMin=$gainMin gainMax=$gainMax tag=${profileGainTableMap.sourceTag}"
         )
         return textureId
     }
