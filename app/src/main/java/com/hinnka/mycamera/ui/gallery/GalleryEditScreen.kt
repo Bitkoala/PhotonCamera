@@ -57,7 +57,6 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.toEffectParams
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
@@ -106,7 +105,6 @@ private data class PreviewRenderSignature(
     val editSharpening: Float,
     val editNoiseReduction: Float,
     val editChromaNoiseReduction: Float,
-    val editDenoiseAlgorithm: DenoiseAlgorithm,
     val editRawExposureCompensation: Float,
     val editRawAutoExposure: Boolean,
     val editRawHighlightsAdjustment: Float,
@@ -187,7 +185,6 @@ fun GalleryEditScreen(
     val editSharpening by viewModel.editSharpening.collectAsState()
     val editNoiseReduction by viewModel.editNoiseReduction.collectAsState()
     val editChromaNoiseReduction by viewModel.editChromaNoiseReduction.collectAsState()
-    val editDenoiseAlgorithm by viewModel.editDenoiseAlgorithm.collectAsState()
     val editRawExposureCompensation by viewModel.editRawExposureCompensation.collectAsState()
     val editRawAutoExposure by viewModel.editRawAutoExposure.collectAsState()
     val editRawHighlightsAdjustment by viewModel.editRawHighlightsAdjustment.collectAsState()
@@ -256,7 +253,6 @@ fun GalleryEditScreen(
             editSharpening = editSharpening,
             editNoiseReduction = if (fast) 0f else editNoiseReduction,
             editChromaNoiseReduction = if (fast) 0f else editChromaNoiseReduction,
-            editDenoiseAlgorithm = editDenoiseAlgorithm,
             editRawExposureCompensation = if (fast) 0f else editRawExposureCompensation,
             editRawAutoExposure = if (fast) false else editRawAutoExposure,
             editRawHighlightsAdjustment = if (fast) 0f else editRawHighlightsAdjustment,
@@ -1065,21 +1061,6 @@ fun GalleryEditScreen(
                                         onValueChange = { viewModel.setSharpening(it) },
                                         onValueChangeFinished = { }
                                     )
-                                    SegmentedControl(
-                                        title = stringResource(R.string.settings_denoise_algorithm),
-                                        items = DenoiseAlgorithm.entries,
-                                        selectedItem = editDenoiseAlgorithm,
-                                        onItemSelected = {
-                                            viewModel.setDenoiseAlgorithm(it)
-                                            if (isRaw) {
-                                                viewModel.persistCurrentRawEditMetadata(currentPhoto) { success ->
-                                                    if (success) requestRawPreviewRefresh()
-                                                }
-                                            }
-                                        },
-                                        itemLabel = { it.displayName() }
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
                                     SliderSettingItem(
                                         title = stringResource(R.string.settings_noise_reduction),
                                         value = editNoiseReduction,
@@ -1592,14 +1573,6 @@ private fun <T> SegmentedControl(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DenoiseAlgorithm.displayName(): String {
-    return when (this) {
-        DenoiseAlgorithm.Fast -> stringResource(R.string.settings_denoise_algorithm_fast)
-        DenoiseAlgorithm.HighQuality -> stringResource(R.string.settings_denoise_algorithm_high_quality)
     }
 }
 

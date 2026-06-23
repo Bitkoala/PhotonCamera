@@ -11,7 +11,6 @@ import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -27,7 +26,7 @@ import kotlin.math.log2
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 20,
+    val version: Int = 19,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
@@ -40,7 +39,6 @@ data class MediaMetadata(
     val sharpening: Float? = null,
     val noiseReduction: Float? = null,
     val chromaNoiseReduction: Float? = null,
-    val denoiseAlgorithm: DenoiseAlgorithm? = null,
     val rawDenoiseValue: Float? = null,
     val rawExposureCompensation: Float? = null,
     val rawAutoExposure: Boolean? = null,
@@ -262,11 +260,6 @@ data class MediaMetadata(
                         .toFloat(),
                     chromaNoiseReduction = if (obj.isNull("chromaNoiseReduction")) null else obj.optDouble("chromaNoiseReduction")
                         .toFloat(),
-                    denoiseAlgorithm = if (obj.isNull("denoiseAlgorithm")) {
-                        null
-                    } else {
-                        DenoiseAlgorithm.fromPersistedName(obj.optString("denoiseAlgorithm"))
-                    },
                     rawDenoiseValue = if (obj.isNull("denoiseValue")) null else obj.optDouble("denoiseValue").toFloat(),
                     rawExposureCompensation = if (obj.isNull("rawExposureCompensation")) null else obj.optDouble("rawExposureCompensation").toFloat(),
                     rawAutoExposure = if (obj.isNull("rawAutoExposure")) null else obj.optBoolean("rawAutoExposure"),

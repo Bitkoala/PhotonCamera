@@ -297,10 +297,6 @@
     <string name="settings_sharpening_description">增强图像锐度和边缘清晰度</string>
     <string name="settings_noise_reduction">降噪</string>
     <string name="settings_noise_reduction_description">减少图像噪点，同时保留细节</string>
-    <string name="settings_denoise_algorithm">降噪算法</string>
-    <string name="settings_denoise_algorithm_description">选择软件降噪的处理路径。</string>
-    <string name="settings_denoise_algorithm_fast">快速</string>
-    <string name="settings_denoise_algorithm_high_quality">高质量</string>
     <string name="settings_chroma_noise_reduction">减少杂色</string>
     <string name="settings_chroma_noise_reduction_description">减少彩色噪点和伪影</string>
     <string name="settings_detail_enhancement_description">手动微调锐化和降噪参数</string>

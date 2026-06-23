@@ -47,7 +47,6 @@ import com.hinnka.mycamera.raw.DcpProfileParser
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.color.TransferCurve
 import com.hinnka.mycamera.model.EffectParams
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.raw.RawCfaCorrection
@@ -1115,8 +1114,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val sharpening: Flow<Float> = userPreferencesRepository.userPreferences.map { it.sharpening }
     val noiseReduction: Flow<Float> = userPreferencesRepository.userPreferences.map { it.noiseReduction }
     val chromaNoiseReduction: Flow<Float> = userPreferencesRepository.userPreferences.map { it.chromaNoiseReduction }
-    val denoiseAlgorithm: Flow<DenoiseAlgorithm> =
-        userPreferencesRepository.userPreferences.map { it.denoiseAlgorithm }
 
     private var isShutterSoundEnabled = true
     private var isVibrationEnabled = true
@@ -1871,7 +1868,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             sharpening = sharpeningValue,
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
-            denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
             rawDcpId = userPrefs?.rawDcpId,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
@@ -3945,12 +3941,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun setDenoiseAlgorithm(algorithm: DenoiseAlgorithm) {
-        viewModelScope.launch {
-            userPreferencesRepository.saveDenoiseAlgorithm(algorithm)
-        }
-    }
-
     /**
      * 设置摄像头方向偏移
      * @param cameraId 摄像头 ID
@@ -4185,7 +4175,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
-                denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -4352,7 +4341,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
-                denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -4491,7 +4479,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     sharpening = sharpeningValue,
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
-                    denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                     rawDcpId = userPrefs?.rawDcpId,
                     rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                     rawAutoExposure = effectiveRawAutoExposure,
@@ -4652,7 +4639,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 sharpening = sharpeningValue,
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
-                denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
                 rawDcpId = userPrefs?.rawDcpId,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
@@ -5172,7 +5158,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             sharpening = sharpeningValue,
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
-            denoiseAlgorithm = userPrefs?.denoiseAlgorithm ?: DenoiseAlgorithm.DEFAULT,
             rawDcpId = userPrefs?.rawDcpId,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,

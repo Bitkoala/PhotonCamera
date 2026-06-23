@@ -42,7 +42,6 @@ import com.hinnka.mycamera.video.VideoResolutionPreset
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.model.CameraPreset
 import com.hinnka.mycamera.model.LutSelectorMode
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 
 /**
  * DataStore 扩展属性
@@ -132,7 +131,6 @@ data class UserPreferences(
     val sharpening: Float = 0f,              // 0.0 ~ 1.0 锐化强度
     val noiseReduction: Float = 0f,         // 0.0 ~ 1.0 降噪强度
     val chromaNoiseReduction: Float = 0f,   // 0.0 ~ 1.0 减少杂色强度
-    val denoiseAlgorithm: DenoiseAlgorithm = DenoiseAlgorithm.DEFAULT,
     // 摄像头方向校正：Map<CameraId, 旋转偏移角度(0/90/180/270)>
     val cameraOrientationOffsets: Map<String, Int> = emptyMap(),
     // 排序顺序
@@ -307,7 +305,6 @@ class UserPreferencesRepository(private val context: Context) {
         private val SHARPENING = floatPreferencesKey("sharpening")
         private val NOISE_REDUCTION = floatPreferencesKey("noise_reduction")
         private val CHROMA_NOISE_REDUCTION = floatPreferencesKey("chroma_noise_reduction")
-        private val DENOISE_ALGORITHM = stringPreferencesKey("denoise_algorithm")
 
         // 排序 Keys
         private val FILTER_ORDER = stringPreferencesKey("filter_order")
@@ -477,7 +474,6 @@ class UserPreferencesRepository(private val context: Context) {
                 sharpening = preferences[SHARPENING] ?: 0f,
                 noiseReduction = preferences[NOISE_REDUCTION] ?: 0f,
                 chromaNoiseReduction = preferences[CHROMA_NOISE_REDUCTION] ?: 0f,
-                denoiseAlgorithm = DenoiseAlgorithm.fromPersistedName(preferences[DENOISE_ALGORITHM]),
                 // 摄像头方向偏移
                 cameraOrientationOffsets = parseCameraOrientationOffsets(preferences[CAMERA_ORIENTATION_OFFSETS]),
                 // 排序
@@ -1170,12 +1166,6 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveChromaNoiseReduction(value: Float) {
         context.dataStore.edit { preferences ->
             preferences[CHROMA_NOISE_REDUCTION] = value.coerceIn(0f, 1f)
-        }
-    }
-
-    suspend fun saveDenoiseAlgorithm(algorithm: DenoiseAlgorithm) {
-        context.dataStore.edit { preferences ->
-            preferences[DENOISE_ALGORITHM] = algorithm.persistedName
         }
     }
 

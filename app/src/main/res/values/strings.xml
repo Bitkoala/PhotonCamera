@@ -299,10 +299,6 @@
     <string name="settings_sharpening_description">Enhance image sharpness and edge definition</string>
     <string name="settings_noise_reduction">Noise Reduction</string>
     <string name="settings_noise_reduction_description">Reduce image noise while preserving detail</string>
-    <string name="settings_denoise_algorithm">Denoise Algorithm</string>
-    <string name="settings_denoise_algorithm_description">Choose the software denoise processing path.</string>
-    <string name="settings_denoise_algorithm_fast">Fast</string>
-    <string name="settings_denoise_algorithm_high_quality">High Quality</string>
     <string name="settings_chroma_noise_reduction">Chroma Noise Reduction</string>
     <string name="settings_chroma_noise_reduction_description">Reduce color noise and artifacts</string>
     <string name="settings_detail_enhancement_description">Fine-tune sharpening and noise reduction parameters</string>

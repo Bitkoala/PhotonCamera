@@ -20,7 +20,6 @@ import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.ColorCorrectionPipelineResolver
 import com.hinnka.mycamera.lut.LutImageProcessor
 import com.hinnka.mycamera.lut.LutManager
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.processor.DepthBokehProcessor
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrRenderResult
@@ -85,16 +84,6 @@ class PhotoProcessor(
 
     private fun resolveChromaNoiseReduction(metadata: MediaMetadata, fallback: Float): Float {
         return metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else fallback)
-    }
-
-    private suspend fun resolveDenoiseAlgorithm(metadata: MediaMetadata): DenoiseAlgorithm {
-        return metadata.denoiseAlgorithm
-            ?: if (metadata.isImported) {
-                DenoiseAlgorithm.DEFAULT
-            } else {
-                userPreferencesRepository.userPreferences.firstOrNull()?.denoiseAlgorithm
-                    ?: DenoiseAlgorithm.DEFAULT
-            }
     }
 
     suspend fun prepareUltraHdrSource(
@@ -186,7 +175,6 @@ class PhotoProcessor(
                             val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
                             val finalChromaNoiseReduction =
                                 metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
-                            val finalDenoiseAlgorithm = resolveDenoiseAlgorithm(metadata)
                             val colorCorrection = resolveColorCorrection(
                                 metadata = metadata,
                                 fallbackTarget = BaselineColorCorrectionTarget.JPG
@@ -208,8 +196,7 @@ class PhotoProcessor(
                                     colorCorrection.creativeLayer,
                                     finalSharpening,
                                     finalNoiseReduction,
-                                    finalChromaNoiseReduction,
-                                    finalDenoiseAlgorithm
+                                    finalChromaNoiseReduction
                                 )
                                 sdrBitmap = applyCrop(sdrBitmap, metadata, "hlg_sdr")
                             }
@@ -478,7 +465,6 @@ class PhotoProcessor(
     ): GainmapSourceSet? = withContext(Dispatchers.IO) {
         val rawNoiseReduction = resolveNoiseReduction(metadata, noiseReduction)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(metadata, chromaNoiseReduction)
-        val rawDenoiseAlgorithm = resolveDenoiseAlgorithm(metadata)
         val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
             context = context,
             dngFilePath = dngPath,
@@ -498,7 +484,6 @@ class PhotoProcessor(
             sharpeningValue = 0.4f,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
-            denoiseAlgorithm = rawDenoiseAlgorithm,
             rawDcpId = metadata.rawDcpId,
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters,
@@ -547,7 +532,6 @@ class PhotoProcessor(
         val finalSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
         val finalNoiseReduction = resolveNoiseReduction(metadata, noiseReduction)
         val finalChromaNoiseReduction = resolveChromaNoiseReduction(metadata, chromaNoiseReduction)
-        val finalDenoiseAlgorithm = resolveDenoiseAlgorithm(metadata)
 
         // 1. 应用 LUT
         val colorCorrection = resolveColorCorrection(
@@ -574,7 +558,6 @@ class PhotoProcessor(
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             denoiseValue = finalNoiseReduction,
             chromaDenoiseValue = finalChromaNoiseReduction,
-            denoiseAlgorithm = finalDenoiseAlgorithm,
             rawDcpId = metadata.rawDcpId,
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters,
@@ -642,7 +625,6 @@ class PhotoProcessor(
         val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
         val finalChromaNoiseReduction =
             metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
-        val finalDenoiseAlgorithm = resolveDenoiseAlgorithm(metadata)
 
         val colorCorrection = resolveColorCorrection(
             metadata = metadata,
@@ -660,8 +642,7 @@ class PhotoProcessor(
             colorCorrection.creativeLayer,
             finalSharpening,
             finalNoiseReduction,
-            finalChromaNoiseReduction,
-            finalDenoiseAlgorithm
+            finalChromaNoiseReduction
         )
         YuvProcessor.free(input)
 
@@ -702,7 +683,6 @@ class PhotoProcessor(
         val finalNoiseReduction = metadata.noiseReduction ?: (if (metadata.isImported) 0f else noiseReduction)
         val finalChromaNoiseReduction =
             metadata.chromaNoiseReduction ?: (if (metadata.isImported) 0f else chromaNoiseReduction)
-        val finalDenoiseAlgorithm = resolveDenoiseAlgorithm(metadata)
 
         val colorCorrection = resolveColorCorrection(
             metadata = metadata,
@@ -727,8 +707,7 @@ class PhotoProcessor(
             colorCorrection.creativeLayer,
             finalSharpening,
             finalNoiseReduction,
-            finalChromaNoiseReduction,
-            finalDenoiseAlgorithm
+            finalChromaNoiseReduction
         )
 
         result = applyCrop(result, metadata, "bitmap")

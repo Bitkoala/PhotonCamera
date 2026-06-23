@@ -121,7 +121,6 @@ import com.hinnka.mycamera.gallery.HeicExportEncoder
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
-import com.hinnka.mycamera.processing.DenoiseAlgorithm
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
@@ -223,14 +222,6 @@ private fun AiFocusTargetMode.displayName(): String {
     }
 }
 
-@Composable
-private fun DenoiseAlgorithm.displayName(): String {
-    return when (this) {
-        DenoiseAlgorithm.Fast -> stringResource(R.string.settings_denoise_algorithm_fast)
-        DenoiseAlgorithm.HighQuality -> stringResource(R.string.settings_denoise_algorithm_high_quality)
-    }
-}
-
 
 /**
  * 设置页面
@@ -270,7 +261,6 @@ fun SettingsScreen(
     val sharpening by viewModel.sharpening.collectAsState(initial = 0f)
     val noiseReduction by viewModel.noiseReduction.collectAsState(initial = 0f)
     val chromaNoiseReduction by viewModel.chromaNoiseReduction.collectAsState(initial = 0f)
-    val denoiseAlgorithm by viewModel.denoiseAlgorithm.collectAsState(initial = DenoiseAlgorithm.DEFAULT)
     val defaultFocalLength by viewModel.defaultFocalLength.collectAsState(initial = 0f)
     val customLensIds by viewModel.customLensIds.collectAsState(initial = emptyList())
     val lensIdBlacklist by viewModel.lensIdBlacklist.collectAsState(initial = emptyList())
@@ -1532,24 +1522,6 @@ fun SettingsScreen(
                             valueRange = 0f..1f,
                             resetValue = 0f,
                             onValueChange = { viewModel.setNoiseReduction(it) }
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        val denoiseAlgorithmOptions = DenoiseAlgorithm.entries.map { it to it.displayName() }
-                        val denoiseAlgorithmLabels = denoiseAlgorithmOptions.map { it.second }
-                        DropdownSettingItem(
-                            title = stringResource(R.string.settings_denoise_algorithm),
-                            description = stringResource(R.string.settings_denoise_algorithm_description),
-                            value = denoiseAlgorithm.displayName(),
-                            options = denoiseAlgorithmLabels,
-                            isLoading = false,
-                            onExpanded = {},
-                            onOptionSelected = { label ->
-                                denoiseAlgorithmOptions.firstOrNull { it.second == label }?.first?.let {
-                                    viewModel.setDenoiseAlgorithm(it)
-                                }
-                            }
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
