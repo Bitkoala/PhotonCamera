@@ -963,11 +963,7 @@ class RawDemosaicProcessor {
                 RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
             )
             val wbGains = actualMetadata.whiteBalanceGains
-            val lscSize = if (hasValidLensShadingMap(actualMetadata)) {
-                "${actualMetadata.lensShadingMapWidth}x${actualMetadata.lensShadingMapHeight}"
-            } else {
-                "none"
-            }
+            val lscSize = lensShadingLogString(actualMetadata)
             PLog.d(
                 TAG,
                 "RCD populate: cfa=${actualMetadata.cfaPattern} black=${blackLevel4.contentToString()} " +
@@ -3137,6 +3133,23 @@ class RawDemosaicProcessor {
         return width > 0 && height > 0 && map.size >= width * height * 4
     }
 
+    private fun lensShadingLogString(metadata: RawMetadata): String {
+        if (!hasValidLensShadingMap(metadata)) return "none"
+        val grid = metadata.lensShadingMapGrid
+        return when {
+            grid != null && grid.size >= 8 -> {
+                "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight},dng," +
+                        "bounds=${grid[4]},${grid[5]},${grid[6]},${grid[7]}"
+            }
+            grid != null && grid.size >= 4 -> {
+                "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight},dng"
+            }
+            else -> {
+                "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight},camera2"
+            }
+        }
+    }
+
     private fun runQuadBayerDemosaic(
         metadata: RawMetadata,
         width: Int,
@@ -3164,11 +3177,7 @@ class RawDemosaicProcessor {
             }.coerceAtLeast(0f)
         }
         val wbGains = metadata.whiteBalanceGains
-        val lscSize = if (hasValidLensShadingMap(metadata)) {
-            "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight}"
-        } else {
-            "none"
-        }
+        val lscSize = lensShadingLogString(metadata)
         val expandedBlockSize = RawCfaCorrection.expandedBayerBlockSize(metadata.cfaPattern)
         val outputBorder = (expandedBlockSize * 2).coerceAtLeast(4)
 
@@ -3330,6 +3339,20 @@ class RawDemosaicProcessor {
             grid?.getOrElse(1) { 0f } ?: 0f,
             grid?.getOrElse(2) { 1f } ?: 1f,
             grid?.getOrElse(3) { 1f } ?: 1f
+        )
+        val boundsLeft = grid?.getOrElse(4) { 0f } ?: 0f
+        val boundsTop = grid?.getOrElse(5) { 0f } ?: 0f
+        val boundsRight = grid?.getOrElse(6) { metadata.width.toFloat() } ?: metadata.width.toFloat()
+        val boundsBottom = grid?.getOrElse(7) { metadata.height.toFloat() } ?: metadata.height.toFloat()
+        GLES31.glUniform2f(
+            GLES31.glGetUniformLocation(program, "uLensShadingBoundsOrigin"),
+            boundsLeft,
+            boundsTop
+        )
+        GLES31.glUniform2f(
+            GLES31.glGetUniformLocation(program, "uLensShadingBoundsSize"),
+            (boundsRight - boundsLeft).coerceAtLeast(1f),
+            (boundsBottom - boundsTop).coerceAtLeast(1f)
         )
     }
 

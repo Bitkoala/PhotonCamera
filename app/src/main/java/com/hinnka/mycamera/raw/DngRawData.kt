@@ -21,7 +21,9 @@ import java.nio.ByteBuffer
  * @param lensShadingMap Lens Shading Map (LSC) 增益表，null表示无LSC数据
  * @param lensShadingMapWidth LSC 表宽度
  * @param lensShadingMapHeight LSC 表高度
- * @param lensShadingMapGrid DNG GainMap grid 参数 [originH, originV, spacingH, spacingV]，null 表示按 Camera2 UV 采样
+ * @param lensShadingMapGrid DNG GainMap 参数
+ * [originH, originV, spacingH, spacingV, boundsLeft, boundsTop, boundsRight, boundsBottom]，
+ * null 表示按 Camera2 UV 采样
  */
 @Keep
 data class DngRawData @Keep constructor(

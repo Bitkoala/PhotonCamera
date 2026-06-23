@@ -66,6 +66,11 @@ data class RawMetadata(
     val lensShadingMap: FloatArray? = null,
     val lensShadingMapWidth: Int = 0,
     val lensShadingMapHeight: Int = 0,
+    /**
+     * DNG GainMap 参数:
+     * [originH, originV, spacingH, spacingV, boundsLeft, boundsTop, boundsRight, boundsBottom]。
+     * null 表示使用 Camera2 LensShadingMap 的整图 UV 语义。
+     */
     val lensShadingMapGrid: FloatArray? = null,
 
     /**

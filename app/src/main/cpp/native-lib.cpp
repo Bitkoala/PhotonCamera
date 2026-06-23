@@ -538,6 +538,157 @@ static void computeEffectiveBlackLevels(LibRaw &rawProcessor, int cfaPattern,
   }
 }
 
+struct DngRawTagInfo {
+  bool hasActiveArea = false;
+  int activeArea[4] = {0, 0, 0, 0}; // top, left, bottom, right
+  int maskedAreaCount = 0;
+  int blackRepeatRows = 0;
+  int blackRepeatCols = 0;
+  std::vector<double> blackLevel;
+  std::vector<double> blackDeltaH;
+  std::vector<double> blackDeltaV;
+};
+
+static int bayerBlackLevelIndexForPattern(int cfaPattern, int col, int row) {
+  const int r = row & 1;
+  const int c = col & 1;
+  if (cfaPattern == 0) { // RGGB
+    return r == 0 ? (c == 0 ? 0 : 1) : (c == 0 ? 2 : 3);
+  }
+  if (cfaPattern == 1) { // GRBG
+    return r == 0 ? (c == 0 ? 1 : 0) : (c == 0 ? 3 : 2);
+  }
+  if (cfaPattern == 2) { // GBRG
+    return r == 0 ? (c == 0 ? 2 : 3) : (c == 0 ? 0 : 1);
+  }
+  return r == 0 ? (c == 0 ? 3 : 2) : (c == 0 ? 1 : 0);
+}
+
+static void mapLibRawBlackLevelsForGpu(LibRaw &rawProcessor, int cfaPattern,
+                                       int left, int top,
+                                       const float librawBlackLevels[4],
+                                       float active2x2[4],
+                                       float exportedRggb[4]) {
+  for (int i = 0; i < 4; ++i) {
+    active2x2[i] = 0.0f;
+    exportedRggb[i] = librawBlackLevels[i];
+  }
+
+  active2x2[0] = librawBlackLevels[rawProcessor.FC(top, left)];
+  active2x2[1] = librawBlackLevels[rawProcessor.FC(top, left + 1)];
+  active2x2[2] = librawBlackLevels[rawProcessor.FC(top + 1, left)];
+  active2x2[3] = librawBlackLevels[rawProcessor.FC(top + 1, left + 1)];
+
+  bool filled[4] = {false, false, false, false};
+  const int period = cfaPattern >= 4 ? (cfaPattern >= 8 ? 8 : 4) : 2;
+  for (int row = 0; row < period; ++row) {
+    for (int col = 0; col < period; ++col) {
+      const int srcChannel = rawProcessor.FC(top + row, left + col);
+      if (srcChannel < 0 || srcChannel > 3)
+        continue;
+      const int dstChannel = cfaPattern >= 4
+                                 ? quadChannelIndexForPattern(cfaPattern, col, row)
+                                 : bayerBlackLevelIndexForPattern(cfaPattern, col, row);
+      if (dstChannel >= 0 && dstChannel < 4) {
+        exportedRggb[dstChannel] = librawBlackLevels[srcChannel];
+        filled[dstChannel] = true;
+      }
+    }
+  }
+
+  for (int i = 0; i < 4; ++i) {
+    if (!filled[i]) {
+      exportedRggb[i] = active2x2[std::min(i, 3)];
+    }
+  }
+}
+
+static bool applyDngBlackLevelDeltas(LibRaw &rawProcessor,
+                                     const DngRawTagInfo &rawTags) {
+  if (rawTags.blackDeltaH.empty() && rawTags.blackDeltaV.empty()) {
+    return false;
+  }
+  if (!rawProcessor.imgdata.rawdata.raw_image) {
+    return false;
+  }
+
+  const int rawWidth = rawProcessor.imgdata.sizes.raw_width;
+  const int rawHeight = rawProcessor.imgdata.sizes.raw_height;
+  const int rawPitch = rawProcessor.imgdata.sizes.raw_pitch > 0
+                           ? rawProcessor.imgdata.sizes.raw_pitch / static_cast<int>(sizeof(ushort))
+                           : rawWidth;
+  int activeTop = rawTags.hasActiveArea ? rawTags.activeArea[0]
+                                        : static_cast<int>(rawProcessor.imgdata.sizes.top_margin);
+  int activeLeft = rawTags.hasActiveArea ? rawTags.activeArea[1]
+                                         : static_cast<int>(rawProcessor.imgdata.sizes.left_margin);
+  int activeBottom = rawTags.hasActiveArea
+                         ? rawTags.activeArea[2]
+                         : activeTop + static_cast<int>(rawProcessor.imgdata.sizes.height);
+  int activeRight = rawTags.hasActiveArea
+                        ? rawTags.activeArea[3]
+                        : activeLeft + static_cast<int>(rawProcessor.imgdata.sizes.width);
+  activeTop = std::clamp(activeTop, 0, rawHeight);
+  activeBottom = std::clamp(activeBottom, activeTop, rawHeight);
+  activeLeft = std::clamp(activeLeft, 0, rawWidth);
+  activeRight = std::clamp(activeRight, activeLeft, rawWidth);
+
+  const int activeWidth = activeRight - activeLeft;
+  const int activeHeight = activeBottom - activeTop;
+  if (activeWidth <= 0 || activeHeight <= 0) {
+    return false;
+  }
+  if (!rawTags.blackDeltaH.empty() &&
+      rawTags.blackDeltaH.size() != static_cast<size_t>(activeWidth)) {
+    LOGI("dng black delta: skip H count=%zu activeWidth=%d",
+         rawTags.blackDeltaH.size(), activeWidth);
+    return false;
+  }
+  if (!rawTags.blackDeltaV.empty() &&
+      rawTags.blackDeltaV.size() != static_cast<size_t>(activeHeight)) {
+    LOGI("dng black delta: skip V count=%zu activeHeight=%d",
+         rawTags.blackDeltaV.size(), activeHeight);
+    return false;
+  }
+
+  bool hasNonZeroDelta = false;
+  for (double value : rawTags.blackDeltaH) {
+    if (std::abs(value) > 1e-9) {
+      hasNonZeroDelta = true;
+      break;
+    }
+  }
+  for (double value : rawTags.blackDeltaV) {
+    if (std::abs(value) > 1e-9) {
+      hasNonZeroDelta = true;
+      break;
+    }
+  }
+  if (!hasNonZeroDelta) {
+    return false;
+  }
+
+  auto *rawImage = rawProcessor.imgdata.rawdata.raw_image;
+  for (int y = activeTop; y < activeBottom; ++y) {
+    const double rowDelta = rawTags.blackDeltaV.empty()
+                                ? 0.0
+                                : rawTags.blackDeltaV[static_cast<size_t>(y - activeTop)];
+    for (int x = activeLeft; x < activeRight; ++x) {
+      const double colDelta = rawTags.blackDeltaH.empty()
+                                  ? 0.0
+                                  : rawTags.blackDeltaH[static_cast<size_t>(x - activeLeft)];
+      const double delta = rowDelta + colDelta;
+      if (std::abs(delta) <= 1e-9) {
+        continue;
+      }
+      const int index = y * rawPitch + x;
+      const double corrected = static_cast<double>(rawImage[index]) - delta;
+      rawImage[index] = static_cast<ushort>(
+          std::clamp(static_cast<int>(std::lround(corrected)), 0, 65535));
+    }
+  }
+  return true;
+}
+
 
 // Metadata-based black level calculation is now handled by computeEffectiveBlackLevels.
 
@@ -640,13 +791,17 @@ static bool applySupportedDngGainMaps(LibRaw &rawProcessor, const float blackLev
 static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
                                             int cfaPattern, int activeLeft, int activeTop,
                                             int &outWidth, int &outHeight,
-                                            float outGrid[4]) {
+                                            float outGrid[8]) {
   outWidth = 0;
   outHeight = 0;
   outGrid[0] = 0.0f;
   outGrid[1] = 0.0f;
   outGrid[2] = 1.0f;
   outGrid[3] = 1.0f;
+  outGrid[4] = 0.0f;
+  outGrid[5] = 0.0f;
+  outGrid[6] = static_cast<float>(std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.width)));
+  outGrid[7] = static_cast<float>(std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.height)));
 
   std::vector<DngGainMap> gainMaps;
   if (!parseDngGainMaps(rawProcessor.imgdata.color.dng_levels.rawopcodes[1], gainMaps) ||
@@ -725,14 +880,19 @@ static jfloatArray buildDngLensShadingArray(JNIEnv *env, LibRaw &rawProcessor,
   outGrid[1] = static_cast<float>(gainMaps[0].mapOriginV);
   outGrid[2] = static_cast<float>(gainMaps[0].mapSpacingH);
   outGrid[3] = static_cast<float>(gainMaps[0].mapSpacingV);
+  outGrid[4] = 0.0f;
+  outGrid[5] = 0.0f;
+  outGrid[6] = static_cast<float>(std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.width)));
+  outGrid[7] = static_cast<float>(std::max(1, static_cast<int>(rawProcessor.imgdata.sizes.height)));
   jfloatArray result = env->NewFloatArray(static_cast<jsize>(packed.size()));
   if (!result) {
     return nullptr;
   }
   env->SetFloatArrayRegion(result, 0, static_cast<jsize>(packed.size()), packed.data());
-  LOGI("dng gain map export: %dx%d origin=(%f,%f) spacing=(%f,%f) mode=%s",
+  LOGI("dng gain map export: %dx%d origin=(%f,%f) spacing=(%f,%f) bounds=(%f,%f,%f,%f) mode=%s",
        outWidth, outHeight, outGrid[0], outGrid[1], outGrid[2], outGrid[3],
-       isQuadBayer ? "quad-parity" : "bayer-channel");
+       outGrid[4], outGrid[5], outGrid[6], outGrid[7],
+       isQuadBayer ? "quad-parity" : "dng-parity");
   return result;
 }
 
@@ -2036,6 +2196,28 @@ static uint32_t tiffReadU32(const unsigned char *data, bool littleEndian) {
          static_cast<uint32_t>(data[3]);
 }
 
+static uint64_t tiffReadU64(const unsigned char *data, bool littleEndian) {
+  uint64_t value = 0;
+  if (littleEndian) {
+    for (int i = 7; i >= 0; --i) {
+      value = (value << 8) | data[i];
+    }
+  } else {
+    for (int i = 0; i < 8; ++i) {
+      value = (value << 8) | data[i];
+    }
+  }
+  return value;
+}
+
+static int16_t tiffReadI16(const unsigned char *data, bool littleEndian) {
+  return static_cast<int16_t>(tiffReadU16(data, littleEndian));
+}
+
+static int32_t tiffReadI32(const unsigned char *data, bool littleEndian) {
+  return static_cast<int32_t>(tiffReadU32(data, littleEndian));
+}
+
 static bool tiffReadAt(std::ifstream &file, uint32_t offset, unsigned char *dst,
                        size_t size) {
   file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
@@ -2075,7 +2257,7 @@ static bool tiffEntryData(std::ifstream &file, const unsigned char entry[12],
   if (typeSize <= 0 || count == 0)
     return false;
   const uint64_t byteCount = static_cast<uint64_t>(typeSize) * count;
-  if (byteCount > 4096)
+  if (byteCount > 1024 * 1024)
     return false;
 
   out.assign(static_cast<size_t>(byteCount), 0);
@@ -2099,6 +2281,49 @@ static int tiffReadValueAt(const std::vector<unsigned char> &data, uint16_t type
   if (type == 4 || type == 9)
     return static_cast<int>(tiffReadU32(data.data() + offset, littleEndian));
   return data[offset];
+}
+
+static double tiffReadRealAt(const std::vector<unsigned char> &data, uint16_t type,
+                             uint32_t index, bool littleEndian) {
+  const int typeSize = tiffTypeSize(type);
+  const size_t offset = static_cast<size_t>(index) * static_cast<size_t>(typeSize);
+  if (typeSize <= 0 || offset + static_cast<size_t>(typeSize) > data.size())
+    return 0.0;
+  const unsigned char *ptr = data.data() + offset;
+  switch (type) {
+  case 3:
+    return static_cast<double>(tiffReadU16(ptr, littleEndian));
+  case 4:
+    return static_cast<double>(tiffReadU32(ptr, littleEndian));
+  case 5: {
+    const uint32_t num = tiffReadU32(ptr, littleEndian);
+    const uint32_t den = tiffReadU32(ptr + 4, littleEndian);
+    return den == 0 ? 0.0 : static_cast<double>(num) / static_cast<double>(den);
+  }
+  case 8:
+    return static_cast<double>(tiffReadI16(ptr, littleEndian));
+  case 9:
+    return static_cast<double>(tiffReadI32(ptr, littleEndian));
+  case 10: {
+    const int32_t num = tiffReadI32(ptr, littleEndian);
+    const int32_t den = tiffReadI32(ptr + 4, littleEndian);
+    return den == 0 ? 0.0 : static_cast<double>(num) / static_cast<double>(den);
+  }
+  case 11: {
+    const uint32_t bits = tiffReadU32(ptr, littleEndian);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    return static_cast<double>(value);
+  }
+  case 12: {
+    const uint64_t bits = tiffReadU64(ptr, littleEndian);
+    double value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+  }
+  default:
+    return static_cast<double>(tiffReadValueAt(data, type, index, littleEndian));
+  }
 }
 
 static void parseDngCfaIfd(std::ifstream &file, bool littleEndian,
@@ -2188,6 +2413,110 @@ static bool parseDngCfaInfo(const char *path, DngCfaInfo &info) {
   const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
   parseDngCfaIfd(file, littleEndian, firstIfd, info, 0);
   return info.repeatRows > 0 && info.repeatCols > 0 && info.patternLen > 0;
+}
+
+static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
+                              uint32_t ifdOffset, DngRawTagInfo &info, int depth) {
+  if (ifdOffset == 0 || depth > 8)
+    return;
+
+  unsigned char countBytes[2];
+  if (!tiffReadAt(file, ifdOffset, countBytes, sizeof(countBytes)))
+    return;
+  const uint16_t entryCount = tiffReadU16(countBytes, littleEndian);
+  if (entryCount == 0 || entryCount > 1024)
+    return;
+
+  std::vector<uint32_t> childIfds;
+  for (uint16_t entryIndex = 0; entryIndex < entryCount; ++entryIndex) {
+    unsigned char entry[12];
+    const uint32_t entryOffset =
+        ifdOffset + 2u + static_cast<uint32_t>(entryIndex) * 12u;
+    if (!tiffReadAt(file, entryOffset, entry, sizeof(entry)))
+      return;
+
+    const uint16_t tag = tiffReadU16(entry, littleEndian);
+    const uint16_t type = tiffReadU16(entry + 2, littleEndian);
+    const uint32_t count = tiffReadU32(entry + 4, littleEndian);
+    std::vector<unsigned char> data;
+
+    if (tag == 0xc68d && count >= 4 &&
+        tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.hasActiveArea = true;
+      for (int i = 0; i < 4; ++i) {
+        info.activeArea[i] = tiffReadValueAt(data, type, static_cast<uint32_t>(i), littleEndian);
+      }
+    } else if (tag == 0xc68e && count >= 4 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.maskedAreaCount = static_cast<int>(count / 4);
+    } else if (tag == 0xc619 && count >= 2 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.blackRepeatRows = tiffReadValueAt(data, type, 0, littleEndian);
+      info.blackRepeatCols = tiffReadValueAt(data, type, 1, littleEndian);
+    } else if (tag == 0xc61a && count > 0 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const uint32_t safeCount = std::min<uint32_t>(count, 64);
+      info.blackLevel.resize(safeCount);
+      for (uint32_t i = 0; i < safeCount; ++i) {
+        info.blackLevel[i] = tiffReadRealAt(data, type, i, littleEndian);
+      }
+    } else if (tag == 0xc61b && count > 0 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.blackDeltaH.resize(count);
+      for (uint32_t i = 0; i < count; ++i) {
+        info.blackDeltaH[i] = tiffReadRealAt(data, type, i, littleEndian);
+      }
+    } else if (tag == 0xc61c && count > 0 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      info.blackDeltaV.resize(count);
+      for (uint32_t i = 0; i < count; ++i) {
+        info.blackDeltaV[i] = tiffReadRealAt(data, type, i, littleEndian);
+      }
+    } else if (tag == 0x014a &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const uint32_t childCount =
+          std::min<uint32_t>(count, static_cast<uint32_t>(data.size() / std::max(1, tiffTypeSize(type))));
+      for (uint32_t i = 0; i < childCount && i < 16; ++i) {
+        const int offset = tiffReadValueAt(data, type, i, littleEndian);
+        if (offset > 0)
+          childIfds.push_back(static_cast<uint32_t>(offset));
+      }
+    }
+  }
+
+  unsigned char nextBytes[4];
+  const uint32_t nextOffsetPos = ifdOffset + 2u + static_cast<uint32_t>(entryCount) * 12u;
+  if (tiffReadAt(file, nextOffsetPos, nextBytes, sizeof(nextBytes))) {
+    const uint32_t nextIfd = tiffReadU32(nextBytes, littleEndian);
+    if (nextIfd != 0)
+      childIfds.push_back(nextIfd);
+  }
+
+  for (uint32_t child : childIfds)
+    parseDngRawTagIfd(file, littleEndian, child, info, depth + 1);
+}
+
+static bool parseDngRawTagInfo(const char *path, DngRawTagInfo &info) {
+  if (!path)
+    return false;
+  std::ifstream file(path, std::ios::binary);
+  if (!file)
+    return false;
+
+  unsigned char header[8];
+  if (!tiffReadAt(file, 0, header, sizeof(header)))
+    return false;
+  const bool littleEndian = header[0] == 'I' && header[1] == 'I';
+  const bool bigEndian = header[0] == 'M' && header[1] == 'M';
+  if (!littleEndian && !bigEndian)
+    return false;
+  if (tiffReadU16(header + 2, littleEndian) != 42)
+    return false;
+
+  const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
+  parseDngRawTagIfd(file, littleEndian, firstIfd, info, 0);
+  return info.hasActiveArea || !info.blackLevel.empty() ||
+         !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
 }
 
 static int dngCfaColorAt(const DngCfaInfo &info, int row, int col) {
@@ -2455,6 +2784,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   DngCfaInfo dngCfaInfo;
   const bool hasDngCfaInfo = parseDngCfaInfo(path, dngCfaInfo);
+  DngRawTagInfo dngRawTagInfo;
+  parseDngRawTagInfo(path, dngRawTagInfo);
   if (hasDngCfaInfo) {
     cfaPattern = identifyQuadCfaFromDng(dngCfaInfo, left, top, dngCfa4x4);
     LOGI("processDngNative: DNG CFA tags repeat=%dx%d patternLen=%d "
@@ -2492,21 +2823,80 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        libRawCfa4x4[3][0], libRawCfa4x4[3][1], libRawCfa4x4[3][2], libRawCfa4x4[3][3],
        cfaPattern);
 
-  // Read the TOTAL effective black level per channel.
+  const auto &levels = RawProcessor.imgdata.color.dng_levels;
+  LOGI("dng black metadata: color.black=%d cblack=%d,%d,%d,%d repeat=%d,%d "
+       "dng_black=%d dng_fblack=%f dng_cblack_repeat=%d,%d",
+       static_cast<int>(RawProcessor.imgdata.color.black),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[0]),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[1]),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[2]),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[3]),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[4]),
+       static_cast<int>(RawProcessor.imgdata.color.cblack[5]),
+       static_cast<int>(levels.dng_black), levels.dng_fblack,
+       static_cast<int>(levels.dng_cblack[4]),
+       static_cast<int>(levels.dng_cblack[5]));
+
+  const bool blackDeltaApplied = applyDngBlackLevelDeltas(RawProcessor, dngRawTagInfo);
+
+  // Read the TOTAL effective black level per LibRaw channel.
   // LibRaw stores it as: color.black + cblack[channel] + repeat_pattern[position].
-  float dngBlackLevels[4] = {};
-  computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, dngBlackLevels);
-  LOGI("dng black levels (metadata): %f %f %f %f", dngBlackLevels[0], dngBlackLevels[1], dngBlackLevels[2], dngBlackLevels[3]);
+  float librawBlackLevels[4] = {};
+  float activeBlackLevels[4] = {};
+  float exportedBlackLevels[4] = {};
+  computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, librawBlackLevels);
+  mapLibRawBlackLevelsForGpu(RawProcessor, cfaPattern, left, top,
+                             librawBlackLevels, activeBlackLevels,
+                             exportedBlackLevels);
+  const double blackPreview0 = !dngRawTagInfo.blackLevel.empty()
+                                   ? dngRawTagInfo.blackLevel[0]
+                                   : exportedBlackLevels[0];
+  const double blackPreview1 = dngRawTagInfo.blackLevel.size() > 1
+                                   ? dngRawTagInfo.blackLevel[1]
+                                   : exportedBlackLevels[1];
+  const double blackPreview2 = dngRawTagInfo.blackLevel.size() > 2
+                                   ? dngRawTagInfo.blackLevel[2]
+                                   : exportedBlackLevels[2];
+  const double blackPreview3 = dngRawTagInfo.blackLevel.size() > 3
+                                   ? dngRawTagInfo.blackLevel[3]
+                                   : exportedBlackLevels[3];
+  LOGI("dng black delta tags: active=%d,%d,%d,%d,%d maskedAreas=%d repeat=%dx%d "
+       "blackCount=%zu blackPreview=%f,%f,%f,%f deltaH=%zu[%f,%f] "
+       "deltaV=%zu[%f,%f] applied=%d",
+       dngRawTagInfo.hasActiveArea ? 1 : 0,
+       dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[0] : top,
+       dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[1] : left,
+       dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[2] : top + height,
+       dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[3] : left + width,
+       dngRawTagInfo.maskedAreaCount,
+       dngRawTagInfo.blackRepeatRows,
+       dngRawTagInfo.blackRepeatCols,
+       dngRawTagInfo.blackLevel.size(),
+       blackPreview0, blackPreview1, blackPreview2, blackPreview3,
+       dngRawTagInfo.blackDeltaH.size(),
+       dngRawTagInfo.blackDeltaH.empty() ? 0.0 : dngRawTagInfo.blackDeltaH.front(),
+       dngRawTagInfo.blackDeltaH.empty() ? 0.0 : dngRawTagInfo.blackDeltaH.back(),
+       dngRawTagInfo.blackDeltaV.size(),
+       dngRawTagInfo.blackDeltaV.empty() ? 0.0 : dngRawTagInfo.blackDeltaV.front(),
+       dngRawTagInfo.blackDeltaV.empty() ? 0.0 : dngRawTagInfo.blackDeltaV.back(),
+       blackDeltaApplied ? 1 : 0);
+  LOGI("dng black levels: librawChannels=%f,%f,%f,%f active2x2=%f,%f,%f,%f "
+       "exportedRGGB=%f,%f,%f,%f",
+       librawBlackLevels[0], librawBlackLevels[1], librawBlackLevels[2], librawBlackLevels[3],
+       activeBlackLevels[0], activeBlackLevels[1], activeBlackLevels[2], activeBlackLevels[3],
+       exportedBlackLevels[0], exportedBlackLevels[1], exportedBlackLevels[2], exportedBlackLevels[3]);
   int exportedLscWidth = 0;
   int exportedLscHeight = 0;
-  float exportedLscGrid[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+  float exportedLscGrid[8] = {
+      0.0f, 0.0f, 1.0f, 1.0f,
+      0.0f, 0.0f, static_cast<float>(std::max(1, width)), static_cast<float>(std::max(1, height))};
   jfloatArray exportedLscArray = buildDngLensShadingArray(
       env, RawProcessor, cfaPattern, left, top, exportedLscWidth,
       exportedLscHeight, exportedLscGrid);
   jfloatArray exportedLscGridArray = nullptr;
   if (exportedLscArray) {
-    exportedLscGridArray = env->NewFloatArray(4);
-    env->SetFloatArrayRegion(exportedLscGridArray, 0, 4, exportedLscGrid);
+    exportedLscGridArray = env->NewFloatArray(8);
+    env->SetFloatArrayRegion(exportedLscGridArray, 0, 8, exportedLscGrid);
   }
   LOGI("dng gain map: opcode2_len=%u native_apply=0 exported=%d",
        RawProcessor.imgdata.color.dng_levels.rawopcodes[1].len,
@@ -2536,7 +2926,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   if (useRawAutoWhiteBalanceEstimate == JNI_TRUE) {
     float estimatedWb[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     int awbSamples = 0;
-    if (estimateRawAutoWhiteBalance(RawProcessor, dngBlackLevels, estimatedWb, awbSamples)) {
+    if (estimateRawAutoWhiteBalance(RawProcessor, librawBlackLevels, estimatedWb, awbSamples)) {
       RawProcessor.imgdata.params.use_camera_wb = 0;
       RawProcessor.imgdata.params.use_auto_wb = 0;
       for (int i = 0; i < 4; ++i) {
@@ -2576,7 +2966,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   jfloatArray blackLevelArray = env->NewFloatArray(4);
   for (int i = 0; i < 4; i++) {
-    float val = dngBlackLevels[i];
+    float val = exportedBlackLevels[i];
     env->SetFloatArrayRegion(blackLevelArray, i, 1, &val);
   }
 

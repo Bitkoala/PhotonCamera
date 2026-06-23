@@ -19,7 +19,6 @@ import com.hinnka.mycamera.camera.VendorCaptureSettings
 import com.hinnka.mycamera.camera.VendorCaptureSettingsByLens
 import com.hinnka.mycamera.gallery.PhotoSavePath
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
-import com.hinnka.mycamera.lut.DEFAULT_RAW_BASELINE_LUT_ID
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawProcessingPreferences
@@ -416,8 +415,7 @@ class UserPreferencesRepository(private val context: Context) {
                 lutId = preferences[LUT_ID_KEY]
                     ?: preferences[LEGACY_PHANTOM_LUT_ID_KEY],  // 不提供默认值，由 CameraViewModel 处理
                 jpgBaselineLutId = preferences[JPG_BASELINE_LUT_ID_KEY],
-                rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY]
-                    ?: if (!rawBaselineLutConfigured) DEFAULT_RAW_BASELINE_LUT_ID else null,
+                rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY],
                 rawBaselineLutConfigured = rawBaselineLutConfigured,
                 rawDcpId = preferences[RAW_DCP_ID_KEY],
                 rawRenderingEngine = RawRenderingEngine.fromPersistedName(preferences[RAW_COLOR_ENGINE_KEY]),

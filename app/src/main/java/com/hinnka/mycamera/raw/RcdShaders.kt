@@ -37,6 +37,8 @@ object RcdShaders {
         uniform bool uLensShadingUsesDngGrid;
         uniform vec2 uLensShadingMapSize;
         uniform vec4 uLensShadingGrid; // originH, originV, spacingH, spacingV
+        uniform vec2 uLensShadingBoundsOrigin;
+        uniform vec2 uLensShadingBoundsSize;
 
         #define RED 0
         #define GREEN 1
@@ -89,6 +91,8 @@ object RcdShaders {
             vec2 norm = (vec2(coord) + vec2(0.5)) / vec2(uImageSize);
             vec2 uv = norm;
             if (uLensShadingUsesDngGrid) {
+                vec2 boundsSize = max(uLensShadingBoundsSize, vec2(1.0));
+                norm = (vec2(coord) + vec2(0.5) - uLensShadingBoundsOrigin) / boundsSize;
                 vec2 origin = uLensShadingGrid.xy;
                 vec2 spacing = max(uLensShadingGrid.zw, vec2(1e-8));
                 vec2 mapIndex = (norm - origin) / spacing;
