@@ -2794,7 +2794,7 @@ object GalleryManager {
         if (!referenceProduct.isFinite() || referenceProduct <= 0.0 ||
             !baseProduct.isFinite() || baseProduct <= 0.0
         ) {
-            return HdrBracketConfig.SIDE_EV
+            return HdrBracketConfig.RAW_SIDE_EV
         }
         val baselineExposureEv = if (baseProduct < referenceProduct) {
             (ln(referenceProduct / baseProduct) / ln(2.0)).toFloat()

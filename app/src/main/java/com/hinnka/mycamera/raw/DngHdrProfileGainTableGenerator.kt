@@ -5,7 +5,6 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.sqrt
 
 internal object DngHdrProfileGainTableGenerator {
     private const val TAG = "DngHdrProfileGainTableGenerator"
@@ -26,6 +25,11 @@ internal object DngHdrProfileGainTableGenerator {
     private const val INPUT_HEADROOM = 1.12f
     private const val MIN_HIGHLIGHT_GAIN = 0.08f
     private const val MAX_HIGHLIGHT_GAIN = 0.95f
+    private const val MIN_CURVE_INPUT = 1e-6f
+    private const val MIN_SHOULDER_PIVOT = 0.055f
+    private const val MAX_SHOULDER_PIVOT = 0.24f
+    private const val MIN_LOW_GAIN = 0.82f
+    private const val MAX_LOW_GAIN = 1.72f
     private val BASE_INPUT_WEIGHTS = floatArrayOf(
         0.1063f,
         0.3576f,
@@ -57,15 +61,7 @@ internal object DngHdrProfileGainTableGenerator {
             ),
             safeBaselineEv = safeBaselineEv,
             safePointCount = safePointCount,
-            curveParams = arrayOf(
-                HdrPgtmCurveParams(
-                    lowGain = 1f,
-                    highlightGain = hdrPgtmHighlightGain(safeBaselineEv),
-                    rollPower = 0.54f,
-                    rollStart = 0.014f,
-                    highlightPressure = smoothStep(0.35f, 3.2f, safeBaselineEv)
-                )
-            )
+            curveParams = arrayOf(baselineHdrPgtmCurveParams(safeBaselineEv))
         )
     }
 
@@ -243,19 +239,84 @@ internal object DngHdrProfileGainTableGenerator {
             highlightPressure,
             0.60f * brightRegion * hdrStrength
         ).coerceIn(0f, 1f)
-        val localDodgeEv = 0.78f * darkRegion *
-            (1f - smoothStep(0.34f, 0.78f, cell.p90)) *
+        val deepShadowLiftEv = 0.42f *
+            (1f - smoothStep(0.015f, 0.050f, cell.p90)) *
             hdrStrength
-        val localBurnEv = (0.38f * brightRegion + 0.32f * combinedPressure) * hdrStrength
-        val lowGain = 2.0f.pow((localDodgeEv - localBurnEv).coerceIn(-0.65f, 0.88f))
-            .coerceIn(0.62f, 1.85f)
-        return HdrPgtmCurveParams(
+        val localDodgeEv = (
+            deepShadowLiftEv +
+                0.10f * darkRegion * (1f - smoothStep(0.05f, 0.18f, cell.p90))
+            ).coerceIn(0f, 0.52f)
+        val localBurnEv = (
+            0.46f * smoothStep(0.18f, 0.88f, cell.p90) +
+                0.20f * brightRegion +
+                0.18f * combinedPressure
+            ).coerceIn(0f, 0.72f) * hdrStrength
+        val lowGain = hdrPgtmBaseLowGain(baselineExposureEv) *
+            2.0f.pow((localDodgeEv - localBurnEv).coerceIn(-0.68f, 0.46f))
+        return toneMappedHdrPgtmCurveParams(
             lowGain = lowGain,
             highlightGain = hdrPgtmHighlightGain(baselineExposureEv),
-            rollPower = lerp(0.66f, 0.42f, max(combinedPressure, brightRegion)),
-            rollStart = lerp(0.020f, 0.006f, combinedPressure),
-            highlightPressure = combinedPressure
+            highlightPressure = combinedPressure,
+            statsShoulderPivot = hdrPgtmStatsShoulderPivot(
+                cell = cell,
+                global = global,
+                highlightPressure = combinedPressure
+            )
         )
+    }
+
+    private fun baselineHdrPgtmCurveParams(baselineExposureEv: Float): HdrPgtmCurveParams {
+        val highlightPressure = smoothStep(0.35f, 3.2f, baselineExposureEv)
+        return toneMappedHdrPgtmCurveParams(
+            lowGain = hdrPgtmBaseLowGain(baselineExposureEv),
+            highlightGain = hdrPgtmHighlightGain(baselineExposureEv),
+            highlightPressure = highlightPressure,
+            statsShoulderPivot = 0.12f
+        )
+    }
+
+    private fun toneMappedHdrPgtmCurveParams(
+        lowGain: Float,
+        highlightGain: Float,
+        highlightPressure: Float,
+        statsShoulderPivot: Float,
+    ): HdrPgtmCurveParams {
+        val safeLowGain = lowGain.coerceIn(MIN_LOW_GAIN, MAX_LOW_GAIN)
+        val safeHighlightGain = highlightGain.coerceIn(MIN_HIGHLIGHT_GAIN, MAX_HIGHLIGHT_GAIN)
+        val pressure = highlightPressure.coerceIn(0f, 1f)
+        val highlightRatio = safeHighlightGain / max(safeLowGain, 1e-6f)
+        val dynamicRangePressure = 1f - smoothStep(0.10f, 0.45f, highlightRatio)
+        val shoulderStrength = max(pressure, dynamicRangePressure).coerceIn(0f, 1f)
+        val exposurePivot = lerp(0.18f, 0.112f, shoulderStrength)
+        val requestedPivot = min(
+            exposurePivot,
+            statsShoulderPivot.takeIf { it.isFinite() && it > 0f } ?: exposurePivot
+        )
+        return HdrPgtmCurveParams(
+            lowGain = safeLowGain,
+            highlightGain = safeHighlightGain,
+            shoulderPivot = requestedPivot.coerceIn(MIN_SHOULDER_PIVOT, MAX_SHOULDER_PIVOT),
+            shoulderPower = lerp(1.45f, 1.68f, shoulderStrength),
+            highlightPressure = pressure
+        )
+    }
+
+    private fun hdrPgtmStatsShoulderPivot(
+        cell: HdrPgtmCellStats,
+        global: HdrPgtmCellStats,
+        highlightPressure: Float,
+    ): Float {
+        val pressure = highlightPressure.coerceIn(0f, 1f)
+        val localPivot = min(
+            cell.p90 * lerp(0.56f, 0.34f, pressure),
+            cell.p98 * lerp(0.40f, 0.25f, pressure)
+        )
+        val globalPivot = min(
+            global.p90 * lerp(0.68f, 0.46f, pressure),
+            global.p98 * lerp(0.50f, 0.32f, pressure)
+        )
+        val statsPivot = lerp(globalPivot, localPivot, 0.68f)
+        return lerp(0.18f, statsPivot, pressure).coerceIn(MIN_SHOULDER_PIVOT, MAX_SHOULDER_PIVOT)
     }
 
     private fun smoothHdrPgtmCurveParams(
@@ -270,8 +331,8 @@ internal object DngHdrProfileGainTableGenerator {
                     var weightSum = 0f
                     var lowGain = 0f
                     var highlightGain = 0f
-                    var rollPower = 0f
-                    var rollStart = 0f
+                    var shoulderPivot = 0f
+                    var shoulderPower = 0f
                     var highlightPressure = 0f
                     for (dy in -1..1) {
                         for (dx in -1..1) {
@@ -282,8 +343,8 @@ internal object DngHdrProfileGainTableGenerator {
                             weightSum += weight
                             lowGain += value.lowGain * weight
                             highlightGain += value.highlightGain * weight
-                            rollPower += value.rollPower * weight
-                            rollStart += value.rollStart * weight
+                            shoulderPivot += value.shoulderPivot * weight
+                            shoulderPower += value.shoulderPower * weight
                             highlightPressure += value.highlightPressure * weight
                         }
                     }
@@ -291,8 +352,8 @@ internal object DngHdrProfileGainTableGenerator {
                     next[index] = HdrPgtmCurveParams(
                         lowGain = lowGain / weightSum,
                         highlightGain = highlightGain / weightSum,
-                        rollPower = rollPower / weightSum,
-                        rollStart = rollStart / weightSum,
+                        shoulderPivot = shoulderPivot / weightSum,
+                        shoulderPower = shoulderPower / weightSum,
                         highlightPressure = highlightPressure / weightSum,
                     )
                 }
@@ -309,33 +370,23 @@ internal object DngHdrProfileGainTableGenerator {
         params: HdrPgtmCurveParams,
     ) {
         var previousOutput = 0f
-        val rollBias = ((0.66f - params.rollPower.coerceIn(0.42f, 0.66f)) / 0.24f)
-            .coerceIn(0f, 1f)
-        val lowGain = params.lowGain.coerceAtLeast(1e-4f)
-        val highlightGain = params.highlightGain.coerceAtLeast(1e-4f)
+        val lowGain = params.lowGain.coerceIn(MIN_LOW_GAIN, MAX_LOW_GAIN)
+        val highlightGain = params.highlightGain.coerceIn(MIN_HIGHLIGHT_GAIN, MAX_HIGHLIGHT_GAIN)
+        val shoulderPivot = params.shoulderPivot.coerceIn(MIN_SHOULDER_PIVOT, MAX_SHOULDER_PIVOT)
+        val shoulderPower = params.shoulderPower.coerceIn(1.20f, 2.10f)
+        val endpointRoll = rationalShoulderRoll(1f, shoulderPivot, shoulderPower)
         for (index in 0 until pointCount) {
             val input = tableInputForIndex(index, pointCount)
-            if (input <= 1e-6f) {
-                output[outputOffset + index] = params.lowGain
+            if (input <= MIN_CURVE_INPUT) {
+                output[outputOffset + index] = lowGain
                 previousOutput = 0f
                 continue
             }
-            val sqrtInput = sqrt(input.coerceIn(0f, 1f))
-            val rollInput = lerp(sqrtInput, sqrt(sqrtInput), rollBias)
-            val roll = smoothStep(params.rollStart, 1f, rollInput)
-            val highlightRoll = params.highlightPressure * smoothStep(0.12f, 0.78f, input)
-            val gainMix = max(roll, highlightRoll).coerceIn(0f, 1f)
-            val gain = (lowGain * highlightGain) / max(
-                highlightGain * (1f - gainMix) + lowGain * gainMix,
-                1e-6f
-            )
-            var targetOutput = input * gain
-            val outputCeiling = highlightGain * lerp(
-                0.70f,
-                1f,
-                smoothStep(0.035f, 1f, input)
-            )
-            targetOutput = min(targetOutput, outputCeiling)
+            val rawRoll = rationalShoulderRoll(input, shoulderPivot, shoulderPower)
+            val shoulderRoll = ((rawRoll - endpointRoll) / max(1f - endpointRoll, 1e-6f))
+                .coerceIn(0f, 1f)
+            val gain = lerp(highlightGain, lowGain, shoulderRoll)
+            val targetOutput = input * gain
             val monotonicOutput = max(targetOutput, previousOutput)
             output[outputOffset + index] = (monotonicOutput / input).coerceIn(
                 0.05f,
@@ -345,11 +396,20 @@ internal object DngHdrProfileGainTableGenerator {
         }
     }
 
+    private fun rationalShoulderRoll(input: Float, pivot: Float, power: Float): Float {
+        val ratio = input.coerceAtLeast(0f) / max(pivot, MIN_CURVE_INPUT)
+        return 1f / (1f + ratio.pow(power))
+    }
+
     private fun hdrPgtmInputWeights(baselineExposureEv: Float): FloatArray {
         val scale = hdrPgtmHighlightGain(baselineExposureEv)
         return FloatArray(MAP_INPUT_WEIGHT_COUNT) { index ->
             BASE_INPUT_WEIGHTS[index] * scale
         }
+    }
+
+    private fun hdrPgtmBaseLowGain(baselineExposureEv: Float): Float {
+        return lerp(1.06f, 1.25f, smoothStep(1.0f, 3.35f, baselineExposureEv))
     }
 
     private fun hdrPgtmHighlightGain(baselineExposureEv: Float): Float {
@@ -403,8 +463,8 @@ internal object DngHdrProfileGainTableGenerator {
     private data class HdrPgtmCurveParams(
         val lowGain: Float,
         val highlightGain: Float,
-        val rollPower: Float,
-        val rollStart: Float,
+        val shoulderPivot: Float,
+        val shoulderPower: Float,
         val highlightPressure: Float,
     )
 }
