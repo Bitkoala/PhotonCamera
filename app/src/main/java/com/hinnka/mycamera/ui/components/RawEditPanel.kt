@@ -30,6 +30,7 @@ import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.raw.SpectralFilmTuning
@@ -57,6 +58,7 @@ fun RawEditPanel(
     rawWhitePointCorrection: Float,
     rawBlackLevelMode: String = RawCfaCorrection.MODE_DEFAULT,
     rawCustomBlackLevel: Float = 0f,
+    rawWhiteLevelMode: String = RawWhiteLevelCorrection.MODE_DEFAULT,
     rawCfaCorrectionMode: String = RawCfaCorrection.MODE_DEFAULT,
     rawRenderingEngine: RawRenderingEngine,
     rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
@@ -73,6 +75,7 @@ fun RawEditPanel(
     onRawWhitePointCorrectionChange: (Float) -> Unit,
     onRawBlackLevelModeChange: (String) -> Unit = {},
     onRawCustomBlackLevelChange: (Float) -> Unit = {},
+    onRawWhiteLevelModeChange: (String) -> Unit = {},
     onRawCfaCorrectionModeChange: (String) -> Unit = {},
     onRawColorEngineChange: (RawRenderingEngine) -> Unit,
     onRawToneMappingParametersChange: (RawToneMappingParameters) -> Unit = {},
@@ -220,6 +223,19 @@ fun RawEditPanel(
                         onValueChange = onRawCustomBlackLevelChange
                     )
                 }
+                RawChoiceSetting(
+                    title = stringResource(R.string.settings_raw_white_level_correction),
+                    description = stringResource(R.string.settings_raw_white_level_correction_description),
+                    levels = listOf(
+                        RawWhiteLevelCorrection.MODE_DEFAULT to stringResource(R.string.settings_white_level_default),
+                        RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
+                        RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
+                        RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
+                        RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor)
+                    ),
+                    currentLevel = rawWhiteLevelMode,
+                    onLevelSelected = onRawWhiteLevelModeChange
+                )
                 RawChoiceSetting(
                     title = stringResource(R.string.settings_raw_cfa_correction),
                     description = stringResource(R.string.settings_raw_cfa_correction_description),

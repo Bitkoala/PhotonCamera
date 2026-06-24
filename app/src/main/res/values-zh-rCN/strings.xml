@@ -744,6 +744,14 @@
     <string name="settings_raw_black_level_correction_description">手动设置 RAW 显影时的黑电平，用于修复偏色问题。针对镜头单独设置。</string>
     <string name="settings_black_level_default">默认</string>
     <string name="settings_black_level_custom">自定义</string>
+    <string name="settings_raw_white_level_correction">白电平校正</string>
+    <string name="settings_raw_white_level_correction_with_lens">白电平校正（镜头 %1$s · %2$dmm）</string>
+    <string name="settings_raw_white_level_correction_description">覆盖 RAW 显影和 DNG 元数据使用的传感器饱和值。针对镜头单独设置。</string>
+    <string name="settings_white_level_default">默认</string>
+    <string name="settings_white_level_raw10">RAW10</string>
+    <string name="settings_white_level_raw12">RAW12</string>
+    <string name="settings_white_level_raw14">RAW14</string>
+    <string name="settings_white_level_raw_sensor">RAW Sensor(65535)</string>
     <string name="settings_raw_cfa_correction">CFA 通道校正</string>
     <string name="settings_raw_cfa_correction_with_lens">CFA 通道校正（镜头 %1$s · %2$dmm）</string>
     <string name="settings_raw_cfa_correction_description">覆盖写入 DNG 的 RAW CFA 通道排列。针对镜头单独设置。</string>

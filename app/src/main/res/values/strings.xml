@@ -728,6 +728,14 @@
     <string name="settings_raw_black_level_correction_description">Manually set the black level for RAW development to fix color cast issues. Applied per camera lens.</string>
     <string name="settings_black_level_default">Default</string>
     <string name="settings_black_level_custom">Custom</string>
+    <string name="settings_raw_white_level_correction">White Level Correction</string>
+    <string name="settings_raw_white_level_correction_with_lens">White Level Correction (Lens %1$s · %2$dmm)</string>
+    <string name="settings_raw_white_level_correction_description">Override the RAW sensor saturation level used for DNG metadata and RAW development. Applied per camera lens.</string>
+    <string name="settings_white_level_default">Default</string>
+    <string name="settings_white_level_raw10">RAW10</string>
+    <string name="settings_white_level_raw12">RAW12</string>
+    <string name="settings_white_level_raw14">RAW14</string>
+    <string name="settings_white_level_raw_sensor">RAW Sensor(65535)</string>
     <string name="settings_raw_cfa_correction">CFA Channel Correction</string>
     <string name="settings_raw_cfa_correction_with_lens">CFA Channel Correction (Lens %1$s · %2$dmm)</string>
     <string name="settings_raw_cfa_correction_description">Override the RAW CFA channel pattern written to DNG. Applied per camera lens.</string>

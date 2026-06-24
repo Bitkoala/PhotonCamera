@@ -7,6 +7,7 @@ import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.RawCfaCorrection
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -85,6 +86,7 @@ object SuperResolutionDngWriter {
         valueDomain: RawProcessor.RawBufferValueDomain,
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
+        whiteLevelMode: String? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
     ): Boolean {
@@ -100,6 +102,10 @@ object SuperResolutionDngWriter {
                 customBlackLevel = customBlackLevel
             )
             val hasBlackLevelOverride = blackLevelMode != null && !blackLevel.contentEquals(resolvedBlackLevel)
+            val resolvedWhiteLevel = RawWhiteLevelCorrection.resolveWhiteLevel(
+                defaultWhiteLevel = whiteLevel.toFloat(),
+                mode = whiteLevelMode
+            ).toInt()
 
             val encodedBlackLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
                 if (hasBlackLevelOverride) {
@@ -127,7 +133,7 @@ object SuperResolutionDngWriter {
             val encodedWhiteLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
                 65535
             } else {
-                whiteLevel
+                resolvedWhiteLevel
             }
 
             val imageByteCount = width.toLong() * height.toLong() * 2L

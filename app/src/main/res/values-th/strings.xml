@@ -666,6 +666,14 @@
     <string name="settings_raw_black_level_correction_description">ตั้งค่าระดับสีดำด้วยตนเองในระหว่างการพัฒนา RAW เพื่อแก้ไขปัญหาสีเพี้ยน การตั้งค่าส่วนบุคคลสำหรับเลนส์</string>
     <string name="settings_black_level_default">ค่าเริ่มต้น</string>
     <string name="settings_black_level_custom">ปรับแต่ง</string>
+    <string name="settings_raw_white_level_correction">การแก้ไขระดับสีขาว</string>
+    <string name="settings_raw_white_level_correction_with_lens">การแก้ไขระดับสีขาว (เลนส์ %1$s · %2$d มม.)</string>
+    <string name="settings_raw_white_level_correction_description">แทนที่ระดับความอิ่มตัวของเซ็นเซอร์ RAW ที่ใช้สำหรับข้อมูลเมตา DNG และการพัฒนา RAW การตั้งค่าส่วนบุคคลสำหรับเลนส์</string>
+    <string name="settings_white_level_default">ค่าเริ่มต้น</string>
+    <string name="settings_white_level_raw10">RAW10</string>
+    <string name="settings_white_level_raw12">RAW12</string>
+    <string name="settings_white_level_raw14">RAW14</string>
+    <string name="settings_white_level_raw_sensor">RAW Sensor(65535)</string>
     <string name="settings_raw_cfa_correction">การแก้ไขช่อง CFA</string>
     <string name="settings_raw_cfa_correction_with_lens">การแก้ไขช่อง CFA (เลนส์ %1$s · %2$d มม.)</string>
     <string name="settings_raw_cfa_correction_description">แทนที่รูปแบบช่อง RAW CFA ที่เขียนลง DNG การตั้งค่าส่วนบุคคลสำหรับเลนส์</string>

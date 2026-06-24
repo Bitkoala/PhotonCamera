@@ -50,6 +50,7 @@ private fun MediaMetadata.thumbnailTransformCacheKey(): Int {
         rawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawBlackLevelMode = null,
         rawCustomBlackLevel = null,
+        rawWhiteLevelMode = null,
         rawCfaCorrectionMode = null,
         cameraId = null,
         sourceUri = null,

@@ -122,6 +122,7 @@ import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.raw.RawCfaCorrection
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
@@ -319,6 +320,7 @@ fun SettingsScreen(
     val rawAutoWhiteBalanceEstimate by viewModel.rawAutoWhiteBalanceEstimate.collectAsState()
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
+    val rawWhiteLevelMode by viewModel.rawWhiteLevelMode.collectAsState()
     val rawCfaCorrectionMode by viewModel.rawCfaCorrectionMode.collectAsState()
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
@@ -1738,6 +1740,33 @@ fun SettingsScreen(
                             }
                         )
                     }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = Color.White.copy(alpha = 0.1f)
+                    )
+
+                    val rawWhiteLevelCorrectionTitle = state.getCurrentCameraInfo()?.let { info ->
+                        stringResource(
+                            R.string.settings_raw_white_level_correction_with_lens,
+                            info.cameraId,
+                            info.focalLength35mmEquivalent.roundToInt()
+                        )
+                    } ?: stringResource(R.string.settings_raw_white_level_correction)
+
+                    QualityLevelSetting(
+                        title = rawWhiteLevelCorrectionTitle,
+                        description = stringResource(R.string.settings_raw_white_level_correction_description),
+                        levels = listOf(
+                            RawWhiteLevelCorrection.MODE_DEFAULT to stringResource(R.string.settings_white_level_default),
+                            RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
+                            RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
+                            RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
+                            RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor)
+                        ),
+                        currentLevel = rawWhiteLevelMode,
+                        onLevelSelected = { viewModel.setRawWhiteLevelMode(it) }
+                    )
                 }
 
                 SettingsTab.PHANTOM -> {

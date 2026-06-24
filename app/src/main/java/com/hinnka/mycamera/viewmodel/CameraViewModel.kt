@@ -52,6 +52,7 @@ import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
@@ -960,6 +961,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     ) { cameraId, prefs ->
         prefs.rawCustomBlackLevels[cameraId] ?: 0f
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+    val rawWhiteLevelMode: StateFlow<String> = combine(
+        state.map { it.currentCameraId }.distinctUntilChanged(),
+        userPreferencesRepository.userPreferences
+    ) { cameraId, prefs ->
+        prefs.rawWhiteLevelModes[cameraId] ?: RawWhiteLevelCorrection.MODE_DEFAULT
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, RawWhiteLevelCorrection.MODE_DEFAULT)
     val rawCfaCorrectionMode: StateFlow<String> = combine(
         state.map { it.currentCameraId }.distinctUntilChanged(),
         userPreferencesRepository.userPreferences
@@ -1659,6 +1666,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPreferencesRepository.saveRawCustomBlackLevel(state.value.currentCameraId, value)
         }
     }
+    fun setRawWhiteLevelMode(mode: String) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveRawWhiteLevelMode(state.value.currentCameraId, mode)
+        }
+    }
     fun setRawCfaCorrectionMode(mode: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveRawCfaCorrectionMode(state.value.currentCameraId, mode)
@@ -1878,6 +1890,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
             rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+            rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
             rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
@@ -4189,6 +4203,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+                rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                    ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
@@ -4355,6 +4371,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+                rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                    ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
@@ -4496,6 +4514,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
                     rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                     rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+                    rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                        ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                     rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                     cameraId = currentCameraId,
                     rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
@@ -4662,6 +4682,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
                 rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+                rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                    ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
@@ -5181,6 +5203,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawAutoWhiteBalanceEstimate = userPrefs?.rawAutoWhiteBalanceEstimate ?: false,
             rawBlackLevelMode = userPrefs?.rawBlackLevelModes?.get(currentCameraId) ?: "Default",
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
+            rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
+                ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
             rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,

@@ -38,6 +38,7 @@ import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawToneMappingParameters
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.ui.gallery.CropAspectOption
@@ -328,6 +329,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     var editRawBlackLevelMode = MutableStateFlow(RawCfaCorrection.MODE_DEFAULT)
         private set
     var editRawCustomBlackLevel = MutableStateFlow(0f)
+        private set
+    var editRawWhiteLevelMode = MutableStateFlow(RawWhiteLevelCorrection.MODE_DEFAULT)
         private set
     var editRawCfaCorrectionMode = MutableStateFlow(RawCfaCorrection.MODE_DEFAULT)
         private set
@@ -1123,6 +1126,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             editRawWhitePointCorrection.value = m.rawWhitePointCorrection ?: 0f
             editRawBlackLevelMode.value = m.rawBlackLevelMode ?: RawCfaCorrection.MODE_DEFAULT
             editRawCustomBlackLevel.value = m.rawCustomBlackLevel ?: 0f
+            editRawWhiteLevelMode.value = m.rawWhiteLevelMode ?: RawWhiteLevelCorrection.MODE_DEFAULT
             editRawCfaCorrectionMode.value = m.rawCfaCorrectionMode ?: RawCfaCorrection.MODE_DEFAULT
             editRawDcpId.value = m.rawDcpId
             editRawRenderingEngine.value = m.rawRenderingEngine
@@ -1747,6 +1751,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawWhitePointCorrection.value = metadata.rawWhitePointCorrection ?: 0f
                 editRawBlackLevelMode.value = metadata.rawBlackLevelMode ?: RawCfaCorrection.MODE_DEFAULT
                 editRawCustomBlackLevel.value = metadata.rawCustomBlackLevel ?: 0f
+                editRawWhiteLevelMode.value = metadata.rawWhiteLevelMode ?: RawWhiteLevelCorrection.MODE_DEFAULT
                 editRawCfaCorrectionMode.value = metadata.rawCfaCorrectionMode ?: RawCfaCorrection.MODE_DEFAULT
                 editRawDROMode.value = RawProcessingPreferences.DROMode.fromPersistedName(metadata.droMode).name
                 editComputationalAperture.value = metadata.computationalAperture
@@ -1771,6 +1776,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 editRawWhitePointCorrection.value = 0f
                 editRawBlackLevelMode.value = RawCfaCorrection.MODE_DEFAULT
                 editRawCustomBlackLevel.value = 0f
+                editRawWhiteLevelMode.value = RawWhiteLevelCorrection.MODE_DEFAULT
                 editRawCfaCorrectionMode.value = RawCfaCorrection.MODE_DEFAULT
                 editRawDROMode.value = "OFF"
                 editRawDcpId.value = null
@@ -1819,6 +1825,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         editRawWhitePointCorrection.value = 0f
         editRawBlackLevelMode.value = RawCfaCorrection.MODE_DEFAULT
         editRawCustomBlackLevel.value = 0f
+        editRawWhiteLevelMode.value = RawWhiteLevelCorrection.MODE_DEFAULT
         editRawCfaCorrectionMode.value = RawCfaCorrection.MODE_DEFAULT
         editRawDROMode.value = "OFF"
         editRawDcpId.value = null
@@ -1955,6 +1962,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val droMode = editRawDROMode.value
         val blackLevelMode = editRawBlackLevelMode.value
         val customBlackLevel = editRawCustomBlackLevel.value
+        val whiteLevelMode = editRawWhiteLevelMode.value
         val cfaCorrectionMode = editRawCfaCorrectionMode.value
         val dcpId = editRawDcpId.value
         val baselineLutId = editRawBaselineLutId.value
@@ -1986,6 +1994,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     rawWhitePointCorrection = whitePoint,
                     rawBlackLevelMode = blackLevelMode,
                     rawCustomBlackLevel = customBlackLevel,
+                    rawWhiteLevelMode = whiteLevelMode,
                     rawCfaCorrectionMode = cfaCorrectionMode,
                     droMode = droMode,
                     rawDcpId = dcpId,
@@ -2088,6 +2097,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveRawCustomBlackLevel(mediaData: MediaData, value: Float, onComplete: ((Boolean) -> Unit)? = null) {
         editRawCustomBlackLevel.value = value
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
+    fun saveRawWhiteLevelMode(mediaData: MediaData, mode: String, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawWhiteLevelMode.value = mode
         persistRawEditMetadata(mediaData, onComplete)
     }
 
@@ -2368,6 +2382,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         rawWhitePointCorrection = editRawWhitePointCorrection.value,
                         rawBlackLevelMode = editRawBlackLevelMode.value,
                         rawCustomBlackLevel = editRawCustomBlackLevel.value,
+                        rawWhiteLevelMode = editRawWhiteLevelMode.value,
                         rawCfaCorrectionMode = editRawCfaCorrectionMode.value,
                         rawDcpId = editRawDcpId.value,
                         baselineTarget = editRawBaselineLutId.value?.let { BaselineColorCorrectionTarget.RAW },
@@ -2689,6 +2704,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         rawWhitePointCorrection = editRawWhitePointCorrection.value,
                         rawBlackLevelMode = editRawBlackLevelMode.value,
                         rawCustomBlackLevel = editRawCustomBlackLevel.value,
+                        rawWhiteLevelMode = editRawWhiteLevelMode.value,
                         rawCfaCorrectionMode = editRawCfaCorrectionMode.value,
                         rawDcpId = editRawDcpId.value,
                         baselineTarget = rawBaselineLutId?.let { BaselineColorCorrectionTarget.RAW },

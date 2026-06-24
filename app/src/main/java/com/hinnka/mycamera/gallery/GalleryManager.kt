@@ -1563,15 +1563,18 @@ object GalleryManager {
             FileOutputStream(tempDngFile).use { outputStream ->
                 image.use {
                     try {
-                        RawProcessor.saveToDng(
+                        dngSaveAttempted = RawProcessor.saveToDng(
                             image,
                             characteristics,
                             resolvedCaptureResult,
                             outputStream,
                             rotation,
-                            thumbnail
+                            thumbnail,
+                            blackLevelMode = metadata.rawBlackLevelMode,
+                            customBlackLevel = metadata.rawCustomBlackLevel,
+                            whiteLevelMode = metadata.rawWhiteLevelMode,
+                            cfaCorrectionMode = metadata.rawCfaCorrectionMode
                         )
-                        dngSaveAttempted = true
                     } catch (e: Throwable) {
                         PLog.e(TAG, "DNG save failed", e)
                     }
@@ -1613,6 +1616,7 @@ object GalleryManager {
                 rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
+                rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
                 sharpeningValue = 0.4f,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
@@ -2376,6 +2380,13 @@ object GalleryManager {
                     "RAW stack black level override mode=${metadata.rawBlackLevelMode} value=${stackBlackLevel.joinToString()}"
                 )
             }
+            val stackWhiteLevel = RawProcessor.resolveWhiteLevelForMode(
+                defaultWhiteLevel = rawMetadata.whiteLevel,
+                whiteLevelMode = metadata.rawWhiteLevelMode
+            ).toInt()
+            if (stackWhiteLevel != rawMetadata.whiteLevel.toInt()) {
+                PLog.d(TAG, "RAW stack white level override mode=${metadata.rawWhiteLevelMode} value=$stackWhiteLevel")
+            }
             val stackCfaPattern = RawProcessor.resolveCfaPatternForMode(
                 defaultCfaPattern = rawMetadata.cfaPattern,
                 cfaCorrectionMode = metadata.rawCfaCorrectionMode
@@ -2394,7 +2405,7 @@ object GalleryManager {
                 superResolutionScale,
                 useGpuAcceleration,
                 masterBlackLevel = stackBlackLevel,
-                whiteLevel = rawMetadata.whiteLevel.toInt(),
+                whiteLevel = stackWhiteLevel,
                 whiteBalanceGains = rawMetadata.whiteBalanceGains,
                 noiseModel = rawMetadata.noiseProfile,
                 lensShading = null,
@@ -2415,6 +2426,7 @@ object GalleryManager {
                     height = finalStackResult.height,
                     rawMetadata = rawMetadata,
                     stackBlackLevel = finalStackResult.blackLevel,
+                    stackWhiteLevel = stackWhiteLevel,
                     isNormalizedSensorData = finalStackResult.isNormalizedSensorData,
                     characteristics = characteristics,
                     captureResult = captureResult,
@@ -2457,6 +2469,7 @@ object GalleryManager {
                 rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
+                rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
                 sharpeningValue = 0.4f,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
@@ -2644,6 +2657,13 @@ object GalleryManager {
                     "RAW HDR black level override mode=${metadata.rawBlackLevelMode} value=${stackBlackLevel.joinToString()}"
                 )
             }
+            val stackWhiteLevel = RawProcessor.resolveWhiteLevelForMode(
+                defaultWhiteLevel = rawMetadata.whiteLevel,
+                whiteLevelMode = metadata.rawWhiteLevelMode
+            ).toInt()
+            if (stackWhiteLevel != rawMetadata.whiteLevel.toInt()) {
+                PLog.d(TAG, "RAW HDR white level override mode=${metadata.rawWhiteLevelMode} value=$stackWhiteLevel")
+            }
             val stackCfaPattern = RawProcessor.resolveCfaPatternForMode(
                 defaultCfaPattern = rawMetadata.cfaPattern,
                 cfaCorrectionMode = metadata.rawCfaCorrectionMode
@@ -2674,7 +2694,7 @@ object GalleryManager {
                     cfaPattern = stackCfaPattern,
                     useGpuAcceleration = true,
                     masterBlackLevel = stackBlackLevel,
-                    whiteLevel = rawMetadata.whiteLevel.toInt(),
+                    whiteLevel = stackWhiteLevel,
                     noiseModel = rawMetadata.noiseProfile,
                     lensShading = null,
                     lensShadingWidth = 0,
@@ -2709,6 +2729,7 @@ object GalleryManager {
                         height = stackResult.height,
                         rawMetadata = rawMetadata,
                         stackBlackLevel = stackResult.blackLevel,
+                        stackWhiteLevel = stackWhiteLevel,
                         isNormalizedSensorData = true,
                         characteristics = characteristics,
                         captureResult = shortCandidate.captureResult,
@@ -2833,6 +2854,7 @@ object GalleryManager {
             rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
             rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
             rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
+            rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
             sharpeningValue = 0.4f,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
@@ -2940,6 +2962,7 @@ object GalleryManager {
         height: Int,
         rawMetadata: RawMetadata,
         stackBlackLevel: FloatArray,
+        stackWhiteLevel: Int,
         isNormalizedSensorData: Boolean,
         characteristics: CameraCharacteristics,
         captureResult: CaptureResult,
@@ -2965,7 +2988,7 @@ object GalleryManager {
                     thumbnail = thumbnail,
                     cfaPattern = rawMetadata.cfaPattern,
                     blackLevel = stackBlackLevel,
-                    whiteLevel = rawMetadata.whiteLevel.toInt(),
+                    whiteLevel = stackWhiteLevel,
                     valueDomain = if (isNormalizedSensorData) {
                         RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE
                     } else {
@@ -4004,6 +4027,7 @@ object GalleryManager {
                         rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                         rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                         rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
+                        rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
                         sharpeningValue = 0.4f,
                         denoiseValue = rawNoiseReduction,
                         chromaDenoiseValue = rawChromaNoiseReduction,
@@ -4160,6 +4184,7 @@ object GalleryManager {
                     rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
                     rawBlackLevelMode = updatedMetadata?.rawBlackLevelMode,
                     rawCustomBlackLevel = updatedMetadata?.rawCustomBlackLevel,
+                    rawWhiteLevelMode = updatedMetadata?.rawWhiteLevelMode,
                     sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
                     denoiseValue = rawNoiseReduction,
                     chromaDenoiseValue = rawChromaNoiseReduction,

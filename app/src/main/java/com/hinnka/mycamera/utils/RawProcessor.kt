@@ -14,6 +14,7 @@ import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -56,6 +57,10 @@ object RawProcessor {
 
     fun resolveCfaPatternForMode(defaultCfaPattern: Int, cfaCorrectionMode: String?): Int {
         return RawCfaCorrection.resolveCfaPattern(defaultCfaPattern, cfaCorrectionMode)
+    }
+
+    fun resolveWhiteLevelForMode(defaultWhiteLevel: Float, whiteLevelMode: String?): Float {
+        return RawWhiteLevelCorrection.resolveWhiteLevel(defaultWhiteLevel, whiteLevelMode)
     }
 
     /**
@@ -138,14 +143,33 @@ object RawProcessor {
         captureResult: CaptureResult,
         outputStream: java.io.OutputStream,
         rotation: Int = 0,
-        thumbnail: Bitmap? = null
-    ) {
+        thumbnail: Bitmap? = null,
+        blackLevelMode: String? = null,
+        customBlackLevel: Float? = null,
+        whiteLevelMode: String? = null,
+        cfaCorrectionMode: String? = null,
+    ): Boolean {
         if (!isRawImage(image)) {
             throw IllegalArgumentException("Image is not RAW format: ${image.format}")
         }
 
+        if (RawWhiteLevelCorrection.isOverrideMode(whiteLevelMode)) {
+            return saveRawImageToDngWithCustomWriter(
+                image = image,
+                characteristics = characteristics,
+                captureResult = captureResult,
+                outputStream = outputStream,
+                rotation = rotation,
+                thumbnail = thumbnail,
+                blackLevelMode = blackLevelMode,
+                customBlackLevel = customBlackLevel,
+                whiteLevelMode = whiteLevelMode,
+                cfaCorrectionMode = cfaCorrectionMode
+            )
+        }
+
         val dngCreator = DngCreator(characteristics, captureResult)
-        try {
+        return try {
             val orientation = when (rotation) {
                 90 -> ExifInterface.ORIENTATION_ROTATE_90
                 180 -> ExifInterface.ORIENTATION_ROTATE_180
@@ -158,11 +182,90 @@ object RawProcessor {
 //                PLog.d(TAG, "Embedded DNG thumbnail written: ${it.width}x${it.height}")
 //            }
             dngCreator.writeImage(outputStream, image.image)
+            true
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to save DNG", e)
+            false
         } finally {
             dngCreator.close()
         }
+    }
+
+    private fun saveRawImageToDngWithCustomWriter(
+        image: SafeImage,
+        characteristics: CameraCharacteristics,
+        captureResult: CaptureResult,
+        outputStream: java.io.OutputStream,
+        rotation: Int,
+        thumbnail: Bitmap?,
+        blackLevelMode: String?,
+        customBlackLevel: Float?,
+        whiteLevelMode: String?,
+        cfaCorrectionMode: String?,
+    ): Boolean {
+        if (image.format != ImageFormat.RAW_SENSOR) {
+            PLog.w(TAG, "Custom DNG writer requires RAW_SENSOR input, got format=${image.format}")
+            return false
+        }
+
+        val rawBuffer = copyRawSensorImageToContiguousBuffer(image) ?: return false
+        val rawMetadata = RawMetadata.create(
+            width = image.width,
+            height = image.height,
+            characteristics = characteristics,
+            captureResult = captureResult
+        )
+
+        PLog.i(TAG, "Writing RAW_SENSOR DNG with custom writer for white level mode=$whiteLevelMode")
+        return saveRawBufferToDng(
+            rawBuffer = rawBuffer,
+            width = image.width,
+            height = image.height,
+            characteristics = characteristics,
+            captureResult = captureResult,
+            outputStream = outputStream,
+            rotation = rotation,
+            thumbnail = thumbnail,
+            cfaPattern = rawMetadata.cfaPattern,
+            blackLevel = rawMetadata.blackLevel,
+            whiteLevel = rawMetadata.whiteLevel.toInt(),
+            valueDomain = RawBufferValueDomain.SENSOR,
+            customWriter = true,
+            blackLevelMode = blackLevelMode,
+            customBlackLevel = customBlackLevel,
+            whiteLevelMode = whiteLevelMode,
+            cfaCorrectionMode = cfaCorrectionMode
+        )
+    }
+
+    private fun copyRawSensorImageToContiguousBuffer(image: SafeImage): ByteBuffer? {
+        val plane = image.planes.firstOrNull() ?: return null
+        val rowStride = plane.rowStride
+        val pixelStride = runCatching { plane.pixelStride }.getOrDefault(2).takeIf { it > 0 } ?: 2
+        val width = image.width
+        val height = image.height
+        val rowBytes = width * 2
+
+        if (pixelStride != 2 || rowStride < rowBytes) {
+            PLog.w(TAG, "Unsupported RAW_SENSOR plane stride row=$rowStride pixel=$pixelStride size=${width}x${height}")
+            return null
+        }
+
+        val source = plane.buffer.duplicate()
+        val output = ByteBuffer.allocateDirect(rowBytes * height).order(ByteOrder.nativeOrder())
+        for (row in 0 until height) {
+            val rowOffset = row * rowStride
+            val rowEnd = rowOffset + rowBytes
+            if (rowEnd > source.capacity()) {
+                PLog.w(TAG, "RAW_SENSOR plane too small row=$row rowEnd=$rowEnd capacity=${source.capacity()}")
+                return null
+            }
+            source.limit(rowEnd)
+            source.position(rowOffset)
+            output.put(source)
+        }
+        output.rewind()
+        return output
     }
 
     fun saveRawBufferToDng(
@@ -181,14 +284,20 @@ object RawProcessor {
         customWriter: Boolean = false,
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
+        whiteLevelMode: String? = null,
         cfaCorrectionMode: String? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
     ): Boolean {
         val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
+        val resolvedWhiteLevel = resolveWhiteLevelForMode(whiteLevel.toFloat(), whiteLevelMode).toInt()
         val hasCfaOverride = RawCfaCorrection.isOverrideMode(cfaCorrectionMode)
+        val hasWhiteLevelOverride = RawWhiteLevelCorrection.isOverrideMode(whiteLevelMode)
         if (hasCfaOverride && resolvedCfaPattern != cfaPattern) {
             PLog.d(TAG, "RAW DNG CFA override mode=$cfaCorrectionMode cfa=$cfaPattern->$resolvedCfaPattern")
+        }
+        if (resolvedWhiteLevel != whiteLevel) {
+            PLog.d(TAG, "RAW DNG white level override mode=$whiteLevelMode white=$whiteLevel->$resolvedWhiteLevel")
         }
 
         val orientation = when (rotation) {
@@ -197,7 +306,7 @@ object RawProcessor {
             270 -> ExifInterface.ORIENTATION_ROTATE_270
             else -> ExifInterface.ORIENTATION_NORMAL
         }
-        if (customWriter || hasCfaOverride || !canDngCreatorWriteBuffer(width, height, characteristics)) {
+        if (customWriter || hasCfaOverride || hasWhiteLevelOverride || !canDngCreatorWriteBuffer(width, height, characteristics)) {
             PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height}")
             return SuperResolutionDngWriter.write(
                 outputStream = outputStream,
@@ -209,10 +318,11 @@ object RawProcessor {
                 orientation = orientation,
                 cfaPattern = resolvedCfaPattern,
                 blackLevel = blackLevel,
-                whiteLevel = whiteLevel,
+                whiteLevel = resolvedWhiteLevel,
                 valueDomain = valueDomain,
                 blackLevelMode = blackLevelMode,
                 customBlackLevel = customBlackLevel,
+                whiteLevelMode = whiteLevelMode,
                 baselineExposureEv = baselineExposureEv,
                 profileGainTableMap = profileGainTableMap
             )
@@ -234,7 +344,7 @@ object RawProcessor {
                     height = height,
                     cfaPattern = resolvedCfaPattern,
                     blackLevel = blackLevel,
-                    whiteLevel = whiteLevel
+                    whiteLevel = resolvedWhiteLevel
                 )
             }
             dngInputBuffer.rewind()

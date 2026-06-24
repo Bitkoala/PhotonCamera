@@ -114,6 +114,7 @@ private data class PreviewRenderSignature(
     val editRawDROMode: String,
     val editRawBlackLevelMode: String,
     val editRawCustomBlackLevel: Float,
+    val editRawWhiteLevelMode: String,
     val editRawCfaCorrectionMode: String,
     val editRawDcpId: String?,
     val editRawRenderingEngine: String,
@@ -194,6 +195,7 @@ fun GalleryEditScreen(
     val editRawDROMode by viewModel.editRawDROMode.collectAsState()
     val editRawBlackLevelMode by viewModel.editRawBlackLevelMode.collectAsState()
     val editRawCustomBlackLevel by viewModel.editRawCustomBlackLevel.collectAsState()
+    val editRawWhiteLevelMode by viewModel.editRawWhiteLevelMode.collectAsState()
     val editRawCfaCorrectionMode by viewModel.editRawCfaCorrectionMode.collectAsState()
     val editRawDcpId by viewModel.editRawDcpId.collectAsState()
     val editRawBaselineLutId by viewModel.editRawBaselineLutId.collectAsState()
@@ -262,6 +264,7 @@ fun GalleryEditScreen(
             editRawDROMode = if (fast) "" else editRawDROMode,
             editRawBlackLevelMode = if (fast) "" else editRawBlackLevelMode,
             editRawCustomBlackLevel = if (fast) 0f else editRawCustomBlackLevel,
+            editRawWhiteLevelMode = if (fast) "" else editRawWhiteLevelMode,
             editRawCfaCorrectionMode = if (fast) "" else editRawCfaCorrectionMode,
             editRawDcpId = if (fast) null else editRawDcpId,
             editRawRenderingEngine = if (fast) "" else editRawColorEngine.name,
@@ -1112,6 +1115,7 @@ fun GalleryEditScreen(
                                         rawWhitePointCorrection = editRawWhitePointCorrection,
                                         rawBlackLevelMode = editRawBlackLevelMode,
                                         rawCustomBlackLevel = editRawCustomBlackLevel,
+                                        rawWhiteLevelMode = editRawWhiteLevelMode,
                                         rawCfaCorrectionMode = editRawCfaCorrectionMode,
                                         rawRenderingEngine = editRawColorEngine,
                                         rawToneMappingParameters = editRawToneMappingParameters,
@@ -1177,6 +1181,11 @@ fun GalleryEditScreen(
                                         },
                                         onRawCustomBlackLevelChange = {
                                             viewModel.saveRawCustomBlackLevel(currentPhoto, it) {
+                                                requestRawPreviewRefresh()
+                                            }
+                                        },
+                                        onRawWhiteLevelModeChange = {
+                                            viewModel.saveRawWhiteLevelMode(currentPhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
