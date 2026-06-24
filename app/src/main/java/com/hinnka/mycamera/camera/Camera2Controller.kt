@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ColorSpace
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
 import android.hardware.camera2.params.MeteringRectangle
@@ -2215,27 +2216,52 @@ class Camera2Controller(private val context: Context) {
      */
     private fun applyZoomSettings(builder: CaptureRequest.Builder, state: CameraState) {
         val openCameraId = getCurrentOpenCameraId()
-        if (openCameraId.isEmpty() || state.zoomRatio <= 1f) return
+        if (openCameraId.isEmpty()) return
 
         try {
             val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
-            val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
+            val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+            val minZoom = zoomRatioRange?.lower ?: 1f
+            val maxSupportedZoom = zoomRatioRange?.upper ?: maxZoom
+            val zoomRatio = state.zoomRatio.coerceIn(minZoom, maxSupportedZoom)
+            val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
 
-            val centerX = activeRect.width() / 2
-            val centerY = activeRect.height() / 2
-            val deltaX = ((activeRect.width() / 2) / state.zoomRatio).toInt()
-            val deltaY = ((activeRect.height() / 2) / state.zoomRatio).toInt()
-
-            val cropRect = android.graphics.Rect(
-                centerX - deltaX,
-                centerY - deltaY,
-                centerX + deltaX,
-                centerY + deltaY
-            )
-            builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+            applyZoomRequestSettings(builder, zoomRatio, activeRect, zoomRatioRange)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply zoom settings", e)
         }
+    }
+
+    private fun applyZoomRequestSettings(
+        builder: CaptureRequest.Builder,
+        zoomRatio: Float,
+        activeRect: Rect?,
+        zoomRatioRange: android.util.Range<Float>?
+    ) {
+        if (zoomRatioRange != null) {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoomRatio)
+            return
+        }
+
+        activeRect ?: return
+        builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
+    }
+
+    private fun buildCenteredCropRegion(activeRect: Rect, zoomRatio: Float): Rect {
+        val safeZoomRatio = zoomRatio.coerceAtLeast(1f)
+        if (safeZoomRatio == 1f) return Rect(activeRect)
+
+        val cropWidth = (activeRect.width() / safeZoomRatio).roundToInt().coerceAtLeast(1)
+        val cropHeight = (activeRect.height() / safeZoomRatio).roundToInt().coerceAtLeast(1)
+        val cropLeft = activeRect.left + (activeRect.width() - cropWidth) / 2
+        val cropTop = activeRect.top + (activeRect.height() - cropHeight) / 2
+        return Rect(
+            cropLeft,
+            cropTop,
+            cropLeft + cropWidth,
+            cropTop + cropHeight
+        )
     }
 
     /**
@@ -3227,7 +3253,7 @@ class Camera2Controller(private val context: Context) {
 
     /**
      * 设置变焦倍数
-     * 注意：Camera2 的变焦通过 SCALER_CROP_REGION 实现
+     * 注意：优先使用 Camera2 CONTROL_ZOOM_RATIO；设备不支持时才回退到 SCALER_CROP_REGION。
      */
     fun setZoomRatio(ratio: Float) {
         val handler = cameraHandler
@@ -3254,38 +3280,18 @@ class Camera2Controller(private val context: Context) {
                 return
             }
 
-            // 计算裁剪区域
-            val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-            if (clampedRatio < 1f && zoomRatioRange != null) {
-                previewRequestBuilder?.apply {
-                    set(CaptureRequest.CONTROL_ZOOM_RATIO, clampedRatio)
-                    set(CaptureRequest.SCALER_CROP_REGION, activeRect)
-                    updatePreview()
-                }
-
-                PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio (CONTROL_ZOOM_RATIO)")
-                return
-            }
-
-            val centerX = activeRect.width() / 2
-            val centerY = activeRect.height() / 2
-            val deltaX = ((activeRect.width() / 2) / clampedRatio).toInt()
-            val deltaY = ((activeRect.height() / 2) / clampedRatio).toInt()
-
-            val cropRect = android.graphics.Rect(
-                centerX - deltaX,
-                centerY - deltaY,
-                centerX + deltaX,
-                centerY + deltaY
-            )
-
+            val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             previewRequestBuilder?.apply {
-                set(CaptureRequest.CONTROL_ZOOM_RATIO, 1f)
-                set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+                applyZoomRequestSettings(this, clampedRatio, activeRect, zoomRatioRange)
                 updatePreview()
             }
 
-            PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio")
+            val zoomMode = if (zoomRatioRange != null) {
+                "CONTROL_ZOOM_RATIO"
+            } else {
+                "SCALER_CROP_REGION"
+            }
+            PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio ($zoomMode)")
 
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to set zoom", e)

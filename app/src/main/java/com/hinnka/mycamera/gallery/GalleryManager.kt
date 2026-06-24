@@ -1333,7 +1333,11 @@ object GalleryManager {
             val videoFile = File(photoDir, VIDEO_FILE)
             val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
 
-            var cropRegion = captureResult?.get(CaptureResult.SCALER_CROP_REGION)
+            var cropRegion = resolveCaptureCropRegion(
+                captureResult = captureResult,
+                imageWidth = metadata.width,
+                imageHeight = metadata.height
+            )
             if (superResolutionScale > 1.0f && cropRegion != null) {
                 cropRegion = Rect(
                     (cropRegion.left * superResolutionScale).roundToInt(),
@@ -1343,7 +1347,7 @@ object GalleryManager {
                 )
             }
             if (cropRegion != null && !includeCropRegionInOutputSize) {
-                PLog.d(TAG, "Ignoring SCALER_CROP_REGION for output sizing: $cropRegion")
+                PLog.d(TAG, "Ignoring capture crop region for output sizing: $cropRegion")
             }
             val effectiveCropRegion = cropRegion?.takeIf { includeCropRegionInOutputSize }
 
@@ -1379,6 +1383,41 @@ object GalleryManager {
             PLog.e(TAG, "Failed to prepare photo", e)
             null
         }
+    }
+
+    private fun resolveCaptureCropRegion(
+        captureResult: CaptureResult?,
+        imageWidth: Int,
+        imageHeight: Int
+    ): Rect? {
+        if (captureResult == null) return null
+
+        val scalerCropRegion = captureResult.get(CaptureResult.SCALER_CROP_REGION)
+        val zoomRatio = captureResult.get(CaptureResult.CONTROL_ZOOM_RATIO) ?: 1f
+        if (zoomRatio <= 1f) {
+            return scalerCropRegion
+        }
+
+        // CONTROL_ZOOM_RATIO keeps SCALER_CROP_REGION at active-array size. RAW output still
+        // needs an equivalent crop region so the software demosaic path matches the preview FOV.
+        val baseRegion = scalerCropRegion ?: Rect(
+            0,
+            0,
+            imageWidth.coerceAtLeast(1),
+            imageHeight.coerceAtLeast(1)
+        )
+        if (baseRegion.width() <= 0 || baseRegion.height() <= 0) return scalerCropRegion
+
+        val cropWidth = (baseRegion.width() / zoomRatio).roundToInt().coerceAtLeast(1)
+        val cropHeight = (baseRegion.height() / zoomRatio).roundToInt().coerceAtLeast(1)
+        val cropLeft = baseRegion.left + (baseRegion.width() - cropWidth) / 2
+        val cropTop = baseRegion.top + (baseRegion.height() - cropHeight) / 2
+        return Rect(
+            cropLeft,
+            cropTop,
+            cropLeft + cropWidth,
+            cropTop + cropHeight
+        )
     }
 
     suspend fun saveVideo(
