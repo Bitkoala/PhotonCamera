@@ -377,9 +377,16 @@ fun SettingsScreen(
         }
     }
 
+    fun applyTonemapMode(mode: String) {
+        if (mode == "LINEAR_PIPELINE" && rawAutoExposure) {
+            viewModel.setRawAutoExposure(false)
+        }
+        viewModel.setTonemapMode(mode)
+    }
+
     LaunchedEffect(tonemapMode, settingsTonemapMode) {
         if (settingsTonemapMode != tonemapMode) {
-            viewModel.setTonemapMode(settingsTonemapMode)
+            applyTonemapMode(settingsTonemapMode)
         }
     }
 
@@ -1309,7 +1316,7 @@ fun SettingsScreen(
                                 "SRGB" to stringResource(R.string.settings_tonemap_mode_srgb),
                             ),
                             currentLevel = settingsTonemapMode,
-                            onLevelSelected = { viewModel.setTonemapMode(it) }
+                            onLevelSelected = ::applyTonemapMode
                         )
 
                         HorizontalDivider(
