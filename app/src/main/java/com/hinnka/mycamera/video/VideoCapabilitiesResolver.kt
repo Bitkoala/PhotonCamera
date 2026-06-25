@@ -4,6 +4,7 @@ import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Range
 import android.util.Size
 import com.hinnka.mycamera.utils.PLog
@@ -83,7 +84,7 @@ object VideoCapabilitiesResolver {
             ?: availableLogProfiles.first()
 
         val availableStabilizationModes = mutableListOf(VideoStabilizationMode.OFF)
-        if (availableVideoStabilizationModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)) {
+        if (supportsElectronicStabilization(availableVideoStabilizationModes)) {
             availableStabilizationModes.add(VideoStabilizationMode.EIS)
         }
         if (availableOpticalStabilizationModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
@@ -121,6 +122,18 @@ object VideoCapabilitiesResolver {
             ),
             previewSize = previewSize
         )
+    }
+
+    private fun supportsElectronicStabilization(availableVideoStabilizationModes: IntArray): Boolean {
+        return availableVideoStabilizationModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON) ||
+            supportsPreviewStabilization(availableVideoStabilizationModes)
+    }
+
+    private fun supportsPreviewStabilization(availableVideoStabilizationModes: IntArray): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            availableVideoStabilizationModes.contains(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
+            )
     }
 
     private fun findBestOutputSize(

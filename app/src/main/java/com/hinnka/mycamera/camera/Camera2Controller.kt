@@ -1431,6 +1431,7 @@ class Camera2Controller(private val context: Context) {
                         }
                     }
                 )
+                applyInitialSessionParameters(sessionConfig)
                 device.createCaptureSession(sessionConfig)
                 return
             }
@@ -1547,6 +1548,28 @@ class Camera2Controller(private val context: Context) {
                     DynamicRangeProfiles.STANDARD
                 }
             }
+        }
+    }
+
+    private fun applyInitialSessionParameters(sessionConfig: SessionConfiguration) {
+        val builder = previewRequestBuilder ?: return
+        val sessionKeys = try {
+            cachedCharacteristics?.availableSessionKeys
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to query available session keys", e)
+            null
+        }
+
+        val shouldSetSessionParameters =
+            sessionKeys?.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE) == true ||
+                sessionKeys?.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE) == true
+
+        if (!shouldSetSessionParameters) return
+
+        try {
+            sessionConfig.setSessionParameters(builder.build())
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to set initial session parameters", e)
         }
     }
 
@@ -2217,20 +2240,16 @@ class Camera2Controller(private val context: Context) {
     /**
      * 应用防抖设置
      *
-     * 优先开启 OIS (光学防抖)
+     * 视频模式按用户选项启用 EIS/OIS；EIS 优先使用预览防抖以匹配当前 GL 录制链路。
      */
     private fun applyStabilizationSettings(builder: CaptureRequest.Builder, state: CameraState) {
         try {
             if (state.captureMode == CaptureMode.VIDEO) {
                 val mode = state.videoConfig.stabilizationMode
-                if (availableVideoStabilizationModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)) {
+                resolveVideoStabilizationRequestMode(mode)?.let { videoStabilizationMode ->
                     builder.set(
                         CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                        if (mode == VideoStabilizationMode.EIS) {
-                            CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-                        } else {
-                            CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
-                        }
+                        videoStabilizationMode
                     )
                 }
                 if (availableOpticalStabilizationModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
@@ -2255,6 +2274,33 @@ class Camera2Controller(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply stabilization settings", e)
         }
+    }
+
+    private fun resolveVideoStabilizationRequestMode(mode: VideoStabilizationMode): Int? {
+        return when (mode) {
+            VideoStabilizationMode.EIS -> when {
+                isPreviewVideoStabilizationAvailable() ->
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
+
+                availableVideoStabilizationModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON) ->
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+
+                else -> null
+            }
+
+            VideoStabilizationMode.OIS,
+            VideoStabilizationMode.OFF -> {
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
+                    .takeIf { availableVideoStabilizationModes.contains(it) }
+            }
+        }
+    }
+
+    private fun isPreviewVideoStabilizationAvailable(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                availableVideoStabilizationModes.contains(
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
+                )
     }
 
     /**
@@ -3775,12 +3821,21 @@ class Camera2Controller(private val context: Context) {
     }
 
     fun setVideoStabilizationMode(mode: VideoStabilizationMode) {
+        val previousMode = _state.value.videoConfig.stabilizationMode
         _state.value = _state.value.copy(
             videoConfig = _state.value.videoConfig.copy(
                 stabilizationMode = mode
             )
         )
         refreshVideoCapabilities()
+        val resolvedMode = _state.value.videoConfig.stabilizationMode
+        if (_state.value.captureMode == CaptureMode.VIDEO &&
+            !_state.value.videoRecordingState.isRecording &&
+            previousMode != resolvedMode
+        ) {
+            createPreviewSession()
+            return
+        }
         previewRequestBuilder?.apply {
             applyBaseCameraSettings(this, isCapture = false)
             updatePreview()

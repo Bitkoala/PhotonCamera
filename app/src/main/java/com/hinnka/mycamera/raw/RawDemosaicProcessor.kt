@@ -4162,7 +4162,7 @@ class RawDemosaicProcessor {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(sharpenProgram, "uSharpening"),
-            if (sharpeningValue > 0f) sharpeningValue else defaultUsmAmount
+            defaultUsmAmount + (1f - defaultUsmAmount) * sharpeningValue
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(sharpenProgram, "uRadius"),
