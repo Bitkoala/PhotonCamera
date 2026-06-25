@@ -44,7 +44,7 @@ object ChromaDenoiseShaders {
             vec2 sumUV = vec2(0.0);
             float sumW = 0.0;
 
-            float stepScale = 2.0 + uH * 10.0;
+            float stepScale = 6.5;
             float localH = uH * noiseSigmaForLuma(yuv.x);
             float invChromaH2 = 1.0 / max((localH * 1.5) * (localH * 1.5), 1e-6);
             float invLumaH2 = 1.0 / max((localH * 0.5) * (localH * 0.5), 1e-6);
