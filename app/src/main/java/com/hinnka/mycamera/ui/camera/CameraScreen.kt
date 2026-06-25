@@ -1174,6 +1174,7 @@ fun CameraScreen(
                 galleryViewModel = galleryViewModel,
                 latestPhoto = latestPhoto,
                 useMultipleExposure = useMultipleExposure,
+                tonemapMode = tonemapMode,
                 multipleExposureState = multipleExposureState,
                 onGalleryThumbnailBoundsChanged = { bounds ->
                     galleryThumbnailBounds = bounds
@@ -1698,6 +1699,7 @@ fun Controls(
     galleryViewModel: GalleryViewModel,
     latestPhoto: com.hinnka.mycamera.gallery.MediaData?,
     useMultipleExposure: Boolean,
+    tonemapMode: String,
     multipleExposureState: com.hinnka.mycamera.viewmodel.MultipleExposureSessionState,
     onGalleryThumbnailBoundsChanged: (Rect) -> Unit,
     onSwitchCameraClick: () -> Unit,
@@ -1742,8 +1744,10 @@ fun Controls(
                     isCapturing = state.isCapturing,
                     isVideoRecording = state.videoRecordingState.isRecording,
                     isPaused = state.videoRecordingState.isPaused,
-                    allowLongPress = (state.captureMode == CaptureMode.PHOTO && !useMultipleExposure) ||
-                        state.captureMode == CaptureMode.QUICK_SHOT,
+                    allowLongPress = state.captureMode == CaptureMode.QUICK_SHOT ||
+                        (tonemapMode != "LINEAR_PIPELINE" &&
+                            state.captureMode == CaptureMode.PHOTO &&
+                            !useMultipleExposure),
                     multipleExposureEnabled = useMultipleExposure && state.captureMode == CaptureMode.PHOTO,
                     multipleExposureProgress = multipleExposureState.capturedCount.toFloat() /
                             multipleExposureState.targetCount.coerceAtLeast(1).toFloat(),
@@ -1869,7 +1873,7 @@ fun CaptureButton(
         modifier = modifier
             .size(72.dp)
             .scale(scale)
-            .pointerInput(Unit) {
+            .pointerInput(allowLongPress) {
                 var isLongPressStarted = false
                 detectTapGestures(
                     onTap = {
@@ -1877,12 +1881,14 @@ fun CaptureButton(
                             onTap()
                         }
                     },
-                    onLongPress = {
-                        if (allowLongPress && !currentDisabled) {
-                            isLongPressStarted = true
-                            onLongPressStart()
+                    onLongPress = if (allowLongPress) {
+                        {
+                            if (!currentDisabled) {
+                                isLongPressStarted = true
+                                onLongPressStart()
+                            }
                         }
-                    },
+                    } else null,
                     onPress = {
                         isLongPressStarted = false
                         try {

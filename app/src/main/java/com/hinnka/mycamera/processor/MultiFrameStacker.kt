@@ -106,6 +106,7 @@ object MultiFrameStacker {
                 rotation = rotation,
                 colorSpace = colorSpace,
                 inputFormat = inputFormat,
+                outputPath = outputPath,
             ).process(images)
             if (glesBitmap != null) {
                 images.forEach { it.close() }

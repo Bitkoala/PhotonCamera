@@ -2015,7 +2015,18 @@ class Camera2Controller(private val context: Context) {
 
     private fun applyToneMapSettings(builder: CaptureRequest.Builder, state: CameraState, isCapture: Boolean) {
         val linearizePreviewInput = state.fixTonemapPreview && !isCapture
-        when (sanitizeTonemapMode(state.tonemapMode)) {
+        val tonemapMode = sanitizeTonemapMode(state.tonemapMode)
+        if (tonemapMode == "LINEAR_PIPELINE" && isCapture && state.useMultipleExposure) {
+            PLog.d(TAG, "Forcing default tone map for multiple exposure")
+            applyDefaultToneMapSettings(builder, state, isCapture)
+            return
+        }
+        if (tonemapMode == "LINEAR_PIPELINE" && shouldForceDefaultToneMapForHdrComposition(state, isCapture)) {
+            PLog.d(TAG, "Forcing default tone map for YUV HDR composition capture")
+            applyDefaultToneMapSettings(builder, state, isCapture)
+            return
+        }
+        when (tonemapMode) {
             "SYSTEM_DEFAULT" -> applyDefaultToneMapSettings(builder, state, isCapture)
             "SRGB" -> {
                 if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
@@ -2039,6 +2050,13 @@ class Camera2Controller(private val context: Context) {
                 applyDefaultToneMapSettings(builder, state, isCapture)
             }
         }
+    }
+
+    private fun shouldForceDefaultToneMapForHdrComposition(state: CameraState, isCapture: Boolean): Boolean {
+        return isCapture &&
+                state.captureMode == CaptureMode.PHOTO &&
+                state.useHdrComposition &&
+                !state.useRaw
     }
 
     private fun applyDefaultToneMapSettings(

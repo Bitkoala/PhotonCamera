@@ -1879,6 +1879,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         return MediaMetadata(
             lutId = lutIdToSave,
+            tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
             frameId = frameIdToSave,
             colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,
@@ -2130,6 +2131,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 captureInfo = captureInfo,
                 captureMode = "multiple_exposure",
                 multipleExposureFrameCount = multipleExposureState.targetCount
+            ).copy(
+                tonemapMode = "SYSTEM_DEFAULT"
             ).also { multipleExposureMetadata = it }
 
             val frameFile = GalleryManager.saveMultipleExposureFrame(
@@ -2315,6 +2318,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun startContinuousCapture() {
         if (state.value.captureMode == CaptureMode.QUICK_SHOT) {
             startQuickShotBurst()
+            return
+        }
+        if (tonemapMode.value == "LINEAR_PIPELINE") {
+            PLog.d(TAG, "Continuous photo burst disabled while Natural Light tone map is active")
             return
         }
         if (state.value.useRaw && state.value.isRawSupported) return
@@ -4682,6 +4689,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
+                tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
                 frameId = frameIdToSave,
                 colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
@@ -4908,7 +4916,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 captureMode = captureMode,
                 multipleExposureFrameCount = expectedFrameCount,
                 baselineTarget = BaselineColorCorrectionTarget.JPG,
-            )
+            ).let { hdrMetadata ->
+                if (hdrMetadata.tonemapMode == "LINEAR_PIPELINE") {
+                    PLog.d(TAG, "YUV HDR bracket stores SYSTEM_DEFAULT tonemap metadata")
+                    hdrMetadata.copy(tonemapMode = "SYSTEM_DEFAULT")
+                } else {
+                    hdrMetadata
+                }
+            }
 
             val photoId = GalleryManager.preparePhoto(
                 context,
@@ -5204,6 +5219,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
         val metadata = MediaMetadata(
             lutId = lutIdToSave,
+            tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
             frameId = frameIdToSave,
             colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,

@@ -2343,19 +2343,33 @@ object GalleryManager {
                 result = BitmapUtils.flipHorizontal(result)
             }
 
+            var previewBitmap = result
+            if (metadata.usesLinearPipelineToneMap()) {
+                previewBitmap = photoProcessor.processCapturePreviewToneMap(result, metadata)
+            }
+
             // Save Original (Stacked Result)
             FileOutputStream(tempFile).use { outputStream ->
-                writeFinalJpeg(result, outputStream, photoQuality)
+                writeFinalJpeg(previewBitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
-            generateBokehPhoto(context, photoId, metadata, result)
+            generateBokehPhoto(context, photoId, metadata, previewBitmap)
+            if (previewBitmap !== result && !previewBitmap.isRecycled) {
+                previewBitmap.recycle()
+            }
             // Auto Save
             if (shouldAutoSave) {
                 val metadata = loadMetadata(context, photoId) ?: return@withContext
+                val exportBitmap = if (yuvFile.exists() && yuvFile.length() > 0L) {
+                    null
+                } else {
+                    PLog.w(TAG, "YUV stack linear source missing; exporting stacked preview bitmap")
+                    result
+                }
                 exportPhoto(
                     context,
                     photoId,
-                    result,
+                    exportBitmap,
                     photoProcessor,
                     metadata,
                     sharpeningValue,
