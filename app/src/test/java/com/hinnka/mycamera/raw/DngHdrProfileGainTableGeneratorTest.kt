@@ -32,6 +32,11 @@ class DngHdrProfileGainTableGeneratorTest {
         assertEquals(0.32f, sampleGainAtIndex(map, 64), 0.04f)
         assertEquals(0.18f, sampleGainAtIndex(map, 128), 0.04f)
         assertEquals(0.108f, sampleGainAtIndex(map, 256), 0.004f)
+        assertEquals(0.073f, tableOutputAtIndex(map, 32), 0.006f)
+        assertEquals(0.081f, tableOutputAtIndex(map, 64), 0.006f)
+        assertEquals(0.092f, tableOutputAtIndex(map, 128), 0.006f)
+        assertTrue(tableOutputSlope(map, 46, 64) > 0.035f)
+        assertTrue(tableOutputSlope(map, 64, 102) > 0.030f)
         assertEquals(1.12f, map.mapInputWeights.sum() * 2.0f.pow(IPHONE_REFERENCE_BASELINE_EV), 0.02f)
     }
 
@@ -88,6 +93,8 @@ class DngHdrProfileGainTableGeneratorTest {
         assertTrue(sampleGainAtIndex(bright, 0) < 0.95f)
         assertTrue(sampleGainAtIndex(dark, 16) > sampleGainAtIndex(mid, 16))
         assertTrue(sampleGainAtIndex(mid, 16) > sampleGainAtIndex(bright, 16))
+        assertEquals(0.43f, sampleGainAtIndex(bright, 16), 0.08f)
+        assertEquals(0.22f, sampleGainAtIndex(bright, 64), 0.05f)
         assertEquals(sampleGainAtIndex(dark, 256), sampleGainAtIndex(bright, 256), 0.002f)
     }
 
@@ -182,6 +189,20 @@ class DngHdrProfileGainTableGeneratorTest {
 
     private fun sampleGainAtIndex(map: DngProfileGainTableMap, index: Int): Float {
         return map.gains[index.coerceIn(0, map.mapPointsN - 1)]
+    }
+
+    private fun tableOutputAtIndex(map: DngProfileGainTableMap, index: Int): Float {
+        val safeIndex = index.coerceIn(0, map.mapPointsN - 1)
+        return tableInputForIndex(safeIndex, map.mapPointsN) * map.gains[safeIndex]
+    }
+
+    private fun tableOutputSlope(map: DngProfileGainTableMap, startIndex: Int, endIndex: Int): Float {
+        val start = startIndex.coerceIn(0, map.mapPointsN - 2)
+        val end = endIndex.coerceIn(start + 1, map.mapPointsN - 1)
+        val startInput = tableInputForIndex(start, map.mapPointsN)
+        val endInput = tableInputForIndex(end, map.mapPointsN)
+        return (tableOutputAtIndex(map, end) - tableOutputAtIndex(map, start)) /
+            (endInput - startInput)
     }
 
     private fun renderedOutputForPostBaselineSignal(map: DngProfileGainTableMap, input: Float): Float {
