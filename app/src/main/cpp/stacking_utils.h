@@ -121,8 +121,7 @@ public:
   // Write the result to an ARGB8888 bitmap buffer with rotation and cropping
   void writeResult(uint32_t *outBitmap, int outWidth, int outHeight,
                    int rotation, int targetWR, int targetHR,
-                   const char *outputPath = nullptr, int *outFinalW = nullptr,
-                   int *outFinalH = nullptr);
+                   int *outFinalW = nullptr, int *outFinalH = nullptr);
 
   // Getter for the current scale
   int getScale() const { return scale; }

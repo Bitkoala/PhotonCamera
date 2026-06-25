@@ -63,7 +63,6 @@ import kotlin.io.copyTo
 import kotlin.io.deleteRecursively
 import kotlin.io.extension
 import kotlin.io.inputStream
-import kotlin.io.readBytes
 import kotlin.io.walkBottomUp
 import kotlin.math.ln
 import kotlin.math.roundToInt
@@ -83,7 +82,9 @@ object GalleryManager {
     private const val PHOTOS_DIR = "photos"
     private const val BURST_DIR = "burst"
     private const val PHOTO_FILE = "original.jpg"
-    private const val YUV_FILE = "original.jxl"
+    private const val HIGH_QUALITY_PHOTO_FILE = "original.heic"
+    private const val LEGACY_JXL_FILE = "original.jxl"
+    private const val INTERNAL_HEIC_QUALITY = 100
     private const val HDR_FILE = "original_hdr.bin"
     private const val VIDEO_FILE = "video.mp4"
     private const val DNG_FILE = "original.dng"
@@ -135,14 +136,6 @@ object GalleryManager {
         val skippedExistingCount: Int,
         val skippedUnsupportedCount: Int,
         val failedCount: Int
-    )
-
-    data class HdrSidecarData(
-        val buffer: ByteBuffer,
-        val width: Int,
-        val height: Int,
-        val compressed: Boolean,
-        val usesLargeDirectAllocator: Boolean = false,
     )
 
     private data class PhotoExportDestination(
@@ -256,8 +249,21 @@ object GalleryManager {
         return File(getPhotoDir(context, photoId), PHOTO_FILE)
     }
 
-    fun getYuvFile(context: Context, photoId: String): File {
-        return File(getPhotoDir(context, photoId), YUV_FILE)
+    fun getHighQualityPhotoFile(context: Context, photoId: String): File {
+        return File(getPhotoDir(context, photoId), HIGH_QUALITY_PHOTO_FILE)
+    }
+
+    fun hasHighQualityPhoto(context: Context, photoId: String): Boolean {
+        val file = getHighQualityPhotoFile(context, photoId)
+        return file.exists() && file.length() > 0L
+    }
+
+    fun getOriginalImageFile(context: Context, photoId: String): File? {
+        val highQualityFile = getHighQualityPhotoFile(context, photoId)
+        if (highQualityFile.exists() && highQualityFile.length() > 0L) return highQualityFile
+        val photoFile = getPhotoFile(context, photoId)
+        if (photoFile.exists() && photoFile.length() > 0L) return photoFile
+        return null
     }
 
     fun getHdrFile(context: Context, photoId: String): File {
@@ -318,9 +324,8 @@ object GalleryManager {
 
     fun deleteDetailHdrFile(context: Context, photoId: String) {
         val detailFile = getDetailHdrFile(context, photoId)
-        val photoFile = getPhotoFile(context, photoId)
         val photoDir = getPhotoDir(context, photoId)
-        val stableTimestamp = photoFile.takeIf { it.exists() }?.lastModified()
+        val stableTimestamp = getOriginalImageFile(context, photoId)?.lastModified()
         if (detailFile.exists()) {
             detailFile.delete()
         }
@@ -332,8 +337,7 @@ object GalleryManager {
     }
 
     private fun getExistingMediaFile(context: Context, photoId: String): File? {
-        val photoFile = getPhotoFile(context, photoId)
-        if (photoFile.exists()) return photoFile
+        getOriginalImageFile(context, photoId)?.let { return it }
         val videoFile = getVideoFile(context, photoId)
         if (videoFile.exists()) return videoFile
         return null
@@ -498,6 +502,62 @@ object GalleryManager {
         return success
     }
 
+    private fun deleteDeprecatedJxlStorage(photoDir: File) {
+        File(photoDir, LEGACY_JXL_FILE).takeIf { it.exists() }?.delete()
+        File(photoDir, HDR_FILE).takeIf { it.exists() }?.delete()
+    }
+
+    private fun writeInternalOriginalPhoto(photoDir: File, bitmap: Bitmap, jpegQuality: Int): File? {
+        deleteDeprecatedJxlStorage(photoDir)
+        val heicFile = File(photoDir, HIGH_QUALITY_PHOTO_FILE)
+        val jpegFile = File(photoDir, PHOTO_FILE)
+
+        if (HeicExportEncoder.isSupported && !bitmap.isRecycled) {
+            val tempHeicFile = File(photoDir, "temp_original_${System.nanoTime()}.${HeicExportEncoder.EXTENSION}")
+            val saved = HeicExportEncoder.write(
+                bitmap = bitmap,
+                outputFile = tempHeicFile,
+                quality = INTERNAL_HEIC_QUALITY
+            )
+            if (saved) {
+                if (heicFile.exists() && !heicFile.delete()) {
+                    tempHeicFile.delete()
+                } else if (tempHeicFile.renameTo(heicFile)) {
+                    if (jpegFile.exists() && !jpegFile.delete()) {
+                        heicFile.delete()
+                    } else {
+                        return heicFile
+                    }
+                } else {
+                    tempHeicFile.delete()
+                }
+            } else {
+                tempHeicFile.delete()
+            }
+        }
+
+        heicFile.takeIf { it.exists() }?.delete()
+        val tempJpegFile = File(photoDir, "temp_original_${System.nanoTime()}.jpg")
+        val jpegSaved = FileOutputStream(tempJpegFile).use { outputStream ->
+            writeFinalJpeg(bitmap, outputStream, jpegQuality)
+        }
+        if (!jpegSaved) {
+            tempJpegFile.delete()
+            jpegFile.takeIf { it.exists() && it.length() == 0L }?.delete()
+            return null
+        }
+        if (jpegFile.exists() && !jpegFile.delete()) {
+            tempJpegFile.delete()
+            return null
+        }
+        return if (tempJpegFile.renameTo(jpegFile)) {
+            jpegFile
+        } else {
+            tempJpegFile.delete()
+            null
+        }
+    }
+
     suspend fun buildDetailHdrCache(
         context: Context,
         photoId: String,
@@ -516,9 +576,8 @@ object GalleryManager {
                 deleteDetailHdrFile(context, photoId)
                 return@withContext false
             }
-            val photoFile = getPhotoFile(context, photoId)
             val photoDir = getPhotoDir(context, photoId)
-            val stableTimestamp = photoFile.takeIf { it.exists() }?.lastModified()
+            val stableTimestamp = getOriginalImageFile(context, photoId)?.lastModified()
             val detailFile = getDetailHdrFile(context, photoId)
             val tempFile = File(detailFile.parentFile, "detail_hdr_temp.jpg")
 
@@ -1489,73 +1548,57 @@ object GalleryManager {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
 
-            // 预先准备所有文件路径
-            val photoFile = File(photoDir, PHOTO_FILE)
-            val tempFile = File(photoDir, "temp.jpg")
-            val yuvFile = File(photoDir, YUV_FILE)
-            val hdrFile = File(photoDir, HDR_FILE)
+            deleteDeprecatedJxlStorage(photoDir)
 
             val metadata = loadMetadata(context, photoId) ?: return@withContext
 
-            // 创建预览用的 Bitmap
-            var previewBitmap =
-                createBitmap(metadata.width, metadata.height, colorSpace = ColorSpace.get(metadata.colorSpace))
-
             PLog.d(TAG, "saveYuvPhoto: ${metadata.width} ${metadata.height} ${metadata.colorSpace.name}")
 
-            // YUV 格式：使用 native 处理（包含旋转和裁切）并直接保存为 FP16 JXL
-            var success = false
-            val nativeSaveElapsed = measureTimeMillis {
-                success = image.use {
-                    YuvProcessor.processAndSave16(
-                        image, aspectRatio, rotation,
-                        yuvFile.absolutePath,
-                        hdrSidecarPath = if (metadata.dynamicRangeProfile == "HLG10") hdrFile.absolutePath else null,
-                        previewBitmap = previewBitmap
-                    )
+            var processedPreview: Bitmap? = null
+            val nativeProcessElapsed = measureTimeMillis {
+                processedPreview = image.use {
+                    YuvProcessor.processAndToBitmap(it.image, aspectRatio, rotation)
                 }
             }
-            PLog.d(TAG, "saveYuvPhoto processAndSave16 took ${nativeSaveElapsed}ms, success=$success")
+            PLog.d(TAG, "saveYuvPhoto processAndToBitmap took ${nativeProcessElapsed}ms, success=${processedPreview != null}")
+
+            var previewBitmap = processedPreview ?: return@withContext
 
             if (metadata.isMirrored) {
                 previewBitmap = BitmapUtils.flipHorizontal(previewBitmap)
             }
 
-            if (success) {
-                if (metadata.usesLinearPipelineToneMap()) {
-                    val toneMappedPreview = photoProcessor.processCapturePreviewToneMap(previewBitmap, metadata)
-                    if (toneMappedPreview !== previewBitmap && !previewBitmap.isRecycled) {
-                        previewBitmap.recycle()
-                    }
-                    previewBitmap = toneMappedPreview
+            if (metadata.usesLinearPipelineToneMap()) {
+                val toneMappedPreview = photoProcessor.processCapturePreviewToneMap(previewBitmap, metadata)
+                if (toneMappedPreview !== previewBitmap && !previewBitmap.isRecycled) {
+                    previewBitmap.recycle()
                 }
-                FileOutputStream(tempFile).use { outputStream ->
-                    writeFinalJpeg(previewBitmap, outputStream, photoQuality)
-                }
-                tempFile.renameTo(photoFile)
-                generateBokehPhoto(context, photoId, metadata, previewBitmap)
-                queueDetailHdrCacheBuild(
-                    context = context,
-                    photoId = photoId,
-                    metadata = metadata,
-                    sharpening = sharpeningValue,
-                    noiseReduction = noiseReductionValue,
-                    chromaNoiseReduction = chromaNoiseReductionValue
-                )
+                previewBitmap = toneMappedPreview
+            }
+            val originalFile = writeInternalOriginalPhoto(photoDir, previewBitmap, photoQuality) ?: return@withContext
+            PLog.d(TAG, "saveYuvPhoto internal original saved=${originalFile.name}")
+            generateBokehPhoto(context, photoId, metadata, previewBitmap)
+            queueDetailHdrCacheBuild(
+                context = context,
+                photoId = photoId,
+                metadata = metadata,
+                sharpening = sharpeningValue,
+                noiseReduction = noiseReductionValue,
+                chromaNoiseReduction = chromaNoiseReductionValue
+            )
 //                updateThumbnail(context, photoId, photoProcessor, metadata)
-                if (shouldAutoSave) {
-                    exportPhoto(
-                        context,
-                        photoId,
-                        null,
-                        photoProcessor,
-                        metadata,
-                        sharpeningValue,
-                        noiseReductionValue,
-                        chromaNoiseReductionValue,
-                        photoQuality
-                    )
-                }
+            if (shouldAutoSave) {
+                exportPhoto(
+                    context,
+                    photoId,
+                    null,
+                    photoProcessor,
+                    metadata,
+                    sharpeningValue,
+                    noiseReductionValue,
+                    chromaNoiseReductionValue,
+                    photoQuality
+                )
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to savePhoto", e)
@@ -2307,17 +2350,13 @@ object GalleryManager {
             val photoDir = getPhotoDir(context, photoId, true)
             val metadata = loadMetadata(context, photoId) ?: return@withContext
 
-            // 预先准备所有文件路径
-            val photoFile = File(photoDir, PHOTO_FILE)
-            val tempFile = File(photoDir, "temp.jpg")
-            val yuvFile = File(photoDir, YUV_FILE)
+            deleteDeprecatedJxlStorage(photoDir)
 
             var currentUseSuperResolution = useSuperResolution
             var result = MultiFrameStacker.processBurst(
                 images,
                 rotation,
                 aspectRatio,
-                yuvFile.absolutePath,
                 currentUseSuperResolution,
                 useGpuAcceleration,
                 ColorSpace.get(metadata.colorSpace)
@@ -2330,7 +2369,6 @@ object GalleryManager {
                     images,
                     rotation,
                     aspectRatio,
-                    yuvFile.absolutePath,
                     false,
                     useGpuAcceleration,
                     ColorSpace.get(metadata.colorSpace)
@@ -2348,11 +2386,8 @@ object GalleryManager {
                 previewBitmap = photoProcessor.processCapturePreviewToneMap(result, metadata)
             }
 
-            // Save Original (Stacked Result)
-            FileOutputStream(tempFile).use { outputStream ->
-                writeFinalJpeg(previewBitmap, outputStream, photoQuality)
-            }
-            tempFile.renameTo(photoFile)
+            val originalFile = writeInternalOriginalPhoto(photoDir, previewBitmap, photoQuality) ?: return@withContext
+            PLog.d(TAG, "saveYuvStackedPhoto internal original saved=${originalFile.name}")
             generateBokehPhoto(context, photoId, metadata, previewBitmap)
             if (previewBitmap !== result && !previewBitmap.isRecycled) {
                 previewBitmap.recycle()
@@ -2360,10 +2395,10 @@ object GalleryManager {
             // Auto Save
             if (shouldAutoSave) {
                 val metadata = loadMetadata(context, photoId) ?: return@withContext
-                val exportBitmap = if (yuvFile.exists() && yuvFile.length() > 0L) {
+                val exportBitmap = if (hasHighQualityPhoto(context, photoId)) {
                     null
                 } else {
-                    PLog.w(TAG, "YUV stack linear source missing; exporting stacked preview bitmap")
+                    PLog.w(TAG, "Internal HEIC unavailable; exporting stacked preview bitmap")
                     result
                 }
                 exportPhoto(
@@ -2411,7 +2446,6 @@ object GalleryManager {
             val photoFile = File(photoDir, PHOTO_FILE)
             val dngFile = File(photoDir, DNG_FILE)
             val tempFile = File(photoDir, "temp.jpg")
-            val yuvFile = File(photoDir, YUV_FILE)
 
             val metadata = loadMetadata(context, photoId) ?: return@withContext
 
@@ -3737,91 +3771,14 @@ object GalleryManager {
         photoId
     }
 
-    fun loadYuvData(context: Context, photoId: String): ByteBuffer? {
-        val yuvFile = getYuvFile(context, photoId)
-        if (!yuvFile.exists()) {
-            return null
-        }
-        val start = System.currentTimeMillis()
-        return YuvProcessor.loadCompressedArgb(yuvFile.absolutePath).also {
-            PLog.d(TAG, "loadYuvData took ${System.currentTimeMillis() - start}ms, success=${it != null}")
-        }
-    }
-
-    fun loadHdrData(
-        context: Context,
-        photoId: String,
-        fallbackWidth: Int,
-        fallbackHeight: Int
-    ): HdrSidecarData? {
-        val hdrFile = getHdrFile(context, photoId)
-        if (!hdrFile.exists()) {
-            return null
-        }
-
-        val start = System.currentTimeMillis()
-        val dims = YuvProcessor.getCompressedArgbDimensions(hdrFile.absolutePath)
-        if (dims != null && dims.size >= 2) {
-            val buffer = YuvProcessor.loadCompressedArgb(hdrFile.absolutePath)
-            if (buffer != null) {
-                PLog.d(
-                    TAG,
-                    "loadHdrData loaded compressed sidecar in ${System.currentTimeMillis() - start}ms, " +
-                        "size=${dims[0]}x${dims[1]}, bytes=${buffer.capacity()}"
-                )
-                return HdrSidecarData(
-                    buffer = buffer,
-                    width = dims[0],
-                    height = dims[1],
-                    compressed = true
-                )
-            }
-        }
-
-        return try {
-            val bytes = hdrFile.readBytes()
-            val expectedBytes = fallbackWidth * fallbackHeight * 4 * 2
-            if (bytes.size != expectedBytes) {
-                PLog.e(
-                    TAG,
-                    "Failed to load HDR sidecar: unexpected legacy size ${bytes.size}, expected=$expectedBytes"
-                )
-                null
-            } else {
-                PLog.d(
-                    TAG,
-                    "loadHdrData loaded legacy raw sidecar in ${System.currentTimeMillis() - start}ms, " +
-                        "size=${fallbackWidth}x${fallbackHeight}, bytes=${bytes.size}"
-                )
-                val buffer = LargeDirectBuffer.allocate(bytes.size.toLong(), "HDR legacy sidecar")
-                if (buffer == null) {
-                    PLog.e(TAG, "Failed to load HDR sidecar: unable to allocate ${bytes.size} bytes")
-                    null
-                } else HdrSidecarData(
-                    buffer = buffer.apply {
-                        put(bytes)
-                        rewind()
-                    },
-                    width = fallbackWidth,
-                    height = fallbackHeight,
-                    compressed = false,
-                    usesLargeDirectAllocator = true,
-                )
-            }
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to load HDR sidecar", e)
-            null
-        }
-    }
-
     fun loadBitmap(context: Context, photoId: String, maxEdge: Int? = null, preserveHdr: Boolean = false): Bitmap? {
         val bokehFile = getBokehFile(context, photoId)
         if (bokehFile.exists()) {
             return loadBitmap(context, Uri.fromFile(bokehFile), maxEdge, preserveHdr)
         }
-        val photoFile = getPhotoFile(context, photoId)
-        if (photoFile.exists()) {
-            return loadBitmap(context, Uri.fromFile(photoFile), maxEdge, preserveHdr)
+        val originalFile = getOriginalImageFile(context, photoId)
+        if (originalFile != null) {
+            return loadBitmap(context, Uri.fromFile(originalFile), maxEdge, preserveHdr)
         }
         val thumbnailFile = getThumbnailFile(context, photoId)
         if (thumbnailFile.exists()) {
@@ -3836,8 +3793,13 @@ object GalleryManager {
         maxEdge: Int? = null,
         preserveHdr: Boolean = false
     ): Bitmap? {
+        val highQualityFile = getHighQualityPhotoFile(context, photoId)
+        if (highQualityFile.exists() && highQualityFile.length() > 0L) {
+            loadBitmap(context, Uri.fromFile(highQualityFile), maxEdge, preserveHdr)?.let { return it }
+            PLog.w(TAG, "Failed to decode internal HEIC, falling back to JPEG for $photoId")
+        }
         val photoFile = getPhotoFile(context, photoId)
-        if (!photoFile.exists()) {
+        if (!photoFile.exists() || photoFile.length() <= 0L) {
             return null
         }
         return loadBitmap(context, Uri.fromFile(photoFile), maxEdge, preserveHdr)

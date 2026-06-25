@@ -1151,12 +1151,9 @@ void ImageStacker::processFrame(int index) {
 
 #include "yuv_utils.h"
 
-#include "jxl_utils.h"
-
 void ImageStacker::writeResult(uint32_t *outBitmap, int outWidth, int outHeight,
                                int rotation, int targetWR, int targetHR,
-                               const char *outputPath, int *outFinalW,
-                               int *outFinalH) {
+                               int *outFinalW, int *outFinalH) {
   // Use current scaled dimensions
   int currentW = width * scale;
   int currentH = height * scale;
@@ -1196,7 +1193,7 @@ void ImageStacker::writeResult(uint32_t *outBitmap, int outWidth, int outHeight,
   RotatePlane16(iU.data(), rU.data(), uvWidth, uvHeight, rotation);
   RotatePlane16(iV.data(), rV.data(), uvWidth, uvHeight, rotation);
 
-  // 3. Cropping Calculation (same as processAndSaveYuv)
+  // 3. Cropping Calculation
   bool currentIsLandscape = (rotatedWidth >= rotatedHeight);
   int tw, th;
   if (currentIsLandscape) {
@@ -1229,12 +1226,7 @@ void ImageStacker::writeResult(uint32_t *outBitmap, int outWidth, int outHeight,
   int cropX = ((rotatedWidth - finalWidth) / 4) * 2;
   int cropY = ((rotatedHeight - finalHeight) / 4) * 2;
 
-  // 4. Convert and write to outBitmap and optionally to JXL (FP16)
-  std::vector<uint16_t> fp16Pixels;
-  if (outputPath) {
-    fp16Pixels.resize(finalWidth * finalHeight * 4);
-  }
-
+  // 4. Convert and write to outBitmap
   // Ensure we don't write out of the provided bitmap bounds
   int drawWidth = std::min(finalWidth, outWidth);
   int drawHeight = std::min(finalHeight, outHeight);
@@ -1267,23 +1259,7 @@ void ImageStacker::writeResult(uint32_t *outBitmap, int outWidth, int outHeight,
             (0xFF << 24) | (b8 << 16) | (g8 << 8) | r8;
       }
 
-      // --- Storage: 16-bit JXL ---
-      if (outputPath) {
-        int idx16 = (y * finalWidth + x) * 4;
-        fp16Pixels[idx16 + 0] =
-            static_cast<uint16_t>(std::max(0.0f, std::min(1.0f, R)) * 65535.0f);
-        fp16Pixels[idx16 + 1] =
-            static_cast<uint16_t>(std::max(0.0f, std::min(1.0f, G)) * 65535.0f);
-        fp16Pixels[idx16 + 2] =
-            static_cast<uint16_t>(std::max(0.0f, std::min(1.0f, B)) * 65535.0f);
-        fp16Pixels[idx16 + 3] = 65535; // Alpha
-      }
     }
-  }
-
-  if (outputPath) {
-    saveJxl(fp16Pixels.data(), finalWidth, finalHeight, JXL_TYPE_UINT16,
-            outputPath);
   }
 }
 

@@ -30,7 +30,7 @@ object GalleryMediaStore {
     private const val PHOTOS_DIR = "photos"
     private const val BURST_DIR = "burst"
     private const val PHOTO_FILE = "original.jpg"
-    private const val YUV_FILE = "original.jxl"
+    private const val HIGH_QUALITY_PHOTO_FILE = "original.heic"
     private const val VIDEO_FILE = "video.mp4"
     private const val DNG_FILE = "original.dng"
     private const val THUMBNAIL_FILE = "thumbnail.jpg"
@@ -160,9 +160,10 @@ object GalleryMediaStore {
         val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
         val videoFile = File(photoDir, VIDEO_FILE)
         val dngFile = File(photoDir, DNG_FILE)
-        val yuvFile = File(photoDir, YUV_FILE)
-        val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
-        val sourceOnlySize = if (!photoFile.exists()) {
+        val highQualityPhotoFile = File(photoDir, HIGH_QUALITY_PHOTO_FILE)
+        val displayFile = photoFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() }
+        val originalFile = dngFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() } ?: photoFile
+        val sourceOnlySize = if (displayFile == null) {
             metadata.sourceUri?.let { runCatching { queryContentSize(context, Uri.parse(it)) }.getOrNull() } ?: 0L
         } else {
             0L
@@ -179,17 +180,17 @@ object GalleryMediaStore {
             id = photoId,
             mediaType = metadata.mediaType.name,
             dateAdded = dateAdded,
-            size = if (photoFile.exists()) photoFile.length() else sourceOnlySize,
+            size = displayFile?.length() ?: sourceOnlySize,
             photoPath = photoFile.absolutePath,
             thumbnailPath = thumbnailFile.absolutePath,
             videoPath = videoFile.absolutePath,
             dngPath = dngFile.absolutePath,
-            yuvPath = yuvFile.absolutePath,
-            hasOriginal = photoFile.exists(),
+            yuvPath = highQualityPhotoFile.absolutePath,
+            hasOriginal = displayFile != null,
             hasThumbnail = thumbnailFile.exists(),
             hasVideo = videoFile.exists(),
             hasDng = dngFile.exists(),
-            hasYuv = yuvFile.exists(),
+            hasYuv = highQualityPhotoFile.exists(),
             isBurstPhoto = hasBurstPhotos(photoDir),
             updatedAt = System.currentTimeMillis(),
             version = metadata.version,
@@ -295,7 +296,7 @@ object GalleryMediaStore {
         val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
         val videoFile = File(photoDir, VIDEO_FILE)
         val dngFile = File(photoDir, DNG_FILE)
-        val yuvFile = File(photoDir, YUV_FILE)
+        val highQualityPhotoFile = File(photoDir, HIGH_QUALITY_PHOTO_FILE)
         val thumbnailUri = when {
             thumbnailFile.exists() -> Uri.fromFile(thumbnailFile)
             sourceUri != null -> sourceUri.toUri()
@@ -321,7 +322,8 @@ object GalleryMediaStore {
             )
         }
 
-        if (!photoFile.exists()) {
+        val displayFile = photoFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() }
+        if (displayFile == null) {
             val resolvedSourceUri = sourceUri?.let(Uri::parse) ?: return null
             return MediaData(
                 id = id,
@@ -339,18 +341,18 @@ object GalleryMediaStore {
                 metadata = metadata
             )
         }
-        val originalFile = dngFile.takeIf { it.exists() } ?: yuvFile.takeIf { it.exists() } ?: photoFile
+        val originalFile = dngFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() } ?: displayFile
         return MediaData(
             id = id,
-            uri = Uri.fromFile(photoFile),
+            uri = Uri.fromFile(displayFile),
             thumbnailUri = thumbnailUri,
-            displayName = photoFile.name,
+            displayName = displayFile.name,
             dateAdded = originalFile.lastModified().takeIf { it > 0L } ?: dateAdded,
-            size = photoFile.length(),
+            size = displayFile.length(),
             width = width,
             height = height,
             mediaType = MediaType.IMAGE,
-            mimeType = mimeType ?: "image/jpeg",
+            mimeType = mimeType ?: if (displayFile.extension.equals("heic", ignoreCase = true)) "image/heic" else "image/jpeg",
             sourceUri = sourceUri?.let(Uri::parse),
             isMotionPhoto = videoFile.exists(),
             isBurstPhoto = hasBurstPhotos(photoDir),

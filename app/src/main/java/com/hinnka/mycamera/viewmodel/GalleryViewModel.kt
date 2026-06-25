@@ -3127,7 +3127,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         return metadata.hasEmbeddedGainmap ||
             metadata.dynamicRangeProfile == "HLG10" ||
             GalleryManager.getDngFile(getApplication(), photo.id).exists() ||
-            GalleryManager.getYuvFile(getApplication(), photo.id).exists() ||
+            GalleryManager.getHighQualityPhotoFile(getApplication(), photo.id).exists() ||
             GalleryManager.getPhotoFile(getApplication(), photo.id).exists()
     }
 

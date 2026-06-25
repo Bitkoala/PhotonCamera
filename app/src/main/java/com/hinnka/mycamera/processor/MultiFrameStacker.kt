@@ -66,7 +66,6 @@ object MultiFrameStacker {
         images: List<SafeImage>,
         rotation: Int,
         aspectRatio: AspectRatio?,
-        outputPath: String? = null,
         enableSuperResolution: Boolean = false,
         useGpuAcceleration: Boolean = true,
         colorSpace: ColorSpace,
@@ -106,7 +105,6 @@ object MultiFrameStacker {
                 rotation = rotation,
                 colorSpace = colorSpace,
                 inputFormat = inputFormat,
-                outputPath = outputPath,
             ).process(images)
             if (glesBitmap != null) {
                 images.forEach { it.close() }
@@ -157,8 +155,7 @@ object MultiFrameStacker {
                 previewBitmap,
                 rotation,
                 aspectRatio?.widthRatio ?: width,
-                aspectRatio?.heightRatio ?: height,
-                outputPath
+                aspectRatio?.heightRatio ?: height
             )
 
             PLog.i(TAG, "Legacy stacking completed in ${System.currentTimeMillis() - startTime}ms")
@@ -386,8 +383,7 @@ object MultiFrameStacker {
         outBitmap: Bitmap?,
         rotation: Int,
         targetWR: Int,
-        targetHR: Int,
-        outputPath: String?
+        targetHR: Int
     )
 
     private external fun releaseStackerNative(stackerPtr: Long)

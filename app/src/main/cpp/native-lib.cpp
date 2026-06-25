@@ -17,13 +17,8 @@
 #include <string>
 #include <turbojpeg.h>
 #include <vector>
-#include <jxl/decode.h>
-#include <jxl/decode_cxx.h>
-#include <jxl/thread_parallel_runner.h>
-#include <jxl/thread_parallel_runner_cxx.h>
 
 #include "common.h"
-#include "jxl_utils.h"
 #include "libraw/libraw.h"
 #include "math_utils.h"
 #include "stacking_utils.h"
@@ -1255,21 +1250,6 @@ static Matrix3x3 computeXYZD50ToGamut(float xr, float yr, float xg, float yg,
   return gamutToXYZD50.invert();
 }
 
-static inline float hlgToLinear(float value) {
-  constexpr float kHlgA = 0.17883277f;
-  constexpr float kHlgB = 0.28466892f;
-  constexpr float kHlgC = 0.55991073f;
-  constexpr float kHdrReferenceScale = 6.0f;
-
-  const float v = std::max(0.0f, value);
-  const float linear = (v <= 0.5f)
-                           ? (v * v) / 3.0f
-                           : static_cast<float>(
-                                 (std::exp((v - kHlgC) / kHlgA) + kHlgB) /
-                                 12.0f);
-  return linear * kHdrReferenceScale;
-}
-
 static unsigned char mapCfaPatternToLibRaw(int cfaPattern) {
   switch (cfaPattern) {
   case 0:
@@ -1375,36 +1355,23 @@ Java_com_hinnka_mycamera_processor_MultiFrameStacker_clearStagedFramesNative(
 JNIEXPORT void JNICALL
 Java_com_hinnka_mycamera_processor_MultiFrameStacker_processStackNative(
     JNIEnv *env, jobject /* this */, jlong stackerPtr, jobject outBitmap,
-    jint rotation, jint targetWR, jint targetHR, jstring outputPath) {
+    jint rotation, jint targetWR, jint targetHR) {
 
   auto *stacker = reinterpret_cast<ImageStacker *>(stackerPtr);
-  if (!stacker)
+  if (!stacker || !outBitmap)
     return;
-
-  const char *path = nullptr;
-  if (outputPath) {
-    path = env->GetStringUTFChars(outputPath, nullptr);
-  }
 
   AndroidBitmapInfo info;
   void *bitmapPixels = nullptr;
-  if (outBitmap &&
-      (AndroidBitmap_getInfo(env, outBitmap, &info) < 0 ||
-       AndroidBitmap_lockPixels(env, outBitmap, &bitmapPixels) < 0)) {
-    if (path)
-      env->ReleaseStringUTFChars(outputPath, path);
+  if (AndroidBitmap_getInfo(env, outBitmap, &info) < 0 ||
+      AndroidBitmap_lockPixels(env, outBitmap, &bitmapPixels) < 0) {
     return;
   }
 
   stacker->writeResult(static_cast<uint32_t *>(bitmapPixels), info.width,
-                       info.height, rotation, targetWR, targetHR, path);
+                       info.height, rotation, targetWR, targetHR);
 
-  if (outBitmap) {
-    AndroidBitmap_unlockPixels(env, outBitmap);
-  }
-  if (path) {
-    env->ReleaseStringUTFChars(outputPath, path);
-  }
+  AndroidBitmap_unlockPixels(env, outBitmap);
 }
 
 JNIEXPORT void JNICALL
@@ -1500,240 +1467,6 @@ Java_com_hinnka_mycamera_processor_MultiFrameStacker_releaseRawStackerNative(
     JNIEnv *env, jobject /* this */, jlong stackerPtr) {
   auto *stacker = reinterpret_cast<RawStacker *>(stackerPtr);
   delete stacker;
-}
-
-/**
- * 处理 YUV_420_888 或 P010 图像：旋转、裁切、转换为 RGBA16
- */
-/**
- * 处理 YUV_420_888 或 P010 图像：旋转、裁切，并直接保存为 FP16 格式的 JPEG XL
- */
-JNIEXPORT jboolean JNICALL
-Java_com_hinnka_mycamera_utils_YuvProcessor_processAndSaveYuv(
-    JNIEnv *env, jobject /* this */, jobject yBuffer, jobject uBuffer,
-    jobject vBuffer, jint width, jint height, jint yRowStride, jint uvRowStride,
-    jint uvPixelStride, jint rotation, jint targetWR, jint targetHR,
-    jint format, jstring outputPath, jstring hdrSidecarPath, jobject outBitmap8) {
-  constexpr int kHdrSidecarDownsample = 2;
-  const char *path = env->GetStringUTFChars(outputPath, nullptr);
-  const char *hdrPath =
-      hdrSidecarPath ? env->GetStringUTFChars(hdrSidecarPath, nullptr) : nullptr;
-
-  // 1. 锁定 Bitmap 地址 (8-bit) 用于预览
-  void *bitmapPixels;
-  if (AndroidBitmap_lockPixels(env, outBitmap8, &bitmapPixels) < 0) {
-    env->ReleaseStringUTFChars(outputPath, path);
-    if (hdrPath)
-      env->ReleaseStringUTFChars(hdrSidecarPath, hdrPath);
-    return JNI_FALSE;
-  }
-  auto *ptr8 = static_cast<uint32_t *>(bitmapPixels);
-  AndroidBitmapInfo info;
-  AndroidBitmap_getInfo(env, outBitmap8, &info);
-  const int bitmapStridePixels = static_cast<int>(info.stride / 4);
-
-  // 获取 buffer 指针
-  auto *yData = static_cast<uint8_t *>(env->GetDirectBufferAddress(yBuffer));
-  auto *uData = static_cast<uint8_t *>(env->GetDirectBufferAddress(uBuffer));
-  auto *vData = static_cast<uint8_t *>(env->GetDirectBufferAddress(vBuffer));
-
-  if (yData == nullptr || uData == nullptr || vData == nullptr) {
-    LOGE("Failed to get buffer addresses");
-    AndroidBitmap_unlockPixels(env, outBitmap8);
-    env->ReleaseStringUTFChars(outputPath, path);
-    if (hdrPath)
-      env->ReleaseStringUTFChars(hdrSidecarPath, hdrPath);
-    return JNI_FALSE;
-  }
-
-  bool isP010 = (format == 0x36);
-  int rotatedWidth = (rotation == 90 || rotation == 270) ? height : width;
-  int rotatedHeight = (rotation == 90 || rotation == 270) ? width : height;
-
-  // === 裁切计算 ===
-  bool currentIsLandscape = (rotatedWidth >= rotatedHeight);
-  int tw, th;
-  if (currentIsLandscape) {
-    tw = (targetWR >= targetHR) ? targetWR : targetHR;
-    th = (targetWR >= targetHR) ? targetHR : targetWR;
-  } else {
-    tw = (targetWR >= targetHR) ? targetHR : targetWR;
-    th = (targetWR >= targetHR) ? targetWR : targetHR;
-  }
-
-  int finalWidth, finalHeight;
-  if ((long long)rotatedWidth * th > (long long)tw * rotatedHeight) {
-    finalHeight = (rotatedHeight / 2) * 2;
-    finalWidth = (int)(((long long)finalHeight * tw / th) / 2) * 2;
-  } else {
-    finalWidth = (rotatedWidth / 2) * 2;
-    finalHeight = (int)(((long long)finalWidth * th / tw) / 2) * 2;
-  }
-  finalWidth = std::min(finalWidth, (rotatedWidth / 2) * 2);
-  finalHeight = std::min(finalHeight, (rotatedHeight / 2) * 2);
-  if (finalWidth > (int)info.width || finalHeight > (int)info.height) {
-    LOGI("processAndSaveYuv clamping output from %dx%d to bitmap bounds %ux%u",
-         finalWidth, finalHeight, info.width, info.height);
-  }
-  finalWidth = std::min(finalWidth, (int)info.width);
-  finalHeight = std::min(finalHeight, (int)info.height);
-  if (finalWidth > 1) {
-    finalWidth &= ~1;
-  }
-  if (finalHeight > 1) {
-    finalHeight &= ~1;
-  }
-
-  int cropX = ((rotatedWidth - finalWidth) / 4) * 2;
-  int cropY = ((rotatedHeight - finalHeight) / 4) * 2;
-
-  // === 转换并存储为 RGB ===
-  std::vector<uint16_t> fp16Pixels(finalWidth * finalHeight * 4);
-  std::vector<uint16_t> hdrReferencePixels;
-  if (isP010 && hdrPath) {
-    hdrReferencePixels.resize(finalWidth * finalHeight * 4);
-  }
-
-#pragma omp parallel for num_threads(4)
-  for (int y = 0; y < finalHeight; y++) {
-    for (int x = 0; x < finalWidth; x++) {
-      int rx = x + cropX;
-      int ry = y + cropY;
-
-      int sx, sy;
-      if (rotation == 90) {
-        sx = ry;
-        sy = height - 1 - rx;
-      } else if (rotation == 180) {
-        sx = width - 1 - rx;
-        sy = height - 1 - ry;
-      } else if (rotation == 270) {
-        sx = width - 1 - ry;
-        sy = rx;
-      } else { // 0
-        sx = rx;
-        sy = ry;
-      }
-
-      float Y_val, U_val, V_val;
-      if (isP010) {
-        Y_val = (float)readValue<uint16_t>(yData + sy * yRowStride + sx * 2,
-                                           false) /
-                65535.0f;
-        int uv_sx = sx / 2;
-        int uv_sy = sy / 2;
-        U_val =
-            (static_cast<float>(readValue<uint16_t>(
-                 uData + uv_sy * uvRowStride + uv_sx * uvPixelStride, false)) -
-             32768.0f) /
-            65535.0f;
-        V_val =
-            (static_cast<float>(readValue<uint16_t>(
-                 vData + uv_sy * uvRowStride + uv_sx * uvPixelStride, false)) -
-             32768.0f) /
-            65535.0f;
-      } else {
-        Y_val = (float)yData[sy * yRowStride + sx] / 255.0f;
-        int uv_sx = sx / 2;
-        int uv_sy = sy / 2;
-        U_val = (static_cast<float>(
-                     uData[uv_sy * uvRowStride + uv_sx * uvPixelStride]) -
-                 128.0f) /
-                255.0f;
-        V_val = (static_cast<float>(
-                     vData[uv_sy * uvRowStride + uv_sx * uvPixelStride]) -
-                 128.0f) /
-                255.0f;
-      }
-
-      float hdrRInput, hdrGInput, hdrBInput;
-      if (isP010) {
-        hdrRInput = Y_val + 1.4746f * V_val;
-        hdrGInput = Y_val - 0.16455f * U_val - 0.57135f * V_val;
-        hdrBInput = Y_val + 1.8814f * U_val;
-      } else {
-        hdrRInput = Y_val + 1.402f * V_val;
-        hdrGInput = Y_val - 0.344136f * U_val - 0.714136f * V_val;
-        hdrBInput = Y_val + 1.772f * U_val;
-      }
-
-      const float R = std::max(0.0f, std::min(1.0f, hdrRInput));
-      const float G = std::max(0.0f, std::min(1.0f, hdrGInput));
-      const float B = std::max(0.0f, std::min(1.0f, hdrBInput));
-
-      int idx = y * finalWidth + x;
-
-      if (!hdrReferencePixels.empty()) {
-        const float hdrR = hlgToLinear(hdrRInput);
-        const float hdrG = hlgToLinear(hdrGInput);
-        const float hdrB = hlgToLinear(hdrBInput);
-        const int hdrIdx = idx * 4;
-        hdrReferencePixels[hdrIdx + 0] = floatToHalf(hdrR);
-        hdrReferencePixels[hdrIdx + 1] = floatToHalf(hdrG);
-        hdrReferencePixels[hdrIdx + 2] = floatToHalf(hdrB);
-        hdrReferencePixels[hdrIdx + 3] = floatToHalf(1.0f);
-      }
-
-      // --- 输出 A: UINT16 (保存到本地) ---
-      int idx16 = idx * 4;
-      fp16Pixels[idx16 + 0] = static_cast<uint16_t>(R * 65535.0f);
-      fp16Pixels[idx16 + 1] = static_cast<uint16_t>(G * 65535.0f);
-      fp16Pixels[idx16 + 2] = static_cast<uint16_t>(B * 65535.0f);
-      fp16Pixels[idx16 + 3] = 65535; // Alpha
-
-      // --- 输出 B: 8-bit (预览) ---
-      uint32_t r8 = static_cast<uint32_t>(R * 255.0f);
-      uint32_t g8 = static_cast<uint32_t>(G * 255.0f);
-      uint32_t b8 = static_cast<uint32_t>(B * 255.0f);
-      uint32_t a8 = 255;
-      ptr8[y * bitmapStridePixels + x] =
-          (a8 << 24) | (b8 << 16) | (g8 << 8) | r8;
-    }
-  }
-
-  AndroidBitmap_unlockPixels(env, outBitmap8);
-
-  // 保存为 JXL
-  bool success = saveJxl(
-      fp16Pixels.data(), finalWidth, finalHeight, JXL_TYPE_UINT16, path,
-      isP010 ? JxlEncodingProfile::BT2100_HLG : JxlEncodingProfile::ORIGINAL);
-
-  if (success && isP010 && hdrPath) {
-    const int sidecarWidth =
-        std::max(1, (finalWidth + kHdrSidecarDownsample - 1) /
-                        kHdrSidecarDownsample);
-    const int sidecarHeight =
-        std::max(1, (finalHeight + kHdrSidecarDownsample - 1) /
-                        kHdrSidecarDownsample);
-    std::vector<uint16_t> hdrSidecarPixels(sidecarWidth * sidecarHeight * 4);
-    for (int y = 0; y < sidecarHeight; ++y) {
-      const int srcY = std::min(
-          finalHeight - 1,
-          (y * finalHeight + sidecarHeight / 2) / sidecarHeight);
-      for (int x = 0; x < sidecarWidth; ++x) {
-        const int srcX = std::min(
-            finalWidth - 1,
-            (x * finalWidth + sidecarWidth / 2) / sidecarWidth);
-        const int srcIdx = (srcY * finalWidth + srcX) * 4;
-        const int dstIdx = (y * sidecarWidth + x) * 4;
-        hdrSidecarPixels[dstIdx + 0] = hdrReferencePixels[srcIdx + 0];
-        hdrSidecarPixels[dstIdx + 1] = hdrReferencePixels[srcIdx + 1];
-        hdrSidecarPixels[dstIdx + 2] = hdrReferencePixels[srcIdx + 2];
-        hdrSidecarPixels[dstIdx + 3] = hdrReferencePixels[srcIdx + 3];
-      }
-    }
-
-    success = saveJxl(hdrSidecarPixels.data(), sidecarWidth, sidecarHeight,
-                      JXL_TYPE_FLOAT16, hdrPath);
-    if (!success) {
-      LOGE("Failed to write compressed HDR sidecar: %s", hdrPath);
-    }
-  }
-
-  env->ReleaseStringUTFChars(outputPath, path);
-  if (hdrPath)
-    env->ReleaseStringUTFChars(hdrSidecarPath, hdrPath);
-  return success ? JNI_TRUE : JNI_FALSE;
 }
 
 /**
@@ -2011,128 +1744,6 @@ Java_com_hinnka_mycamera_utils_YuvProcessor_processToBitmap(
   }
 
   AndroidBitmap_unlockPixels(env, outBitmap8);
-}
-
-/**
- * 从文件中读取并解压缩 RGBA 数据 (FP16)
- */
-JNIEXPORT jobject JNICALL
-Java_com_hinnka_mycamera_utils_YuvProcessor_loadCompressedArgb(
-    JNIEnv *env, jobject /* this */, jstring inputPath) {
-
-  const char *path = env->GetStringUTFChars(inputPath, nullptr);
-  int32_t width, height;
-  size_t dataSize = 0;
-
-  // 使用 JXL_TYPE_FLOAT16 读取数据，以便于 OpenGL GLES 3.0 处理
-  void *pixels = loadJxlRaw(path, width, height, JXL_TYPE_FLOAT16, dataSize);
-  env->ReleaseStringUTFChars(inputPath, path);
-
-  if (pixels == nullptr) {
-    return nullptr;
-  }
-
-  // 直接返回像素数据，不再添加 4 字节宽高头，以保持与旧版本兼容
-  return env->NewDirectByteBuffer(pixels, dataSize);
-}
-
-JNIEXPORT jintArray JNICALL
-Java_com_hinnka_mycamera_utils_YuvProcessor_getCompressedArgbDimensions(
-    JNIEnv *env, jobject /* this */, jstring inputPath) {
-  const char *path = env->GetStringUTFChars(inputPath, nullptr);
-
-  std::ifstream is(path, std::ios::binary | std::ios::ate);
-  if (!is) {
-    env->ReleaseStringUTFChars(inputPath, path);
-    return nullptr;
-  }
-  std::streamsize size = is.tellg();
-  is.seekg(0, std::ios::beg);
-  std::vector<uint8_t> buffer(size);
-  if (!is.read(reinterpret_cast<char *>(buffer.data()), size)) {
-    env->ReleaseStringUTFChars(inputPath, path);
-    return nullptr;
-  }
-  env->ReleaseStringUTFChars(inputPath, path);
-
-  auto decoder = JxlDecoderMake(nullptr);
-  size_t num_threads = JxlThreadParallelRunnerDefaultNumWorkerThreads();
-  if (num_threads > 4)
-    num_threads = 4;
-  auto runner = JxlThreadParallelRunnerMake(nullptr, num_threads);
-  if (JXL_DEC_SUCCESS != JxlDecoderSetParallelRunner(decoder.get(),
-                                                     JxlThreadParallelRunner,
-                                                     runner.get())) {
-    return nullptr;
-  }
-
-  if (JXL_DEC_SUCCESS !=
-      JxlDecoderSubscribeEvents(decoder.get(), JXL_DEC_BASIC_INFO)) {
-    return nullptr;
-  }
-
-  JxlDecoderSetInput(decoder.get(), buffer.data(), buffer.size());
-  JxlDecoderCloseInput(decoder.get());
-
-  for (;;) {
-    JxlDecoderStatus status = JxlDecoderProcessInput(decoder.get());
-    if (status == JXL_DEC_BASIC_INFO) {
-      JxlBasicInfo info;
-      if (JXL_DEC_SUCCESS != JxlDecoderGetBasicInfo(decoder.get(), &info)) {
-        return nullptr;
-      }
-      jintArray result = env->NewIntArray(2);
-      if (result == nullptr) {
-        return nullptr;
-      }
-      const jint dims[2] = {static_cast<jint>(info.xsize),
-                            static_cast<jint>(info.ysize)};
-      env->SetIntArrayRegion(result, 0, 2, dims);
-      return result;
-    }
-    if (status == JXL_DEC_SUCCESS || status == JXL_DEC_ERROR ||
-        status == JXL_DEC_NEED_MORE_INPUT) {
-      return nullptr;
-    }
-  }
-}
-
-/**
- * 将 RGBA 数据 (FP16) 压缩并保存到文件
- * 注意：输入 buffer 应该直接包含像素数据，不含宽高头
- */
-JNIEXPORT jboolean JNICALL
-Java_com_hinnka_mycamera_utils_YuvProcessor_saveCompressedArgb(
-    JNIEnv *env, jobject /* this */, jobject buffer, jint width, jint height,
-    jstring outputPath) {
-
-  if (buffer == nullptr || outputPath == nullptr)
-    return JNI_FALSE;
-
-  void *pixels = env->GetDirectBufferAddress(buffer);
-  if (pixels == nullptr) {
-    LOGE("saveCompressedArgb: Failed to get buffer address");
-    return JNI_FALSE;
-  }
-
-  const char *path = env->GetStringUTFChars(outputPath, nullptr);
-  bool success = saveJxl(pixels, width, height, JXL_TYPE_FLOAT16, path);
-  env->ReleaseStringUTFChars(outputPath, path);
-
-  return success ? JNI_TRUE : JNI_FALSE;
-}
-
-/**
- * 释放内存
- */
-JNIEXPORT void JNICALL Java_com_hinnka_mycamera_utils_YuvProcessor_free(
-    JNIEnv *env, jobject /* this */, jobject buffer) {
-  if (buffer == nullptr)
-    return;
-  void *nativePtr = env->GetDirectBufferAddress(buffer);
-  if (nativePtr != nullptr) {
-    free(nativePtr);
-  }
 }
 
 struct ExifData {

@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Environment
 import com.hinnka.mycamera.gallery.db.GalleryMediaStore
 import com.hinnka.mycamera.utils.PLog
-import com.hinnka.mycamera.utils.YuvProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -27,7 +26,7 @@ internal object PrivatePhotoDirectoryRecovery {
     private const val TAG = "PrivatePhotoRecovery"
     private const val PHOTOS_DIR = "photos"
     private const val PHOTO_FILE = "original.jpg"
-    private const val YUV_FILE = "original.jxl"
+    private const val HIGH_QUALITY_PHOTO_FILE = "original.heic"
     private const val VIDEO_FILE = "video.mp4"
     private const val DNG_FILE = "original.dng"
     private const val THUMBNAIL_FILE = "thumbnail.jpg"
@@ -94,11 +93,11 @@ internal object PrivatePhotoDirectoryRecovery {
         val legacyMetadata = loadLegacyMetadata(photoDir)
         val photoFile = File(photoDir, PHOTO_FILE)
         val dngFile = File(photoDir, DNG_FILE)
-        val yuvFile = File(photoDir, YUV_FILE)
+        val highQualityPhotoFile = File(photoDir, HIGH_QUALITY_PHOTO_FILE)
         val videoFile = File(photoDir, VIDEO_FILE)
         val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
 
-        val hasImageSource = photoFile.exists() || dngFile.exists() || yuvFile.exists()
+        val hasImageSource = photoFile.exists() || dngFile.exists() || highQualityPhotoFile.exists()
         if (!hasImageSource && !legacyMetadata?.sourceUri.isNullOrBlank()) {
             return legacyMetadata
         }
@@ -109,28 +108,27 @@ internal object PrivatePhotoDirectoryRecovery {
             return null
         }
 
-        if (!thumbnailFile.exists() && photoFile.exists()) {
-            generateThumbnail(photoFile, thumbnailFile)
+        val displayFile = photoFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() }
+        if (!thumbnailFile.exists() && displayFile != null) {
+            generateThumbnail(displayFile, thumbnailFile)
         }
 
         val metadataFile = when {
             dngFile.exists() -> dngFile
             photoFile.exists() -> photoFile
+            highQualityPhotoFile.exists() -> highQualityPhotoFile
             else -> null
         }
         val inferredMetadata = metadataFile
             ?.let { MediaMetadata.fromUri(context, Uri.fromFile(it)) }
-            ?: readYuvDimensions(yuvFile)?.let { (width, height) ->
-                MediaMetadata.createDefault(width, height)
-            }
             ?: MediaMetadata()
         val baseMetadata = legacyMetadata ?: inferredMetadata
-        val (width, height) = resolveRecoveredImageDimensions(baseMetadata, photoFile, yuvFile)
-        val originalFile = listOf(dngFile, yuvFile, photoFile).firstOrNull { it.exists() }
+        val (width, height) = resolveRecoveredImageDimensions(baseMetadata, photoFile, highQualityPhotoFile)
+        val originalFile = listOf(dngFile, highQualityPhotoFile, photoFile).firstOrNull { it.exists() }
         val dateTaken = baseMetadata.dateTaken
             ?: originalFile?.lastModified()?.takeIf { it > 0L }
             ?: photoDir.lastModified().takeIf { it > 0L }
-        val detectedGainmap = photoFile.exists() && detectEmbeddedGainmap(photoFile)
+        val detectedGainmap = displayFile?.let(::detectEmbeddedGainmap) ?: false
 
         return baseMetadata.copy(
             mediaType = MediaType.IMAGE,
@@ -259,11 +257,11 @@ internal object PrivatePhotoDirectoryRecovery {
     private fun resolveRecoveredImageDimensions(
         metadata: MediaMetadata,
         photoFile: File,
-        yuvFile: File
+        highQualityPhotoFile: File
     ): Pair<Int, Int> {
         if (metadata.width > 0 && metadata.height > 0) return metadata.width to metadata.height
         readImageBounds(photoFile)?.let { return it }
-        readYuvDimensions(yuvFile)?.let { return it }
+        readImageBounds(highQualityPhotoFile)?.let { return it }
         return metadata.width to metadata.height
     }
 
@@ -276,13 +274,6 @@ internal object PrivatePhotoDirectoryRecovery {
         } else {
             null
         }
-    }
-
-    private fun readYuvDimensions(file: File): Pair<Int, Int>? {
-        if (!file.exists()) return null
-        return YuvProcessor.getCompressedArgbDimensions(file.absolutePath)
-            ?.takeIf { it.size >= 2 && it[0] > 0 && it[1] > 0 }
-            ?.let { it[0] to it[1] }
     }
 
     private fun generateThumbnail(sourceFile: File, targetFile: File) {

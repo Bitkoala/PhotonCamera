@@ -1360,7 +1360,7 @@ class LutImageProcessor {
         }
 
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, imageTextureId)
-        // original.jxl 导出路径希望保持与源像素 1:1 对应，避免在首个 pass 之前先发生隐式重采样。
+        // 内部高质量源导出路径希望保持与源像素 1:1 对应，避免在首个 pass 之前先发生隐式重采样。
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)

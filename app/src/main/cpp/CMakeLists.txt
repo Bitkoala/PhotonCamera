@@ -1,19 +1,15 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("native-tool")
 
-set(LIB_PATH ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
 set(ADOBE_DNG_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dcp/dng_sdk/source)
 set(ADOBE_XMP_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dcp/XMPStub/include)
 
 # 4. 添加头文件路径
-include_directories(${LIB_PATH}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/LibRaw)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/libjpeg-turbo/src)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo)
 include_directories(${ADOBE_DNG_SOURCE_DIR})
 include_directories(${ADOBE_XMP_STUB_DIR})
-
-file(GLOB JXL_LIBS "${LIB_PATH}/lib/${ANDROID_ABI}/*.a")
 
 # 启用 OpenMP
 find_package(OpenMP REQUIRED)
@@ -33,7 +29,6 @@ add_subdirectory(libjpeg-turbo)
 add_library(my-native-lib SHARED 
     native-lib.cpp
     yuv_utils.cpp
-    jxl_utils.cpp
     stacking_utils.cpp
     lut_processor.cpp
     dcp_parser.cpp
@@ -60,7 +55,6 @@ target_compile_options(my-native-lib PRIVATE -O3 -ffast-math -w ${OpenMP_CXX_FLA
 
 target_link_libraries(
     my-native-lib
-    ${JXL_LIBS}
     turbojpeg-static
     OpenMP::OpenMP_CXX
     log

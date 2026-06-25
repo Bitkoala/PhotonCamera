@@ -15,7 +15,6 @@ import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
-import com.hinnka.mycamera.utils.YuvProcessor
 import java.nio.ByteBuffer
 import kotlin.math.ln
 import kotlin.math.max
@@ -29,7 +28,6 @@ class GlesYuvStacker(
     private val rotation: Int,
     private val colorSpace: ColorSpace,
     private val inputFormat: Int,
-    private val outputPath: String? = null,
 ) {
     data class HdrInputFrame(
         val image: SafeImage,
@@ -153,8 +151,6 @@ class GlesYuvStacker(
     private var hdrLowTexture = 0
     private var outputTexture = 0
     private var readbackTexture = 0
-    private var linearOutputTexture = 0
-    private var linearReadbackTexture = 0
 
     private var gridWidth = 0
     private var gridHeight = 0
@@ -227,7 +223,6 @@ class GlesYuvStacker(
             }
 
             normalizeOutput()
-            saveLinearStackOutputIfRequested()
             GlesGpuScheduler.yieldToUiRenderer()
             val bitmap = readOutputBitmap() ?: return null
             PLog.i(TAG, "GLES YUV stacking completed in ${System.currentTimeMillis() - startTime}ms")
@@ -1541,72 +1536,6 @@ class GlesYuvStacker(
             LargeDirectBuffer.free(buffer)
         }
         return bitmap
-    }
-
-    private fun saveLinearStackOutputIfRequested() {
-        val path = outputPath ?: return
-        try {
-            ensureLinearOutputResources()
-            renderAccumulatorToTexture(
-                accumulatorTexture = currentAccumulatorTexture,
-                targetTexture = linearOutputTexture,
-                applyDenoise = true,
-                label = "normalizeLinearStackOutput",
-            )
-            val readTexture = resolveReadbackTexture(
-                inputTexture = linearOutputTexture,
-                rotatedTexture = linearReadbackTexture,
-                label = "resolveLinearStackReadbackRotation",
-            )
-            val bufferByteCount = renderOutputWidth.toLong() * renderOutputHeight.toLong() * 4L * 2L
-            val buffer = LargeDirectBuffer.allocate(bufferByteCount, "GLES YUV stack linear readback") ?: run {
-                PLog.w(TAG, "Unable to allocate GLES YUV stack linear readback buffer")
-                return
-            }
-            try {
-                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, readbackFbo)
-                GLES30.glFramebufferTexture2D(
-                    GLES30.GL_FRAMEBUFFER,
-                    GLES30.GL_COLOR_ATTACHMENT0,
-                    GLES30.GL_TEXTURE_2D,
-                    readTexture,
-                    0,
-                )
-                GLES30.glReadBuffer(GLES30.GL_COLOR_ATTACHMENT0)
-                checkFramebuffer("saveLinearStackOutput")
-                GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
-                GLES30.glViewport(0, 0, renderOutputWidth, renderOutputHeight)
-                GLES30.glReadPixels(
-                    0,
-                    0,
-                    renderOutputWidth,
-                    renderOutputHeight,
-                    GLES30.GL_RGBA,
-                    GLES30.GL_HALF_FLOAT,
-                    buffer,
-                )
-                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-                buffer.position(0)
-                val saved = YuvProcessor.saveCompressedArgb(buffer, renderOutputWidth, renderOutputHeight, path)
-                if (!saved) {
-                    PLog.w(TAG, "Failed to save GLES YUV stack linear output: $path")
-                }
-                checkGlError("saveLinearStackOutput")
-            } finally {
-                LargeDirectBuffer.free(buffer)
-            }
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to save GLES YUV stack linear output", e)
-        }
-    }
-
-    private fun ensureLinearOutputResources() {
-        if (linearOutputTexture == 0) {
-            linearOutputTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
-        }
-        if (cpuRotateReadback && linearReadbackTexture == 0) {
-            linearReadbackTexture = createTexture2D(renderOutputWidth, renderOutputHeight, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
-        }
     }
 
     private fun resolveReadbackTexture(
