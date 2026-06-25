@@ -811,9 +811,9 @@ class PhotoProcessor(
         )
     }
 
-    private fun resolveRawAspectRatio(metadata: MediaMetadata): AspectRatio {
-        val storedRatio = metadata.ratio ?: AspectRatio.RATIO_4_3
-        metadata.postCropRegion ?: return storedRatio
+    private fun resolveRawAspectRatio(metadata: MediaMetadata): AspectRatio? {
+        val storedRatio = metadata.ratio ?: return null
+        metadata.postCropRegion ?: return null
         val metadataAspect = metadata.width.takeIf { it > 0 }?.let { width ->
             metadata.height.takeIf { it > 0 }?.let { height ->
                 width.toFloat() / height.toFloat()
