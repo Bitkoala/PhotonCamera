@@ -3272,11 +3272,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val glView = glSurfaceView
         if (glView != null) {
             val thumbnailRotation = capturePreviewThumbnailRotation()
-            glView.capturePreviewFrame { bitmap ->
-                previewThumbnail = rotatePreviewBitmapForCapture(bitmap, thumbnailRotation)
+            glView.captureOriginalPreviewFrame { bitmap ->
+                val thumbnail = bitmap?.let {
+                    rotatePreviewBitmapForCapture(it, thumbnailRotation)
+                }
+                previewThumbnail = thumbnail
                 isGeneratingPreviews = false
             }
         } else {
+            previewThumbnail = null
             isGeneratingPreviews = false
         }
     }

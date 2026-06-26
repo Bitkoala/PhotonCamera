@@ -35,6 +35,11 @@ import kotlin.math.hypot
  * 2. 应用 3D LUT 颜色变换
  * 3. 渲染到屏幕
  */
+enum class PreviewCaptureSource {
+    FinalDisplay,
+    Original
+}
+
 class LutRenderer : GLSurfaceView.Renderer {
     companion object {
         private const val TAG = "LutRenderer"
@@ -463,6 +468,7 @@ class LutRenderer : GLSurfaceView.Renderer {
     private var captureHeight = 512
     private var captureAspectRatio = 0f
     private var captureMaxLongEdge = DEFAULT_PREVIEW_CAPTURE_MAX_LONG_EDGE
+    private var pendingPreviewCaptureSource = PreviewCaptureSource.FinalDisplay
     private var lastCaptureWidth = 0
     private var lastCaptureHeight = 0
 
@@ -1508,12 +1514,16 @@ class LutRenderer : GLSurfaceView.Renderer {
             val needsHdfCompositeForSampling = postProcessEffectEnabled
             if (shouldCapturePreview) {
                 shouldCapturePreview = false
-                capturePreviewFrameInternal(
-                    sourceTextureId = finalDisplayTextureId,
-                    sourceWidth = finalDisplayWidth,
-                    sourceHeight = finalDisplayHeight,
-                    compositeWithHdf = needsHdfCompositeForSampling
-                )
+                when (consumePendingPreviewCaptureSource()) {
+                    PreviewCaptureSource.Original -> captureOriginalPreviewFrameInternal(rawPreviewSource)
+
+                    PreviewCaptureSource.FinalDisplay -> capturePreviewFrameInternal(
+                        sourceTextureId = finalDisplayTextureId,
+                        sourceWidth = finalDisplayWidth,
+                        sourceHeight = finalDisplayHeight,
+                        compositeWithHdf = needsHdfCompositeForSampling
+                    )
+                }
             }
             if (meteringEnabled && activeVideoRecorder == null) {
                 runMeteringInternal(
@@ -1592,10 +1602,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         targetMvpMatrix: FloatArray = mvpMatrix,
         preferBaselineLayer: Boolean = false,
         suppressBaselineLayer: Boolean = false,
+        suppressCreativeLayer: Boolean = false,
         sourceOverride: PreviewSourceOverride? = null
     ) {
         val baselineLayerAvailable = hasBaselineLayer() && !suppressBaselineLayer
-        val creativeLayerAvailable = hasCreativeLayer()
+        val creativeLayerAvailable = hasCreativeLayer() && !suppressCreativeLayer
         val useCreativeLayer = creativeLayerAvailable && (!preferBaselineLayer || !baselineLayerAvailable)
         val useBaselineLayer = !useCreativeLayer && baselineLayerAvailable
         val layerLutConfig = when {
@@ -1669,7 +1680,11 @@ class LutRenderer : GLSurfaceView.Renderer {
         // 捕获预览帧（如果需要）
         if (fboId == 0 && shouldCapturePreview) {
             shouldCapturePreview = false
-            capturePreviewFrameInternal()
+            when (consumePendingPreviewCaptureSource()) {
+                PreviewCaptureSource.Original -> captureOriginalPreviewFrameInternal(rawPreviewSource = null)
+
+                PreviewCaptureSource.FinalDisplay -> capturePreviewFrameInternal()
+            }
         }
 
         // 测光和直方图（按需）
@@ -2836,10 +2851,20 @@ class LutRenderer : GLSurfaceView.Renderer {
      * 请求捕获预览帧
      * 会在下一帧渲染后捕获并通过回调返回
      */
-    fun capturePreviewFrame(maxLongEdge: Int = DEFAULT_PREVIEW_CAPTURE_MAX_LONG_EDGE) {
+    fun capturePreviewFrame(
+        maxLongEdge: Int = DEFAULT_PREVIEW_CAPTURE_MAX_LONG_EDGE,
+        source: PreviewCaptureSource = PreviewCaptureSource.FinalDisplay
+    ) {
         captureMaxLongEdge = maxLongEdge.coerceAtLeast(1)
+        pendingPreviewCaptureSource = source
         updateCaptureSize()
         shouldCapturePreview = true
+    }
+
+    private fun consumePendingPreviewCaptureSource(): PreviewCaptureSource {
+        val source = pendingPreviewCaptureSource
+        pendingPreviewCaptureSource = PreviewCaptureSource.FinalDisplay
+        return source
     }
 
     /**
@@ -2850,7 +2875,8 @@ class LutRenderer : GLSurfaceView.Renderer {
         sourceTextureId: Int? = null,
         sourceWidth: Int = viewportWidth,
         sourceHeight: Int = viewportHeight,
-        compositeWithHdf: Boolean = false
+        compositeWithHdf: Boolean = false,
+        suppressColorLayers: Boolean = false
     ) {
         try {
             if (captureWidth != lastCaptureWidth || captureHeight != lastCaptureHeight) {
@@ -2881,7 +2907,9 @@ class LutRenderer : GLSurfaceView.Renderer {
                     fboId = captureFboId,
                     width = captureWidth,
                     height = captureHeight,
-                    targetMvpMatrix = buildMvpMatrix(captureWidth, captureHeight)
+                    targetMvpMatrix = buildMvpMatrix(captureWidth, captureHeight),
+                    suppressBaselineLayer = suppressColorLayers,
+                    suppressCreativeLayer = suppressColorLayers
                 )
             }
 
@@ -2925,6 +2953,20 @@ class LutRenderer : GLSurfaceView.Renderer {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to capture preview frame", e)
         }
+    }
+
+    private fun captureOriginalPreviewFrameInternal(rawPreviewSource: PreviewSourceOverride?) {
+        if (rawPreviewSource != null) {
+            capturePreviewFrameInternal(
+                sourceTextureId = rawPreviewSource.textureId,
+                sourceWidth = viewportWidth,
+                sourceHeight = viewportHeight,
+                compositeWithHdf = false
+            )
+            return
+        }
+
+        capturePreviewFrameInternal(suppressColorLayers = true)
     }
 
     private var lastRunMeteringTime = 0L

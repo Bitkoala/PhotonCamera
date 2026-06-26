@@ -1,6 +1,5 @@
 package com.hinnka.mycamera.raw
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -12,8 +11,6 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.opengl.GLES30
 import android.opengl.GLES31
-import android.opengl.GLUtils
-import android.util.Half
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.ContentRepository
@@ -37,6 +34,8 @@ import java.nio.ShortBuffer
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -173,13 +172,10 @@ class RawDemosaicProcessor {
         private const val RCD_VH_DIR_BINDING = 4
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD = 0.985f
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
-        private const val RAW_AE_LOCAL_SIZE_X = 16
-        private const val RAW_AE_LOCAL_SIZE_Y = 16
-        private const val RAW_AE_HISTOGRAM_BINS = 256
-        private const val RAW_AE_HISTOGRAM_LOG_MIN = -10f
-        private const val RAW_AE_HISTOGRAM_LOG_MAX = 4f
-        private const val RAW_AE_HISTOGRAM_BINDING = 0
-        private const val RAW_AE_BASE_STATS_BINDING = 1
+        private const val RAW_TONE_MAPPED_AE_MIN_EV = -2f
+        private const val RAW_TONE_MAPPED_AE_MAX_EV = 2f
+        private const val RAW_TONE_MAPPED_AE_ITERATIONS = 6
+        private const val RAW_TONE_MAPPED_AE_LUMA_FLOOR = 0.001f
         private const val FILMIC_GREY_SOURCE = 0.1845f
         private const val FILMIC_OUTPUT_POWER = 3.614815775f
         private const val FILMIC_DISPLAY_BLACK = 0.0001517634f
@@ -242,7 +238,6 @@ class RawDemosaicProcessor {
     private var quadRefineProgram = 0
     private var quadWriteOutputProgram = 0
     private var linearRcdProgram = 0
-    private var rawAeBaseProgram = 0
 
     private var rawTextureId = 0
     private var profileGainTableTextureId = 0
@@ -264,6 +259,10 @@ class RawDemosaicProcessor {
     private var linearMeteringTextureId = 0
     private var linearMeteringWidth = 0
     private var linearMeteringHeight = 0
+    private var srgbMeteringCropFramebufferId = 0
+    private var srgbMeteringCropTextureId = 0
+    private var srgbMeteringCropWidth = 0
+    private var srgbMeteringCropHeight = 0
 
     private var hdrReferenceFramebufferId = 0
     private var hdrReferenceTextureId = 0
@@ -861,8 +860,7 @@ class RawDemosaicProcessor {
                     PLog.d(
                         TAG,
                         "RAW auto exposure thumbnail stats: luma=${stats.midToneLinearLuma} " +
-                            "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount} " +
-                            "highlightRejected=${stats.highlightRejectedSampleCount}"
+                            "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount}"
                     )
                 }
             }
@@ -1168,29 +1166,32 @@ class RawDemosaicProcessor {
             }
 
             val hasProfileGainTableMap = actualMetadata.profileGainTableMap?.isValid == true
-            // 复用 RAW AE 的线性 metering 分布统计，AE 与 Shadows/Highlights 使用同一份结果。
+            // RAW AE 使用低分辨率实际渲染结果测光，使高光压缩和最终输出保持一致。
             val meteringResult = resolveRawAutoExposureEv(
-                context = context,
                 metadata = actualMetadata,
                 sourceTextureId = demosaicTextureId,
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 dcpRenderPlan = resolvedDcpRenderPlan,
-                applyDcpBaselineExposureOffset = false,
-                // MeteringSystem applies DNG BaselineExposure when it builds the AE plan.
-                // Keep the metering pass in scene-linear RAW space so HDR PGTM does not
-                // alter the histogram used to choose exposure.
-                applyDngBaselineExposure = false,
+                applyLinearDcpBaselineExposureOffset = false,
+                applyLinearDngBaselineExposure = hasProfileGainTableMap,
                 viewfinderThumbnailStats = viewfinderThumbnailStats,
+                outputBounds = bounds,
+                outputRotation = actualRotation,
+                useDcpToneCurve = useDcpToneCurve,
+                spectralFilmLut = spektrafilmLut,
+                colorEngine = colorEngine,
+                outputWorkingColorSpace = engineWorkingColorSpace,
+                profileToEngineTransform = profileToEngineTransform,
+                rawToneMappingParameters = rawToneMappingParameters,
+                applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
                 dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
                     resolvedDcpRenderPlan.baselineExposureOffset
                 } else {
                     0f
                 },
-                renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv,
-                meteringCompensationEv = colorEngine.meteringCompensationEv,
-                useDepthWeighting = false
+                renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv
             )
 
             val useAutoDevelopAdjustments = rawAutoExposure &&
@@ -1829,124 +1830,6 @@ class RawDemosaicProcessor {
         }
     """.trimIndent()
 
-    private val RAW_AE_BASE_COMPUTE_SHADER = """
-        #version 310 es
-        precision highp float;
-        precision highp int;
-
-        layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
-
-        const int HISTOGRAM_BINS = 256;
-        const int LOCAL_SIZE = 256;
-        const float LUMA_FLOOR = 0.001;
-        const float MAX_LINEAR_LUMA = 16.0;
-        const float LOG_LUMA_MIN = -10.0;
-        const float LOG_LUMA_MAX = 4.0;
-
-        uniform sampler2D uLinearTexture;
-        uniform sampler2D uDepthTexture;
-        uniform ivec2 uImageSize;
-        uniform int uGroupsX;
-        uniform int uUseDepthWeight;
-        uniform float uMeteringExposureScale;
-        uniform float uHighlightExclusionLuma;
-
-        layout(std430, binding = 0) buffer HistogramOut {
-            uint histogram[];
-        };
-
-        layout(std430, binding = 1) buffer BaseStatsOut {
-            vec4 baseStats[];
-        };
-
-        shared uint localHistogram[HISTOGRAM_BINS];
-        shared vec4 localStats[LOCAL_SIZE];
-
-        float smoothStepRaw(float edge0, float edge1, float x) {
-            float width = edge1 - edge0;
-            if (abs(width) < 0.000001) {
-                return x >= edge1 ? 1.0 : 0.0;
-            }
-            float t = clamp((x - edge0) / width, 0.0, 1.0);
-            return t * t * (3.0 - 2.0 * t);
-        }
-
-        float sanitizeLuma(float value, out float sanitized) {
-            sanitized = 0.0;
-            if (!(value >= 0.0)) {
-                sanitized = 1.0;
-                return 0.0;
-            }
-            if (value > MAX_LINEAR_LUMA) {
-                sanitized = 1.0;
-                return MAX_LINEAR_LUMA;
-            }
-            return value;
-        }
-
-        float centerWeight(vec2 uv) {
-            vec2 d = (uv - vec2(0.5)) / 0.32;
-            float gaussian = exp(-0.5 * dot(d, d));
-            return 0.35 + gaussian * 0.65;
-        }
-
-        float depthWeight(vec2 uv) {
-            if (uUseDepthWeight == 0) {
-                return 1.0;
-            }
-            float depth = texture(uDepthTexture, uv).r;
-            float separation = abs(depth - 0.5) / 0.5;
-            float saliency = smoothStepRaw(0.18, 0.88, separation);
-            return mix(0.88, 1.55, saliency);
-        }
-
-        void main() {
-            int localIndex = int(gl_LocalInvocationIndex);
-            if (localIndex < HISTOGRAM_BINS) {
-                localHistogram[localIndex] = 0u;
-            }
-            localStats[localIndex] = vec4(0.0);
-            barrier();
-
-            ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-            if (coord.x < uImageSize.x && coord.y < uImageSize.y) {
-                vec3 rgb = texelFetch(uLinearTexture, coord, 0).rgb;
-                float sanitized = 0.0;
-                float luma = sanitizeLuma(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), sanitized);
-                float safeLuma = max(luma, LUMA_FLOOR);
-                float logLuma = log2(safeLuma);
-                float histogramT = clamp((logLuma - LOG_LUMA_MIN) / (LOG_LUMA_MAX - LOG_LUMA_MIN), 0.0, 0.999999);
-                int bin = int(histogramT * float(HISTOGRAM_BINS));
-                atomicAdd(localHistogram[bin], 1u);
-
-                vec2 uv = (vec2(coord) + vec2(0.5)) / vec2(uImageSize);
-                float meteredLuma = luma * max(uMeteringExposureScale, 0.0);
-                bool includeSample = uHighlightExclusionLuma <= 0.0 ||
-                    meteredLuma < uHighlightExclusionLuma;
-                if (includeSample) {
-                    float weight = centerWeight(uv) * depthWeight(uv);
-                    localStats[localIndex] = vec4(logLuma * weight, weight, 1.0, sanitized);
-                }
-            }
-            barrier();
-
-            for (int stride = LOCAL_SIZE / 2; stride > 0; stride = stride / 2) {
-                if (localIndex < stride) {
-                    localStats[localIndex] += localStats[localIndex + stride];
-                }
-                barrier();
-            }
-
-            int groupIndex = int(gl_WorkGroupID.y) * uGroupsX + int(gl_WorkGroupID.x);
-            if (localIndex == 0) {
-                baseStats[groupIndex] = localStats[0];
-            }
-            if (localIndex < HISTOGRAM_BINS) {
-                histogram[groupIndex * HISTOGRAM_BINS + localIndex] = localHistogram[localIndex];
-            }
-        }
-    """.trimIndent()
-
     private fun initRcdPrograms(vShader: Int) {
         rcdPopulateProgram = compileComputeProgram(RcdShaders.POPULATE, "POPULATE")
         rcdStep1Program = compileComputeProgram(RcdShaders.STEP_1, "STEP_1")
@@ -1962,7 +1845,6 @@ class RawDemosaicProcessor {
         quadChromaProgram = compileComputeProgram(QuadBayerShaders.CHROMA, "QUAD_CHROMA")
         quadRefineProgram = compileComputeProgram(QuadBayerShaders.REFINE, "QUAD_REFINE")
         quadWriteOutputProgram = compileComputeProgram(QuadBayerShaders.WRITE_OUTPUT, "QUAD_WRITE_OUTPUT")
-        rawAeBaseProgram = compileComputeProgram(RAW_AE_BASE_COMPUTE_SHADER, "RAW_AE_BASE")
 
         val fShaderLinearRcd = compileShader(
             GLES30.GL_FRAGMENT_SHADER,
@@ -3217,6 +3099,59 @@ class RawDemosaicProcessor {
             0
         )
         checkGlError("setupLinearMeteringFramebuffer")
+    }
+
+    private fun setupSrgbMeteringCropFramebuffer(width: Int, height: Int) {
+        if (
+            srgbMeteringCropWidth == width &&
+            srgbMeteringCropHeight == height &&
+            srgbMeteringCropFramebufferId != 0
+        ) {
+            return
+        }
+
+        if (srgbMeteringCropTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(srgbMeteringCropTextureId), 0)
+        }
+        if (srgbMeteringCropFramebufferId != 0) {
+            GLES30.glDeleteFramebuffers(1, intArrayOf(srgbMeteringCropFramebufferId), 0)
+        }
+
+        srgbMeteringCropWidth = width
+        srgbMeteringCropHeight = height
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        srgbMeteringCropTextureId = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srgbMeteringCropTextureId)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGBA8,
+            width,
+            height,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            null
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val framebuffers = IntArray(1)
+        GLES30.glGenFramebuffers(1, framebuffers, 0)
+        srgbMeteringCropFramebufferId = framebuffers[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, srgbMeteringCropFramebufferId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            srgbMeteringCropTextureId,
+            0
+        )
+        checkGlError("setupSrgbMeteringCropFramebuffer")
     }
 
     private fun setupHdrReferenceFramebuffer(width: Int, height: Int) {
@@ -4592,20 +4527,26 @@ class RawDemosaicProcessor {
     }
 
     private suspend fun resolveRawAutoExposureEv(
-        context: Context,
         metadata: RawMetadata,
         sourceTextureId: Int,
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
         colorCorrectionMatrix: FloatArray,
         dcpRenderPlan: DcpRenderPlan?,
-        applyDcpBaselineExposureOffset: Boolean,
-        applyDngBaselineExposure: Boolean,
+        applyLinearDcpBaselineExposureOffset: Boolean,
+        applyLinearDngBaselineExposure: Boolean,
         viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats?,
+        outputBounds: Rect,
+        outputRotation: Int,
+        useDcpToneCurve: Boolean,
+        spectralFilmLut: SpectralFilmLut?,
+        colorEngine: RawRenderingEngine,
+        outputWorkingColorSpace: ColorSpace,
+        profileToEngineTransform: FloatArray,
+        rawToneMappingParameters: RawToneMappingParameters,
+        applyProfileDcpBaselineExposureOffset: Boolean,
         dcpBaselineExposureOffset: Float,
-        renderingEngineMeteringCompensationEv: Float,
-        meteringCompensationEv: Float,
-        useDepthWeighting: Boolean = true
+        renderingEngineMeteringCompensationEv: Float
     ): MeteringSystem.MeteringResult {
         if (viewfinderThumbnailStats == null) {
             return MeteringSystem.MeteringResult.EMPTY
@@ -4625,327 +4566,399 @@ class RawDemosaicProcessor {
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = colorCorrectionMatrix,
                 dcpRenderPlan = dcpRenderPlan,
-                applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
-                applyDngBaselineExposure = applyDngBaselineExposure,
+                applyDcpBaselineExposureOffset = applyLinearDcpBaselineExposureOffset,
+                applyDngBaselineExposure = applyLinearDngBaselineExposure,
                 label = "LinearMeteringPass"
             )
-            var bitmap: Bitmap? = null
-            var depthMap: Bitmap? = null
-            var depthTextureId = 0
-            try {
-                if (useDepthWeighting) {
-                    val depthPreviewBuffer = LargeDirectBuffer.allocate(
-                        meteringWidth.toLong() * meteringHeight.toLong() * 4L * 2L,
-                        "RAW auto exposure depth preview"
-                    ) ?: return MeteringSystem.MeteringResult.EMPTY
-                    try {
-                        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearMeteringFramebufferId)
-                        GLES30.glReadPixels(
-                            0,
-                            0,
-                            meteringWidth,
-                            meteringHeight,
-                            GLES30.GL_RGBA,
-                            GLES30.GL_HALF_FLOAT,
-                            depthPreviewBuffer
-                        )
-                        checkGlError("resolveRawAutoExposureEv depth preview")
-                        depthPreviewBuffer.position(0)
-                        bitmap = createLinearMeteringPreviewBitmap(
-                            depthPreviewBuffer.asShortBuffer(),
-                            meteringWidth,
-                            meteringHeight
-                        )
-                    } finally {
-                        LargeDirectBuffer.free(depthPreviewBuffer)
-                    }
-                    depthMap = SharedDepthEstimator.estimateDepth(context, bitmap)
-                    depthTextureId = depthMap?.let {
-                        uploadRawAutoExposureDepthTexture(it)
-                    } ?: 0
-                    if (depthTextureId == 0) {
-                        PLog.w(TAG, "RAW AE depth weighting skipped: depth texture unavailable")
-                    }
-                }
-
-                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-                GLES31.glMemoryBarrier(
-                    GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
-                )
-                val meteringResult = resolveRawAutoExposureEvGpu(
-                    linearTextureId = linearMeteringTextureId,
-                    width = meteringWidth,
-                    height = meteringHeight,
-                    depthTextureId = depthTextureId,
-                    baselineExposure = metadata.baselineExposure,
-                    viewfinderThumbnailStats = viewfinderThumbnailStats,
-                    dcpBaselineExposureOffset = dcpBaselineExposureOffset,
-                    renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv,
-                    meteringCompensationEv = meteringCompensationEv
-                ) ?: MeteringSystem.MeteringResult.EMPTY
-
-                if (depthMap != null && !depthMap.isRecycled) {
-                    depthMap.recycle()
-                }
-                if (bitmap != null && !bitmap.isRecycled) {
-                    bitmap.recycle()
-                }
-                meteringResult
-            } finally {
-                if (depthTextureId != 0) {
-                    GLES30.glDeleteTextures(1, intArrayOf(depthTextureId), 0)
-                }
-                if (depthMap != null && !depthMap.isRecycled) {
-                    depthMap.recycle()
-                }
-                if (bitmap != null && !bitmap.isRecycled) {
-                    bitmap.recycle()
-                }
-            }
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            GLES31.glMemoryBarrier(
+                GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
+            )
+            setupCombinedFramebuffer(meteringWidth, meteringHeight)
+            val meteringBounds = scaleMeteringBounds(
+                bounds = outputBounds,
+                sourceWidth = metadata.width,
+                sourceHeight = metadata.height,
+                targetWidth = meteringWidth,
+                targetHeight = meteringHeight
+            )
+            setupSrgbMeteringCropFramebuffer(
+                meteringBounds.width().coerceAtLeast(1),
+                meteringBounds.height().coerceAtLeast(1)
+            )
+            resolveToneMappedRawAutoExposureEv(
+                metadata = metadata,
+                linearTextureId = linearMeteringTextureId,
+                width = meteringWidth,
+                height = meteringHeight,
+                meteringBounds = meteringBounds,
+                outputRotation = outputRotation,
+                viewfinderThumbnailStats = viewfinderThumbnailStats,
+                dcpRenderPlan = dcpRenderPlan,
+                useDcpToneCurve = useDcpToneCurve,
+                spectralFilmLut = spectralFilmLut,
+                colorEngine = colorEngine,
+                outputWorkingColorSpace = outputWorkingColorSpace,
+                profileToEngineTransform = profileToEngineTransform,
+                rawToneMappingParameters = rawToneMappingParameters,
+                applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
+                applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure,
+                dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+                renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv
+            ) ?: MeteringSystem.MeteringResult.EMPTY
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
             MeteringSystem.MeteringResult.EMPTY
         }
     }
 
-    private fun resolveRawAutoExposureEvGpu(
-        linearTextureId: Int,
-        width: Int,
-        height: Int,
-        depthTextureId: Int,
-        baselineExposure: Float,
-        viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats,
-        dcpBaselineExposureOffset: Float,
-        renderingEngineMeteringCompensationEv: Float,
-        meteringCompensationEv: Float
-    ): MeteringSystem.MeteringResult? {
-        if (rawAeBaseProgram == 0) {
-            PLog.e(
-                TAG,
-                "RAW AE GPU program unavailable: base=$rawAeBaseProgram"
-            )
-            return null
-        }
+    private data class ToneMappedRawAeSample(
+        val autoEv: Float,
+        val profileExposureEv: Float,
+        val renderedMidToneLinearLuma: Float,
+        val errorEv: Float,
+        val stats: MeteringSystem.SrgbThumbnailMeteringStats
+    )
 
-        val meteringBaseExposureScale = MeteringSystem.resolveViewfinderMeteringBaseExposureScale(
-            baselineExposure = baselineExposure,
-            dcpBaselineExposureOffset = dcpBaselineExposureOffset,
-            renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv
-        )
-        val baseStats = dispatchRawAeBaseStats(
-            linearTextureId = linearTextureId,
-            width = width,
-            height = height,
-            depthTextureId = depthTextureId,
-            meteringBaseExposureScale = meteringBaseExposureScale,
-            highlightExclusionLuma = MeteringSystem.VIEWFINDER_METERING_HIGHLIGHT_EXCLUSION_LUMA
-        ) ?: return null
-        val plan = MeteringSystem.prepareGpuLinearRawAutoExposure(
-            stats = baseStats,
-            baselineExposure = baselineExposure,
-            viewfinderThumbnailStats = viewfinderThumbnailStats,
-            dcpBaselineExposureOffset = dcpBaselineExposureOffset,
-            renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv,
-            meteringCompensationEv = meteringCompensationEv,
-            tag = "Linear RAW AE GPU"
-        ) ?: return null
-        return MeteringSystem.finishGpuLinearRawAutoExposure(plan)
+    private fun scaleMeteringBounds(
+        bounds: Rect,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int
+    ): Rect {
+        if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+            return Rect(0, 0, targetWidth.coerceAtLeast(1), targetHeight.coerceAtLeast(1))
+        }
+        val scaleX = targetWidth.toFloat() / sourceWidth.toFloat()
+        val scaleY = targetHeight.toFloat() / sourceHeight.toFloat()
+        val left = floor(bounds.left * scaleX).toInt().coerceIn(0, targetWidth - 1)
+        val top = floor(bounds.top * scaleY).toInt().coerceIn(0, targetHeight - 1)
+        val right = ceil(bounds.right * scaleX).toInt().coerceIn(left + 1, targetWidth)
+        val bottom = ceil(bounds.bottom * scaleY).toInt().coerceIn(top + 1, targetHeight)
+        return Rect(left, top, right, bottom)
     }
 
-    private fun dispatchRawAeBaseStats(
+    private fun resolveToneMappedRawAutoExposureEv(
+        metadata: RawMetadata,
         linearTextureId: Int,
         width: Int,
         height: Int,
-        depthTextureId: Int,
-        meteringBaseExposureScale: Float,
-        highlightExclusionLuma: Float
-    ): MeteringSystem.GpuRawAutoExposureBaseStats? {
-        val groupsX = roundUp(width, RAW_AE_LOCAL_SIZE_X) / RAW_AE_LOCAL_SIZE_X
-        val groupsY = roundUp(height, RAW_AE_LOCAL_SIZE_Y) / RAW_AE_LOCAL_SIZE_Y
-        val groupCount = (groupsX * groupsY).coerceAtLeast(1)
-        val histogramByteCount = groupCount * RAW_AE_HISTOGRAM_BINS * 4
-        val baseStatsByteCount = groupCount * 4 * 4
-        val buffers = IntArray(2)
-        GLES31.glGenBuffers(2, buffers, 0)
+        meteringBounds: Rect,
+        outputRotation: Int,
+        viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats,
+        dcpRenderPlan: DcpRenderPlan?,
+        useDcpToneCurve: Boolean,
+        spectralFilmLut: SpectralFilmLut?,
+        colorEngine: RawRenderingEngine,
+        outputWorkingColorSpace: ColorSpace,
+        profileToEngineTransform: FloatArray,
+        rawToneMappingParameters: RawToneMappingParameters,
+        applyProfileDcpBaselineExposureOffset: Boolean,
+        applyProfileDngBaselineExposure: Boolean,
+        dcpBaselineExposureOffset: Float,
+        renderingEngineMeteringCompensationEv: Float
+    ): MeteringSystem.MeteringResult? {
+        val targetLuma = viewfinderThumbnailStats.midToneLinearLuma
+        val samples = mutableListOf<ToneMappedRawAeSample>()
+        val readbackWidth = meteringBounds.width().coerceAtLeast(1)
+        val readbackHeight = meteringBounds.height().coerceAtLeast(1)
+        val pixelCount = readbackWidth * readbackHeight
+        val readbackBuffer = LargeDirectBuffer.allocate(
+            pixelCount.toLong() * 4L,
+            "tone-mapped RAW AE readback"
+        ) ?: return null
+
+        fun sample(autoEv: Float): ToneMappedRawAeSample? {
+            return renderToneMappedRawAeSample(
+                metadata = metadata,
+                linearTextureId = linearTextureId,
+                width = width,
+                height = height,
+                autoEv = autoEv,
+                targetLuma = targetLuma,
+                dcpRenderPlan = dcpRenderPlan,
+                useDcpToneCurve = useDcpToneCurve,
+                spectralFilmLut = spectralFilmLut,
+                colorEngine = colorEngine,
+                outputWorkingColorSpace = outputWorkingColorSpace,
+                profileToEngineTransform = profileToEngineTransform,
+                rawToneMappingParameters = rawToneMappingParameters,
+                applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
+                applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
+                readbackBounds = meteringBounds,
+                outputRotation = outputRotation,
+                readbackBuffer = readbackBuffer
+            )?.also { samples += it }
+        }
+
         return try {
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, buffers[0])
-            GLES31.glBufferData(
-                GLES31.GL_SHADER_STORAGE_BUFFER,
-                histogramByteCount,
-                null,
-                GLES31.GL_DYNAMIC_READ
+            var low = sample(RAW_TONE_MAPPED_AE_MIN_EV) ?: return null
+            var high = sample(RAW_TONE_MAPPED_AE_MAX_EV) ?: return null
+            var best = if (abs(low.errorEv) <= abs(high.errorEv)) low else high
+            val bracketsTarget = (low.errorEv <= 0f && high.errorEv >= 0f) ||
+                (low.errorEv >= 0f && high.errorEv <= 0f)
+
+            if (bracketsTarget) {
+                val increasing = high.errorEv >= low.errorEv
+                for (iteration in 0 until RAW_TONE_MAPPED_AE_ITERATIONS) {
+                    if (abs(high.autoEv - low.autoEv) <= 0.01f) break
+                    val mid = sample((low.autoEv + high.autoEv) * 0.5f) ?: break
+                    if (abs(mid.errorEv) < abs(best.errorEv)) {
+                        best = mid
+                    }
+                    if (increasing) {
+                        if (mid.errorEv > 0f) {
+                            high = mid
+                        } else {
+                            low = mid
+                        }
+                    } else {
+                        if (mid.errorEv > 0f) {
+                            low = mid
+                        } else {
+                            high = mid
+                        }
+                    }
+                }
+            }
+
+            best = samples.minByOrNull { abs(it.errorEv) } ?: best
+            val meteredEv = best.autoEv.coerceIn(
+                RAW_TONE_MAPPED_AE_MIN_EV,
+                RAW_TONE_MAPPED_AE_MAX_EV
             )
-            GLES31.glBindBufferBase(
-                GLES31.GL_SHADER_STORAGE_BUFFER,
-                RAW_AE_HISTOGRAM_BINDING,
-                buffers[0]
+            PLog.d(
+                TAG,
+                "Tone-mapped RAW AE: mode=ViewfinderThumbnail target=$targetLuma " +
+                    "autoEv=$meteredEv renderedLuma=${best.renderedMidToneLinearLuma} " +
+                    "errorEv=${best.errorEv} profileExposureEv=${best.profileExposureEv} " +
+                    "baselineExposure=${metadata.baselineExposure} " +
+                    "dcpBaselineExposureOffset=$dcpBaselineExposureOffset " +
+                    "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
+                    "engineMeteringEv=$renderingEngineMeteringCompensationEv " +
+                    "colorEngine=$colorEngine useDcpToneCurve=$useDcpToneCurve " +
+                    "profileDngBaseline=$applyProfileDngBaselineExposure " +
+                    "profileDcpBaseline=$applyProfileDcpBaselineExposureOffset " +
+                    "meteringBounds=$meteringBounds outputRotation=$outputRotation " +
+                    "viewfinderSamples=${viewfinderThumbnailStats.sampleCount} " +
+                    "viewfinderSanitizedSamples=${viewfinderThumbnailStats.sanitizedSampleCount} " +
+                    "renderedSamples=${best.stats.sampleCount} " +
+                    "renderedSanitizedSamples=${best.stats.sanitizedSampleCount} " +
+                    "samples=${formatToneMappedRawAeSamples(samples)}"
             )
 
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, buffers[1])
-            GLES31.glBufferData(
-                GLES31.GL_SHADER_STORAGE_BUFFER,
-                baseStatsByteCount,
-                null,
-                GLES31.GL_DYNAMIC_READ
-            )
-            GLES31.glBindBufferBase(
-                GLES31.GL_SHADER_STORAGE_BUFFER,
-                RAW_AE_BASE_STATS_BINDING,
-                buffers[1]
-            )
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
-
-            GLES31.glUseProgram(rawAeBaseProgram)
-            bindComputeSampler(rawAeBaseProgram, "uLinearTexture", 0, linearTextureId)
-            bindComputeSampler(rawAeBaseProgram, "uDepthTexture", 1, depthTextureId)
-            GLES31.glUniform2i(
-                GLES31.glGetUniformLocation(rawAeBaseProgram, "uImageSize"),
-                width,
-                height
-            )
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(rawAeBaseProgram, "uGroupsX"), groupsX)
-            GLES31.glUniform1i(
-                GLES31.glGetUniformLocation(rawAeBaseProgram, "uUseDepthWeight"),
-                if (depthTextureId != 0) 1 else 0
-            )
-            GLES31.glUniform1f(
-                GLES31.glGetUniformLocation(rawAeBaseProgram, "uMeteringExposureScale"),
-                meteringBaseExposureScale
-            )
-            GLES31.glUniform1f(
-                GLES31.glGetUniformLocation(rawAeBaseProgram, "uHighlightExclusionLuma"),
-                highlightExclusionLuma
-            )
-            GLES31.glDispatchCompute(groupsX, groupsY, 1)
-            GLES31.glMemoryBarrier(
-                GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT
-            )
-            checkGlError("RAW AE base stats")
-
-            readRawAeBaseStats(
-                histogramBufferId = buffers[0],
-                baseStatsBufferId = buffers[1],
-                histogramByteCount = histogramByteCount,
-                baseStatsByteCount = baseStatsByteCount,
-                groupCount = groupCount
+            MeteringSystem.MeteringResult(
+                meteredEv = meteredEv,
+                dynamicRangeGap = 0f,
+                avgLuma = best.renderedMidToneLinearLuma,
+                clipLow = 0f,
+                clipHigh = 0f,
+                curveWhitePoint = 1f
             )
         } finally {
-            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RAW_AE_HISTOGRAM_BINDING, 0)
-            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RAW_AE_BASE_STATS_BINDING, 0)
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
-            GLES31.glDeleteBuffers(2, buffers, 0)
+            LargeDirectBuffer.free(readbackBuffer)
         }
     }
 
-    private fun readRawAeBaseStats(
-        histogramBufferId: Int,
-        baseStatsBufferId: Int,
-        histogramByteCount: Int,
-        baseStatsByteCount: Int,
-        groupCount: Int
-    ): MeteringSystem.GpuRawAutoExposureBaseStats? {
-        val histogram = IntArray(RAW_AE_HISTOGRAM_BINS)
-        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, histogramBufferId)
-        val mappedHistogram = GLES31.glMapBufferRange(
-            GLES31.GL_SHADER_STORAGE_BUFFER,
-            0,
-            histogramByteCount,
-            GLES31.GL_MAP_READ_BIT
-        ) as? ByteBuffer
-        if (mappedHistogram == null) {
-            PLog.e(TAG, "RAW AE base histogram map failed")
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
+    private fun renderToneMappedRawAeSample(
+        metadata: RawMetadata,
+        linearTextureId: Int,
+        width: Int,
+        height: Int,
+        autoEv: Float,
+        targetLuma: Float,
+        dcpRenderPlan: DcpRenderPlan?,
+        useDcpToneCurve: Boolean,
+        spectralFilmLut: SpectralFilmLut?,
+        colorEngine: RawRenderingEngine,
+        outputWorkingColorSpace: ColorSpace,
+        profileToEngineTransform: FloatArray,
+        rawToneMappingParameters: RawToneMappingParameters,
+        applyProfileDcpBaselineExposureOffset: Boolean,
+        applyProfileDngBaselineExposure: Boolean,
+        readbackBounds: Rect,
+        outputRotation: Int,
+        readbackBuffer: ByteBuffer
+    ): ToneMappedRawAeSample? {
+        val clampedAutoEv = autoEv.coerceIn(
+            RAW_TONE_MAPPED_AE_MIN_EV,
+            RAW_TONE_MAPPED_AE_MAX_EV
+        )
+        val profileExposureUniforms = computeProfileExposureUniforms(
+            metadata = metadata,
+            profileExposureCompensation = clampedAutoEv + colorEngine.defaultExposureCompensationEv,
+            dcpRenderPlan = dcpRenderPlan,
+            applyDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
+            applyDngBaselineExposure = applyProfileDngBaselineExposure,
+            useRamp = useDcpToneCurve
+        )
+        val rendered = renderCombinedPass(
+            metadata = metadata,
+            inputTextureId = linearTextureId,
+            dcpRenderPlan = dcpRenderPlan,
+            useDcpToneCurve = useDcpToneCurve,
+            spectralFilmLut = spectralFilmLut,
+            colorEngine = colorEngine,
+            outputWorkingColorSpace = outputWorkingColorSpace,
+            profileToEngineTransform = profileToEngineTransform,
+            profileExposureUniforms = profileExposureUniforms,
+            shadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
+            rawToneMappingParameters = rawToneMappingParameters,
+            viewportWidth = width,
+            viewportHeight = height
+        )
+        if (!rendered) {
+            PLog.e(TAG, "Tone-mapped RAW AE render failed for ev=$clampedAutoEv")
             return null
         }
-        mappedHistogram.order(ByteOrder.nativeOrder())
-        val histogramInts = mappedHistogram.asIntBuffer()
-        for (group in 0 until groupCount) {
-            val groupOffset = group * RAW_AE_HISTOGRAM_BINS
-            for (bin in 0 until RAW_AE_HISTOGRAM_BINS) {
-                histogram[bin] += histogramInts.get(groupOffset + bin)
-            }
-        }
-        GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
-
-        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, baseStatsBufferId)
-        val mappedBaseStats = GLES31.glMapBufferRange(
-            GLES31.GL_SHADER_STORAGE_BUFFER,
-            0,
-            baseStatsByteCount,
-            GLES31.GL_MAP_READ_BIT
-        ) as? ByteBuffer
-        if (mappedBaseStats == null) {
-            PLog.e(TAG, "RAW AE base stats map failed")
-            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
+        if (!renderSrgbMeteringCropPass(
+                sourceTextureId = combinedTextureId,
+                sourceWidth = width,
+                sourceHeight = height,
+                bounds = readbackBounds,
+                rotation = outputRotation
+            )
+        ) {
             return null
         }
-        mappedBaseStats.order(ByteOrder.nativeOrder())
-        val baseFloats = mappedBaseStats.asFloatBuffer()
-        var weightedLogLumaSum = 0.0
-        var weightSum = 0.0
-        var sampleCount = 0
-        var sanitizedSampleCount = 0
-        for (group in 0 until groupCount) {
-            val base = group * 4
-            weightedLogLumaSum += baseFloats.get(base).toDouble()
-            weightSum += baseFloats.get(base + 1).toDouble()
-            sampleCount += baseFloats.get(base + 2).toInt()
-            sanitizedSampleCount += baseFloats.get(base + 3).toInt()
-        }
-        GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
-        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
-
-        return MeteringSystem.GpuRawAutoExposureBaseStats(
-            histogram = histogram,
-            histogramLogMin = RAW_AE_HISTOGRAM_LOG_MIN,
-            histogramLogMax = RAW_AE_HISTOGRAM_LOG_MAX,
-            weightedLogLumaSum = weightedLogLumaSum,
-            weightSum = weightSum,
-            sampleCount = sampleCount,
-            sanitizedSampleCount = sanitizedSampleCount,
-            groupCount = groupCount
+        val stats = readSrgbMeteringCropStats(
+            width = readbackBounds.width().coerceAtLeast(1),
+            height = readbackBounds.height().coerceAtLeast(1),
+            pixelBuffer = readbackBuffer
+        ) ?: return null
+        return ToneMappedRawAeSample(
+            autoEv = clampedAutoEv,
+            profileExposureEv = profileExposureUniforms.exposureEv,
+            renderedMidToneLinearLuma = stats.midToneLinearLuma,
+            errorEv = displayLumaErrorEv(
+                renderedLuma = stats.midToneLinearLuma,
+                targetLuma = targetLuma
+            ),
+            stats = stats
         )
     }
 
-    private fun uploadRawAutoExposureDepthTexture(depthMap: Bitmap): Int {
-        val textures = IntArray(1)
-        GLES30.glGenTextures(1, textures, 0)
-        val textureId = textures[0]
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
-        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, depthMap, 0)
-        checkGlError("uploadRawAutoExposureDepthTexture")
-        return textureId
-    }
-
-    @SuppressLint("HalfFloat")
-    private fun createLinearMeteringPreviewBitmap(
-        linearPixels: ShortBuffer,
-        width: Int,
-        height: Int
-    ): Bitmap {
-        val argbPixels = IntArray(width * height)
-        for (i in argbPixels.indices) {
-            val base = i * 4
-            val r = linearToSrgb8(Half.toFloat(linearPixels.get(base)))
-            val g = linearToSrgb8(Half.toFloat(linearPixels.get(base + 1)))
-            val b = linearToSrgb8(Half.toFloat(linearPixels.get(base + 2)))
-            argbPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    private fun renderSrgbMeteringCropPass(
+        sourceTextureId: Int,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        bounds: Rect,
+        rotation: Int
+    ): Boolean {
+        if (passthroughProgram == 0 || srgbMeteringCropFramebufferId == 0) {
+            PLog.e(
+                TAG,
+                "Tone-mapped RAW AE crop unavailable: program=$passthroughProgram " +
+                    "fbo=$srgbMeteringCropFramebufferId"
+            )
+            return false
         }
-        return Bitmap.createBitmap(argbPixels, width, height, Bitmap.Config.ARGB_8888)
-    }
+        val targetWidth = bounds.width().coerceAtLeast(1)
+        val targetHeight = bounds.height().coerceAtLeast(1)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, srgbMeteringCropFramebufferId)
+        GLES30.glViewport(0, 0, targetWidth, targetHeight)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glUseProgram(passthroughProgram)
 
-    private fun linearToSrgb8(value: Float): Int {
-        val linear = value.coerceIn(0f, 1f)
-        val srgb = if (linear <= 0.0031308f) {
-            linear * 12.92f
+        val isSwapped = rotation == 90 || rotation == 270
+        val cropW: Float
+        val cropH: Float
+        val cropCenterX: Float
+        val cropCenterY: Float
+        if (isSwapped) {
+            cropW = bounds.height().toFloat()
+            cropH = bounds.width().toFloat()
+            cropCenterX = bounds.top + bounds.height() / 2f
+            cropCenterY = bounds.left + bounds.width() / 2f
         } else {
-            1.055f * linear.pow(1f / 2.4f) - 0.055f
+            cropW = bounds.width().toFloat()
+            cropH = bounds.height().toFloat()
+            cropCenterX = bounds.centerX().toFloat()
+            cropCenterY = bounds.centerY().toFloat()
         }
-        return (srgb * 255f + 0.5f).toInt().coerceIn(0, 255)
+
+        val texMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(texMatrix, 0)
+        GlMatrix.translateM(texMatrix, 0, cropCenterX / sourceWidth, cropCenterY / sourceHeight, 0f)
+        GlMatrix.scaleM(texMatrix, 0, cropW / sourceWidth, cropH / sourceHeight, 1.0f)
+        GlMatrix.rotateM(texMatrix, 0, -rotation.toFloat(), 0f, 0f, 1f)
+        GlMatrix.translateM(texMatrix, 0, -0.5f, -0.5f, 0f)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(passthroughProgram, "uTexMatrix"),
+            1,
+            false,
+            texMatrix,
+            0
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(passthroughProgram, "uTexture"), 0)
+        drawQuad(passthroughProgram)
+        checkGlError("tone-mapped RAW AE crop pass")
+        return true
+    }
+
+    private fun readSrgbMeteringCropStats(
+        width: Int,
+        height: Int,
+        pixelBuffer: ByteBuffer
+    ): MeteringSystem.SrgbThumbnailMeteringStats? {
+        if (width <= 0 || height <= 0) {
+            return null
+        }
+        val pixelCount = width * height
+        pixelBuffer.clear()
+        pixelBuffer.limit(pixelCount * 4)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, srgbMeteringCropFramebufferId)
+        GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
+        GLES30.glReadPixels(
+            0,
+            0,
+            width,
+            height,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            pixelBuffer
+        )
+        checkGlError("tone-mapped RAW AE readback")
+        pixelBuffer.position(0)
+
+        val argbPixels = IntArray(pixelCount)
+        for (i in 0 until pixelCount) {
+            val r = pixelBuffer.get().toInt() and 0xff
+            val g = pixelBuffer.get().toInt() and 0xff
+            val b = pixelBuffer.get().toInt() and 0xff
+            val a = pixelBuffer.get().toInt() and 0xff
+            argbPixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+        }
+        return MeteringSystem.analyzeSrgbThumbnail(width, height, argbPixels)
+    }
+
+    private fun displayLumaErrorEv(renderedLuma: Float, targetLuma: Float): Float {
+        val safeRendered = renderedLuma
+            .takeIf { it.isFinite() }
+            ?.coerceAtLeast(RAW_TONE_MAPPED_AE_LUMA_FLOOR)
+            ?: RAW_TONE_MAPPED_AE_LUMA_FLOOR
+        val safeTarget = targetLuma
+            .takeIf { it.isFinite() }
+            ?.coerceAtLeast(RAW_TONE_MAPPED_AE_LUMA_FLOOR)
+            ?: RAW_TONE_MAPPED_AE_LUMA_FLOOR
+        return (ln(safeRendered.toDouble() / safeTarget.toDouble()) / ln(2.0)).toFloat()
+    }
+
+    private fun formatToneMappedRawAeSamples(samples: List<ToneMappedRawAeSample>): String {
+        return samples
+            .sortedBy { it.autoEv }
+            .joinToString(prefix = "[", postfix = "]") { sample ->
+                String.format(
+                    Locale.US,
+                    "%.3f:%.5f/%+.3f",
+                    sample.autoEv,
+                    sample.renderedMidToneLinearLuma,
+                    sample.errorEv
+                )
+            }
     }
 
     private fun renderOutputPass(
@@ -5209,7 +5222,6 @@ class RawDemosaicProcessor {
         if (quadRefineProgram != 0) GLES31.glDeleteProgram(quadRefineProgram)
         if (quadWriteOutputProgram != 0) GLES31.glDeleteProgram(quadWriteOutputProgram)
         if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
-        if (rawAeBaseProgram != 0) GLES31.glDeleteProgram(rawAeBaseProgram)
 
         // darktable denoiseprofile compute programs
         if (denoisePreconditionV2Program != 0) GLES31.glDeleteProgram(denoisePreconditionV2Program)
@@ -5263,6 +5275,16 @@ class RawDemosaicProcessor {
         if (linearMeteringFramebufferId != 0) GLES30.glDeleteFramebuffers(
             1,
             intArrayOf(linearMeteringFramebufferId),
+            0
+        )
+        if (srgbMeteringCropTextureId != 0) GLES30.glDeleteTextures(
+            1,
+            intArrayOf(srgbMeteringCropTextureId),
+            0
+        )
+        if (srgbMeteringCropFramebufferId != 0) GLES30.glDeleteFramebuffers(
+            1,
+            intArrayOf(srgbMeteringCropFramebufferId),
             0
         )
         if (hdrReferenceTextureId != 0) GLES30.glDeleteTextures(

@@ -11,6 +11,7 @@ import com.hinnka.mycamera.livephoto.LivePhotoRecorder
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.LutRenderer
+import com.hinnka.mycamera.lut.PreviewCaptureSource
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -301,21 +302,49 @@ class CameraGLSurfaceView @JvmOverloads constructor(
      * @param callback 捕获完成后的回调，在主线程调用
      */
     fun capturePreviewFrame(callback: (Bitmap) -> Unit) {
-        capturePreviewFrameInternal(maxLongEdge = null, requestRenderImmediately = true, callback = callback)
+        capturePreviewFrameInternal(
+            maxLongEdge = null,
+            source = PreviewCaptureSource.FinalDisplay,
+            requestRenderImmediately = true
+        ) { bitmap ->
+            bitmap?.let(callback)
+        }
     }
 
     fun capturePreviewFrame(maxLongEdge: Int, callback: (Bitmap) -> Unit) {
-        capturePreviewFrameInternal(maxLongEdge = maxLongEdge, requestRenderImmediately = true, callback = callback)
+        capturePreviewFrameInternal(
+            maxLongEdge = maxLongEdge,
+            source = PreviewCaptureSource.FinalDisplay,
+            requestRenderImmediately = true
+        ) { bitmap ->
+            bitmap?.let(callback)
+        }
     }
 
     fun captureNextPreviewFrame(maxLongEdge: Int, callback: (Bitmap) -> Unit) {
-        capturePreviewFrameInternal(maxLongEdge = maxLongEdge, requestRenderImmediately = false, callback = callback)
+        capturePreviewFrameInternal(
+            maxLongEdge = maxLongEdge,
+            source = PreviewCaptureSource.FinalDisplay,
+            requestRenderImmediately = false
+        ) { bitmap ->
+            bitmap?.let(callback)
+        }
+    }
+
+    fun captureOriginalPreviewFrame(callback: (Bitmap?) -> Unit) {
+        capturePreviewFrameInternal(
+            maxLongEdge = null,
+            source = PreviewCaptureSource.Original,
+            requestRenderImmediately = true,
+            callback = callback
+        )
     }
 
     private fun capturePreviewFrameInternal(
         maxLongEdge: Int?,
+        source: PreviewCaptureSource,
         requestRenderImmediately: Boolean,
-        callback: (Bitmap) -> Unit
+        callback: (Bitmap?) -> Unit
     ) {
         renderer.onPreviewFrameCaptured = { bitmap ->
             // 在主线程回调
@@ -325,9 +354,9 @@ class CameraGLSurfaceView @JvmOverloads constructor(
         }
         queueEvent {
             if (maxLongEdge != null) {
-                renderer.capturePreviewFrame(maxLongEdge)
+                renderer.capturePreviewFrame(maxLongEdge, source)
             } else {
-                renderer.capturePreviewFrame()
+                renderer.capturePreviewFrame(source = source)
             }
             if (requestRenderImmediately) {
                 requestRender()
