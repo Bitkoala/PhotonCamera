@@ -536,6 +536,8 @@ static void computeEffectiveBlackLevels(LibRaw &rawProcessor, int cfaPattern,
 struct DngRawTagInfo {
   bool hasActiveArea = false;
   int activeArea[4] = {0, 0, 0, 0}; // top, left, bottom, right
+  bool hasAsShotWhiteXY = false;
+  float asShotWhiteXY[2] = {0.0f, 0.0f};
   int maskedAreaCount = 0;
   int blackRepeatRows = 0;
   int blackRepeatCols = 0;
@@ -1058,6 +1060,17 @@ static bool xyzToXy(const std::array<float, 3> &xyz,
   return std::isfinite(xy[0]) && std::isfinite(xy[1]);
 }
 
+static bool xyToXyz(const std::array<float, 2> &xy,
+                    std::array<float, 3> &xyz) {
+  if (!std::isfinite(xy[0]) || !std::isfinite(xy[1]) || xy[0] <= 0.0f ||
+      xy[1] <= 0.0f || xy[0] + xy[1] >= 1.0f) {
+    return false;
+  }
+  xyz = {xy[0] / xy[1], 1.0f, (1.0f - xy[0] - xy[1]) / xy[1]};
+  return std::isfinite(xyz[0]) && std::isfinite(xyz[1]) &&
+         std::isfinite(xyz[2]);
+}
+
 static float xyCoordToTemperature(const std::array<float, 2> &xy) {
   float denominator = xy[1] - 0.1858f;
   if (std::abs(denominator) < 1e-6f) {
@@ -1203,6 +1216,63 @@ static float calculateDngReferenceInterpolationWeight(
                                                    whiteXy);
   }
   return calculateRatioInterpolationWeight(illuminant1, illuminant2, wb);
+}
+
+static bool computeWbFromDngAsShotWhiteXY(const LibRaw &rawProcessor,
+                                          const DngRawTagInfo &rawTags,
+                                          float outWb[4]) {
+  if (!rawTags.hasAsShotWhiteXY) {
+    return false;
+  }
+
+  const std::array<float, 2> whiteXy = {
+      rawTags.asShotWhiteXY[0],
+      rawTags.asShotWhiteXY[1],
+  };
+  std::array<float, 3> whiteXyz;
+  if (!xyToXyz(whiteXy, whiteXyz)) {
+    return false;
+  }
+
+  Matrix3x3 colorMatrix1;
+  Matrix3x3 colorMatrix2;
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      colorMatrix1.m[i * 3 + j] =
+          rawProcessor.imgdata.color.dng_color[0].colormatrix[i][j];
+      colorMatrix2.m[i * 3 + j] =
+          rawProcessor.imgdata.color.dng_color[1].colormatrix[i][j];
+    }
+  }
+
+  Matrix3x3 xyzToCamera;
+  const bool hasColor1 = hasMatrixSignal(colorMatrix1);
+  const bool hasColor2 = hasMatrixSignal(colorMatrix2);
+  if (!findXyzToCamera(
+          whiteXy, colorMatrix1, hasColor1, colorMatrix2, hasColor2,
+          rawProcessor.imgdata.color.dng_color[0].illuminant,
+          rawProcessor.imgdata.color.dng_color[1].illuminant, xyzToCamera)) {
+    return false;
+  }
+
+  const std::array<float, 3> cameraWhite =
+      multiplyMatrixVector(xyzToCamera, whiteXyz);
+  if (cameraWhite[0] <= 1e-6f || cameraWhite[1] <= 1e-6f ||
+      cameraWhite[2] <= 1e-6f || !std::isfinite(cameraWhite[0]) ||
+      !std::isfinite(cameraWhite[1]) || !std::isfinite(cameraWhite[2])) {
+    return false;
+  }
+
+  outWb[0] = 1.0f / cameraWhite[0];
+  outWb[1] = 1.0f / cameraWhite[1];
+  outWb[2] = 1.0f / cameraWhite[2];
+  outWb[3] = outWb[1];
+  const float green = outWb[1] > 0.0f ? outWb[1] : 1.0f;
+  for (int i = 0; i < 4; ++i) {
+    outWb[i] /= green;
+  }
+  return std::isfinite(outWb[0]) && std::isfinite(outWb[1]) &&
+         std::isfinite(outWb[2]) && std::isfinite(outWb[3]);
 }
 
 static Matrix3x3 computeXYZD50ToGamut(float xr, float yr, float xg, float yg,
@@ -2083,6 +2153,16 @@ static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
       for (uint32_t i = 0; i < count; ++i) {
         info.blackDeltaV[i] = tiffReadRealAt(data, type, i, littleEndian);
       }
+    } else if (tag == 0xc629 && count >= 2 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const double x = tiffReadRealAt(data, type, 0, littleEndian);
+      const double y = tiffReadRealAt(data, type, 1, littleEndian);
+      if (std::isfinite(x) && std::isfinite(y) && x > 0.0 && y > 0.0 &&
+          x + y < 1.0) {
+        info.hasAsShotWhiteXY = true;
+        info.asShotWhiteXY[0] = static_cast<float>(x);
+        info.asShotWhiteXY[1] = static_cast<float>(y);
+      }
     } else if (tag == 0x014a &&
                tiffEntryData(file, entry, littleEndian, type, count, data)) {
       const uint32_t childCount =
@@ -2126,7 +2206,7 @@ static bool parseDngRawTagInfo(const char *path, DngRawTagInfo &info) {
 
   const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
   parseDngRawTagIfd(file, littleEndian, firstIfd, info, 0);
-  return info.hasActiveArea || !info.blackLevel.empty() ||
+  return info.hasActiveArea || info.hasAsShotWhiteXY || !info.blackLevel.empty() ||
          !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
 }
 
@@ -2525,14 +2605,34 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   RawProcessor.imgdata.params.med_passes = 0;
 
   float selectedWb[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  float cameraWb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  bool hasCameraWb = true;
   for (int i = 0; i < 4; i++) {
     const float val = RawProcessor.imgdata.color.cam_mul[i];
+    cameraWb[i] = val;
+    if (i < 3 && !(val > 0.0f && std::isfinite(val))) {
+      hasCameraWb = false;
+    }
     selectedWb[i] = val > 0.0f && std::isfinite(val) ? val : 1.0f;
+  }
+  if (selectedWb[3] <= 0.0f || !std::isfinite(selectedWb[3])) {
+    selectedWb[3] = selectedWb[1];
+  }
+  const char *selectedWbSource = hasCameraWb ? "cam_mul" : "unity";
+  if (!hasCameraWb &&
+      computeWbFromDngAsShotWhiteXY(RawProcessor, dngRawTagInfo, selectedWb)) {
+    selectedWbSource = "AsShotWhiteXY";
   }
   float selectedBase = selectedWb[1] > 0.0f ? selectedWb[1] : 1.0f;
   for (int i = 0; i < 4; i++) {
     selectedWb[i] /= selectedBase;
   }
+  LOGI("dng wb metadata: source=%s cam_mul=%f,%f,%f,%f "
+       "hasAsShotWhiteXY=%d xy=%f,%f selected=%f,%f,%f,%f",
+       selectedWbSource, cameraWb[0], cameraWb[1], cameraWb[2], cameraWb[3],
+       dngRawTagInfo.hasAsShotWhiteXY ? 1 : 0, dngRawTagInfo.asShotWhiteXY[0],
+       dngRawTagInfo.asShotWhiteXY[1], selectedWb[0], selectedWb[1],
+       selectedWb[2], selectedWb[3]);
 
   if (useRawAutoWhiteBalanceEstimate == JNI_TRUE) {
     float estimatedWb[4] = {1.0f, 1.0f, 1.0f, 1.0f};
