@@ -175,8 +175,8 @@ private fun sanitizeSettingsTonemapMode(mode: String): String {
     return when (mode) {
         "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
         "REC709" -> "SRGB"
-        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> "LINEAR_PIPELINE"
-        else -> mode
+        "SYSTEM_DEFAULT", "SRGB" -> mode
+        else -> "SYSTEM_DEFAULT"
     }
 }
 
@@ -382,9 +382,6 @@ fun SettingsScreen(
     }
 
     fun applyTonemapMode(mode: String) {
-        if (mode == "LINEAR_PIPELINE" && rawAutoExposure) {
-            viewModel.setRawAutoExposure(false)
-        }
         viewModel.setTonemapMode(mode)
     }
 
@@ -1323,7 +1320,6 @@ fun SettingsScreen(
                             description = stringResource(R.string.settings_tonemap_mode_description),
                             levels = listOf(
                                 "SYSTEM_DEFAULT" to stringResource(R.string.settings_tonemap_mode_system_default),
-                                "LINEAR_PIPELINE" to stringResource(R.string.settings_tonemap_mode_natural_light),
                                 "SRGB" to stringResource(R.string.settings_tonemap_mode_srgb),
                             ),
                             currentLevel = settingsTonemapMode,

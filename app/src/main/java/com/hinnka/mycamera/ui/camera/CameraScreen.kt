@@ -206,7 +206,7 @@ fun CameraScreen(
     val droMode by viewModel.droMode.collectAsState()
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
-    val tonemapMode by viewModel.tonemapMode.collectAsState()
+    val naturalLightEnabled by viewModel.naturalLightEnabled.collectAsState()
     val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
@@ -952,7 +952,7 @@ fun CameraScreen(
                         videoRecorder = viewModel.videoRecorder,
                         videoLogProfile = state.videoConfig.logProfile,
                         isHlgInput = if (hlgHardwareCompatibilityEnabled) state.isHLG else false,
-                        tonemapMode = tonemapMode,
+                        naturalLightEnabled = naturalLightEnabled,
                         fixTonemapPreview = fixTonemapPreview,
                         rawExposureCompensation = rawExposureCompensation,
                         rawBlackPointCorrection = rawBlackPointCorrection,
@@ -1163,7 +1163,7 @@ fun CameraScreen(
                 galleryViewModel = galleryViewModel,
                 latestPhoto = latestPhoto,
                 useMultipleExposure = useMultipleExposure,
-                tonemapMode = tonemapMode,
+                naturalLightEnabled = naturalLightEnabled,
                 multipleExposureState = multipleExposureState,
                 onGalleryThumbnailBoundsChanged = { bounds ->
                     galleryThumbnailBounds = bounds
@@ -1344,7 +1344,7 @@ fun CameraScreen(
             useRaw = useRaw && state.isRawSupported,
             onRawToggle = { viewModel.setUseRaw(it) },
             isRawSupported = state.isRawSupported,
-            useNaturalLight = tonemapMode == "LINEAR_PIPELINE",
+            useNaturalLight = naturalLightEnabled,
             onNaturalLightToggle = { viewModel.setNaturalLightToneMapEnabled(it) },
             rawDcpId = rawDcpId,
             availableDcps = viewModel.availableDcps,
@@ -1686,7 +1686,7 @@ fun Controls(
     galleryViewModel: GalleryViewModel,
     latestPhoto: com.hinnka.mycamera.gallery.MediaData?,
     useMultipleExposure: Boolean,
-    tonemapMode: String,
+    naturalLightEnabled: Boolean,
     multipleExposureState: com.hinnka.mycamera.viewmodel.MultipleExposureSessionState,
     onGalleryThumbnailBoundsChanged: (Rect) -> Unit,
     onSwitchCameraClick: () -> Unit,
@@ -1732,7 +1732,7 @@ fun Controls(
                     isVideoRecording = state.videoRecordingState.isRecording,
                     isPaused = state.videoRecordingState.isPaused,
                     allowLongPress = state.captureMode == CaptureMode.QUICK_SHOT ||
-                        (tonemapMode != "LINEAR_PIPELINE" &&
+                        (!naturalLightEnabled &&
                             state.captureMode == CaptureMode.PHOTO &&
                             !useMultipleExposure),
                     multipleExposureEnabled = useMultipleExposure && state.captureMode == CaptureMode.PHOTO,

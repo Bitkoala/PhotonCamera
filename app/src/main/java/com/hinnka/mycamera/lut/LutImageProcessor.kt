@@ -79,6 +79,7 @@ class LutImageProcessor {
     private var bitmapDenoiseNlmFusedAccuProgram = 0
     private var bitmapDenoiseNlmFinishProgram = 0
     private var bitmapDenoisePassthroughProgram = 0
+    private var naturalLightSrgbToLinearProgram = 0
     private var bitmapChromaDenoiseProgram = 0
     private var lutSharpenProgram = 0
 
@@ -522,6 +523,7 @@ class LutImageProcessor {
         chromaNoiseReductionValue: Float = 0f,
         lutMaskType: Int = 0,
         linearInputToneMap: Boolean = false,
+        naturalLightInputSrgb: Boolean = false,
         linearInputExposureEv: Float = 0f,
         naturalLightDefaultChromaDenoise: Boolean = false,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
@@ -585,9 +587,14 @@ class LutImageProcessor {
         } else {
             chromaDenoisedTexId
         }
+        val naturalLightSourceTexId = if (applyNaturalLightToneMap && naturalLightInputSrgb) {
+            renderSrgbInputToLinear(inputTexId, width, height)
+        } else {
+            inputTexId
+        }
         val renderInputTexId = if (applyNaturalLightToneMap) {
             renderNaturalLightToneMap(
-                inputTexId,
+                naturalLightSourceTexId,
                 width,
                 height,
                 rawRenderingEngine,
@@ -1479,6 +1486,7 @@ class LutImageProcessor {
         bitmapDenoiseNlmFusedAccuProgram = compileComputeProgram(DenoiseProfileShaders.FUSED_ACCU, "BitmapDenoise_NLM_FusedAccu")
         bitmapDenoiseNlmFinishProgram = compileComputeProgram(DenoiseProfileShaders.FINISH_V2, "BitmapDenoise_NLM_FinishV2")
         bitmapDenoisePassthroughProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, TEXTURE_PASSTHROUGH_SHADER, "BitmapDenoise_Passthrough")
+        naturalLightSrgbToLinearProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, SRGB_TO_LINEAR_SHADER, "NaturalLight_SrgbToLinear")
         bitmapChromaDenoiseProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.PASS_CHROMA_DENOISE, "BitmapChromaDenoise_BM3DPass0")
         lutSharpenProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, RawShaders.SHARPEN_FRAGMENT_SHADER, "LutSharpen")
         PLog.d(
@@ -1486,7 +1494,7 @@ class LutImageProcessor {
             "Bitmap denoiseprofile programs initialized: pre=$bitmapDenoisePreconditionProgram " +
                 "init=$bitmapDenoiseNlmInitProgram fusedAccu=$bitmapDenoiseNlmFusedAccuProgram " +
                 "finish=$bitmapDenoiseNlmFinishProgram " +
-                "pass=$bitmapDenoisePassthroughProgram " +
+                "pass=$bitmapDenoisePassthroughProgram linearize=$naturalLightSrgbToLinearProgram " +
                 "chroma=$bitmapChromaDenoiseProgram " +
                 "sharpen=$lutSharpenProgram"
         )
@@ -1672,6 +1680,33 @@ class LutImageProcessor {
             0
         )
         drawQuad(bitmapDenoisePassthroughProgram)
+    }
+
+    private fun renderSrgbInputToLinear(sourceTextureId: Int, width: Int, height: Int): Int {
+        setupBitmapDenoiseFramebuffers(width, height)
+        if (naturalLightSrgbToLinearProgram == 0) return sourceTextureId
+        val targetIndex = if (sourceTextureId == bitmapDenoiseTexId[0]) 1 else 0
+        val targetFboId = bitmapDenoiseFboId[targetIndex]
+        val targetTextureId = bitmapDenoiseTexId[targetIndex]
+        val identityMatrix = FloatArray(16)
+        android.opengl.Matrix.setIdentityM(identityMatrix, 0)
+
+        GLES30.glUseProgram(naturalLightSrgbToLinearProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(naturalLightSrgbToLinearProgram, "uInputTexture"), 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(naturalLightSrgbToLinearProgram, "uMVPMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        drawQuad(naturalLightSrgbToLinearProgram)
+        checkGlError("renderSrgbInputToLinear")
+        return targetTextureId
     }
 
     private fun setupLutSharpenFramebuffer(width: Int, height: Int): Boolean {
@@ -2645,6 +2680,7 @@ class LutImageProcessor {
         if (bitmapDenoiseNlmFusedAccuProgram != 0) GLES31.glDeleteProgram(bitmapDenoiseNlmFusedAccuProgram)
         if (bitmapDenoiseNlmFinishProgram != 0) GLES31.glDeleteProgram(bitmapDenoiseNlmFinishProgram)
         if (bitmapDenoisePassthroughProgram != 0) GLES30.glDeleteProgram(bitmapDenoisePassthroughProgram)
+        if (naturalLightSrgbToLinearProgram != 0) GLES30.glDeleteProgram(naturalLightSrgbToLinearProgram)
         if (bitmapChromaDenoiseProgram != 0) GLES30.glDeleteProgram(bitmapChromaDenoiseProgram)
         if (lutSharpenProgram != 0) {
             GLES30.glDeleteProgram(lutSharpenProgram)
@@ -2730,6 +2766,33 @@ class LutImageProcessor {
 
             void main() {
                 fragColor = texture(uInputTexture, vTexCoord);
+            }
+        """.trimIndent()
+
+        private val SRGB_TO_LINEAR_SHADER = """
+            #version 300 es
+            precision highp float;
+
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+
+            uniform sampler2D uInputTexture;
+
+            vec3 srgbToLinear(vec3 srgb) {
+                vec3 color = max(srgb, vec3(0.0));
+                bvec3 useHigh = greaterThan(color, vec3(0.04045));
+                vec3 low = color / 12.92;
+                vec3 high = pow((color + 0.055) / 1.055, vec3(2.4));
+                return vec3(
+                    useHigh.r ? high.r : low.r,
+                    useHigh.g ? high.g : low.g,
+                    useHigh.b ? high.b : low.b
+                );
+            }
+
+            void main() {
+                vec4 color = texture(uInputTexture, vTexCoord);
+                fragColor = vec4(srgbToLinear(color.rgb), color.a);
             }
         """.trimIndent()
 

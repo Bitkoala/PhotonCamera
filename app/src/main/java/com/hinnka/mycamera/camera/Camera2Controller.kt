@@ -2048,16 +2048,6 @@ class Camera2Controller(private val context: Context) {
     private fun applyToneMapSettings(builder: CaptureRequest.Builder, state: CameraState, isCapture: Boolean) {
         val linearizePreviewInput = state.fixTonemapPreview && !isCapture
         val tonemapMode = sanitizeTonemapMode(state.tonemapMode)
-        if (tonemapMode == "LINEAR_PIPELINE" && isCapture && state.useMultipleExposure) {
-            PLog.d(TAG, "Forcing default tone map for multiple exposure")
-            applyDefaultToneMapSettings(builder, state, isCapture)
-            return
-        }
-        if (tonemapMode == "LINEAR_PIPELINE" && shouldForceDefaultToneMapForHdrComposition(state, isCapture)) {
-            PLog.d(TAG, "Forcing default tone map for YUV HDR composition capture")
-            applyDefaultToneMapSettings(builder, state, isCapture)
-            return
-        }
         when (tonemapMode) {
             "SYSTEM_DEFAULT" -> applyDefaultToneMapSettings(builder, state, isCapture)
             "SRGB" -> {
@@ -2066,16 +2056,6 @@ class Camera2Controller(private val context: Context) {
                     val srgbCurve = generateSrgbCurve(linearizePreviewInput)
                     val curve = TonemapCurve(srgbCurve, srgbCurve, srgbCurve)
                     builder.set(CaptureRequest.TONEMAP_CURVE, curve)
-                }
-            }
-            "LINEAR_PIPELINE" -> {
-                if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
-                    builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                    val linearCurve = generateLinearToneCurve()
-                    val curve = TonemapCurve(linearCurve, linearCurve, linearCurve)
-                    builder.set(CaptureRequest.TONEMAP_CURVE, curve)
-                } else {
-                    applyDefaultToneMapSettings(builder, state, isCapture)
                 }
             }
             else -> {
@@ -2113,8 +2093,8 @@ class Camera2Controller(private val context: Context) {
         return when (mode) {
             "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
             "REC709" -> "SRGB"
-            "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> "LINEAR_PIPELINE"
-            "SYSTEM_DEFAULT", "SRGB", "LINEAR_PIPELINE" -> mode
+            "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3", "LINEAR_PIPELINE" -> "SRGB"
+            "SYSTEM_DEFAULT", "SRGB" -> mode
             else -> "SYSTEM_DEFAULT"
         }
     }

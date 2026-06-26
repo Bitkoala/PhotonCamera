@@ -491,6 +491,8 @@ class PhotoProcessor(
             lutConfig = null,
             colorRecipeParams = null,
             linearInputToneMap = true,
+            naturalLightInputSrgb = metadata.tonemapMode == "SRGB_ACR3" ||
+                metadata.tonemapMode == "REC709_ACR3",
             linearInputExposureEv = metadata.rawExposureCompensation ?: 0f,
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters

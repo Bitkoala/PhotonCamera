@@ -52,10 +52,17 @@ private fun sanitizeTonemapMode(mode: String): String {
     return when (mode) {
         "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
         "REC709" -> "SRGB"
-        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> "LINEAR_PIPELINE"
-        "SYSTEM_DEFAULT", "SRGB", "LINEAR_PIPELINE" -> mode
+        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3", "LINEAR_PIPELINE" -> "SRGB"
+        "SYSTEM_DEFAULT", "SRGB" -> mode
         else -> "SYSTEM_DEFAULT"
     }
+}
+
+private fun isLegacyNaturalLightTonemap(mode: String?): Boolean {
+    return mode == "LINEAR_PIPELINE" ||
+        mode == "RAW_PREVIEW" ||
+        mode == "SRGB_ACR3" ||
+        mode == "REC709_ACR3"
 }
 
 enum class VolumeKeyAction {
@@ -161,6 +168,8 @@ data class UserPreferences(
     val useGpuAcceleration: Boolean = DeviceUtil.defaultGpuAcceleration, // 多帧合成是否使用 GPU 加速
     val droMode: String = "OFF", // DRO 模式
     val tonemapMode: String = "SYSTEM_DEFAULT", // 色调映射模式
+    val naturalLightEnabled: Boolean = false, // 是否启用自然光影
+    val naturalLightPreviousTonemapMode: String = "SYSTEM_DEFAULT", // 自然光影关闭时恢复的色调映射模式
     val fixTonemapPreview: Boolean = false, // 修复部分设备自定义色调映射预览异常
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
     val colorSpace: ColorSpace = ColorSpace.SRGB,
@@ -344,6 +353,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_GPU_ACCELERATION = booleanPreferencesKey("use_gpu_acceleration")
         private val DRO_MODE = stringPreferencesKey("dro_mode")
         private val TONEMAP_MODE = stringPreferencesKey("tonemap_mode")
+        private val NATURAL_LIGHT_ENABLED = booleanPreferencesKey("natural_light_enabled")
+        private val NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE = stringPreferencesKey("natural_light_previous_tonemap_mode")
         private val FIX_TONEMAP_PREVIEW = booleanPreferencesKey("fix_tonemap_preview")
         private val APPLY_ULTRA_HDR = booleanPreferencesKey("apply_ultra_hdr")
         private val COLOR_SPACE = stringPreferencesKey("color_space")
@@ -514,6 +525,11 @@ class UserPreferencesRepository(private val context: Context) {
                 useGpuAcceleration = preferences[USE_GPU_ACCELERATION] ?: DeviceUtil.defaultGpuAcceleration,
                 droMode = preferences[DRO_MODE] ?: if (preferences[RAW_DRO_ENABLED_KEY] == true) "DR100" else "OFF",
                 tonemapMode = sanitizeTonemapMode(preferences[TONEMAP_MODE] ?: "SYSTEM_DEFAULT"),
+                naturalLightEnabled = preferences[NATURAL_LIGHT_ENABLED]
+                    ?: isLegacyNaturalLightTonemap(preferences[TONEMAP_MODE]),
+                naturalLightPreviousTonemapMode = sanitizeTonemapMode(
+                    preferences[NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE] ?: "SYSTEM_DEFAULT"
+                ),
                 fixTonemapPreview = preferences[FIX_TONEMAP_PREVIEW] ?: false,
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
@@ -1480,6 +1496,31 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveTonemapMode(mode: String) {
         context.dataStore.edit { preferences ->
             preferences[TONEMAP_MODE] = sanitizeTonemapMode(mode)
+        }
+    }
+
+    /**
+     * 保存是否启用自然光影
+     */
+    suspend fun saveNaturalLightEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[NATURAL_LIGHT_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveNaturalLightState(
+        enabled: Boolean,
+        previousTonemapMode: String? = null,
+        tonemapMode: String? = null
+    ) {
+        context.dataStore.edit { preferences ->
+            previousTonemapMode?.let {
+                preferences[NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE] = sanitizeTonemapMode(it)
+            }
+            tonemapMode?.let {
+                preferences[TONEMAP_MODE] = sanitizeTonemapMode(it)
+            }
+            preferences[NATURAL_LIGHT_ENABLED] = enabled
         }
     }
 

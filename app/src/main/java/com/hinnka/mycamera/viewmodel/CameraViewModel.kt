@@ -107,15 +107,14 @@ private fun sanitizeViewModelTonemapMode(mode: String): String {
     return when (mode) {
         "FAST", "HIGH_QUALITY" -> TONEMAP_MODE_SYSTEM_DEFAULT
         "REC709" -> TONEMAP_MODE_SRGB
-        "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> TONEMAP_MODE_LINEAR_PIPELINE
-        TONEMAP_MODE_SYSTEM_DEFAULT, TONEMAP_MODE_SRGB, TONEMAP_MODE_LINEAR_PIPELINE -> mode
+        TONEMAP_MODE_SYSTEM_DEFAULT, TONEMAP_MODE_SRGB -> mode
         else -> TONEMAP_MODE_SYSTEM_DEFAULT
     }
 }
 
 private fun resolvePreviewBaselineTarget(prefs: UserPreferences): BaselineColorCorrectionTarget? {
     return when {
-        prefs.useRaw && prefs.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE -> BaselineColorCorrectionTarget.RAW
+        prefs.useRaw && prefs.naturalLightEnabled -> BaselineColorCorrectionTarget.RAW
         prefs.useRaw -> null
         else -> BaselineColorCorrectionTarget.JPG
     }
@@ -660,42 +659,44 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.useHdrComposition && !isRawEnabledForNaturalLightHdrGuard(prefs)
     }
 
+    private fun effectiveCameraTonemapMode(prefs: UserPreferences): String {
+        return if (prefs.naturalLightEnabled) {
+            TONEMAP_MODE_SRGB
+        } else {
+            sanitizeViewModelTonemapMode(prefs.tonemapMode)
+        }
+    }
+
+    private fun metadataTonemapMode(prefs: UserPreferences?): String {
+        return if (prefs?.naturalLightEnabled == true) {
+            "SRGB_ACR3"
+        } else {
+            sanitizeViewModelTonemapMode(prefs?.tonemapMode ?: TONEMAP_MODE_SYSTEM_DEFAULT)
+        }
+    }
+
     private suspend fun saveTonemapModeWithFeatureGuards(mode: String) {
         val resolvedMode = sanitizeViewModelTonemapMode(mode)
-        if (resolvedMode == TONEMAP_MODE_LINEAR_PIPELINE) {
-            val prefs = userPreferencesRepository.userPreferences.first()
-            val shouldDisableMultipleExposure = prefs.useMultipleExposure
-            val shouldDisableHdrComposition = shouldDisableNaturalLightForHdrComposition(prefs)
-
-            if (shouldDisableMultipleExposure || shouldDisableHdrComposition) {
-                applyCameraFeatureUpdate(
-                    CameraFeatureUpdate(
-                        useMultipleExposure = if (shouldDisableMultipleExposure) {
-                            SettingValue(false)
-                        } else {
-                            null
-                        },
-                        useHdrComposition = if (shouldDisableHdrComposition) {
-                            SettingValue(false)
-                        } else {
-                            null
-                        }
-                    )
-                )
-            }
-
-            if (prefs.rawAutoExposure) {
-                userPreferencesRepository.saveRawAutoExposure(false)
-            }
+        val prefs = userPreferencesRepository.userPreferences.first()
+        if (prefs.naturalLightEnabled) {
+            userPreferencesRepository.saveNaturalLightState(
+                enabled = true,
+                previousTonemapMode = resolvedMode,
+                tonemapMode = TONEMAP_MODE_SRGB
+            )
+        } else {
+            userPreferencesRepository.saveTonemapMode(resolvedMode)
         }
-        userPreferencesRepository.saveTonemapMode(resolvedMode)
     }
 
     private suspend fun clearNaturalLightTonemapIfNeeded(reason: String, prefs: UserPreferences? = null) {
         val currentPrefs = prefs ?: userPreferencesRepository.userPreferences.first()
-        if (currentPrefs.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE) {
+        if (currentPrefs.naturalLightEnabled) {
             PLog.d(TAG, "Disabling Natural Light tone map: $reason")
-            userPreferencesRepository.saveTonemapMode(TONEMAP_MODE_SYSTEM_DEFAULT)
+            userPreferencesRepository.saveNaturalLightState(
+                enabled = false,
+                tonemapMode = currentPrefs.naturalLightPreviousTonemapMode
+            )
         }
     }
 
@@ -1085,6 +1086,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val tonemapMode: StateFlow<String> = userPreferencesRepository.userPreferences
         .map { it.tonemapMode }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "SYSTEM_DEFAULT")
+    val naturalLightEnabled: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.naturalLightEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val fixTonemapPreview: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.fixTonemapPreview }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -1346,7 +1350,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val effectiveUseRaw = it.useRaw && !multipleExposureEnabled
                 val effectiveUseMFNR = it.useMFNR && !multipleExposureEnabled
                 val effectiveUseMFSR = it.useMFSR && !multipleExposureEnabled
-                if (it.tonemapMode == TONEMAP_MODE_LINEAR_PIPELINE &&
+                if (it.naturalLightEnabled &&
                     (multipleExposureEnabled || shouldDisableNaturalLightForHdrComposition(it))
                 ) {
                     viewModelScope.launch {
@@ -1385,11 +1389,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (currentCameraState.rawMinShutterSpeedNs != it.rawMinShutterSpeedNs) {
                     cameraController.setRawMinShutterSpeedNs(it.rawMinShutterSpeedNs)
                 }
-                if (currentCameraState.tonemapMode != it.tonemapMode) {
-                    cameraController.setTonemapMode(it.tonemapMode)
+                val effectiveTonemapMode = effectiveCameraTonemapMode(it)
+                if (currentCameraState.tonemapMode != effectiveTonemapMode) {
+                    cameraController.setTonemapMode(effectiveTonemapMode)
                 }
-                if (currentCameraState.fixTonemapPreview != it.fixTonemapPreview) {
-                    cameraController.setFixTonemapPreview(it.fixTonemapPreview)
+                val effectiveFixTonemapPreview = it.fixTonemapPreview && !it.naturalLightEnabled
+                if (currentCameraState.fixTonemapPreview != effectiveFixTonemapPreview) {
+                    cameraController.setFixTonemapPreview(effectiveFixTonemapPreview)
                 }
                 if (cameraController.state.value.meteringMode != it.meteringMode) {
                     cameraController.setMeteringMode(it.meteringMode)
@@ -1564,8 +1570,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setUseMFSR(prefs.useMFSR && !prefs.useMultipleExposure)
                 cameraController.setMultiFrameCount(prefs.multiFrameCount)
                 cameraController.setUseLivePhoto(prefs.useLivePhoto && prefs.captureMode == CaptureMode.PHOTO)
-                cameraController.setTonemapMode(prefs.tonemapMode)
-                cameraController.setFixTonemapPreview(prefs.fixTonemapPreview)
+                cameraController.setTonemapMode(effectiveCameraTonemapMode(prefs))
+                cameraController.setFixTonemapPreview(prefs.fixTonemapPreview && !prefs.naturalLightEnabled)
 
                 // 应用保存的虚拟光圈
                 if (prefs.defaultVirtualAperture > 0f) {
@@ -1956,7 +1962,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         return MediaMetadata(
             lutId = lutIdToSave,
-            tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
+            tonemapMode = metadataTonemapMode(userPrefs),
             frameId = frameIdToSave,
             colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,
@@ -2401,7 +2407,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             startQuickShotBurst()
             return
         }
-        if (tonemapMode.value == "LINEAR_PIPELINE") {
+        if (naturalLightEnabled.value) {
             PLog.d(TAG, "Continuous photo burst disabled while Natural Light tone map is active")
             return
         }
@@ -4305,7 +4311,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
-                tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
+                tonemapMode = metadataTonemapMode(userPrefs),
                 frameId = frameIdToSave,
                 colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
@@ -4791,7 +4797,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
             val metadata = MediaMetadata(
                 lutId = lutIdToSave,
-                tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
+                tonemapMode = metadataTonemapMode(userPrefs),
                 frameId = frameIdToSave,
                 colorRecipeParams = getMergedRecipeParams(),
                 baselineTarget = baselineMetadata?.first,
@@ -5020,7 +5026,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 multipleExposureFrameCount = expectedFrameCount,
                 baselineTarget = BaselineColorCorrectionTarget.JPG,
             ).let { hdrMetadata ->
-                if (hdrMetadata.tonemapMode == "LINEAR_PIPELINE") {
+                if (hdrMetadata.usesLinearPipelineToneMap()) {
                     PLog.d(TAG, "YUV HDR bracket stores SYSTEM_DEFAULT tonemap metadata")
                     hdrMetadata.copy(tonemapMode = "SYSTEM_DEFAULT")
                 } else {
@@ -5322,7 +5328,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // 创建统一的 PhotoMetadata，包含编辑配置和拍摄信息
         val metadata = MediaMetadata(
             lutId = lutIdToSave,
-            tonemapMode = userPrefs?.tonemapMode ?: "SYSTEM_DEFAULT",
+            tonemapMode = metadataTonemapMode(userPrefs),
             frameId = frameIdToSave,
             colorRecipeParams = getMergedRecipeParams(),
             baselineTarget = baselineMetadata?.first,
@@ -5559,13 +5565,51 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setNaturalLightToneMapEnabled(enabled: Boolean) {
-        setTonemapMode(
+        viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
             if (enabled) {
-                TONEMAP_MODE_LINEAR_PIPELINE
-            } else {
-                TONEMAP_MODE_SYSTEM_DEFAULT
+                val shouldDisableMultipleExposure = prefs.useMultipleExposure
+                val shouldDisableHdrComposition = shouldDisableNaturalLightForHdrComposition(prefs)
+
+                if (shouldDisableMultipleExposure || shouldDisableHdrComposition) {
+                    applyCameraFeatureUpdate(
+                        CameraFeatureUpdate(
+                            useMultipleExposure = if (shouldDisableMultipleExposure) {
+                                SettingValue(false)
+                            } else {
+                                null
+                            },
+                            useHdrComposition = if (shouldDisableHdrComposition) {
+                                SettingValue(false)
+                            } else {
+                                null
+                            }
+                        )
+                    )
+                }
+
+                if (prefs.rawAutoExposure) {
+                    userPreferencesRepository.saveRawAutoExposure(false)
+                }
             }
-        )
+            if (enabled) {
+                val previousTonemapMode = if (prefs.naturalLightEnabled) {
+                    prefs.naturalLightPreviousTonemapMode
+                } else {
+                    prefs.tonemapMode
+                }
+                userPreferencesRepository.saveNaturalLightState(
+                    enabled = true,
+                    previousTonemapMode = previousTonemapMode,
+                    tonemapMode = TONEMAP_MODE_SRGB
+                )
+            } else {
+                userPreferencesRepository.saveNaturalLightState(
+                    enabled = false,
+                    tonemapMode = prefs.naturalLightPreviousTonemapMode
+                )
+            }
+        }
     }
 
     fun setFixTonemapPreview(enabled: Boolean) {

@@ -68,7 +68,7 @@ fun CameraPreviewGL(
     videoRecorder: VideoRecorder? = null,
     videoLogProfile: VideoLogProfile = VideoLogProfile.OFF,
     isHlgInput: Boolean = false,
-    tonemapMode: String = "SYSTEM_DEFAULT",
+    naturalLightEnabled: Boolean = false,
     fixTonemapPreview: Boolean = false,
     rawExposureCompensation: Float = 0f,
     rawBlackPointCorrection: Float = 0f,
@@ -272,11 +272,11 @@ fun CameraPreviewGL(
                         glSurfaceView.setVideoLogProfile(videoLogProfile)
                         glSurfaceView.setIsHlgInput(isHlgInput)
                         glSurfaceView.setRawPreviewSettings(
-                            enabled = tonemapMode == "LINEAR_PIPELINE" || tonemapMode == "RAW_PREVIEW",
+                            enabled = naturalLightEnabled,
                             exposureCompensation = rawExposureCompensation,
                             blackPointCorrection = rawBlackPointCorrection,
                             whitePointCorrection = rawWhitePointCorrection,
-                            linearizeInput = fixTonemapPreview,
+                            linearizeInput = naturalLightEnabled || fixTonemapPreview,
                             renderingEngine = rawRenderingEngine,
                             toneMappingParameters = rawToneMappingParameters
                         )
