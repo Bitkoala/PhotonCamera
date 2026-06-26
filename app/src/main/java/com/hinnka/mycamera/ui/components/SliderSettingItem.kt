@@ -34,6 +34,7 @@ fun SliderSettingItem(
     onValueChangeFinished: (() -> Unit)? = null,
     valueTextFormatter: (Float) -> String = { String.format("%.2f", it) },
     resetValue: Float? = null,
+    onResetValue: ((Float) -> Unit)? = null,
     toggleValue: Boolean? = null,
     onToggleChange: (Boolean) -> Unit = {},
     enabled: Boolean = toggleValue ?: true,
@@ -108,8 +109,12 @@ fun SliderSettingItem(
                 inactiveTrackColor = Color.White.copy(alpha = if (enabled) 0.2f else 0.12f),
                 onDoubleTap = {
                     if (enabled && resetValue != null) {
-                        onValueChange(resetValue)
-                        onValueChangeFinished?.invoke()
+                        if (onResetValue != null) {
+                            onResetValue(resetValue)
+                        } else {
+                            onValueChange(resetValue)
+                            onValueChangeFinished?.invoke()
+                        }
                     }
                 },
             )

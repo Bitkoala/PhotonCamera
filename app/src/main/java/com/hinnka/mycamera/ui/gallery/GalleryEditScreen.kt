@@ -1155,6 +1155,11 @@ fun GalleryEditScreen(
                                         onRawExposureCompensationChange = {
                                             viewModel.saveRawExposureCompensationValue(currentPhoto, it)
                                         },
+                                        onRawExposureCompensationReset = {
+                                            viewModel.resetRawExposureCompensationValue(currentPhoto) { success ->
+                                                if (success) requestRawPreviewRefresh()
+                                            }
+                                        },
                                         onRawAutoExposureChange = {
                                             if (it) {
                                                 viewModel.saveRawExposureCompensationValue(currentPhoto, 0f)
@@ -1222,6 +1227,7 @@ fun GalleryEditScreen(
                                         onOpenBaselineLutSheet = {
                                             showRawBaselineLutSelectorSheet = true
                                         },
+                                        showAutoExposureControl = false,
                                         showDngMetadataControls = true,
                                         contentMode = RawEditPanelContentMode.FULL,
                                         modifier = Modifier.fillMaxWidth()

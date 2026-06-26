@@ -2056,6 +2056,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         persistRawEditMetadata(mediaData, onComplete)
     }
 
+    fun resetRawExposureCompensationValue(mediaData: MediaData, onComplete: ((Boolean) -> Unit)? = null) {
+        editRawAutoExposure.value = false
+        editRawExposureCompensation.value = 0f
+        persistRawEditMetadata(mediaData, onComplete)
+    }
+
     fun saveRawAutoExposureValue(mediaData: MediaData, enabled: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
         editRawAutoExposure.value = enabled
         if (enabled) {

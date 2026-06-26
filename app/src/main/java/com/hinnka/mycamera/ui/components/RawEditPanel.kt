@@ -83,7 +83,9 @@ fun RawEditPanel(
     onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
     onAdjustmentEnd: () -> Unit,
+    onRawExposureCompensationReset: ((Float) -> Unit)? = null,
     onOpenBaselineLutSheet: (() -> Unit)? = null,
+    showAutoExposureControl: Boolean = true,
     showDngMetadataControls: Boolean = false,
     contentMode: RawEditPanelContentMode = RawEditPanelContentMode.FULL,
     modifier: Modifier = Modifier
@@ -139,17 +141,20 @@ fun RawEditPanel(
                 onAdjustmentStart = onAdjustmentStart,
                 onAdjustmentEnd = onAdjustmentEnd
             )
-            RawSwitchSettingItem(
-                title = stringResource(R.string.settings_raw_auto_exposure),
-                description = stringResource(R.string.settings_raw_auto_exposure_description),
-                checked = rawAutoExposure,
-                onCheckedChange = onRawAutoExposureChange
-            )
+            if (showAutoExposureControl) {
+                RawSwitchSettingItem(
+                    title = stringResource(R.string.settings_raw_auto_exposure),
+                    description = stringResource(R.string.settings_raw_auto_exposure_description),
+                    checked = rawAutoExposure,
+                    onCheckedChange = onRawAutoExposureChange
+                )
+            }
             SliderSettingItem(
                 title = stringResource(R.string.settings_raw_exposure_compensation),
                 value = rawExposureCompensation,
                 valueRange = -2f..2f,
                 resetValue = 0f,
+                onResetValue = onRawExposureCompensationReset,
                 onValueChange = {
                     onAdjustmentStart()
                     onRawExposureCompensationChange(it)
