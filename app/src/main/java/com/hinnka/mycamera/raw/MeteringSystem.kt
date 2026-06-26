@@ -80,6 +80,8 @@ object MeteringSystem {
     }
 
     data class SrgbThumbnailMeteringStats(
+        val width: Int,
+        val height: Int,
         val weightedLogLumaSum: Double,
         val weightSum: Double,
         val sampleCount: Int,
@@ -137,7 +139,8 @@ object MeteringSystem {
 
                 val xFraction = (x + 0.5f) / width.toFloat()
                 val weight = centerWeight(xFraction, yFraction)
-                weightedLogLumaSum += log2(luma.coerceAtLeast(LUMA_FLOOR)).toDouble() * weight.toDouble()
+                val logLuma = log2(luma.coerceAtLeast(LUMA_FLOOR))
+                weightedLogLumaSum += logLuma.toDouble() * weight.toDouble()
                 weightSum += weight.toDouble()
                 if (luma <= CLIP_LOW_LUMA) {
                     clipLowWeightSum += weight.toDouble()
@@ -182,6 +185,8 @@ object MeteringSystem {
             0f
         }
         return SrgbThumbnailMeteringStats(
+            width = width,
+            height = height,
             weightedLogLumaSum = weightedLogLumaSum,
             weightSum = weightSum,
             sampleCount = sampleCount,

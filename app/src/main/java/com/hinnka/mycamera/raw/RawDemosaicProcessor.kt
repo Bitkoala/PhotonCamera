@@ -174,8 +174,8 @@ class RawDemosaicProcessor {
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
         private const val RAW_TONE_MAPPED_AE_MIN_EV = -2f
         private const val RAW_TONE_MAPPED_AE_MAX_EV = 2f
-        private const val RAW_TONE_MAPPED_AE_ITERATIONS = 6
         private const val RAW_TONE_MAPPED_AE_LUMA_FLOOR = 0.001f
+        private const val RAW_TONE_MAPPED_AE_LONG_EDGE = 256
         private const val FILMIC_GREY_SOURCE = 0.1845f
         private const val FILMIC_OUTPUT_POWER = 3.614815775f
         private const val FILMIC_DISPLAY_BLACK = 0.0001517634f
@@ -425,10 +425,29 @@ class RawDemosaicProcessor {
             return null
         }
         return try {
-            val width = bitmap.width
-            val height = bitmap.height
+            val meteringSize = resolveLongEdgeMeteringSize(
+                sourceWidth = bitmap.width,
+                sourceHeight = bitmap.height,
+                maxLongEdge = RAW_TONE_MAPPED_AE_LONG_EDGE
+            )
+            val width = meteringSize.width
+            val height = meteringSize.height
             val pixels = IntArray(width * height)
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            val rowPixels = IntArray(bitmap.width)
+            val sourceWidth = bitmap.width
+            val sourceHeight = bitmap.height
+            for (y in 0 until height) {
+                val sourceY = ((y + 0.5f) * sourceHeight.toFloat() / height.toFloat())
+                    .toInt()
+                    .coerceIn(0, sourceHeight - 1)
+                bitmap.getPixels(rowPixels, 0, sourceWidth, 0, sourceY, sourceWidth, 1)
+                for (x in 0 until width) {
+                    val sourceX = ((x + 0.5f) * sourceWidth.toFloat() / width.toFloat())
+                        .toInt()
+                        .coerceIn(0, sourceWidth - 1)
+                    pixels[y * width + x] = rowPixels[sourceX]
+                }
+            }
             MeteringSystem.analyzeSrgbThumbnail(width, height, pixels)
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to analyze capture preview thumbnail for RAW AE", e)
@@ -859,7 +878,8 @@ class RawDemosaicProcessor {
                 } else {
                     PLog.d(
                         TAG,
-                        "RAW auto exposure thumbnail stats: luma=${stats.midToneLinearLuma} " +
+                        "RAW auto exposure thumbnail stats: size=${stats.width}x${stats.height} " +
+                            "luma=${stats.midToneLinearLuma} " +
                             "clipLow=${stats.clipLow} clipHigh=${stats.clipHigh} " +
                             "highlightAmount=${stats.highlightCompression.amount} " +
                             "highlightStrength=${stats.highlightCompression.strength} " +
@@ -1197,20 +1217,20 @@ class RawDemosaicProcessor {
                 renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv
             )
 
-            val useAutoDevelopAdjustments = rawAutoExposure &&
+            val autoDevelopAvailable = rawAutoExposure &&
                 viewfinderThumbnailStats != null &&
-                meteringResult != MeteringSystem.MeteringResult.EMPTY &&
-                !MeteringSystem.hasManualRawDevelopAdjustments(
-                    rawExposureCompensation = rawExposureCompensation,
-                    rawHighlightsAdjustment = rawHighlightsAdjustment,
-                    rawShadowsAdjustment = rawShadowsAdjustment
-                )
-            val effectiveExposureCompensation = if (useAutoDevelopAdjustments) {
+                meteringResult != MeteringSystem.MeteringResult.EMPTY
+            val useAutoExposureAdjustment = autoDevelopAvailable &&
+                abs(rawExposureCompensation) <= 0.0001f
+            val useAutoHighlightsAdjustment = autoDevelopAvailable &&
+                abs(rawHighlightsAdjustment) <= 0.0001f
+            val effectiveExposureCompensation = if (useAutoExposureAdjustment) {
                 meteringResult.meteredEv
             } else {
                 rawExposureCompensation
             }
-            val effectiveHighlightsAdjustment = if (useAutoDevelopAdjustments) {
+            // 自动高光只驱动高光滑块，用于恢复已压缩高光区域的细节、色度和对比度；不参与 EV 求解。
+            val effectiveHighlightsAdjustment = if (useAutoHighlightsAdjustment) {
                 meteringResult.highlightCompression.autoHighlightsAdjustment
             } else {
                 rawHighlightsAdjustment
@@ -1245,7 +1265,8 @@ class RawDemosaicProcessor {
                     TAG,
                     "RAW auto develop sliders: exposure=${adjustments.exposureCompensation} " +
                             "highlights=${adjustments.highlights} shadows=${adjustments.shadows} " +
-                            "autoMeteringApplied=$useAutoDevelopAdjustments " +
+                            "autoExposureApplied=$useAutoExposureAdjustment " +
+                            "autoHighlightsApplied=$useAutoHighlightsAdjustment " +
                             "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
                             "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
                             "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
@@ -1253,7 +1274,7 @@ class RawDemosaicProcessor {
                             "highlightCompressionStrength=${meteringResult.highlightCompression.strength} " +
                             "highlightReductionThreshold=${meteringResult.highlightCompression.reductionThreshold}"
                 )
-                if (useAutoDevelopAdjustments) {
+                if (useAutoExposureAdjustment || useAutoHighlightsAdjustment) {
                     onRawAutoAdjustments?.invoke(adjustments)
                 }
             }
@@ -3533,9 +3554,6 @@ class RawDemosaicProcessor {
         val hueSatMap = dcpRenderPlan?.hueSatMap?.takeIf { it.isValid }
         val lookTable = dcpRenderPlan?.lookTable?.takeIf { it.isValid }
 
-        PLog.d(TAG, "bindDcpCombinedResources: hueSatMap=${hueSatMap?.values?.size}")
-        PLog.d(TAG, "bindDcpCombinedResources: lookTable=${lookTable?.values?.size}")
-
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uDcpHueSatTexture"), 2)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uDcpLookTableTexture"), 3)
         GLES30.glUniform1i(
@@ -4562,8 +4580,13 @@ class RawDemosaicProcessor {
         if (viewfinderThumbnailStats == null) {
             return MeteringSystem.MeteringResult.EMPTY
         }
-        val meteringWidth = minOf(metadata.width, 256).coerceAtLeast(1)
-        val meteringHeight = minOf(metadata.height, 256).coerceAtLeast(1)
+        val meteringSize = resolveLongEdgeMeteringSize(
+            sourceWidth = metadata.width,
+            sourceHeight = metadata.height,
+            maxLongEdge = RAW_TONE_MAPPED_AE_LONG_EDGE
+        )
+        val meteringWidth = meteringSize.width
+        val meteringHeight = meteringSize.height
         return try {
             setupLinearMeteringFramebuffer(meteringWidth, meteringHeight)
             renderLinearRcdPass(
@@ -4591,11 +4614,12 @@ class RawDemosaicProcessor {
                 sourceWidth = metadata.width,
                 sourceHeight = metadata.height,
                 targetWidth = meteringWidth,
-                targetHeight = meteringHeight
+                targetHeight = meteringHeight,
+                outputRotation = outputRotation
             )
             setupSrgbMeteringCropFramebuffer(
-                meteringBounds.width().coerceAtLeast(1),
-                meteringBounds.height().coerceAtLeast(1)
+                viewfinderThumbnailStats.width.coerceAtLeast(1),
+                viewfinderThumbnailStats.height.coerceAtLeast(1)
             )
             resolveToneMappedRawAutoExposureEv(
                 metadata = metadata,
@@ -4603,6 +4627,8 @@ class RawDemosaicProcessor {
                 width = meteringWidth,
                 height = meteringHeight,
                 meteringBounds = meteringBounds,
+                readbackWidth = viewfinderThumbnailStats.width.coerceAtLeast(1),
+                readbackHeight = viewfinderThumbnailStats.height.coerceAtLeast(1),
                 outputRotation = outputRotation,
                 viewfinderThumbnailStats = viewfinderThumbnailStats,
                 dcpRenderPlan = dcpRenderPlan,
@@ -4626,20 +4652,62 @@ class RawDemosaicProcessor {
     private data class ToneMappedRawAeSample(
         val autoEv: Float,
         val profileExposureEv: Float,
-        val renderedMidToneLinearLuma: Float,
+        val renderedLuma: Float,
         val errorEv: Float,
         val stats: MeteringSystem.SrgbThumbnailMeteringStats
     )
+
+    private data class RawAeMeteringSize(
+        val width: Int,
+        val height: Int
+    )
+
+    private fun resolveLongEdgeMeteringSize(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        maxLongEdge: Int
+    ): RawAeMeteringSize {
+        if (sourceWidth <= 0 || sourceHeight <= 0) {
+            return RawAeMeteringSize(1, 1)
+        }
+        val longEdge = minOf(max(sourceWidth, sourceHeight), maxLongEdge.coerceAtLeast(1))
+            .coerceAtLeast(1)
+        return if (sourceWidth >= sourceHeight) {
+            RawAeMeteringSize(
+                width = longEdge,
+                height = ((longEdge.toFloat() * sourceHeight.toFloat() / sourceWidth.toFloat()) + 0.5f)
+                    .toInt()
+                    .coerceAtLeast(1)
+            )
+        } else {
+            RawAeMeteringSize(
+                width = ((longEdge.toFloat() * sourceWidth.toFloat() / sourceHeight.toFloat()) + 0.5f)
+                    .toInt()
+                    .coerceAtLeast(1),
+                height = longEdge
+            )
+        }
+    }
 
     private fun scaleMeteringBounds(
         bounds: Rect,
         sourceWidth: Int,
         sourceHeight: Int,
         targetWidth: Int,
-        targetHeight: Int
+        targetHeight: Int,
+        outputRotation: Int
     ): Rect {
         if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
             return Rect(0, 0, targetWidth.coerceAtLeast(1), targetHeight.coerceAtLeast(1))
+        }
+        if (outputRotation == 90 || outputRotation == 270) {
+            val scaleRotatedX = targetHeight.toFloat() / sourceHeight.toFloat()
+            val scaleRotatedY = targetWidth.toFloat() / sourceWidth.toFloat()
+            val left = floor(bounds.left * scaleRotatedX).toInt().coerceIn(0, targetHeight - 1)
+            val top = floor(bounds.top * scaleRotatedY).toInt().coerceIn(0, targetWidth - 1)
+            val right = ceil(bounds.right * scaleRotatedX).toInt().coerceIn(left + 1, targetHeight)
+            val bottom = ceil(bounds.bottom * scaleRotatedY).toInt().coerceIn(top + 1, targetWidth)
+            return Rect(left, top, right, bottom)
         }
         val scaleX = targetWidth.toFloat() / sourceWidth.toFloat()
         val scaleY = targetHeight.toFloat() / sourceHeight.toFloat()
@@ -4656,6 +4724,8 @@ class RawDemosaicProcessor {
         width: Int,
         height: Int,
         meteringBounds: Rect,
+        readbackWidth: Int,
+        readbackHeight: Int,
         outputRotation: Int,
         viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats,
         dcpRenderPlan: DcpRenderPlan?,
@@ -4671,22 +4741,19 @@ class RawDemosaicProcessor {
         renderingEngineMeteringCompensationEv: Float
     ): MeteringSystem.MeteringResult? {
         val targetLuma = viewfinderThumbnailStats.midToneLinearLuma
-        val samples = mutableListOf<ToneMappedRawAeSample>()
-        val readbackWidth = meteringBounds.width().coerceAtLeast(1)
-        val readbackHeight = meteringBounds.height().coerceAtLeast(1)
         val pixelCount = readbackWidth * readbackHeight
         val readbackBuffer = LargeDirectBuffer.allocate(
             pixelCount.toLong() * 4L,
             "tone-mapped RAW AE readback"
         ) ?: return null
 
-        fun sample(autoEv: Float): ToneMappedRawAeSample? {
-            return renderToneMappedRawAeSample(
+        return try {
+            val zero = renderToneMappedRawAeSample(
                 metadata = metadata,
                 linearTextureId = linearTextureId,
                 width = width,
                 height = height,
-                autoEv = autoEv,
+                autoEv = 0f,
                 targetLuma = targetLuma,
                 dcpRenderPlan = dcpRenderPlan,
                 useDcpToneCurve = useDcpToneCurve,
@@ -4698,57 +4765,26 @@ class RawDemosaicProcessor {
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                 applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
                 readbackBounds = meteringBounds,
+                readbackWidth = readbackWidth,
+                readbackHeight = readbackHeight,
                 outputRotation = outputRotation,
                 readbackBuffer = readbackBuffer
-            )?.also { samples += it }
-        }
-
-        return try {
-            var low = sample(RAW_TONE_MAPPED_AE_MIN_EV) ?: return null
-            var high = sample(RAW_TONE_MAPPED_AE_MAX_EV) ?: return null
-            var best = if (abs(low.errorEv) <= abs(high.errorEv)) low else high
-            val bracketsTarget = (low.errorEv <= 0f && high.errorEv >= 0f) ||
-                (low.errorEv >= 0f && high.errorEv <= 0f)
-
-            if (bracketsTarget) {
-                val increasing = high.errorEv >= low.errorEv
-                for (iteration in 0 until RAW_TONE_MAPPED_AE_ITERATIONS) {
-                    if (abs(high.autoEv - low.autoEv) <= 0.01f) break
-                    val mid = sample((low.autoEv + high.autoEv) * 0.5f) ?: break
-                    if (abs(mid.errorEv) < abs(best.errorEv)) {
-                        best = mid
-                    }
-                    if (increasing) {
-                        if (mid.errorEv > 0f) {
-                            high = mid
-                        } else {
-                            low = mid
-                        }
-                    } else {
-                        if (mid.errorEv > 0f) {
-                            low = mid
-                        } else {
-                            high = mid
-                        }
-                    }
-                }
-            }
-
-            best = samples.minByOrNull { abs(it.errorEv) } ?: best
-            val meteredEv = best.autoEv.coerceIn(
+            ) ?: return null
+            val meteredEv = (-zero.errorEv).coerceIn(
                 RAW_TONE_MAPPED_AE_MIN_EV,
                 RAW_TONE_MAPPED_AE_MAX_EV
             )
+            val highlightCompression = viewfinderThumbnailStats.highlightCompression
             PLog.d(
                 TAG,
                 "Tone-mapped RAW AE: mode=ViewfinderThumbnail target=$targetLuma " +
-                    "autoEv=$meteredEv renderedLuma=${best.renderedMidToneLinearLuma} " +
-                    "errorEv=${best.errorEv} profileExposureEv=${best.profileExposureEv} " +
-                    "clipLow=${best.stats.clipLow} clipHigh=${best.stats.clipHigh} " +
-                    "highlightCompressionAmount=${best.stats.highlightCompression.amount} " +
-                    "highlightCompressionStrength=${best.stats.highlightCompression.strength} " +
-                    "highlightReductionThreshold=${best.stats.highlightCompression.reductionThreshold} " +
-                    "autoHighlights=${best.stats.highlightCompression.autoHighlightsAdjustment} " +
+                    "autoEv=$meteredEv renderedLuma=${zero.renderedLuma} " +
+                    "errorEv=${zero.errorEv} zeroProfileExposureEv=${zero.profileExposureEv} " +
+                    "clipLow=${zero.stats.clipLow} clipHigh=${zero.stats.clipHigh} " +
+                    "highlightCompressionAmount=${highlightCompression.amount} " +
+                    "highlightCompressionStrength=${highlightCompression.strength} " +
+                    "highlightReductionThreshold=${highlightCompression.reductionThreshold} " +
+                    "autoHighlights=${highlightCompression.autoHighlightsAdjustment} " +
                     "baselineExposure=${metadata.baselineExposure} " +
                     "dcpBaselineExposureOffset=$dcpBaselineExposureOffset " +
                     "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
@@ -4756,22 +4792,24 @@ class RawDemosaicProcessor {
                     "colorEngine=$colorEngine useDcpToneCurve=$useDcpToneCurve " +
                     "profileDngBaseline=$applyProfileDngBaselineExposure " +
                     "profileDcpBaseline=$applyProfileDcpBaselineExposureOffset " +
-                    "meteringBounds=$meteringBounds outputRotation=$outputRotation " +
+                    "meteringTexture=${width}x$height meteringBounds=$meteringBounds " +
+                    "outputRotation=$outputRotation " +
+                    "targetSize=${viewfinderThumbnailStats.width}x${viewfinderThumbnailStats.height} " +
+                    "renderedSize=${zero.stats.width}x${zero.stats.height} " +
                     "viewfinderSamples=${viewfinderThumbnailStats.sampleCount} " +
                     "viewfinderSanitizedSamples=${viewfinderThumbnailStats.sanitizedSampleCount} " +
-                    "renderedSamples=${best.stats.sampleCount} " +
-                    "renderedSanitizedSamples=${best.stats.sanitizedSampleCount} " +
-                    "samples=${formatToneMappedRawAeSamples(samples)}"
+                    "renderedSamples=${zero.stats.sampleCount} " +
+                    "renderedSanitizedSamples=${zero.stats.sanitizedSampleCount}"
             )
 
             MeteringSystem.MeteringResult(
                 meteredEv = meteredEv,
                 dynamicRangeGap = 0f,
-                avgLuma = best.renderedMidToneLinearLuma,
-                clipLow = best.stats.clipLow,
-                clipHigh = best.stats.clipHigh,
+                avgLuma = zero.renderedLuma,
+                clipLow = zero.stats.clipLow,
+                clipHigh = zero.stats.clipHigh,
                 curveWhitePoint = 1f,
-                highlightCompression = best.stats.highlightCompression
+                highlightCompression = highlightCompression
             )
         } finally {
             LargeDirectBuffer.free(readbackBuffer)
@@ -4795,6 +4833,8 @@ class RawDemosaicProcessor {
         applyProfileDcpBaselineExposureOffset: Boolean,
         applyProfileDngBaselineExposure: Boolean,
         readbackBounds: Rect,
+        readbackWidth: Int,
+        readbackHeight: Int,
         outputRotation: Int,
         readbackBuffer: ByteBuffer
     ): ToneMappedRawAeSample? {
@@ -4834,20 +4874,22 @@ class RawDemosaicProcessor {
                 sourceWidth = width,
                 sourceHeight = height,
                 bounds = readbackBounds,
+                targetWidth = readbackWidth,
+                targetHeight = readbackHeight,
                 rotation = outputRotation
             )
         ) {
             return null
         }
         val stats = readSrgbMeteringCropStats(
-            width = readbackBounds.width().coerceAtLeast(1),
-            height = readbackBounds.height().coerceAtLeast(1),
+            width = readbackWidth,
+            height = readbackHeight,
             pixelBuffer = readbackBuffer
         ) ?: return null
         return ToneMappedRawAeSample(
             autoEv = clampedAutoEv,
             profileExposureEv = profileExposureUniforms.exposureEv,
-            renderedMidToneLinearLuma = stats.midToneLinearLuma,
+            renderedLuma = stats.midToneLinearLuma,
             errorEv = displayLumaErrorEv(
                 renderedLuma = stats.midToneLinearLuma,
                 targetLuma = targetLuma
@@ -4861,6 +4903,8 @@ class RawDemosaicProcessor {
         sourceWidth: Int,
         sourceHeight: Int,
         bounds: Rect,
+        targetWidth: Int,
+        targetHeight: Int,
         rotation: Int
     ): Boolean {
         if (passthroughProgram == 0 || srgbMeteringCropFramebufferId == 0) {
@@ -4871,8 +4915,6 @@ class RawDemosaicProcessor {
             )
             return false
         }
-        val targetWidth = bounds.width().coerceAtLeast(1)
-        val targetHeight = bounds.height().coerceAtLeast(1)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, srgbMeteringCropFramebufferId)
         GLES30.glViewport(0, 0, targetWidth, targetHeight)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
@@ -4962,20 +5004,6 @@ class RawDemosaicProcessor {
             ?.coerceAtLeast(RAW_TONE_MAPPED_AE_LUMA_FLOOR)
             ?: RAW_TONE_MAPPED_AE_LUMA_FLOOR
         return (ln(safeRendered.toDouble() / safeTarget.toDouble()) / ln(2.0)).toFloat()
-    }
-
-    private fun formatToneMappedRawAeSamples(samples: List<ToneMappedRawAeSample>): String {
-        return samples
-            .sortedBy { it.autoEv }
-            .joinToString(prefix = "[", postfix = "]") { sample ->
-                String.format(
-                    Locale.US,
-                    "%.3f:%.5f/%+.3f",
-                    sample.autoEv,
-                    sample.renderedMidToneLinearLuma,
-                    sample.errorEv
-                )
-            }
     }
 
     private fun renderOutputPass(
