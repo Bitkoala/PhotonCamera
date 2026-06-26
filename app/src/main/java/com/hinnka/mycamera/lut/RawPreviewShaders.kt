@@ -13,7 +13,6 @@ internal object RawPreviewShaders {
         uniform float uExposureEv;
         uniform float uBlackPoint;
         uniform float uWhitePoint;
-        uniform bool uLinearizeInput;
 
         vec3 srgbToLinear(vec3 color) {
             vec3 clampedColor = max(color, vec3(0.0));
@@ -29,9 +28,7 @@ internal object RawPreviewShaders {
 
         void main() {
             vec3 color = texture(uCameraTexture, vTexCoord).rgb;
-            if (uLinearizeInput) {
-                color = srgbToLinear(color);
-            }
+            color = srgbToLinear(color);
             float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
             float whitePoint = max(uWhitePoint, blackPoint + 0.01);
             color = max((color - vec3(blackPoint)) / (whitePoint - blackPoint), vec3(0.0));

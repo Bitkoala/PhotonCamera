@@ -20,6 +20,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.log2
 
+const val TONEMAP_MODE_NATURAL_LIGHT = "NATURAL_LIGHT"
+
 /**
  * 照片元数据
  *
@@ -177,15 +179,12 @@ data class MediaMetadata(
     val resolution: String
         get() = "${width}x${height}"
 
-    fun usesLinearPipelineToneMap(): Boolean {
-        return when (tonemapMode) {
-            "LINEAR_PIPELINE", "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3" -> true
-            else -> false
-        }
+    fun usesNaturalLightToneMap(): Boolean {
+        return tonemapMode == TONEMAP_MODE_NATURAL_LIGHT
     }
 
     fun shouldApplyNaturalLightDefaultChromaDenoise(): Boolean {
-        return usesLinearPipelineToneMap() && captureNoiseReductionLevel in LOW_HARDWARE_NOISE_REDUCTION_LEVELS
+        return usesNaturalLightToneMap() && captureNoiseReductionLevel in LOW_HARDWARE_NOISE_REDUCTION_LEVELS
     }
 
     /**

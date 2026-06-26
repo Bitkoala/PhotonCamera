@@ -483,7 +483,7 @@ class PhotoProcessor(
         input: Bitmap,
         metadata: MediaMetadata,
     ): Bitmap = withContext(Dispatchers.IO) {
-        if (!metadata.usesLinearPipelineToneMap()) return@withContext input
+        if (!metadata.usesNaturalLightToneMap()) return@withContext input
         if (shouldDecodeHlgInput(metadata)) return@withContext input
         lutImageProcessor.applyLut(
             bitmap = input,
@@ -491,8 +491,7 @@ class PhotoProcessor(
             lutConfig = null,
             colorRecipeParams = null,
             linearInputToneMap = true,
-            naturalLightInputSrgb = metadata.tonemapMode == "SRGB_ACR3" ||
-                metadata.tonemapMode == "REC709_ACR3",
+            naturalLightInputSrgb = true,
             linearInputExposureEv = metadata.rawExposureCompensation ?: 0f,
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters

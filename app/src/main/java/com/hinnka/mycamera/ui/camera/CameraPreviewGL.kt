@@ -69,7 +69,6 @@ fun CameraPreviewGL(
     videoLogProfile: VideoLogProfile = VideoLogProfile.OFF,
     isHlgInput: Boolean = false,
     naturalLightEnabled: Boolean = false,
-    fixTonemapPreview: Boolean = false,
     rawExposureCompensation: Float = 0f,
     rawBlackPointCorrection: Float = 0f,
     rawWhitePointCorrection: Float = 0f,
@@ -276,7 +275,6 @@ fun CameraPreviewGL(
                             exposureCompensation = rawExposureCompensation,
                             blackPointCorrection = rawBlackPointCorrection,
                             whitePointCorrection = rawWhitePointCorrection,
-                            linearizeInput = naturalLightEnabled || fixTonemapPreview,
                             renderingEngine = rawRenderingEngine,
                             toneMappingParameters = rawToneMappingParameters
                         )

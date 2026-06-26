@@ -200,7 +200,6 @@ class CameraGLSurfaceView @JvmOverloads constructor(
         exposureCompensation: Float,
         blackPointCorrection: Float,
         whitePointCorrection: Float,
-        linearizeInput: Boolean,
         renderingEngine: RawRenderingEngine,
         toneMappingParameters: RawToneMappingParameters
     ) {
@@ -210,7 +209,6 @@ class CameraGLSurfaceView @JvmOverloads constructor(
                 exposureCompensation = exposureCompensation,
                 blackPointCorrection = blackPointCorrection,
                 whitePointCorrection = whitePointCorrection,
-                linearizeInput = linearizeInput,
                 renderingEngine = renderingEngine,
                 toneMappingParameters = toneMappingParameters
             )

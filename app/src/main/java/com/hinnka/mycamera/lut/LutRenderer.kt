@@ -175,9 +175,6 @@ class LutRenderer : GLSurfaceView.Renderer {
     var rawPreviewWhitePointCorrection: Float = 0f
 
     @Volatile
-    var rawPreviewLinearizeInput: Boolean = false
-
-    @Volatile
     var rawPreviewRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve
 
     @Volatile
@@ -846,10 +843,6 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(program, "uWhitePoint"),
             (1f + rawPreviewWhitePointCorrection).coerceAtLeast(blackPoint + 0.01f)
-        )
-        GLES30.glUniform1i(
-            GLES30.glGetUniformLocation(program, "uLinearizeInput"),
-            if (rawPreviewLinearizeInput) 1 else 0
         )
         drawRawPreviewQuad(program)
         GlUtils.checkGlError("renderRawPreviewInputStage")
@@ -3768,7 +3761,6 @@ class LutRenderer : GLSurfaceView.Renderer {
         exposureCompensation: Float,
         blackPointCorrection: Float,
         whitePointCorrection: Float,
-        linearizeInput: Boolean,
         renderingEngine: RawRenderingEngine,
         toneMappingParameters: RawToneMappingParameters
     ) {
@@ -3776,7 +3768,6 @@ class LutRenderer : GLSurfaceView.Renderer {
         rawPreviewExposureCompensation = exposureCompensation
         rawPreviewBlackPointCorrection = blackPointCorrection
         rawPreviewWhitePointCorrection = whitePointCorrection
-        rawPreviewLinearizeInput = linearizeInput
         rawPreviewRenderingEngine = renderingEngine
         rawPreviewToneMappingParameters = toneMappingParameters
     }

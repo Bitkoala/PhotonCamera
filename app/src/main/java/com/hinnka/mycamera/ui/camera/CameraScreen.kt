@@ -208,7 +208,6 @@ fun CameraScreen(
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
     val naturalLightEnabled by viewModel.naturalLightEnabled.collectAsState()
     val naturalLightWarningShown by viewModel.naturalLightWarningShown.collectAsState()
-    val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
@@ -954,7 +953,6 @@ fun CameraScreen(
                         videoLogProfile = state.videoConfig.logProfile,
                         isHlgInput = if (hlgHardwareCompatibilityEnabled) state.isHLG else false,
                         naturalLightEnabled = naturalLightEnabled,
-                        fixTonemapPreview = fixTonemapPreview,
                         rawExposureCompensation = rawExposureCompensation,
                         rawBlackPointCorrection = rawBlackPointCorrection,
                         rawWhitePointCorrection = rawWhitePointCorrection,

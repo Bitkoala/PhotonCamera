@@ -1673,7 +1673,7 @@ object GalleryManager {
                 previewBitmap = BitmapUtils.flipHorizontal(previewBitmap)
             }
 
-            if (metadata.usesLinearPipelineToneMap()) {
+            if (metadata.usesNaturalLightToneMap()) {
                 val toneMappedPreview = photoProcessor.processCapturePreviewToneMap(previewBitmap, metadata)
                 if (toneMappedPreview !== previewBitmap && !previewBitmap.isRecycled) {
                     previewBitmap.recycle()
@@ -2489,7 +2489,7 @@ object GalleryManager {
             }
 
             var previewBitmap = result
-            if (metadata.usesLinearPipelineToneMap()) {
+            if (metadata.usesNaturalLightToneMap()) {
                 previewBitmap = photoProcessor.processCapturePreviewToneMap(result, metadata)
             }
 
