@@ -207,6 +207,7 @@ fun CameraScreen(
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
     val naturalLightEnabled by viewModel.naturalLightEnabled.collectAsState()
+    val naturalLightWarningShown by viewModel.naturalLightWarningShown.collectAsState()
     val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
@@ -1345,7 +1346,9 @@ fun CameraScreen(
             onRawToggle = { viewModel.setUseRaw(it) },
             isRawSupported = state.isRawSupported,
             useNaturalLight = naturalLightEnabled,
+            naturalLightWarningShown = naturalLightWarningShown,
             onNaturalLightToggle = { viewModel.setNaturalLightToneMapEnabled(it) },
+            onNaturalLightWarningShown = { viewModel.setNaturalLightWarningShown(true) },
             rawDcpId = rawDcpId,
             availableDcps = viewModel.availableDcps,
             rawBaselineLutId = rawBaselineLutId,

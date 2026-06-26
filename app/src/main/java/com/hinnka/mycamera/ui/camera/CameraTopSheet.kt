@@ -71,7 +71,9 @@ fun CameraTopSheet(
     onRawToggle: (Boolean) -> Unit,
     isRawSupported: Boolean,
     useNaturalLight: Boolean,
+    naturalLightWarningShown: Boolean,
     onNaturalLightToggle: (Boolean) -> Unit,
+    onNaturalLightWarningShown: () -> Unit,
     rawDcpId: String?,
     availableDcps: List<DcpInfo>,
     rawBaselineLutId: String?,
@@ -113,6 +115,44 @@ fun CameraTopSheet(
 ) {
     var expandedVideoPanel by rememberSaveable { mutableStateOf<VideoSettingPanel?>(null) }
     var showRawSheet by rememberSaveable { mutableStateOf(false) }
+    var showNaturalLightWarning by rememberSaveable { mutableStateOf(false) }
+
+    fun handleNaturalLightToggle(enabled: Boolean) {
+        if (enabled && !useNaturalLight && !naturalLightWarningShown) {
+            showNaturalLightWarning = true
+        } else {
+            onNaturalLightToggle(enabled)
+        }
+    }
+
+    if (showNaturalLightWarning) {
+        AlertDialog(
+            onDismissRequest = { showNaturalLightWarning = false },
+            title = {
+                Text(text = stringResource(R.string.natural_light_warning_title))
+            },
+            text = {
+                Text(text = stringResource(R.string.natural_light_warning_message))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showNaturalLightWarning = false
+                        onNaturalLightWarningShown()
+                        onNaturalLightToggle(true)
+                    }
+                ) {
+                    Text(text = stringResource(R.string.natural_light_warning_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNaturalLightWarning = false }) {
+                    Text(text = stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     AnimatedVisibility(
         visible = visible,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -192,7 +232,7 @@ fun CameraTopSheet(
                     if (!isRawSupported) {
                         NaturalLightQuickSetting(
                             checked = useNaturalLight,
-                            onCheckedChange = onNaturalLightToggle,
+                            onCheckedChange = ::handleNaturalLightToggle,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -207,7 +247,7 @@ fun CameraTopSheet(
                     if (isRawSupported) {
                         NaturalLightQuickSetting(
                             checked = useNaturalLight,
-                            onCheckedChange = onNaturalLightToggle,
+                            onCheckedChange = ::handleNaturalLightToggle,
                             modifier = Modifier.weight(1f)
                         )
                     }

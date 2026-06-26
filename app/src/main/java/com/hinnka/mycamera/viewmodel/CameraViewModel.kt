@@ -1089,6 +1089,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val naturalLightEnabled: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.naturalLightEnabled }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val naturalLightWarningShown: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.naturalLightWarningShown }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val fixTonemapPreview: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.fixTonemapPreview }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -5617,6 +5620,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     tonemapMode = prefs.naturalLightPreviousTonemapMode
                 )
             }
+        }
+    }
+
+    fun setNaturalLightWarningShown(shown: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveNaturalLightWarningShown(shown)
         }
     }
 

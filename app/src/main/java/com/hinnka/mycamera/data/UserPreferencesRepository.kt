@@ -170,6 +170,7 @@ data class UserPreferences(
     val tonemapMode: String = "SYSTEM_DEFAULT", // 色调映射模式
     val naturalLightEnabled: Boolean = false, // 是否启用自然光影
     val naturalLightPreviousTonemapMode: String = "SYSTEM_DEFAULT", // 自然光影关闭时恢复的色调映射模式
+    val naturalLightWarningShown: Boolean = false, // 是否已提示自然光影兼容性风险
     val fixTonemapPreview: Boolean = false, // 修复部分设备自定义色调映射预览异常
     val fixTonemapCapture: Boolean = false, // 修复部分设备自定义色调映射拍摄异常
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
@@ -356,6 +357,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val TONEMAP_MODE = stringPreferencesKey("tonemap_mode")
         private val NATURAL_LIGHT_ENABLED = booleanPreferencesKey("natural_light_enabled")
         private val NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE = stringPreferencesKey("natural_light_previous_tonemap_mode")
+        private val NATURAL_LIGHT_WARNING_SHOWN = booleanPreferencesKey("natural_light_warning_shown")
         private val FIX_TONEMAP_PREVIEW = booleanPreferencesKey("fix_tonemap_preview")
         private val FIX_TONEMAP_CAPTURE = booleanPreferencesKey("fix_tonemap_capture")
         private val APPLY_ULTRA_HDR = booleanPreferencesKey("apply_ultra_hdr")
@@ -532,6 +534,7 @@ class UserPreferencesRepository(private val context: Context) {
                 naturalLightPreviousTonemapMode = sanitizeTonemapMode(
                     preferences[NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE] ?: "SYSTEM_DEFAULT"
                 ),
+                naturalLightWarningShown = preferences[NATURAL_LIGHT_WARNING_SHOWN] ?: false,
                 fixTonemapPreview = preferences[FIX_TONEMAP_PREVIEW] ?: false,
                 fixTonemapCapture = preferences[FIX_TONEMAP_CAPTURE] ?: false,
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
@@ -1524,6 +1527,12 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences[TONEMAP_MODE] = sanitizeTonemapMode(it)
             }
             preferences[NATURAL_LIGHT_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveNaturalLightWarningShown(shown: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[NATURAL_LIGHT_WARNING_SHOWN] = shown
         }
     }
 
