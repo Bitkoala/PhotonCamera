@@ -339,6 +339,7 @@ data class CameraState(
     val droMode: String = "OFF",
     val tonemapMode: String = "SYSTEM_DEFAULT",
     val fixTonemapPreview: Boolean = false,
+    val fixTonemapCapture: Boolean = false,
     // 是否正在拍摄 Live Photo (用于 UI 动画)
     val isCapturingLivePhoto: Boolean = false,
     val applyUltraHDR: Boolean = true,

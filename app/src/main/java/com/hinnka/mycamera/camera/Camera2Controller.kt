@@ -2046,14 +2046,14 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun applyToneMapSettings(builder: CaptureRequest.Builder, state: CameraState, isCapture: Boolean) {
-        val linearizePreviewInput = state.fixTonemapPreview && !isCapture
+        val linearizeInput = if (isCapture) state.fixTonemapCapture else state.fixTonemapPreview
         val tonemapMode = sanitizeTonemapMode(state.tonemapMode)
         when (tonemapMode) {
             "SYSTEM_DEFAULT" -> applyDefaultToneMapSettings(builder, state, isCapture)
             "SRGB" -> {
                 if (availableTonemapModes.contains(CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)) {
                     builder.set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                    val srgbCurve = generateSrgbCurve(linearizePreviewInput)
+                    val srgbCurve = generateSrgbCurve(linearizeInput)
                     val curve = TonemapCurve(srgbCurve, srgbCurve, srgbCurve)
                     builder.set(CaptureRequest.TONEMAP_CURVE, curve)
                 }
@@ -2093,7 +2093,6 @@ class Camera2Controller(private val context: Context) {
         return when (mode) {
             "FAST", "HIGH_QUALITY" -> "SYSTEM_DEFAULT"
             "REC709" -> "SRGB"
-            "RAW_PREVIEW", "SRGB_ACR3", "REC709_ACR3", "LINEAR_PIPELINE" -> "SRGB"
             "SYSTEM_DEFAULT", "SRGB" -> mode
             else -> "SYSTEM_DEFAULT"
         }
@@ -2528,6 +2527,14 @@ class Camera2Controller(private val context: Context) {
             applyToneMapSettings(this, _state.value, false)
             updatePreview()
         }
+    }
+
+    /**
+     * 设置是否修复自定义色调映射拍摄异常
+     */
+    fun setFixTonemapCapture(enabled: Boolean) {
+        _state.value = _state.value.copy(fixTonemapCapture = enabled)
+        PLog.d(TAG, "修复色调映射拍摄异常: $enabled")
     }
 
     /**

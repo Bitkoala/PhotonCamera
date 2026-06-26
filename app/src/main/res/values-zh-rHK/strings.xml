@@ -211,6 +211,8 @@
     <string name="settings_tonemap_mode_natural_light">自然光影</string>
     <string name="settings_fix_tonemap_preview">修復色調映射預覽異常</string>
     <string name="settings_fix_tonemap_preview_description">部分裝置預覽已自帶 sRGB Gamma。開啟後只在預覽中先轉為線性再套用自訂色調曲線，拍攝輸出不變。</string>
+    <string name="settings_fix_tonemap_capture">修復色調映射拍攝異常</string>
+    <string name="settings_fix_tonemap_capture_description">部分裝置拍攝輸出已自帶 sRGB Gamma。開啟後會在拍攝請求中先轉為線性再套用自訂色調曲線。</string>
 
     <!-- LUT -->
     <string name="filter_intensity">濾鏡強度</string>

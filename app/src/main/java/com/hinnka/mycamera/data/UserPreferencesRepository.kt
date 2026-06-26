@@ -171,6 +171,7 @@ data class UserPreferences(
     val naturalLightEnabled: Boolean = false, // 是否启用自然光影
     val naturalLightPreviousTonemapMode: String = "SYSTEM_DEFAULT", // 自然光影关闭时恢复的色调映射模式
     val fixTonemapPreview: Boolean = false, // 修复部分设备自定义色调映射预览异常
+    val fixTonemapCapture: Boolean = false, // 修复部分设备自定义色调映射拍摄异常
     val applyUltraHDR: Boolean = false, // 是否应用 Ultra HDR 策略
     val colorSpace: ColorSpace = ColorSpace.SRGB,
     val logCurve: TransferCurve = TransferCurve.SRGB,
@@ -356,6 +357,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val NATURAL_LIGHT_ENABLED = booleanPreferencesKey("natural_light_enabled")
         private val NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE = stringPreferencesKey("natural_light_previous_tonemap_mode")
         private val FIX_TONEMAP_PREVIEW = booleanPreferencesKey("fix_tonemap_preview")
+        private val FIX_TONEMAP_CAPTURE = booleanPreferencesKey("fix_tonemap_capture")
         private val APPLY_ULTRA_HDR = booleanPreferencesKey("apply_ultra_hdr")
         private val COLOR_SPACE = stringPreferencesKey("color_space")
         private val LOG_CURVE = stringPreferencesKey("log_curve")
@@ -531,6 +533,7 @@ class UserPreferencesRepository(private val context: Context) {
                     preferences[NATURAL_LIGHT_PREVIOUS_TONEMAP_MODE] ?: "SYSTEM_DEFAULT"
                 ),
                 fixTonemapPreview = preferences[FIX_TONEMAP_PREVIEW] ?: false,
+                fixTonemapCapture = preferences[FIX_TONEMAP_CAPTURE] ?: false,
                 applyUltraHDR = preferences[APPLY_ULTRA_HDR] ?: false,
                 colorSpace = ColorSpace.valueOf(preferences[COLOR_SPACE] ?: ColorSpace.SRGB.name),
                 logCurve = TransferCurve.fromPersistedName(preferences[LOG_CURVE] ?: TransferCurve.SRGB.name),
@@ -1530,6 +1533,15 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveFixTonemapPreview(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[FIX_TONEMAP_PREVIEW] = enabled
+        }
+    }
+
+    /**
+     * 保存是否修复自定义色调映射拍摄异常
+     */
+    suspend fun saveFixTonemapCapture(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[FIX_TONEMAP_CAPTURE] = enabled
         }
     }
 

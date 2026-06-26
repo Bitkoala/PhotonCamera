@@ -1092,6 +1092,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val fixTonemapPreview: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.fixTonemapPreview }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val fixTonemapCapture: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.fixTonemapCapture }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val applyUltraHDR: StateFlow<Boolean> = userPreferencesRepository.userPreferences
         .map { it.applyUltraHDR }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -1397,6 +1400,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (currentCameraState.fixTonemapPreview != effectiveFixTonemapPreview) {
                     cameraController.setFixTonemapPreview(effectiveFixTonemapPreview)
                 }
+                val effectiveFixTonemapCapture = it.fixTonemapCapture && !it.naturalLightEnabled
+                if (currentCameraState.fixTonemapCapture != effectiveFixTonemapCapture) {
+                    cameraController.setFixTonemapCapture(effectiveFixTonemapCapture)
+                }
                 if (cameraController.state.value.meteringMode != it.meteringMode) {
                     cameraController.setMeteringMode(it.meteringMode)
                 }
@@ -1572,6 +1579,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraController.setUseLivePhoto(prefs.useLivePhoto && prefs.captureMode == CaptureMode.PHOTO)
                 cameraController.setTonemapMode(effectiveCameraTonemapMode(prefs))
                 cameraController.setFixTonemapPreview(prefs.fixTonemapPreview && !prefs.naturalLightEnabled)
+                cameraController.setFixTonemapCapture(prefs.fixTonemapCapture && !prefs.naturalLightEnabled)
 
                 // 应用保存的虚拟光圈
                 if (prefs.defaultVirtualAperture > 0f) {
@@ -5615,6 +5623,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setFixTonemapPreview(enabled: Boolean) {
         viewModelScope.launch {
             userPreferencesRepository.saveFixTonemapPreview(enabled)
+        }
+    }
+
+    fun setFixTonemapCapture(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveFixTonemapCapture(enabled)
         }
     }
 

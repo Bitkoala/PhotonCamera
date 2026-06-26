@@ -281,6 +281,7 @@ fun SettingsScreen(
     val tonemapMode by viewModel.tonemapMode.collectAsState()
     val settingsTonemapMode = remember(tonemapMode) { sanitizeSettingsTonemapMode(tonemapMode) }
     val fixTonemapPreview by viewModel.fixTonemapPreview.collectAsState()
+    val fixTonemapCapture by viewModel.fixTonemapCapture.collectAsState()
     val useGpuAcceleration by viewModel.useGpuAcceleration.collectAsState()
     val useP010 by viewModel.useP010.collectAsState()
     val useHlg10 by viewModel.useHlg10.collectAsState()
@@ -1338,6 +1339,17 @@ fun SettingsScreen(
                             onCheckedChange = { viewModel.setFixTonemapPreview(it) }
                         )
 
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_fix_tonemap_capture),
+                            description = stringResource(R.string.settings_fix_tonemap_capture_description),
+                            checked = fixTonemapCapture,
+                            onCheckedChange = { viewModel.setFixTonemapCapture(it) }
+                        )
 
                         if (state.isP010Supported) {
                             HorizontalDivider(
