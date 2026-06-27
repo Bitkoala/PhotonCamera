@@ -26,6 +26,7 @@ import android.graphics.Bitmap
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.raw.DcpInfo
+import com.hinnka.mycamera.raw.MeteringSystem
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -152,7 +153,7 @@ fun RawEditPanel(
             SliderSettingItem(
                 title = stringResource(R.string.settings_raw_exposure_compensation),
                 value = rawExposureCompensation,
-                valueRange = -2f..2f,
+                valueRange = MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV,
                 resetValue = 0f,
                 onResetValue = onRawExposureCompensationReset,
                 onValueChange = {

@@ -10,6 +10,9 @@ import kotlin.math.sqrt
  * 评价测光与场景分析系统
  */
 object MeteringSystem {
+    const val RAW_EXPOSURE_MIN_EV = -4f
+    const val RAW_EXPOSURE_MAX_EV = 4f
+
     private const val DISPLAY_TARGET_LUMA = 0.18f
     private const val LUMA_FLOOR = 0.001f
     private const val MAX_LINEAR_LUMA = 16.0f

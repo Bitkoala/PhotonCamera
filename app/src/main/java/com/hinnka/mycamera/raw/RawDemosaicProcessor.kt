@@ -172,8 +172,6 @@ class RawDemosaicProcessor {
         private const val RCD_VH_DIR_BINDING = 4
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD = 0.985f
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
-        private const val RAW_TONE_MAPPED_AE_MIN_EV = -2f
-        private const val RAW_TONE_MAPPED_AE_MAX_EV = 2f
         private const val RAW_TONE_MAPPED_AE_LUMA_FLOOR = 0.001f
         private const val RAW_TONE_MAPPED_AE_LONG_EDGE = 256
         private const val FILMIC_GREY_SOURCE = 0.1845f
@@ -1257,7 +1255,10 @@ class RawDemosaicProcessor {
                 shadows = rawShadowsAdjustment,
             )
             RawAutoAdjustments(
-                exposureCompensation = effectiveExposureCompensation.coerceIn(-2f, 2f),
+                exposureCompensation = effectiveExposureCompensation.coerceIn(
+                    MeteringSystem.RAW_EXPOSURE_MIN_EV,
+                    MeteringSystem.RAW_EXPOSURE_MAX_EV
+                ),
                 highlights = shadowsHighlightsParams.highlights,
                 shadows = shadowsHighlightsParams.shadows
             ).also { adjustments ->
@@ -4771,8 +4772,8 @@ class RawDemosaicProcessor {
                 readbackBuffer = readbackBuffer
             ) ?: return null
             val meteredEv = (-zero.errorEv).coerceIn(
-                RAW_TONE_MAPPED_AE_MIN_EV,
-                RAW_TONE_MAPPED_AE_MAX_EV
+                MeteringSystem.RAW_EXPOSURE_MIN_EV,
+                MeteringSystem.RAW_EXPOSURE_MAX_EV
             )
             val highlightCompression = viewfinderThumbnailStats.highlightCompression
             PLog.d(
@@ -4839,8 +4840,8 @@ class RawDemosaicProcessor {
         readbackBuffer: ByteBuffer
     ): ToneMappedRawAeSample? {
         val clampedAutoEv = autoEv.coerceIn(
-            RAW_TONE_MAPPED_AE_MIN_EV,
-            RAW_TONE_MAPPED_AE_MAX_EV
+            MeteringSystem.RAW_EXPOSURE_MIN_EV,
+            MeteringSystem.RAW_EXPOSURE_MAX_EV
         )
         val profileExposureUniforms = computeProfileExposureUniforms(
             metadata = metadata,
