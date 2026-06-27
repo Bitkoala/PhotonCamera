@@ -23,6 +23,7 @@ import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -42,9 +43,18 @@ import kotlin.math.sqrt
  * 所有 GPU 操作在独立单线程完成，确保 EGL 上下文线程安全
  */
 class LutImageProcessor {
+    @Volatile
+    private var glThread: Thread? = null
+
+    @Volatile
+    private var isReleased = false
+
     // 单线程调度器，确保所有 EGL 操作在同一线程
     private val glDispatcher = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "LutImageProcessor-GL").apply { isDaemon = true }
+        Thread(r, "LutImageProcessor-GL").apply {
+            isDaemon = true
+            glThread = this
+        }
     }.asCoroutineDispatcher()
 
     private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
@@ -2853,9 +2863,25 @@ class LutImageProcessor {
      * 释放资源
      */
     fun release() {
+        if (isReleased) return
+
+        if (Thread.currentThread() === glThread) {
+            releaseOnGlThread()
+        } else {
+            runBlocking(glDispatcher) {
+                releaseOnGlThread()
+            }
+        }
+
+        isReleased = true
+        glDispatcher.close()
+    }
+
+    private fun releaseOnGlThread() {
         if (!isInitialized) return
 
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+        GLES30.glFinish()
 
         if (shaderProgram != 0) {
             GLES30.glDeleteProgram(shaderProgram)
