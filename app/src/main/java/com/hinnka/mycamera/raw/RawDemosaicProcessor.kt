@@ -217,7 +217,10 @@ class RawDemosaicProcessor {
     private var sharpenProgram = 0
     private var passthroughProgram = 0
     private var hdrReferenceProgram = 0
-    private var chromaDenoiseProgram = 0
+    private var chromaDenoisePrepareProgram = 0
+    private var chromaDenoiseDecomposeProgram = 0
+    private var chromaDenoiseSynthesizeProgram = 0
+    private var chromaDenoiseComposeProgram = 0
     private var loggedShadowsHighlightsUniforms = false
 
     // RCD Compute Shader Programs
@@ -297,6 +300,10 @@ class RawDemosaicProcessor {
     private var gfFboId = intArrayOf(0, 0)
     private var gfWidth = 0
     private var gfHeight = 0
+    private val chromaDenoiseDetailTexId = IntArray(ChromaDenoiseShaders.WAVELET_BANDS)
+    private val chromaDenoiseDetailFboId = IntArray(ChromaDenoiseShaders.WAVELET_BANDS)
+    private var chromaDenoiseDetailWidth = 0
+    private var chromaDenoiseDetailHeight = 0
 
     suspend fun prewarmDepthEstimator(context: Context) = withContext(Dispatchers.Default) {
         val start = System.currentTimeMillis()
@@ -1604,7 +1611,7 @@ class RawDemosaicProcessor {
             // 初始化着色器和缓冲区
             initShaderProgram()
             if (sharpenProgram == 0 || passthroughProgram == 0 ||
-                chromaDenoiseProgram == 0 ||
+                !isChromaDenoiseReady() ||
                 rcdPopulateProgram == 0 || rcdStep1Program == 0 || rcdStep2Program == 0 ||
                 rcdStep3Program == 0 || rcdStep40Program == 0 || rcdStep41Program == 0 ||
                 rcdStep42Program == 0 || rcdStep43Program == 0 || rcdWriteOutputProgram == 0 ||
@@ -1615,7 +1622,10 @@ class RawDemosaicProcessor {
                 PLog.e(
                     TAG, "Critical shader programs failed to compile or link. " +
                             "sharpen=$sharpenProgram pass=$passthroughProgram " +
-                            "chromaDenoise=$chromaDenoiseProgram " +
+                            "chromaPrepare=$chromaDenoisePrepareProgram " +
+                            "chromaDecompose=$chromaDenoiseDecomposeProgram " +
+                            "chromaSynthesize=$chromaDenoiseSynthesizeProgram " +
+                            "chromaCompose=$chromaDenoiseComposeProgram " +
                             "populate=$rcdPopulateProgram step1=$rcdStep1Program step2=$rcdStep2Program " +
                             "step3=$rcdStep3Program step40=$rcdStep40Program step41=$rcdStep41Program " +
                             "step42=$rcdStep42Program step43=$rcdStep43Program write=$rcdWriteOutputProgram " +
@@ -1700,25 +1710,8 @@ class RawDemosaicProcessor {
         // 2.7 NLM Programs
         initNLMPrograms(vShader)
 
-        // 2.75 RAW 默认色度降噪 Program
-        val fShaderChromaDenoise =
-            compileShader(
-                GLES30.GL_FRAGMENT_SHADER,
-                ChromaDenoiseShaders.PASS_CHROMA_DENOISE,
-                "rawChromaDenoiseFragment"
-            )
-        if (vShader != 0 && fShaderChromaDenoise != 0) {
-            chromaDenoiseProgram = GLES30.glCreateProgram()
-            GLES30.glAttachShader(chromaDenoiseProgram, vShader)
-            GLES30.glAttachShader(chromaDenoiseProgram, fShaderChromaDenoise)
-            val linkStart = System.currentTimeMillis()
-            GLES30.glLinkProgram(chromaDenoiseProgram)
-            if (!logProgramLinkResult(chromaDenoiseProgram, "rawChromaDenoiseProgram", linkStart)) {
-                chromaDenoiseProgram = 0
-            }
-
-            GLES30.glDeleteShader(fShaderChromaDenoise)
-        }
+        // 2.75 RAW 默认色度降噪 Programs
+        initRawChromaDenoisePrograms(vShader)
 
         // 3. Passthrough Program
         val fShaderPass =
@@ -1748,6 +1741,54 @@ class RawDemosaicProcessor {
             TAG,
             "Shader programs created: passthrough=$passthroughProgram"
         )
+    }
+
+    private fun initRawChromaDenoisePrograms(vShader: Int) {
+        chromaDenoisePrepareProgram = createRawFragmentProgram(
+            vShader = vShader,
+            fragmentSource = ChromaDenoiseShaders.PREPARE_YCBCR,
+            label = "rawChromaDenoisePrepare"
+        )
+        chromaDenoiseDecomposeProgram = createRawFragmentProgram(
+            vShader = vShader,
+            fragmentSource = ChromaDenoiseShaders.WAVELET_DECOMPOSE,
+            label = "rawChromaDenoiseDecompose"
+        )
+        chromaDenoiseSynthesizeProgram = createRawFragmentProgram(
+            vShader = vShader,
+            fragmentSource = ChromaDenoiseShaders.WAVELET_SYNTHESIZE,
+            label = "rawChromaDenoiseSynthesize"
+        )
+        chromaDenoiseComposeProgram = createRawFragmentProgram(
+            vShader = vShader,
+            fragmentSource = ChromaDenoiseShaders.COMPOSE_RGB,
+            label = "rawChromaDenoiseCompose"
+        )
+        PLog.d(
+            TAG,
+            "RAW chroma denoise programs: prepare=$chromaDenoisePrepareProgram " +
+                    "decompose=$chromaDenoiseDecomposeProgram " +
+                    "synthesize=$chromaDenoiseSynthesizeProgram compose=$chromaDenoiseComposeProgram"
+        )
+    }
+
+    private fun createRawFragmentProgram(
+        vShader: Int,
+        fragmentSource: String,
+        label: String
+    ): Int {
+        if (vShader == 0) return 0
+        val fShader = compileShader(GLES30.GL_FRAGMENT_SHADER, fragmentSource, "${label}Fragment")
+        if (fShader == 0) return 0
+
+        val program = GLES30.glCreateProgram()
+        GLES30.glAttachShader(program, vShader)
+        GLES30.glAttachShader(program, fShader)
+        val linkStart = System.currentTimeMillis()
+        GLES30.glLinkProgram(program)
+        val linked = logProgramLinkResult(program, "${label}Program", linkStart)
+        GLES30.glDeleteShader(fShader)
+        return if (linked) program else 0
     }
 
     private fun getOrCreateCombinedProgram(colorEngine: RawRenderingEngine): Int {
@@ -2083,6 +2124,81 @@ class RawDemosaicProcessor {
         checkGlError("setupGuidedFilterFramebuffers")
     }
 
+    private fun setupChromaDenoiseResources(width: Int, height: Int) {
+        setupNLMFramebuffers(width, height)
+        if (
+            chromaDenoiseDetailWidth == width &&
+            chromaDenoiseDetailHeight == height &&
+            chromaDenoiseDetailTexId.all { it != 0 }
+        ) {
+            return
+        }
+
+        releaseChromaDenoiseDetailResources()
+        chromaDenoiseDetailWidth = width
+        chromaDenoiseDetailHeight = height
+
+        for (i in chromaDenoiseDetailTexId.indices) {
+            val texture = IntArray(1)
+            val framebuffer = IntArray(1)
+            GLES30.glGenTextures(1, texture, 0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture[0])
+            GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, width, height)
+            GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MIN_FILTER,
+                GLES30.GL_NEAREST
+            )
+            GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MAG_FILTER,
+                GLES30.GL_NEAREST
+            )
+            GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_S,
+                GLES30.GL_CLAMP_TO_EDGE
+            )
+            GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_T,
+                GLES30.GL_CLAMP_TO_EDGE
+            )
+            GLES30.glGenFramebuffers(1, framebuffer, 0)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer[0])
+            GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                texture[0],
+                0
+            )
+            val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+            if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+                PLog.e(TAG, "RAW chroma wavelet detail FBO $i incomplete: $status")
+            }
+            chromaDenoiseDetailTexId[i] = texture[0]
+            chromaDenoiseDetailFboId[i] = framebuffer[0]
+        }
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        checkGlError("setupChromaDenoiseResources")
+    }
+
+    private fun releaseChromaDenoiseDetailResources() {
+        for (i in chromaDenoiseDetailTexId.indices) {
+            if (chromaDenoiseDetailTexId[i] != 0) {
+                GLES30.glDeleteTextures(1, intArrayOf(chromaDenoiseDetailTexId[i]), 0)
+                chromaDenoiseDetailTexId[i] = 0
+            }
+            if (chromaDenoiseDetailFboId[i] != 0) {
+                GLES30.glDeleteFramebuffers(1, intArrayOf(chromaDenoiseDetailFboId[i]), 0)
+                chromaDenoiseDetailFboId[i] = 0
+            }
+        }
+        chromaDenoiseDetailWidth = 0
+        chromaDenoiseDetailHeight = 0
+    }
+
     private fun setupDenoiseProfileResources(width: Int, height: Int) {
         val pixelCount = width * height
         if (
@@ -2125,13 +2241,14 @@ class RawDemosaicProcessor {
             return sourceTextureId
         }
 
-        if (chromaDenoiseProgram == 0 || linearOutputFramebufferId == 0 || linearOutputTextureId == 0) {
+        if (!isChromaDenoiseReady() || linearOutputFramebufferId == 0 || linearOutputTextureId == 0) {
             PLog.w(
                 TAG,
                 "RAW chroma denoise program not initialized, falling back to denoiseprofile source"
             )
             return sourceTextureId
         }
+        setupChromaDenoiseResources(width, height)
 
         val profileGain =
             (metadata.iso / 100.0f * metadata.postRawSensitivityBoost).coerceAtLeast(1f)
@@ -2140,39 +2257,251 @@ class RawDemosaicProcessor {
         val identityMatrix = FloatArray(16)
         GlMatrix.setIdentityM(identityMatrix, 0)
 
-        GLES30.glUseProgram(chromaDenoiseProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearOutputFramebufferId)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(chromaDenoiseProgram, "uInputTexture"), 0)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(chromaDenoiseProgram, "uTexelSize"),
-            1.0f / width,
-            1.0f / height
+        var currentIndex = 0
+        var nextIndex = 1
+        renderRawChromaPrepare(
+            sourceTextureId,
+            gfFboId[currentIndex],
+            width,
+            height,
+            identityMatrix
         )
-        GLES30.glUniformMatrix4fv(
-            GLES30.glGetUniformLocation(chromaDenoiseProgram, "uTexMatrix"),
-            1,
-            false,
-            identityMatrix,
-            0
+
+        for (band in 0 until ChromaDenoiseShaders.WAVELET_BANDS) {
+            val scale = 1 shl band
+            val currentTextureId = gfTexId[currentIndex]
+            renderRawChromaDecompose(
+                currentTextureId,
+                chromaDenoiseDetailFboId[band],
+                width,
+                height,
+                h,
+                noiseA,
+                noiseB,
+                scale,
+                outputMode = 1,
+                texMatrix = identityMatrix
+            )
+            renderRawChromaDecompose(
+                currentTextureId,
+                gfFboId[nextIndex],
+                width,
+                height,
+                h,
+                noiseA,
+                noiseB,
+                scale,
+                outputMode = 0,
+                texMatrix = identityMatrix
+            )
+            currentIndex = nextIndex
+            nextIndex = 1 - currentIndex
+        }
+
+        for (band in ChromaDenoiseShaders.WAVELET_BANDS - 1 downTo 0) {
+            renderRawChromaSynthesize(
+                gfTexId[currentIndex],
+                chromaDenoiseDetailTexId[band],
+                gfFboId[nextIndex],
+                width,
+                height,
+                h,
+                noiseA,
+                noiseB,
+                chromaWaveletBandScale(band),
+                identityMatrix
+            )
+            currentIndex = nextIndex
+            nextIndex = 1 - currentIndex
+        }
+
+        renderRawChromaCompose(
+            originalTextureId = sourceTextureId,
+            chromaTextureId = gfTexId[currentIndex],
+            targetFboId = linearOutputFramebufferId,
+            width = width,
+            height = height,
+            h = h,
+            noiseA = noiseA,
+            noiseB = noiseB,
+            texMatrix = identityMatrix
         )
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(chromaDenoiseProgram, "uH"), h)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(chromaDenoiseProgram, "uNoiseModel"),
-            noiseA,
-            noiseB
-        )
-        drawQuad(chromaDenoiseProgram)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        checkGlError("RAW chroma denoise before denoiseprofile")
+        checkGlError("RAW chroma wavelet denoise before denoiseprofile")
+        releaseChromaDenoiseDetailResources()
 
         PLog.d(
             TAG,
-            "RAW chroma denoise before denoiseprofile: strength=$strength h=$h a=$noiseA b=$noiseB"
+            "RAW chroma wavelet denoise before denoiseprofile: strength=$strength h=$h " +
+                    "a=$noiseA b=$noiseB bands=${ChromaDenoiseShaders.WAVELET_BANDS}"
         )
         return linearOutputTextureId
+    }
+
+    private fun isChromaDenoiseReady(): Boolean {
+        return chromaDenoisePrepareProgram != 0 &&
+                chromaDenoiseDecomposeProgram != 0 &&
+                chromaDenoiseSynthesizeProgram != 0 &&
+                chromaDenoiseComposeProgram != 0
+    }
+
+    private fun renderRawChromaPrepare(
+        sourceTextureId: Int,
+        targetFboId: Int,
+        width: Int,
+        height: Int,
+        texMatrix: FloatArray
+    ) {
+        GLES30.glUseProgram(chromaDenoisePrepareProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoisePrepareProgram, "uInputTexture"),
+            0
+        )
+        setRawFragmentMatrix(chromaDenoisePrepareProgram, texMatrix)
+        drawQuad(chromaDenoisePrepareProgram)
+    }
+
+    private fun renderRawChromaDecompose(
+        sourceTextureId: Int,
+        targetFboId: Int,
+        width: Int,
+        height: Int,
+        h: Float,
+        noiseA: Float,
+        noiseB: Float,
+        scale: Int,
+        outputMode: Int,
+        texMatrix: FloatArray
+    ) {
+        GLES30.glUseProgram(chromaDenoiseDecomposeProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uInputTexture"),
+            0
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uTexelSize"),
+            1.0f / width,
+            1.0f / height
+        )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uH"), h)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uNoiseModel"),
+            noiseA,
+            noiseB
+        )
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uScale"), scale)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseDecomposeProgram, "uOutputMode"),
+            outputMode
+        )
+        setRawFragmentMatrix(chromaDenoiseDecomposeProgram, texMatrix)
+        drawQuad(chromaDenoiseDecomposeProgram)
+    }
+
+    private fun renderRawChromaSynthesize(
+        coarseTextureId: Int,
+        detailTextureId: Int,
+        targetFboId: Int,
+        width: Int,
+        height: Int,
+        h: Float,
+        noiseA: Float,
+        noiseB: Float,
+        bandScale: Float,
+        texMatrix: FloatArray
+    ) {
+        GLES30.glUseProgram(chromaDenoiseSynthesizeProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, coarseTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uCoarseTexture"),
+            0
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, detailTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uDetailTexture"),
+            1
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uTexelSize"),
+            1.0f / width,
+            1.0f / height
+        )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uH"), h)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uNoiseModel"),
+            noiseA,
+            noiseB
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(chromaDenoiseSynthesizeProgram, "uBandScale"),
+            bandScale
+        )
+        setRawFragmentMatrix(chromaDenoiseSynthesizeProgram, texMatrix)
+        drawQuad(chromaDenoiseSynthesizeProgram)
+    }
+
+    private fun renderRawChromaCompose(
+        originalTextureId: Int,
+        chromaTextureId: Int,
+        targetFboId: Int,
+        width: Int,
+        height: Int,
+        h: Float,
+        noiseA: Float,
+        noiseB: Float,
+        texMatrix: FloatArray
+    ) {
+        GLES30.glUseProgram(chromaDenoiseComposeProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, originalTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseComposeProgram, "uOriginalTexture"),
+            0
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, chromaTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(chromaDenoiseComposeProgram, "uChromaTexture"),
+            1
+        )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(chromaDenoiseComposeProgram, "uH"), h)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(chromaDenoiseComposeProgram, "uNoiseModel"),
+            noiseA,
+            noiseB
+        )
+        setRawFragmentMatrix(chromaDenoiseComposeProgram, texMatrix)
+        drawQuad(chromaDenoiseComposeProgram)
+    }
+
+    private fun setRawFragmentMatrix(program: Int, texMatrix: FloatArray) {
+        val matrixLocation = GLES30.glGetUniformLocation(program, "uTexMatrix")
+        if (matrixLocation >= 0) {
+            GLES30.glUniformMatrix4fv(matrixLocation, 1, false, texMatrix, 0)
+        }
+    }
+
+    private fun chromaWaveletBandScale(band: Int): Float {
+        return when (band) {
+            0 -> 0.58f
+            1 -> 0.82f
+            2 -> 1.08f
+            else -> 1.35f
+        }
     }
 
 
@@ -5250,7 +5579,10 @@ class RawDemosaicProcessor {
         if (sharpenProgram != 0) GLES30.glDeleteProgram(sharpenProgram)
         if (passthroughProgram != 0) GLES30.glDeleteProgram(passthroughProgram)
         if (hdrReferenceProgram != 0) GLES30.glDeleteProgram(hdrReferenceProgram)
-        if (chromaDenoiseProgram != 0) GLES30.glDeleteProgram(chromaDenoiseProgram)
+        if (chromaDenoisePrepareProgram != 0) GLES30.glDeleteProgram(chromaDenoisePrepareProgram)
+        if (chromaDenoiseDecomposeProgram != 0) GLES30.glDeleteProgram(chromaDenoiseDecomposeProgram)
+        if (chromaDenoiseSynthesizeProgram != 0) GLES30.glDeleteProgram(chromaDenoiseSynthesizeProgram)
+        if (chromaDenoiseComposeProgram != 0) GLES30.glDeleteProgram(chromaDenoiseComposeProgram)
 
         // RCD Compute Programs
         if (rcdPopulateProgram != 0) GLES31.glDeleteProgram(rcdPopulateProgram)
@@ -5279,6 +5611,7 @@ class RawDemosaicProcessor {
             if (gfTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(gfTexId[i]), 0)
             if (gfFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(gfFboId[i]), 0)
         }
+        releaseChromaDenoiseDetailResources()
         if (denoiseNlmU2BufferId != 0) {
             GLES31.glDeleteBuffers(1, intArrayOf(denoiseNlmU2BufferId), 0)
             denoiseNlmU2BufferId = 0
