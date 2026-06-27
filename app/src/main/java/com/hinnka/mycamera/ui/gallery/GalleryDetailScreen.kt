@@ -13,7 +13,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,7 +67,7 @@ import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.lut.creator.AiPhotoEvaluation
 import com.hinnka.mycamera.lut.VideoLutEffect
 import com.hinnka.mycamera.ui.camera.autoRotate
-import com.hinnka.mycamera.ui.components.CustomSliderThinThumb
+import com.hinnka.mycamera.ui.components.CustomSlider
 import com.hinnka.mycamera.ui.components.PaymentDialog
 import com.hinnka.mycamera.utils.DeviceUtil
 import com.hinnka.mycamera.utils.PLog
@@ -1246,7 +1245,7 @@ private fun HdrStrengthPanel(
                         fontSize = 9.sp
                     )
                 }
-                CustomSliderThinThumb(
+                CustomSlider(
                     value = strength,
                     onValueChange = onStrengthChange,
                     valueRange = HdrGainmapStrength.MIN..HdrGainmapStrength.MAX,

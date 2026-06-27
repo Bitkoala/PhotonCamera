@@ -5,21 +5,15 @@ import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -29,7 +23,6 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,7 +34,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -52,17 +44,15 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.request.ImageRequest
 import com.hinnka.mycamera.R
-import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.model.ColorPaletteState
 import com.hinnka.mycamera.ui.components.ColorRecipePanel
 import com.hinnka.mycamera.ui.components.CurveChannel
-import com.hinnka.mycamera.ui.components.CustomSliderThinThumb
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.ui.components.PaymentDialog
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.SolidColor
-import kotlinx.coroutines.withTimeoutOrNull
+import com.hinnka.mycamera.ui.components.CustomSlider
 import me.saket.telephoto.zoomable.ZoomSpec
 import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
 import me.saket.telephoto.zoomable.rememberZoomableImageState
@@ -385,14 +375,11 @@ fun LutSynthesisScreen(
                                                 )
                                             }
                                             Spacer(modifier = Modifier.height(4.dp))
-                                            CustomSliderThinThumb(
+                                            CustomSlider(
                                                 value = layer.weight,
                                                 onValueChange = { viewModel.updateLayerWeight(index, it) },
                                                 onDoubleTap = { viewModel.updateLayerWeight(index, 1.0f) },
                                                 valueRange = 0f..1f,
-                                                thumbWidth = 3.dp,
-                                                thumbHeight = 16.dp,
-                                                trackHeight = 3.dp,
                                                 activeTrackColor = Color.White,
                                                 inactiveTrackColor = Color.Gray.copy(alpha = 0.3f),
                                                 thumbColor = Color.White,

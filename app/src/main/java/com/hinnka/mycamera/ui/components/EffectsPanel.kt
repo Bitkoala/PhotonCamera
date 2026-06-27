@@ -203,7 +203,7 @@ fun EffectsPanel(
                     )
 
                     // 3. 滑块
-                    CustomSliderThinThumb(
+                    CustomSlider(
                         value = currentValue,
                         onValueChange = { newValue ->
                             if (abs(newValue - currentValue) > 0.05f) {
@@ -213,15 +213,14 @@ fun EffectsPanel(
                         },
                         onDoubleTap = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onParamsChange(effect.setValue(currentParams, effect.defaultValue))
+                            val resetParams = effect.setValue(currentParams, effect.defaultValue)
+                            onParamsChange(resetParams)
                         },
                         valueRange = effect.minValue..effect.maxValue,
-                        thumbWidth = 3.dp,
-                        thumbHeight = 16.dp,
-                        trackHeight = 3.dp,
                         activeTrackColor = effect.color,
                         inactiveTrackColor = Color.Gray.copy(alpha = 0.2f),
                         thumbColor = Color.White,
+                        thumbRadius = 7.dp,
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 8.dp)

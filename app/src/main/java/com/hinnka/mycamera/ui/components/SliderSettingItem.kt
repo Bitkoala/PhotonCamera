@@ -98,7 +98,7 @@ fun SliderSettingItem(
         if (shouldShowSlider) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            CustomSliderThinThumb(
+            CustomSlider(
                 value = value,
                 onValueChange = onValueChange,
                 onValueChangeFinished = onValueChangeFinished,
@@ -116,7 +116,7 @@ fun SliderSettingItem(
                             onValueChangeFinished?.invoke()
                         }
                     }
-                },
+                }
             )
         }
     }

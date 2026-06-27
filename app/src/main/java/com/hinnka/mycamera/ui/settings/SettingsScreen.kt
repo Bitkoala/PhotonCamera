@@ -337,6 +337,7 @@ fun SettingsScreen(
 
     var selectedTab by remember { mutableStateOf(SettingsTab.CAMERA) }
     var isRawSliderAdjusting by remember { mutableStateOf(false) }
+    var isSoftwareProcessingSliderAdjusting by remember { mutableStateOf(false) }
     var mainCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
     var rawHighlightsAdjustmentUi by remember { mutableStateOf(rawHighlightsAdjustment) }
@@ -344,6 +345,9 @@ fun SettingsScreen(
     var rawBlackPointCorrectionUi by remember { mutableStateOf(rawBlackPointCorrection) }
     var rawWhitePointCorrectionUi by remember { mutableStateOf(rawWhitePointCorrection) }
     var rawToneMappingParametersUi by remember { mutableStateOf(rawToneMappingParameters) }
+    var sharpeningUi by remember { mutableStateOf(sharpening) }
+    var noiseReductionUi by remember { mutableStateOf(noiseReduction) }
+    var chromaNoiseReductionUi by remember { mutableStateOf(chromaNoiseReduction) }
     var aiFocusScoreThresholdUi by remember(aiFocusScoreThreshold) { mutableStateOf(aiFocusScoreThreshold) }
     var windowScreenBrightnessUi by remember { mutableStateOf(windowScreenBrightness ?: 1f) }
     var windowScreenBrightnessEnabled by remember { mutableStateOf(windowScreenBrightness != null) }
@@ -366,6 +370,14 @@ fun SettingsScreen(
             rawBlackPointCorrectionUi = rawBlackPointCorrection
             rawWhitePointCorrectionUi = rawWhitePointCorrection
             rawToneMappingParametersUi = rawToneMappingParameters
+        }
+    }
+
+    LaunchedEffect(sharpening, noiseReduction, chromaNoiseReduction) {
+        if (!isSoftwareProcessingSliderAdjusting) {
+            sharpeningUi = sharpening
+            noiseReductionUi = noiseReduction
+            chromaNoiseReductionUi = chromaNoiseReduction
         }
     }
 
@@ -407,6 +419,13 @@ fun SettingsScreen(
         viewModel.setRawBlackPointCorrection(rawBlackPointCorrectionUi)
         viewModel.setRawWhitePointCorrection(rawWhitePointCorrectionUi)
         viewModel.setRawToneMappingParameters(rawToneMappingParametersUi)
+    }
+
+    fun commitSoftwareProcessingSliderValues() {
+        isSoftwareProcessingSliderAdjusting = false
+        viewModel.setSharpening(sharpeningUi)
+        viewModel.setNoiseReduction(noiseReductionUi)
+        viewModel.setChromaNoiseReduction(chromaNoiseReductionUi)
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1535,10 +1554,14 @@ fun SettingsScreen(
                         SliderSettingItem(
                             title = stringResource(R.string.settings_sharpening),
                             description = stringResource(R.string.settings_sharpening_description),
-                            value = sharpening,
+                            value = sharpeningUi,
                             valueRange = 0f..1f,
                             resetValue = 0f,
-                            onValueChange = { viewModel.setSharpening(it) }
+                            onValueChange = {
+                                isSoftwareProcessingSliderAdjusting = true
+                                sharpeningUi = it
+                            },
+                            onValueChangeFinished = ::commitSoftwareProcessingSliderValues
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1546,10 +1569,14 @@ fun SettingsScreen(
                         SliderSettingItem(
                             title = stringResource(R.string.settings_noise_reduction),
                             description = stringResource(R.string.settings_noise_reduction_description),
-                            value = noiseReduction,
+                            value = noiseReductionUi,
                             valueRange = 0f..1f,
                             resetValue = 0f,
-                            onValueChange = { viewModel.setNoiseReduction(it) }
+                            onValueChange = {
+                                isSoftwareProcessingSliderAdjusting = true
+                                noiseReductionUi = it
+                            },
+                            onValueChangeFinished = ::commitSoftwareProcessingSliderValues
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1557,10 +1584,14 @@ fun SettingsScreen(
                         SliderSettingItem(
                             title = stringResource(R.string.settings_chroma_noise_reduction),
                             description = stringResource(R.string.settings_chroma_noise_reduction_description),
-                            value = chromaNoiseReduction,
+                            value = chromaNoiseReductionUi,
                             valueRange = 0f..1f,
                             resetValue = 0f,
-                            onValueChange = { viewModel.setChromaNoiseReduction(it) }
+                            onValueChange = {
+                                isSoftwareProcessingSliderAdjusting = true
+                                chromaNoiseReductionUi = it
+                            },
+                            onValueChangeFinished = ::commitSoftwareProcessingSliderValues
                         )
                     }
 

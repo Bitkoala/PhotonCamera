@@ -613,14 +613,11 @@ fun ColorRecipeSlider(
             )
         }
 
-        CustomSliderThinThumb(
+        CustomSlider(
             value = value,
             onValueChange = onValueChange,
             onDoubleTap = onDoubleTap,
             valueRange = param.minValue..param.maxValue,
-            thumbWidth = 3.dp,
-            thumbHeight = 20.dp,
-            trackHeight = 3.dp,
             activeTrackColor = getParamColor(param),
             inactiveTrackColor = Color.Gray.copy(alpha = 0.3f),
             thumbColor = Color.White,

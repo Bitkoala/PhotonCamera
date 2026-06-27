@@ -26,7 +26,7 @@ import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.model.ColorPaletteState
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.ui.components.ColorRecipePanel
-import com.hinnka.mycamera.ui.components.CustomSliderThinThumb
+import com.hinnka.mycamera.ui.components.CustomSlider
 import com.hinnka.mycamera.viewmodel.LutEditViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -307,7 +307,7 @@ fun LutIntensitySlider(
             )
         }
 
-        CustomSliderThinThumb(
+        CustomSlider(
             value = intensity,
             onValueChange = onIntensityChange,
             onDoubleTap = {
@@ -315,9 +315,6 @@ fun LutIntensitySlider(
             },
             enabled = enabled,
             valueRange = 0f..1f,
-            thumbWidth = 3.dp,
-            thumbHeight = 22.dp,
-            trackHeight = 4.dp,
             activeTrackColor = Color.White,
             inactiveTrackColor = Color.Gray.copy(alpha = 0.5f),
             thumbColor = Color.White,

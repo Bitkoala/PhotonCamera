@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,8 +54,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -102,7 +99,7 @@ import com.hinnka.mycamera.frame.FrameElementDraft
 import com.hinnka.mycamera.frame.FramePosition
 import com.hinnka.mycamera.frame.LogoType
 import com.hinnka.mycamera.frame.TextType
-import com.hinnka.mycamera.ui.components.CustomSliderThinThumb
+import com.hinnka.mycamera.ui.components.CustomSlider
 import com.hinnka.mycamera.ui.theme.AccentOrange
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import kotlinx.coroutines.Dispatchers
@@ -1527,7 +1524,7 @@ private fun ColorPickerDialog(
                             fontSize = 12.sp
                         )
                     }
-                    CustomSliderThinThumb(
+                    CustomSlider(
                         value = alpha,
                         onValueChange = { alpha = it.coerceIn(0f, 1f) },
                     )

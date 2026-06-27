@@ -74,6 +74,7 @@ import com.hinnka.mycamera.data.AiFocusTargetMode
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.model.CameraPreset
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.components.*
 import com.hinnka.mycamera.utils.OrientationObserver
@@ -85,6 +86,7 @@ import com.hinnka.mycamera.video.VideoAspectRatio
 import com.hinnka.mycamera.video.VideoFpsPreset
 import com.hinnka.mycamera.video.VideoLogProfile
 import com.hinnka.mycamera.video.VideoResolutionPreset
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
@@ -103,6 +105,7 @@ enum class ActivePanel {
 private const val InitialPreviewTransitionDelayMillis = 150L
 private const val PreviewTransitionRevealDurationMillis = 800
 private const val RawCaptureTapDebounceMillis = 1000L
+private const val EffectsParamsSaveDebounceMillis = 250L
 private const val DefaultShutterSpeedNs = 1_000_000_000f / 60f
 private const val DefaultIso = 100f
 private const val DefaultAwbTemperature = 5000f
@@ -174,8 +177,12 @@ fun CameraScreen(
     val currentEffectParams by viewModel.currentEffectParams.collectAsState()
     val activePresetId by viewModel.activePresetId.collectAsState()
     val customPresets by viewModel.customPresets.collectAsState()
-    val mergedRecipeParams = remember(currentRecipeParams, currentEffectParams) {
-        currentEffectParams.applyTo(currentRecipeParams)
+    var previewEffectParamsOverride by remember { mutableStateOf<EffectParams?>(null) }
+    var pendingEffectParamsToSave by remember { mutableStateOf<EffectParams?>(null) }
+    var effectParamsSaveJob by remember { mutableStateOf<Job?>(null) }
+    val previewEffectParams = previewEffectParamsOverride ?: currentEffectParams
+    val mergedRecipeParams = remember(currentRecipeParams, previewEffectParams) {
+        previewEffectParams.applyTo(currentRecipeParams)
     }
     val currentBaselineRecipeParams by viewModel.currentBaselineRecipeParams.collectAsState()
     val categoryOrder by viewModel.categoryOrder.collectAsState(emptyList())
@@ -229,6 +236,37 @@ fun CameraScreen(
     var rawCaptureTapLocked by remember { mutableStateOf(false) }
     var baselineEditLutId by remember { mutableStateOf<String?>(null) }
     var baselineEditTarget by remember { mutableStateOf<BaselineColorCorrectionTarget?>(null) }
+
+    fun saveEffectParamsDebounced(params: EffectParams) {
+        previewEffectParamsOverride = params
+        pendingEffectParamsToSave = params
+        effectParamsSaveJob?.cancel()
+        effectParamsSaveJob = scope.launch {
+            delay(EffectsParamsSaveDebounceMillis)
+            viewModel.setEffectParams(params)
+            pendingEffectParamsToSave = null
+            effectParamsSaveJob = null
+        }
+    }
+
+    fun flushEffectParamsSave() {
+        effectParamsSaveJob?.cancel()
+        effectParamsSaveJob = null
+        pendingEffectParamsToSave?.let(viewModel::setEffectParams)
+        pendingEffectParamsToSave = null
+    }
+
+    LaunchedEffect(currentEffectParams) {
+        if (previewEffectParamsOverride == currentEffectParams) {
+            previewEffectParamsOverride = null
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            flushEffectParamsSave()
+        }
+    }
 
     // 标记相机是否已打开
     var cameraOpened by remember { mutableStateOf(false) }
@@ -1566,9 +1604,12 @@ fun CameraScreen(
 
         if (showEffectsSheet) {
             EffectsBottomSheet(
-                currentParams = currentEffectParams,
-                onParamsChange = { viewModel.setEffectParams(it) },
-                onDismiss = { showEffectsSheet = false }
+                currentParams = previewEffectParams,
+                onParamsChange = { saveEffectParamsDebounced(it) },
+                onDismiss = {
+                    flushEffectParamsSave()
+                    showEffectsSheet = false
+                }
             )
         }
 
