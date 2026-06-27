@@ -2200,13 +2200,17 @@ class Camera2Controller(private val context: Context) {
         activeRect: Rect?,
         zoomRatioRange: android.util.Range<Float>?
     ) {
-        if (zoomRatioRange != null) {
+        if (
+            _state.value.availableCameras.size > 1
+            && (zoomRatioRange == null || zoomRatioRange.lower >= 1f)
+            && activeRect != null
+        ) {
+            builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
+        } else if (zoomRatioRange != null) {
             builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoomRatio)
-            return
+        } else if (activeRect != null) {
+            builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
         }
-
-        activeRect ?: return
-        builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
     }
 
     private fun buildCenteredCropRegion(activeRect: Rect, zoomRatio: Float): Rect {
