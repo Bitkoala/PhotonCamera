@@ -277,8 +277,10 @@ object RawShaders {
             if (!uCurveEnabled || uCurveSize <= 1.0) {
                 return value;
             }
-            float clampedValue = clamp(value, 0.0, 1.0);
-            float coordX = clampedValue * ((uCurveSize - 1.0) / uCurveSize) + (0.5 / uCurveSize);
+            if (value < 0.0 || value > 1.0) {
+                return value;
+            }
+            float coordX = value * ((uCurveSize - 1.0) / uCurveSize) + (0.5 / uCurveSize);
             return texture(uCurveTexture, vec2(coordX, 0.5)).r;
         }
 
@@ -296,10 +298,9 @@ object RawShaders {
         }
 
         vec3 applyAdobeCurve(vec3 color) {
-            vec3 clipped = clamp(color, 0.0, 1.0);
-            float r = clipped.r;
-            float g = clipped.g;
-            float b = clipped.b;
+            float r = color.r;
+            float g = color.g;
+            float b = color.b;
 
             if (r >= g) {
                 if (g > b) {
@@ -323,7 +324,7 @@ object RawShaders {
                 }
             }
 
-            return clamp(vec3(r, g, b), 0.0, 1.0);
+            return vec3(r, g, b);
         }
     """.trimIndent()
 
@@ -333,20 +334,28 @@ object RawShaders {
         const float PROFILE_HIGHLIGHT_NEUTRAL_BLEND_MAX = 0.71;
         const float PROFILE_HIGHLIGHT_NEUTRAL_BLEND_POWER = 1.91;
 
-        float pinDcpValue(float value) {
+        float clampDcpTableCoordinate(float value) {
             return clamp(value, 0.0, 1.0);
         }
 
-        float encodeValue(float value, int encoding) {
-            value = pinDcpValue(value);
+        float encodeLookupValue(float value, int encoding) {
+            value = clampDcpTableCoordinate(value);
             if (encoding == 1) {
                 return linearToSrgb(vec3(value)).r;
             }
             return value;
         }
 
-        float decodeValue(float value, int encoding) {
-            value = pinDcpValue(value);
+        float encodeScaledValue(float value, int encoding) {
+            value = max(value, 0.0);
+            if (encoding == 1) {
+                return linearToSrgb(vec3(value)).r;
+            }
+            return value;
+        }
+
+        float decodeScaledValue(float value, int encoding) {
+            value = max(value, 0.0);
             if (encoding == 1) {
                 vec3 srgb = max(vec3(value), vec3(0.0));
                 bvec3 useHigh = greaterThan(srgb, vec3(0.04045));
@@ -473,20 +482,20 @@ object RawShaders {
             }
 
             vec3 hsv = rgbToDcpHsv(color);
-            vec3 tableHsv = hsv;
+            float lookupValue = hsv.z;
             float vEncoded = hsv.z;
             if (encoding == 1 && divisions.z > 1) {
-                vEncoded = encodeValue(hsv.z, encoding);
-                tableHsv.z = vEncoded;
+                vEncoded = encodeScaledValue(hsv.z, encoding);
+                lookupValue = encodeLookupValue(hsv.z, encoding);
             }
 
-            vec3 lookupHsv = vec3(tableHsv.x, tableHsv.y, pinDcpValue(tableHsv.z));
+            vec3 lookupHsv = vec3(hsv.x, hsv.y, clampDcpTableCoordinate(lookupValue));
             vec3 modify = sampleDcpMap(tableTexture, divisions, lookupHsv);
             hsv.x = mod(hsv.x + (modify.x * 6.0 / 360.0), 6.0);
-            hsv.y = pinDcpValue(hsv.y * modify.y);
-            vEncoded = pinDcpValue(vEncoded * modify.z);
+            hsv.y = clampDcpTableCoordinate(hsv.y * modify.y);
+            vEncoded = max(vEncoded * modify.z, 0.0);
             if (encoding == 1) {
-                hsv.z = decodeValue(vEncoded, encoding);
+                hsv.z = decodeScaledValue(vEncoded, encoding);
             } else {
                 hsv.z = vEncoded;
             }

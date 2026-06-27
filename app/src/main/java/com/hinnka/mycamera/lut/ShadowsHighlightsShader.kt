@@ -26,21 +26,11 @@ object ShadowsHighlightsShader {
         const float SH_LAB_EPSILON = 216.0 / 24389.0;
         const float SH_LAB_KAPPA = 24389.0 / 27.0;
         const float SH_LOW_APPROX = 0.000001;
-        const float SH_RANGE_SIGMA = 0.115;
+        const float SH_COMPRESS = 0.5;
+        const float SH_HIGHLIGHTS_COLOR_ADJUSTMENT = 0.6;
+        const float SH_SHADOWS_COLOR_ADJUSTMENT = 1.0;
+        const float SH_RANGE_SIGMA = 0.18;
         const float SH_RANGE_SIGMA2 = SH_RANGE_SIGMA * SH_RANGE_SIGMA;
-        // Negative highlights recover high-key structure: move the highlight base out of
-        // the near-white range, expand L - base detail, and keep chroma from washing out.
-        const float SH_HIGHLIGHT_START = 0.38;
-        const float SH_HIGHLIGHT_FULL = 0.78;
-        const float SH_HIGHLIGHT_RECOVERY_SHIFT = 0.12;
-        const float SH_HIGHLIGHT_BRIGHTEN_SHIFT = 0.12;
-        const float SH_HIGHLIGHT_DETAIL_GAIN = 1.15;
-        const float SH_HIGHLIGHT_CHROMA_GAIN = 0.55;
-        const float SH_SHADOW_FULL = 0.22;
-        const float SH_SHADOW_END = 0.62;
-        const float SH_SHADOW_MAX_SHIFT = 0.18;
-        const float SH_DETAIL_LIMIT = 0.22;
-        const float SH_DETAIL_GAIN_LIMIT = 2.2;
 
         float shSanitizeFloat(float value) {
             if (value != value) return 0.0;
@@ -53,6 +43,19 @@ object ShadowsHighlightsShader {
                 shSanitizeFloat(color.g),
                 shSanitizeFloat(color.b)
             );
+        }
+
+        float shSign(float value) {
+            return value < 0.0 ? -1.0 : 1.0;
+        }
+
+        float shSignedInv(float value, float signSource) {
+            float inv = abs(value) > SH_LOW_APPROX ? 1.0 / abs(value) : 1.0 / SH_LOW_APPROX;
+            return signSource < 0.0 ? -inv : inv;
+        }
+
+        float shColorCorrection(float adjustment, float signSource) {
+            return (clamp(adjustment, 0.0, 1.0) - 0.5) * shSign(signSource) + 0.5;
         }
 
         vec3 shLabF(vec3 value) {
@@ -91,7 +94,7 @@ object ShadowsHighlightsShader {
         float shTonalRangeWeight(float sampleL, float centerL) {
             float delta = sampleL - centerL;
             float bilateral = exp(-(delta * delta) / max(2.0 * SH_RANGE_SIGMA2, SH_LOW_APPROX));
-            float edgeStop = 1.0 - smoothstep(0.16, 0.32, abs(delta));
+            float edgeStop = 1.0 - smoothstep(0.20, 0.38, abs(delta));
             return bilateral * edgeStop;
         }
 
@@ -102,131 +105,88 @@ object ShadowsHighlightsShader {
             weightSum += weight;
         }
 
-        float shSampleBaseL(vec2 uv, float centerL) {
-            vec2 radiusSmall = uTexelSize * 8.0;
-            vec2 radiusMid = uTexelSize * 40.0;
-            vec2 radiusLarge = uTexelSize * 144.0;
+        vec2 shPixelOffset(float x, float y) {
+            return vec2(x * uTexelSize.x, y * uTexelSize.y);
+        }
 
-            float sum = centerL * 0.55;
-            float weightSum = 0.55;
+        void shAddBaseSamplePair(
+            vec2 uv,
+            vec2 offset,
+            float centerL,
+            float spatialWeight,
+            inout float sum,
+            inout float weightSum
+        ) {
+            shAddBaseSample(uv + offset, centerL, spatialWeight, sum, weightSum);
+            shAddBaseSample(uv - offset, centerL, spatialWeight, sum, weightSum);
+        }
 
-            shAddBaseSample(uv + vec2(radiusSmall.x, 0.0), centerL, 0.14, sum, weightSum);
-            shAddBaseSample(uv - vec2(radiusSmall.x, 0.0), centerL, 0.14, sum, weightSum);
-            shAddBaseSample(uv + vec2(0.0, radiusSmall.y), centerL, 0.14, sum, weightSum);
-            shAddBaseSample(uv - vec2(0.0, radiusSmall.y), centerL, 0.14, sum, weightSum);
-            shAddBaseSample(uv + radiusSmall, centerL, 0.09, sum, weightSum);
-            shAddBaseSample(uv - radiusSmall, centerL, 0.09, sum, weightSum);
-            shAddBaseSample(uv + vec2(radiusSmall.x, -radiusSmall.y), centerL, 0.09, sum, weightSum);
-            shAddBaseSample(uv + vec2(-radiusSmall.x, radiusSmall.y), centerL, 0.09, sum, weightSum);
+        float shSampleBaseL(vec2 uv, vec3 centerLab) {
+            float centerL = centerLab.x;
+            float sum = centerL * 0.36;
+            float weightSum = 0.36;
 
-            shAddBaseSample(uv + vec2(radiusMid.x, 0.0), centerL, 0.075, sum, weightSum);
-            shAddBaseSample(uv - vec2(radiusMid.x, 0.0), centerL, 0.075, sum, weightSum);
-            shAddBaseSample(uv + vec2(0.0, radiusMid.y), centerL, 0.075, sum, weightSum);
-            shAddBaseSample(uv - vec2(0.0, radiusMid.y), centerL, 0.075, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(3.5, 1.25), centerL, 0.105, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-1.75, 4.25), centerL, 0.105, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(5.75, -3.25), centerL, 0.09, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-4.25, -5.75), centerL, 0.09, sum, weightSum);
 
-            shAddBaseSample(uv + vec2(radiusLarge.x, 0.0), centerL, 0.035, sum, weightSum);
-            shAddBaseSample(uv - vec2(radiusLarge.x, 0.0), centerL, 0.035, sum, weightSum);
-            shAddBaseSample(uv + vec2(0.0, radiusLarge.y), centerL, 0.035, sum, weightSum);
-            shAddBaseSample(uv - vec2(0.0, radiusLarge.y), centerL, 0.035, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(12.5, 27.5), centerL, 0.06, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-30.5, 16.5), centerL, 0.055, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(39.5, -13.5), centerL, 0.05, sum, weightSum);
+
+            shAddBaseSamplePair(uv, shPixelOffset(73.5, 86.5), centerL, 0.024, sum, weightSum);
+            shAddBaseSamplePair(uv, shPixelOffset(-108.5, 47.5), centerL, 0.024, sum, weightSum);
 
             return sum / max(weightSum, 0.0001);
         }
 
-        float shSmoothUnit(float value) {
-            float t = clamp(value, 0.0, 1.0);
-            return t * t * (3.0 - 2.0 * t);
-        }
+        vec3 shOverlay(vec3 a, vec3 b, float opacity, float transform, float ccorrect) {
+            float opacity2 = opacity * opacity;
+            for (int i = 0; i < 4; i++) {
+                if (opacity2 <= 0.0) break;
 
-        float shHighlightWeight(float value) {
-            return shSmoothUnit(
-                (value - SH_HIGHLIGHT_START) / max(SH_HIGHLIGHT_FULL - SH_HIGHLIGHT_START, SH_LOW_APPROX)
-            );
-        }
+                float la = a.x;
+                float lb = (b.x - 0.5) * shSign(opacity) * shSign(1.0 - la) + 0.5;
+                lb = clamp(lb, 0.0, 1.0);
+                float lref = shSignedInv(la, la);
+                float href = shSignedInv(1.0 - la, 1.0 - la);
 
-        float shShadowWeight(float value) {
-            return shSmoothUnit(
-                (SH_SHADOW_END - value) / max(SH_SHADOW_END - SH_SHADOW_FULL, SH_LOW_APPROX)
-            );
-        }
+                float chunk = opacity2 > 1.0 ? 1.0 : opacity2;
+                float optrans = chunk * transform;
+                opacity2 -= 1.0;
 
-        float shEdgeConfidence(float baseL, float centerL) {
-            return 1.0 - smoothstep(SH_RANGE_SIGMA * 1.35, SH_RANGE_SIGMA * 2.7, abs(centerL - baseL));
-        }
+                float overL = la > 0.5
+                    ? 1.0 - (1.0 - 2.0 * (la - 0.5)) * (1.0 - lb)
+                    : 2.0 * la * lb;
+                a.x = la * (1.0 - optrans) + overL * optrans;
 
-        float shHighlightRegionMask(float baseL, float centerL) {
-            return shHighlightWeight(baseL) * shEdgeConfidence(baseL, centerL);
-        }
-
-        float shApplyHighlightBase(float baseL, float centerL, float highlights) {
-            float mask = shHighlightRegionMask(baseL, centerL);
-            if (highlights < 0.0) {
-                return baseL - (-highlights) * SH_HIGHLIGHT_RECOVERY_SHIFT * mask;
+                float chromaFactor = a.x * lref * ccorrect + (1.0 - a.x) * href * (1.0 - ccorrect);
+                a.y = a.y * (1.0 - optrans) + (a.y + b.y) * chromaFactor * optrans;
+                a.z = a.z * (1.0 - optrans) + (a.z + b.z) * chromaFactor * optrans;
             }
-
-            return baseL + highlights * SH_HIGHLIGHT_BRIGHTEN_SHIFT * mask;
-        }
-
-        float shApplyShadowBase(float baseL, float centerL, float shadows) {
-            float mask = min(shShadowWeight(baseL), shShadowWeight(centerL));
-            if (shadows > 0.0) {
-                return baseL + shadows * SH_SHADOW_MAX_SHIFT * mask;
-            }
-
-            return baseL - (-shadows) * SH_SHADOW_MAX_SHIFT * mask;
-        }
-
-        float shAdjustTone(float value, float highlights, float shadows) {
-            float adjusted = shApplyHighlightBase(value, value, highlights);
-            adjusted = shApplyShadowBase(adjusted, value, shadows);
-            return clamp(adjusted, 0.0, 1.0);
-        }
-
-        float shHighlightDetailGain(float baseL, float highlights) {
-            if (highlights >= 0.0) {
-                return 1.0;
-            }
-
-            float highMask = shHighlightWeight(baseL);
-            float targetGain = 1.0 + (-highlights) * SH_HIGHLIGHT_DETAIL_GAIN;
-            return mix(1.0, min(targetGain, SH_DETAIL_GAIN_LIMIT), highMask);
-        }
-
-        float shBoundedDetailScale(float adjustedBaseL, float detail, float targetGain) {
-            if (abs(detail) < SH_LOW_APPROX) {
-                return 1.0;
-            }
-
-            float boundScale = detail > 0.0
-                ? (1.0 - adjustedBaseL) / max(detail, SH_LOW_APPROX)
-                : adjustedBaseL / max(-detail, SH_LOW_APPROX);
-            return clamp(min(targetGain, boundScale), 0.0, targetGain);
+            return a;
         }
 
         vec3 applyShadowsHighlights(vec3 inputColor, vec2 uv) {
-            float highlights = clamp(uHighlights, -1.0, 1.0);
-            float shadows = clamp(uShadows, -1.0, 1.0);
+            float highlights = 2.0 * clamp(uHighlights, -1.0, 1.0);
+            float shadows = 2.0 * clamp(uShadows, -1.0, 1.0);
             if (abs(highlights) < 0.001 && abs(shadows) < 0.001) {
                 return inputColor;
             }
 
             vec3 lab = shRgbToLabScaled(inputColor);
-            float centerL = clamp(lab.x, 0.0, 1.0);
-            float baseL = clamp(shSampleBaseL(uv, centerL), 0.0, 1.0);
-            float detail = clamp(centerL - baseL, -SH_DETAIL_LIMIT, SH_DETAIL_LIMIT);
+            float baseL = shSampleBaseL(uv, lab);
+            vec3 maskLab = vec3(1.0 - baseL, 0.0, 0.0);
+            float compressDenom = max(1.0 - SH_COMPRESS, 0.0001);
 
-            float highlightBaseL = shApplyHighlightBase(baseL, centerL, highlights);
-            float adjustedBaseL = shApplyShadowBase(highlightBaseL, centerL, shadows);
-            adjustedBaseL = clamp(adjustedBaseL, 0.0, 1.0);
+            float highlightsXform = clamp(1.0 - maskLab.x / compressDenom, 0.0, 1.0);
+            float highlightsCcorrect = shColorCorrection(SH_HIGHLIGHTS_COLOR_ADJUSTMENT, -highlights);
+            lab = shOverlay(lab, maskLab, -highlights, highlightsXform, 1.0 - highlightsCcorrect);
 
-            float detailGain = shHighlightDetailGain(baseL, highlights);
-            float detailScale = shBoundedDetailScale(adjustedBaseL, detail, detailGain);
-            float localL = clamp(adjustedBaseL + detail * detailScale, 0.0, 1.0);
-            float directL = shAdjustTone(centerL, highlights, shadows);
-            float edgeFallback = smoothstep(SH_RANGE_SIGMA * 1.5, SH_RANGE_SIGMA * 3.0, abs(centerL - baseL));
-            lab.x = mix(localL, directL, edgeFallback);
-
-            float chromaMask = max(-highlights, 0.0) * shHighlightRegionMask(baseL, centerL);
-            lab.yz *= 1.0 + SH_HIGHLIGHT_CHROMA_GAIN * chromaMask;
+            float shadowsXform = clamp(maskLab.x / compressDenom - SH_COMPRESS / compressDenom, 0.0, 1.0);
+            float shadowsCcorrect = shColorCorrection(SH_SHADOWS_COLOR_ADJUSTMENT, shadows);
+            lab = shOverlay(lab, maskLab, shadows, shadowsXform, shadowsCcorrect);
 
             return shSanitizeColor(shLabScaledToRgb(lab));
         }
