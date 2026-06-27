@@ -210,14 +210,23 @@ class CameraDiscovery(private val context: Context) {
     }
 
     private fun getPublicCameraIds(): List<String> {
-        return try {
+        val rawIds = try {
             cameraManager.cameraIdList.toList()
         } catch (e: CameraAccessException) {
             PLog.e(TAG, "Failed to get camera ID list (CameraAccessException)", e)
-            emptyList()
+            return emptyList()
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to get camera ID list (${e.javaClass.simpleName}): ${e.message}", e)
-            emptyList()
+            return emptyList()
+        }
+
+        return rawIds.filter { cameraId ->
+            if (getCameraCharacteristicsOrNull(cameraId, "public camera list validation") != null) {
+                true
+            } else {
+                PLog.w(TAG, "Public camera ID $cameraId skipped: characteristics unavailable")
+                false
+            }
         }
     }
 
@@ -719,9 +728,25 @@ class CameraDiscovery(private val context: Context) {
     }
 
     private fun loadZoomRation(cameraId: String): Float? {
-        val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+        val characteristics = getCameraCharacteristicsOrNull(cameraId, "zoom ratio preload")
+            ?: return null
         val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING) ?: return null
         return calculateIntrinsicZoomRatio(cameraId, characteristics, lensFacing)
+    }
+
+    private fun getCameraCharacteristicsOrNull(
+        cameraId: String,
+        reason: String
+    ): CameraCharacteristics? {
+        return try {
+            cameraManager.getCameraCharacteristics(cameraId)
+        } catch (e: Exception) {
+            PLog.v(
+                TAG,
+                "Camera $cameraId characteristics unavailable during $reason: ${e.message}"
+            )
+            null
+        }
     }
 
     /**
