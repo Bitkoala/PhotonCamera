@@ -404,6 +404,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val CUSTOM_PRESETS_JSON = stringPreferencesKey("custom_presets_json")
         private val ACTIVE_PRESET_ID = stringPreferencesKey("active_preset_id")
         private val DELETED_BUILT_IN_IDS = stringPreferencesKey("deleted_built_in_ids")
+        private val CAMERA_STARTUP_DEFAULTS_RESTORED_V1 =
+            booleanPreferencesKey("camera_startup_defaults_restored_v1")
     }
 
     /**
@@ -901,6 +903,21 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[RAW_AUTO_EXPOSURE_KEY] = enabled
         }
+    }
+
+    suspend fun restoreCameraStartupDefaultsOnce(): Boolean {
+        var restored = false
+        context.dataStore.edit { preferences ->
+            if (preferences[CAMERA_STARTUP_DEFAULTS_RESTORED_V1] == true) {
+                return@edit
+            }
+            preferences[TONEMAP_MODE] = "SYSTEM_DEFAULT"
+            preferences[NATURAL_LIGHT_ENABLED] = false
+            preferences[RAW_AUTO_EXPOSURE_KEY] = true
+            preferences[CAMERA_STARTUP_DEFAULTS_RESTORED_V1] = true
+            restored = true
+        }
+        return restored
     }
 
     suspend fun saveRawHighlightsAdjustment(value: Float) {

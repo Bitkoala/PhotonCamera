@@ -1300,6 +1300,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // 监听快门声音、震动和软件处理设置
         viewModelScope.launch {
+            if (userPreferencesRepository.restoreCameraStartupDefaultsOnce()) {
+                PLog.d(TAG, "Restored camera startup defaults once")
+            }
             var firstPreferencesLogged = false
             val preferenceCollectStart = SystemClock.elapsedRealtime()
             userPreferencesRepository.userPreferences.collect {
