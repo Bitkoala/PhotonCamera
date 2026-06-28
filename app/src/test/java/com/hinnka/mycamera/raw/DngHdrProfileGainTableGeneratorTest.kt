@@ -7,45 +7,107 @@ import kotlin.math.pow
 
 class DngHdrProfileGainTableGeneratorTest {
     @Test
-    fun baselineToneCurvePreservesLowerRangeAndCompressesHighlights() {
+    fun googleHdrToneCurveMatchesEmbeddedDngSamples() {
+        val curve = DngProfileToneCurve.googleHdrToneCurvePoints()
+
+        assertEquals(514, curve.size)
+        assertEquals(0f, curve[0], 0f)
+        assertEquals(0f, curve[1], 0f)
+        assertEquals(0.104f, googleToneCurve(0.18f), 0.002f)
+        assertEquals(0.5f, googleToneCurve(0.5f), 0.0001f)
+        assertEquals(0.825f, googleToneCurve(0.75f), 0.002f)
+        assertEquals(1f, curve[curve.lastIndex - 1], 0f)
+        assertEquals(1f, curve[curve.lastIndex], 0f)
+    }
+
+    @Test
+    fun baselineToneCurveKeepsMidGrayAndReservesHighlightHeadroom() {
         val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(2f)
             ?: error("Expected baseline PGTM")
 
         assertTrue(map.isValid)
         assertToneOutputMonotonic(map)
-        assertEquals(0.18f, renderedOutputForPostBaselineSignal(map, input = 0.18f), 0.03f)
-        assertTrue(renderedOutputForPostBaselineSignal(map, input = 1f) < 0.55f)
-        assertEquals(1.12f, renderedOutputForPostBaselineSignal(map, input = 4f), 0.02f)
+        val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
+        val white = renderedOutputForPostBaselineSignal(map, input = 1f)
+        val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
+        val clippedHeadroom = renderedOutputForPostBaselineSignal(map, input = 4f)
+        val toneMappedMidGray = googleToneCurve(midGray)
+        val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
+
+        assertTrue("midGray=$midGray", midGray in 0.30f..0.36f)
+        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.25f..0.37f)
+        assertTrue("white=$white", white in 0.84f..0.92f)
+        assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.90f..0.97f)
+        assertTrue("superWhite=$superWhite", superWhite in 0.97f..1.01f)
+        assertEquals(1.12f, clippedHeadroom, 0.02f)
         assertEquals(sampleGain(map, input = 1f), map.mapInputWeights.sum(), 0.0001f)
+        assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
         assertTrue(map.mapInputWeights[4] > map.mapInputWeights[1])
     }
 
     @Test
-    fun highDynamicRangeBaselineTracksIphoneReferenceCurveShape() {
-        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(IPHONE_REFERENCE_BASELINE_EV)
-            ?: error("Expected iPhone-like baseline PGTM")
+    fun highDynamicRangeBaselineUsesConservativeHdrTargets() {
+        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(HIGH_HDR_BASELINE_EV)
+            ?: error("Expected HDR baseline PGTM")
 
         assertTrue(map.isValid)
         assertToneOutputMonotonic(map)
-        assertEquals(1.25f, sampleGainAtIndex(map, 0), 0.04f)
-        assertEquals(0.94f, sampleGainAtIndex(map, 16), 0.06f)
-        assertEquals(0.32f, sampleGainAtIndex(map, 64), 0.04f)
-        assertEquals(0.18f, sampleGainAtIndex(map, 128), 0.04f)
-        assertEquals(0.108f, sampleGainAtIndex(map, 256), 0.004f)
-        assertEquals(0.073f, tableOutputAtIndex(map, 32), 0.006f)
-        assertEquals(0.081f, tableOutputAtIndex(map, 64), 0.006f)
-        assertEquals(0.092f, tableOutputAtIndex(map, 128), 0.006f)
-        assertTrue(tableOutputSlope(map, 46, 64) > 0.035f)
-        assertTrue(tableOutputSlope(map, 64, 102) > 0.030f)
-        assertEquals(1.12f, map.mapInputWeights.sum() * 2.0f.pow(IPHONE_REFERENCE_BASELINE_EV), 0.02f)
+        val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
+        val white = renderedOutputForPostBaselineSignal(map, input = 1f)
+        val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
+        val farHighlight = renderedOutputForPostBaselineSignal(map, input = 4f)
+        val sceneMax = 1f / map.mapInputWeights.sum()
+        val toneMappedMidGray = googleToneCurve(midGray)
+        val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
+
+        assertTrue("midGray=$midGray", midGray in 0.34f..0.42f)
+        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.28f..0.38f)
+        assertTrue("white=$white", white in 0.84f..0.92f)
+        assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.90f..0.97f)
+        assertTrue("superWhite=$superWhite", superWhite in 0.97f..1.01f)
+        assertTrue("farHighlight=$farHighlight superWhite=$superWhite", farHighlight in superWhite..1.02f)
+        assertEquals(1f, renderedOutputForPostBaselineSignal(map, input = sceneMax), 0.02f)
+        assertTrue(sampleGainAtIndex(map, 0) in 2.45f..2.65f)
+        assertTrue(sampleGainAtIndex(map, 256) < 0.12f)
+        assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
+        assertEquals(1.12f, map.mapInputWeights.sum() * 2.0f.pow(HIGH_HDR_BASELINE_EV), 0.02f)
     }
 
     @Test
-    fun iphoneStyleLocalToneDodgeDarkTilesAndBurnBrightTiles() {
+    fun baselineToneCurveCanBeRegeneratedWithExistingMapTopology() {
+        val template = DngProfileGainTableMap(
+            mapPointsV = 3,
+            mapPointsH = 2,
+            mapSpacingV = 0.5,
+            mapSpacingH = 1.0,
+            mapOriginV = 0.125,
+            mapOriginH = 0.25,
+            mapPointsN = 257,
+            mapInputWeights = floatArrayOf(0.1f, 0.2f, 0.3f, 0f, 0.4f),
+            gamma = 1f,
+            gains = FloatArray(3 * 2 * 257) { 1f },
+            sourceTag = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
+        )
+
+        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposureLike(2f, template)
+            ?: error("Expected topology-matched PGTM")
+
+        assertEquals(template.mapPointsH, map.mapPointsH)
+        assertEquals(template.mapPointsV, map.mapPointsV)
+        assertEquals(template.mapSpacingH, map.mapSpacingH, 0.0)
+        assertEquals(template.mapSpacingV, map.mapSpacingV, 0.0)
+        assertEquals(template.mapOriginH, map.mapOriginH, 0.0)
+        assertEquals(template.mapOriginV, map.mapOriginV, 0.0)
+        assertEquals(template.mapPointsH * template.mapPointsV * template.mapPointsN, map.gains.size)
+        assertToneOutputMonotonic(map)
+    }
+
+    @Test
+    fun localToneMappingDodgesDarkTilesAndBurnsBrightTiles() {
         val dark = DngHdrProfileGainTableGenerator.forHdrCellStats(
             width = 1024,
             height = 768,
-            baselineExposureEv = IPHONE_REFERENCE_BASELINE_EV,
+            baselineExposureEv = HIGH_HDR_BASELINE_EV,
             packedCellStats = packedStatsFor(
                 width = 1024,
                 height = 768,
@@ -59,7 +121,7 @@ class DngHdrProfileGainTableGeneratorTest {
         val mid = DngHdrProfileGainTableGenerator.forHdrCellStats(
             width = 1024,
             height = 768,
-            baselineExposureEv = IPHONE_REFERENCE_BASELINE_EV,
+            baselineExposureEv = HIGH_HDR_BASELINE_EV,
             packedCellStats = packedStatsFor(
                 width = 1024,
                 height = 768,
@@ -73,7 +135,7 @@ class DngHdrProfileGainTableGeneratorTest {
         val bright = DngHdrProfileGainTableGenerator.forHdrCellStats(
             width = 1024,
             height = 768,
-            baselineExposureEv = IPHONE_REFERENCE_BASELINE_EV,
+            baselineExposureEv = HIGH_HDR_BASELINE_EV,
             packedCellStats = packedStatsFor(
                 width = 1024,
                 height = 768,
@@ -88,13 +150,24 @@ class DngHdrProfileGainTableGeneratorTest {
         assertToneOutputMonotonic(dark)
         assertToneOutputMonotonic(mid)
         assertToneOutputMonotonic(bright)
-        assertTrue(sampleGainAtIndex(dark, 0) > 1.55f)
-        assertTrue(sampleGainAtIndex(mid, 0) in 1.18f..1.36f)
-        assertTrue(sampleGainAtIndex(bright, 0) < 0.95f)
-        assertTrue(sampleGainAtIndex(dark, 16) > sampleGainAtIndex(mid, 16))
-        assertTrue(sampleGainAtIndex(mid, 16) > sampleGainAtIndex(bright, 16))
-        assertEquals(0.43f, sampleGainAtIndex(bright, 16), 0.08f)
-        assertEquals(0.22f, sampleGainAtIndex(bright, 64), 0.05f)
+        assertTrue(sampleGainAtIndex(dark, 0) > sampleGainAtIndex(mid, 0))
+        assertTrue(sampleGainAtIndex(mid, 0) > sampleGainAtIndex(bright, 0))
+        assertTrue(
+            renderedOutputForPostBaselineSignal(dark, input = 0.18f) >
+                renderedOutputForPostBaselineSignal(mid, input = 0.18f)
+        )
+        assertTrue(
+            renderedOutputForPostBaselineSignal(mid, input = 0.18f) >
+                renderedOutputForPostBaselineSignal(bright, input = 0.18f)
+        )
+        assertTrue(
+            renderedOutputForPostBaselineSignal(bright, input = 1f) <
+                renderedOutputForPostBaselineSignal(mid, input = 1f)
+        )
+        assertTrue(
+            renderedOutputForPostBaselineSignal(dark, input = 0.8f) >
+                renderedOutputForPostBaselineSignal(bright, input = 0.8f)
+        )
         assertEquals(sampleGainAtIndex(dark, 256), sampleGainAtIndex(bright, 256), 0.002f)
     }
 
@@ -191,23 +264,27 @@ class DngHdrProfileGainTableGeneratorTest {
         return map.gains[index.coerceIn(0, map.mapPointsN - 1)]
     }
 
-    private fun tableOutputAtIndex(map: DngProfileGainTableMap, index: Int): Float {
-        val safeIndex = index.coerceIn(0, map.mapPointsN - 1)
-        return tableInputForIndex(safeIndex, map.mapPointsN) * map.gains[safeIndex]
-    }
-
-    private fun tableOutputSlope(map: DngProfileGainTableMap, startIndex: Int, endIndex: Int): Float {
-        val start = startIndex.coerceIn(0, map.mapPointsN - 2)
-        val end = endIndex.coerceIn(start + 1, map.mapPointsN - 1)
-        val startInput = tableInputForIndex(start, map.mapPointsN)
-        val endInput = tableInputForIndex(end, map.mapPointsN)
-        return (tableOutputAtIndex(map, end) - tableOutputAtIndex(map, start)) /
-            (endInput - startInput)
-    }
-
     private fun renderedOutputForPostBaselineSignal(map: DngProfileGainTableMap, input: Float): Float {
         val tableInput = (input.coerceAtLeast(0f) * map.mapInputWeights.sum()).coerceIn(0f, 1f)
         return input * sampleGain(map, tableInput)
+    }
+
+    private fun googleToneCurve(input: Float): Float {
+        return curveSample(DngProfileToneCurve.googleHdrToneCurvePoints(), input)
+    }
+
+    private fun curveSample(points: FloatArray, input: Float): Float {
+        val x = input.coerceIn(0f, 1f)
+        var segment = 0
+        while (segment < points.size / 2 - 2 && x > points[(segment + 1) * 2]) {
+            segment++
+        }
+        val x0 = points[segment * 2]
+        val y0 = points[segment * 2 + 1]
+        val x1 = points[(segment + 1) * 2]
+        val y1 = points[(segment + 1) * 2 + 1]
+        val t = if (x1 == x0) 0f else ((x - x0) / (x1 - x0)).coerceIn(0f, 1f)
+        return y0 + (y1 - y0) * t
     }
 
     private fun tableInputForIndex(index: Int, pointCount: Int): Float {
@@ -219,6 +296,6 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     private companion object {
-        private const val IPHONE_REFERENCE_BASELINE_EV = 3.377331f
+        private const val HIGH_HDR_BASELINE_EV = 3.377331f
     }
 }

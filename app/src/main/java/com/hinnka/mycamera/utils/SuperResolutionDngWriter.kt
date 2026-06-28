@@ -6,6 +6,7 @@ import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
+import com.hinnka.mycamera.raw.DngProfileToneCurve
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import java.io.ByteArrayOutputStream
@@ -30,6 +31,8 @@ object SuperResolutionDngWriter {
     private const val TYPE_RATIONAL = 5
     private const val TYPE_UNDEFINED = 7
     private const val TYPE_SRATIONAL = 10
+    private const val TYPE_FLOAT = 11
+    private const val TYPE_DOUBLE = 12
 
     private const val TAG_NEW_SUBFILE_TYPE = 254
     private const val TAG_IMAGE_WIDTH = 256
@@ -64,12 +67,14 @@ object SuperResolutionDngWriter {
     private const val TAG_COLOR_MATRIX_2 = 50722
     private const val TAG_FORWARD_MATRIX_1 = 50964
     private const val TAG_FORWARD_MATRIX_2 = 50965
+    private const val TAG_PROFILE_TONE_CURVE = 50940
     private const val TAG_AS_SHOT_NEUTRAL = 50728
     private const val TAG_BASELINE_EXPOSURE = 50730
     private const val TAG_CALIBRATION_ILLUMINANT_1 = 50778
     private const val TAG_CALIBRATION_ILLUMINANT_2 = 50779
     private const val TAG_ACTIVE_AREA = 50829
     private const val TAG_OPCODE_LIST_2 = 51009
+    private const val TAG_NOISE_PROFILE = 51041
     private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
 
     fun write(
@@ -196,6 +201,7 @@ object SuperResolutionDngWriter {
         val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
         val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
         val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
+        val noiseProfile = buildNoiseProfile(captureResult)
         val opcodeList2 = buildOpcodeList2(
             captureResult = captureResult,
             cfaPattern = cfaPattern,
@@ -243,12 +249,16 @@ object SuperResolutionDngWriter {
             forwardMatrix2?.let { add(sRationalArray(TAG_FORWARD_MATRIX_2, colorTransformToDngMatrix(it))) }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
             add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(baselineExposureEv.toDouble())))
+            if (profileGainTableMap != null) {
+                add(floatArray(TAG_PROFILE_TONE_CURVE, DngProfileToneCurve.googleHdrToneCurvePoints()))
+            }
             add(short(TAG_CALIBRATION_ILLUMINANT_1, illuminant1))
             if (illuminant2 != null && colorMatrix2 != null) {
                 add(short(TAG_CALIBRATION_ILLUMINANT_2, illuminant2))
             }
             add(longArray(TAG_ACTIVE_AREA, longArrayOf(0, 0, height.toLong(), width.toLong())))
             opcodeList2?.let { add(undefined(TAG_OPCODE_LIST_2, it)) }
+            noiseProfile?.let { add(doubleArray(TAG_NOISE_PROFILE, it)) }
             profileGainTableMap?.let {
                 add(undefined(TAG_PROFILE_GAIN_TABLE_MAP_2, it.encodeProfileGainTableMap2(ByteOrder.LITTLE_ENDIAN)))
             }
@@ -425,6 +435,37 @@ object SuperResolutionDngWriter {
         return listOf((green / r).toDouble(), 1.0, (green / b).toDouble())
     }
 
+    private fun buildNoiseProfile(captureResult: CaptureResult): List<Double>? {
+        val profile = captureResult.get(CaptureResult.SENSOR_NOISE_PROFILE)
+            ?.takeIf { it.size >= 3 }
+            ?: return null
+        fun safePair(index: Int): Pair<Double, Double>? {
+            val pair = profile.getOrNull(index) ?: return null
+            val slope = pair.first.takeIf { it.isFinite() && it >= 0.0 } ?: return null
+            val offset = pair.second.takeIf { it.isFinite() && it >= 0.0 } ?: return null
+            return slope to offset
+        }
+        val red = safePair(0) ?: return null
+        val green = when {
+            profile.size >= 4 -> {
+                val even = safePair(1) ?: return null
+                val odd = safePair(2) ?: return null
+                ((even.first + odd.first) * 0.5) to ((even.second + odd.second) * 0.5)
+            }
+
+            else -> safePair(1) ?: return null
+        }
+        val blue = safePair(if (profile.size >= 4) 3 else 2) ?: return null
+        return listOf(
+            red.first,
+            red.second,
+            green.first,
+            green.second,
+            blue.first,
+            blue.second
+        )
+    }
+
     private fun colorTransformToDngMatrix(transform: ColorSpaceTransform): List<Double> {
         val values = ArrayList<Double>(9)
         for (row in 0 until 3) {
@@ -480,6 +521,20 @@ object SuperResolutionDngWriter {
             }
         }.toByteArray())
 
+    private fun floatArray(tag: Int, values: FloatArray): TiffEntry =
+        TiffEntry(tag, TYPE_FLOAT, values.size.toLong(), ByteArrayOutputStream().apply {
+            values.forEach { value ->
+                write(floatBytes(value.takeIf { it.isFinite() } ?: 0f))
+            }
+        }.toByteArray())
+
+    private fun doubleArray(tag: Int, values: List<Double>): TiffEntry =
+        TiffEntry(tag, TYPE_DOUBLE, values.size.toLong(), ByteArrayOutputStream().apply {
+            values.forEach { value ->
+                write(doubleBytes(value.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0))
+            }
+        }.toByteArray())
+
     private fun toUnsignedRational(value: Double): Pair<Long, Long> {
         val safe = value.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         val denominator = if (safe >= 4096.0) 1L else 1_000_000L
@@ -505,6 +560,12 @@ object SuperResolutionDngWriter {
 
     private fun intBytes(value: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
+
+    private fun floatBytes(value: Float): ByteArray =
+        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putFloat(value).array()
+
+    private fun doubleBytes(value: Double): ByteArray =
+        ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putDouble(value).array()
 
     private fun beUInt(value: Long): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt((value and 0xFFFFFFFFL).toInt()).array()

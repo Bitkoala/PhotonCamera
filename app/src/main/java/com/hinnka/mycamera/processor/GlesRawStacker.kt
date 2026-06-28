@@ -16,6 +16,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.pow
 
 class GlesRawStacker(
     private val width: Int,
@@ -544,6 +545,10 @@ class GlesRawStacker(
                 pgtmGridHeight,
             )
             GLES31.glUniform1i(GLES31.glGetUniformLocation(pgtmStatsProgram, "uCfaPattern"), cfaPattern)
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(pgtmStatsProgram, "uBaselineExposureGain"),
+                2.0f.pow(baselineExposureEv.coerceIn(0f, 8f))
+            )
             GLES31.glDispatchCompute(pgtmGridWidth, pgtmGridHeight, 1)
             GLES31.glMemoryBarrier(
                 GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT
@@ -2306,17 +2311,19 @@ class GlesRawStacker(
         private val PGTM_STATS_COMPUTE_SHADER = """
             #version 310 es
             $RAW_COMMON
-            layout(local_size_x = 8, local_size_y = 8) in;
+            layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uPackedRaw;
             uniform ivec2 uImageSize;
             uniform ivec2 uGridSize;
             uniform int uCfaPattern;
+            uniform float uBaselineExposureGain;
             layout(std430, binding = $PGTM_STATS_BUFFER_BINDING) buffer PgtmStats {
                 float stats[];
             };
 
-            const int HIST_BINS = 64;
+            const int HIST_BINS = 256;
             const int STATS_STRIDE = 8;
+            const int SAMPLE_GRID = 16;
             shared uint hist[HIST_BINS];
             shared uint sampleCount;
             shared uint highlightCount;
@@ -2365,7 +2372,7 @@ class GlesRawStacker(
                 vec3 rgb = blockRgbAt(base);
                 float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
                 float maxChannel = max(rgb.r, max(rgb.g, rgb.b));
-                return clamp((0.5 * luma + 0.5 * maxChannel) * 1.12, 0.0, 1.0);
+                return clamp((0.5 * luma + 0.5 * maxChannel) * uBaselineExposureGain, 0.0, 1.0);
             }
 
             void main() {
@@ -2394,8 +2401,8 @@ class GlesRawStacker(
 
                 int cellWidth = max(endX - startX, 2);
                 int cellHeight = max(endY - startY, 2);
-                int x = startX + ((localId.x * 2 + 1) * cellWidth) / 16;
-                int y = startY + ((localId.y * 2 + 1) * cellHeight) / 16;
+                int x = startX + ((localId.x * 2 + 1) * cellWidth) / (SAMPLE_GRID * 2);
+                int y = startY + ((localId.y * 2 + 1) * cellHeight) / (SAMPLE_GRID * 2);
                 x = clamp(x - (x & 1), startX, max(startX, endX - 2));
                 y = clamp(y - (y & 1), startY, max(startY, endY - 2));
                 float inputValue = pgtmInputAt(ivec2(x, y));

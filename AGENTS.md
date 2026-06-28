@@ -30,7 +30,7 @@
     ./gradlew buildCMakeDebug
     ```
 
-* python 脚本请使用 uv 运行和管理
+* python 脚本直接在沙箱外使用 uv 运行和管理
 
 ## 注意
 
