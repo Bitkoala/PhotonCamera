@@ -755,6 +755,7 @@ class RawDemosaicProcessor {
         val requestedColorEngine = rawRenderingEngine
         val hasDcpSelection = dcpRenderPlan != null || rawDcpId != null
         val profileWorkingColorSpace = ColorSpace.ProPhoto
+        var embeddedDngRenderPlan: DcpRenderPlan? = null
 
         if (dngFile != null) {
             val profileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)
@@ -799,6 +800,13 @@ class RawDemosaicProcessor {
                 )
             }
             actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
+            if (!hasDcpSelection) {
+                embeddedDngRenderPlan = DngEmbeddedProfile.resolveRenderPlan(
+                    file = dngFile,
+                    metadata = actualMetadata,
+                    workingColorSpace = profileWorkingColorSpace
+                )
+            }
             onMetadata?.invoke(actualMetadata)
         }
 
@@ -823,8 +831,15 @@ class RawDemosaicProcessor {
             context = context,
             providedDcpRenderPlan = dcpRenderPlan,
             rawDcpId = rawDcpId,
-            metadata = actualMetadata
+            metadata = actualMetadata,
+            embeddedDngRenderPlan = embeddedDngRenderPlan
         )
+        val profilePlanSource = when {
+            dcpRenderPlan != null -> "provided"
+            rawDcpId != null -> rawDcpId
+            resolvedDcpRenderPlan != null && embeddedDngRenderPlan != null -> "embedded-dng"
+            else -> null
+        }
         val spektrafilmLut =
             if (requestedColorEngine == RawRenderingEngine.Spektrafilm &&
                 spectralFilmStock != null && spectralFilmPrint != null
@@ -858,8 +873,7 @@ class RawDemosaicProcessor {
             dcpRenderPlan = resolvedDcpRenderPlan
         )
         logRawDcpPipeline(
-            hasDcpSelection = hasDcpSelection,
-            rawDcpId = rawDcpId,
+            profilePlanSource = profilePlanSource,
             requestedColorEngine = requestedColorEngine,
             colorEngine = colorEngine,
             dcpRenderPlan = resolvedDcpRenderPlan,
@@ -4539,14 +4553,17 @@ class RawDemosaicProcessor {
         context: Context,
         providedDcpRenderPlan: DcpRenderPlan?,
         rawDcpId: String?,
-        metadata: RawMetadata
+        metadata: RawMetadata,
+        embeddedDngRenderPlan: DcpRenderPlan? = null
     ): DcpRenderPlan? {
         providedDcpRenderPlan?.let { plan ->
             PLog.d(TAG, "Using provided RAW DCP plan: ${plan.profileName}")
             return plan
         }
 
-        val dcpId = rawDcpId ?: return null
+        val dcpId = rawDcpId ?: return embeddedDngRenderPlan?.also { plan ->
+            PLog.d(TAG, "Using embedded DNG profile plan: ${plan.profileName}")
+        }
         val dcpInfo = ContentRepository.getInstance(context).getAvailableDcps()
             .firstOrNull { it.id == dcpId }
         if (dcpInfo == null) {
@@ -4576,8 +4593,7 @@ class RawDemosaicProcessor {
     }
 
     private fun logRawDcpPipeline(
-        hasDcpSelection: Boolean,
-        rawDcpId: String?,
+        profilePlanSource: String?,
         requestedColorEngine: RawRenderingEngine,
         colorEngine: RawRenderingEngine,
         dcpRenderPlan: DcpRenderPlan?,
@@ -4587,7 +4603,7 @@ class RawDemosaicProcessor {
         useDcpToneCurve: Boolean,
         applyDcpBaselineExposureOffset: Boolean
     ) {
-        if (!hasDcpSelection) return
+        if (profilePlanSource == null) return
 
         val planSpace = dcpRenderPlan?.workingColorSpace
         if (planSpace != null && planSpace != ColorSpace.ProPhoto) {
@@ -4604,7 +4620,7 @@ class RawDemosaicProcessor {
         val matrixSource = if (dcpRenderPlan != null) "DCP" else "metadata-fallback"
         PLog.d(
             TAG,
-            "RAW DCP pipeline: id=${rawDcpId ?: "provided"} " +
+            "RAW DCP pipeline: source=$profilePlanSource " +
                 "profile=${dcpRenderPlan?.profileName ?: "none"} " +
                 "matrixSource=$matrixSource planSpace=$planSpace " +
                 "profileSpace=$profileWorkingColorSpace engineSpace=$engineWorkingColorSpace " +

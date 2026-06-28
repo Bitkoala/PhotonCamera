@@ -44,7 +44,24 @@ data class DcpToneCurve(
     val points: FloatArray
 ) {
     val isValid: Boolean
-        get() = points.size >= 4 && points.size % 2 == 0
+        get() {
+            if (points.size < 4 || points.size % 2 != 0) {
+                return false
+            }
+            var lastX = -1f
+            for (index in points.indices step 2) {
+                val x = points[index]
+                val y = points[index + 1]
+                if (!x.isFinite() || !y.isFinite() || x !in 0f..1f || y !in 0f..1f) {
+                    return false
+                }
+                if (x <= lastX) {
+                    return false
+                }
+                lastX = x
+            }
+            return true
+        }
 
     fun toLut(sampleCount: Int = 256): FloatArray {
         if (!isValid) {
@@ -146,6 +163,18 @@ object DcpProfileParser {
         }
 
         val profile = parse(filePath) ?: return null
+        return resolveRenderPlan(profile, metadata, workingColorSpace)?.also { plan ->
+            synchronized(renderPlanCache) {
+                renderPlanCache[renderPlanKey] = plan
+            }
+        }
+    }
+
+    fun resolveRenderPlan(
+        profile: DcpProfile,
+        metadata: RawMetadata,
+        workingColorSpace: ColorSpace = ColorSpace.ProPhoto
+    ): DcpRenderPlan? {
         val selectedHueSat = interpolateHueSatMap(profile, metadata)
         val selectedMatrix = computeInterpolatedCameraToXyz(profile, metadata)?.let { cameraToXyz ->
             val xyzToWorking = computeXyzD50ToGamut(workingColorSpace) ?: return@let cameraToXyz
@@ -159,11 +188,7 @@ object DcpProfileParser {
             hueSatMap = selectedHueSat,
             lookTable = profile.lookTable?.takeIf { it.isValid },
             toneCurveLut = profile.toneCurve?.takeIf { it.isValid }?.toLut()
-        ).also { plan ->
-            synchronized(renderPlanCache) {
-                renderPlanCache[renderPlanKey] = plan
-            }
-        }
+        )
     }
 
     fun prewarm(context: Context, dcpInfo: DcpInfo?) {
