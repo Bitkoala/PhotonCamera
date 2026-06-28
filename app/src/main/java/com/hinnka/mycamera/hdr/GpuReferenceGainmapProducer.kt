@@ -21,6 +21,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.ShortBuffer
 import java.util.concurrent.Executors
+import kotlin.math.pow
 import kotlin.system.measureTimeMillis
 
 class GpuReferenceGainmapProducer : GainmapProducer {
@@ -72,11 +73,13 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         config: Config,
         strength: Float,
     ): GainmapResult? {
-        val width = (sdrBase.width / DOWNSAMPLE).coerceAtLeast(1)
-        val height = (sdrBase.height / DOWNSAMPLE).coerceAtLeast(1)
-        val fullHdrRatio = (source.displayHdrSdrRatio.takeIf { it > 1f } ?: config.defaultFullHdrRatio)
+        val width = (sdrBase.width / config.downsample).coerceAtLeast(1)
+        val height = (sdrBase.height / config.downsample).coerceAtLeast(1)
+        val maxGainRatio = resolveMaxGainRatio(source.sourceKind, hdrReference, config)
+        val defaultFullHdrRatio = if (source.sourceKind == SourceKind.RAW) maxGainRatio else config.defaultFullHdrRatio
+        val fullHdrRatio = (source.displayHdrSdrRatio.takeIf { it > 1f } ?: defaultFullHdrRatio)
             .coerceAtLeast(config.minFullHdrRatio)
-            .coerceAtMost(config.maxGainRatio)
+            .coerceAtMost(maxGainRatio)
 
         val sdrUpload = prepareUploadBitmap(sdrBase)
         val hdrUpload = hdrReference?.let { prepareUploadBitmap(it) }
@@ -93,6 +96,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                 hdrTexture = hdrTexture,
                 config = config,
                 fullHdrRatio = fullHdrRatio,
+                maxGainRatio = maxGainRatio,
                 strength = strength,
             )
             renderBlurPass(
@@ -113,7 +117,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             val gainmapBitmap = readAlphaBitmap(width, height) ?: return null
             val gainmap = Gainmap(gainmapBitmap).apply {
                 setRatioMin(config.minGainRatio, config.minGainRatio, config.minGainRatio)
-                setRatioMax(config.maxGainRatio, config.maxGainRatio, config.maxGainRatio)
+                setRatioMax(maxGainRatio, maxGainRatio, maxGainRatio)
                 setGamma(1.0f, 1.0f, 1.0f)
                 setEpsilonSdr(EPSILON, EPSILON, EPSILON)
                 setEpsilonHdr(EPSILON, EPSILON, EPSILON)
@@ -140,6 +144,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         hdrTexture: Int,
         config: Config,
         fullHdrRatio: Float,
+        maxGainRatio: Float,
         strength: Float,
     ) {
         GLES30.glUseProgram(computeProgram)
@@ -155,7 +160,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(computeProgram, "uHdrTexture"), 1)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uFullHdrRatio"), fullHdrRatio)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMinGainRatio"), config.minGainRatio)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMaxGainRatio"), config.maxGainRatio)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMaxGainRatio"), maxGainRatio)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uStrength"), strength)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(computeProgram, "uHasHdrReference"), if (config.requiresHdrReference) 1 else 0)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uBaseSceneLift"), config.baseSceneLift)
@@ -164,10 +169,20 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uGlobalStart"), config.globalStart)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uGlobalEnd"), config.globalEnd)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uGlobalPower"), config.globalPower)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uDarkStart"), config.darkStart)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uDarkEnd"), config.darkEnd)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uShoulderStart"), config.shoulderStart)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uShoulderEnd"), config.shoulderEnd)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uShoulderPower"), config.shoulderPower)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uSaturationPenalty"), config.saturationPenalty)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceSceneStart"), config.referenceSceneStart)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceSceneEnd"), config.referenceSceneEnd)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceScenePower"), config.referenceScenePower)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceSceneWeight"), config.referenceSceneWeight)
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(computeProgram, "uReferenceSaturationPenalty"),
+            config.referenceSaturationPenalty
+        )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceTonalStart"), config.referenceTonalStart)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceTonalEnd"), config.referenceTonalEnd)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceHdrStart"), config.referenceHdrStart)
@@ -227,13 +242,40 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
-        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+        if (bitmap.config == Bitmap.Config.RGBA_F16) {
+            uploadHalfFloatBitmap(bitmap)
+        } else {
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+        }
         checkGlError("uploadBitmapTexture")
         return textures[0]
     }
 
+    private fun uploadHalfFloatBitmap(bitmap: Bitmap) {
+        val byteCount = bitmap.byteCount.toLong()
+        val buffer = LargeDirectBuffer.allocate(byteCount, "gainmap RGBA_F16 upload")
+            ?: throw OutOfMemoryError("Failed to allocate ${byteCount}B for RGBA_F16 upload")
+        try {
+            bitmap.copyPixelsToBuffer(buffer)
+            buffer.position(0)
+            GLES30.glTexImage2D(
+                GLES30.GL_TEXTURE_2D,
+                0,
+                GLES30.GL_RGBA16F,
+                bitmap.width,
+                bitmap.height,
+                0,
+                GLES30.GL_RGBA,
+                GLES30.GL_HALF_FLOAT,
+                buffer
+            )
+        } finally {
+            LargeDirectBuffer.free(buffer)
+        }
+    }
+
     private fun prepareUploadBitmap(bitmap: Bitmap): UploadBitmap {
-        if (bitmap.config == Bitmap.Config.ARGB_8888 && !bitmap.isRecycled) {
+        if (!bitmap.isRecycled && (bitmap.config == Bitmap.Config.ARGB_8888 || bitmap.config == Bitmap.Config.RGBA_F16)) {
             return UploadBitmap(bitmap, isTemporary = false)
         }
         bitmap.copy(Bitmap.Config.ARGB_8888, false)?.let {
@@ -400,25 +442,107 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         }
     }
 
+    private fun resolveMaxGainRatio(sourceKind: SourceKind, hdrReference: Bitmap?, config: Config): Float {
+        if (sourceKind != SourceKind.RAW) return config.maxGainRatio
+        return estimateRawMaxGainRatio(hdrReference, config.maxGainRatio)
+    }
+
+    private fun estimateRawMaxGainRatio(hdrReference: Bitmap?, upperBound: Float): Float {
+        val bitmap = hdrReference ?: return RAW_LOW_SCENE_MAX_GAIN_RATIO.coerceAtMost(upperBound)
+        if (bitmap.width <= 0 || bitmap.height <= 0 || bitmap.isRecycled) {
+            return RAW_LOW_SCENE_MAX_GAIN_RATIO.coerceAtMost(upperBound)
+        }
+
+        val sampleColumns = RAW_CAPACITY_SAMPLE_GRID.coerceAtMost(bitmap.width)
+        val sampleRows = RAW_CAPACITY_SAMPLE_GRID.coerceAtMost(bitmap.height)
+        val signals = FloatArray(sampleColumns * sampleRows)
+        var count = 0
+        var overWhiteCount = 0
+
+        for (y in 0 until sampleRows) {
+            val srcY = ((y + 0.5f) * bitmap.height / sampleRows).toInt().coerceIn(0, bitmap.height - 1)
+            for (x in 0 until sampleColumns) {
+                val srcX = ((x + 0.5f) * bitmap.width / sampleColumns).toInt().coerceIn(0, bitmap.width - 1)
+                val color = bitmap.getColor(srcX, srcY)
+                val r = color.red().coerceAtLeast(0f)
+                val g = color.green().coerceAtLeast(0f)
+                val b = color.blue().coerceAtLeast(0f)
+                val luma = 0.2627f * r + 0.6780f * g + 0.0593f * b
+                val signal = maxOf(luma, r, g, b)
+                signals[count++] = signal
+                if (signal > RAW_REFERENCE_WHITE) overWhiteCount++
+            }
+        }
+
+        if (count == 0) return RAW_LOW_SCENE_MAX_GAIN_RATIO.coerceAtMost(upperBound)
+        java.util.Arrays.sort(signals, 0, count)
+        val p90 = percentile(signals, count, 0.90f)
+        val p995 = percentile(signals, count, 0.995f)
+        val overWhiteFraction = overWhiteCount.toFloat() / count.toFloat()
+
+        val coverageWeight = gainmapSmoothstep(
+            RAW_HIGH_COVERAGE_START,
+            RAW_HIGH_COVERAGE_END,
+            overWhiteFraction
+        )
+        val headroomWeight = gainmapSmoothstep(1.0f, RAW_HIGH_CAPACITY_P995, p995)
+        val contrastWeight = gainmapSmoothstep(0.08f, 0.55f, p995 - p90)
+        val highSceneWeight = (coverageWeight * maxOf(headroomWeight, contrastWeight * 0.35f))
+            .coerceIn(0f, 1f)
+        val capacityEv = RAW_LOW_SCENE_GAIN_EV +
+            (RAW_HIGH_SCENE_GAIN_EV - RAW_LOW_SCENE_GAIN_EV) * highSceneWeight
+        val ratio = 2.0.pow(capacityEv.toDouble()).toFloat()
+        PLog.d(
+            TAG,
+            "RAW gainmap capacity fit: overWhite=$overWhiteFraction, p90=$p90, p995=$p995, weight=$highSceneWeight, ratio=$ratio"
+        )
+        return ratio.coerceIn(RAW_LOW_SCENE_MAX_GAIN_RATIO, upperBound)
+    }
+
+    private fun percentile(sortedValues: FloatArray, count: Int, percentile: Float): Float {
+        if (count <= 0) return 0f
+        val index = ((count - 1) * percentile).toInt().coerceIn(0, count - 1)
+        return sortedValues[index]
+    }
+
+    private fun gainmapSmoothstep(edge0: Float, edge1: Float, value: Float): Float {
+        if (edge0 == edge1) return if (value >= edge1) 1f else 0f
+        val t = ((value - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
     private fun configFor(sourceKind: SourceKind): Config? {
         return when (sourceKind) {
             SourceKind.RAW -> Config(
-                maxGainRatio = 4.5f,
-                defaultFullHdrRatio = 1.55f,
-                minFullHdrRatio = 1.5f,
+                maxGainRatio = RAW_HIGH_SCENE_MAX_GAIN_RATIO,
+                defaultFullHdrRatio = RAW_LOW_SCENE_MAX_GAIN_RATIO,
+                downsample = RAW_DOWNSAMPLE,
                 requiresHdrReference = true,
-                baseSceneLift = 0.045f,
-                globalSceneLift = 0.48f,
-                shoulderSceneLift = 0.40f,
+                baseSceneLift = 0.0f,
+                globalSceneLift = 0.18f,
+                shoulderSceneLift = 0.12f,
+                globalStart = 0.06f,
                 globalEnd = 0.90f,
-                shoulderStart = 0.26f,
-                shoulderPower = 1.20f,
-                referenceTonalStart = 0.03f,
+                darkStart = 0.08f,
+                darkEnd = 0.24f,
+                shoulderStart = 0.42f,
+                shoulderEnd = 0.98f,
+                shoulderPower = 1.55f,
+                saturationPenalty = 0.12f,
+                referenceSceneStart = 0.02f,
+                referenceSceneEnd = 0.50f,
+                referenceScenePower = 1.0f,
+                referenceSceneWeight = 0.92f,
+                referenceSaturationPenalty = 0.10f,
+                referenceTonalStart = 0.06f,
                 referenceTonalEnd = 0.90f,
-                referenceHdrStart = 0.42f,
-                referenceHdrEnd = 1.65f,
-                referenceDeltaEnd = 0.20f,
-                referenceExtraScale = 1.05f,
+                referenceHdrStart = 0.20f,
+                referenceHdrEnd = 0.95f,
+                referenceDeltaStart = 0.04f,
+                referenceDeltaEnd = 0.36f,
+                referenceHdrWeight = 0.55f,
+                referenceDeltaWeight = 0.45f,
+                referenceExtraScale = 0.55f,
             )
             SourceKind.HLG_CAPTURE -> Config(maxGainRatio = 3.5f, defaultFullHdrRatio = 1.45f, requiresHdrReference = true)
             SourceKind.SDR_BITMAP -> Config(
@@ -437,16 +561,24 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         val minFullHdrRatio: Float = 1.0f,
         val minDisplayRatioForHdrTransition: Float = 1.0f,
         val requiresHdrReference: Boolean,
+        val downsample: Int = DOWNSAMPLE,
         val baseSceneLift: Float = 0.035f,
         val globalSceneLift: Float = 0.4f,
         val shoulderSceneLift: Float = 0.34f,
         val globalStart: Float = 0.02f,
         val globalEnd: Float = 0.96f,
         val globalPower: Float = 0.82f,
+        val darkStart: Float = 0.0f,
+        val darkEnd: Float = 0.02f,
         val shoulderStart: Float = 0.34f,
         val shoulderEnd: Float = 1.0f,
         val shoulderPower: Float = 1.35f,
         val saturationPenalty: Float = 0.10f,
+        val referenceSceneStart: Float = 0.0f,
+        val referenceSceneEnd: Float = 1.0f,
+        val referenceScenePower: Float = 1.0f,
+        val referenceSceneWeight: Float = 0.0f,
+        val referenceSaturationPenalty: Float = 0.0f,
         val referenceTonalStart: Float = 0.05f,
         val referenceTonalEnd: Float = 0.98f,
         val referenceHdrStart: Float = 0.65f,
@@ -484,6 +616,20 @@ class GpuReferenceGainmapProducer : GainmapProducer {
     companion object {
         private const val TAG = "GpuReferenceGainmapProducer"
         private const val DOWNSAMPLE = 4
+        private const val RAW_DOWNSAMPLE = 2
+        private const val RAW_CAPACITY_SAMPLE_GRID = 48
+        private const val RAW_REFERENCE_WHITE = 1.0f
+        // Fitted from inspected Google DNGs:
+        // low scenes stay around 0.04%-0.11% over-white samples; the high-headroom scene is about 3.96%.
+        private const val RAW_HIGH_COVERAGE_START = 0.002f
+        private const val RAW_HIGH_COVERAGE_END = 0.035f
+        private const val RAW_HIGH_CAPACITY_P995 = 1.10f
+        // 2^0.681828 from low-headroom Google DNG preview gainmaps.
+        private const val RAW_LOW_SCENE_GAIN_EV = 0.681828f
+        private const val RAW_LOW_SCENE_MAX_GAIN_RATIO = 1.6033f
+        // 2^1.941732 from the high-headroom Google DNG preview gainmap.
+        private const val RAW_HIGH_SCENE_GAIN_EV = 1.941732f
+        private const val RAW_HIGH_SCENE_MAX_GAIN_RATIO = 3.8417f
         private const val EPSILON = 1e-4f
         private val VERTICES = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
         private val TEX_COORDS = floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f)
@@ -518,10 +664,17 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             uniform float uGlobalStart;
             uniform float uGlobalEnd;
             uniform float uGlobalPower;
+            uniform float uDarkStart;
+            uniform float uDarkEnd;
             uniform float uShoulderStart;
             uniform float uShoulderEnd;
             uniform float uShoulderPower;
             uniform float uSaturationPenalty;
+            uniform float uReferenceSceneStart;
+            uniform float uReferenceSceneEnd;
+            uniform float uReferenceScenePower;
+            uniform float uReferenceSceneWeight;
+            uniform float uReferenceSaturationPenalty;
             uniform float uReferenceTonalStart;
             uniform float uReferenceTonalEnd;
             uniform float uReferenceHdrStart;
@@ -568,13 +721,18 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                 float globalRamp = pow(gainmapSmoothstep(uGlobalStart, uGlobalEnd, tonalPosition), uGlobalPower);
                 float shoulderRamp = pow(gainmapSmoothstep(uShoulderStart, uShoulderEnd, maxChannel), uShoulderPower);
                 float chromaPenalty = 1.0 - saturation * uSaturationPenalty;
-                float lift = (uBaseSceneLift + uGlobalSceneLift * globalRamp + uShoulderSceneLift * shoulderRamp) * chromaPenalty;
+                float darkGate = gainmapSmoothstep(uDarkStart, uDarkEnd, tonalPosition);
+                float lift = (uBaseSceneLift + uGlobalSceneLift * globalRamp + uShoulderSceneLift * shoulderRamp) *
+                    chromaPenalty * darkGate;
                 float toneRatio = clamp(1.0 + (displayHeadroom - 1.0) * lift, 1.0, uMaxGainRatio);
 
                 float targetRatio = toneRatio;
                 if (uHasHdrReference == 1) {
                     vec3 hdr = max(texture(uHdrTexture, vTexCoord).rgb, vec3(0.0));
                     float hdrSceneLuma = max(dot(hdr, vec3(0.2627, 0.6780, 0.0593)), 0.0);
+                    float hdrMaxChannel = max(hdr.r, max(hdr.g, hdr.b));
+                    float hdrMinChannel = min(hdr.r, min(hdr.g, hdr.b));
+                    float hdrSaturation = hdrMaxChannel <= 0.0001 ? 0.0 : clamp((hdrMaxChannel - hdrMinChannel) / hdrMaxChannel, 0.0, 1.0);
                     float hdrDisplayLuma = displayLuma(hdrSceneLuma, uFullHdrRatio);
                     float referenceRatio = clamp(hdrDisplayLuma / max(sdrLuma, 0.0001), uMinGainRatio, uMaxGainRatio);
                     float referenceWeight = clamp(
@@ -587,6 +745,17 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                         1.0
                     );
                     targetRatio = toneRatio + max(referenceRatio - toneRatio, 0.0) * referenceWeight * uReferenceExtraScale;
+
+                    float referenceSignal = max(hdrSceneLuma, hdrMaxChannel);
+                    float referenceSceneLevel = pow(
+                        gainmapSmoothstep(uReferenceSceneStart, uReferenceSceneEnd, referenceSignal),
+                        uReferenceScenePower
+                    );
+                    float referenceSceneChroma = clamp(1.0 - hdrSaturation * uReferenceSaturationPenalty, 0.0, 1.0);
+                    float referenceSceneEv = log(uMaxGainRatio / uMinGainRatio) *
+                        clamp(referenceSceneLevel * referenceSceneChroma * uReferenceSceneWeight, 0.0, 1.0);
+                    float referenceSceneRatio = uMinGainRatio * exp(referenceSceneEv);
+                    targetRatio = max(targetRatio, referenceSceneRatio);
                 }
                 targetRatio = clamp(targetRatio, uMinGainRatio, uMaxGainRatio);
                 float normalizedStrength = clamp(uStrength, 0.25, 2.0);
