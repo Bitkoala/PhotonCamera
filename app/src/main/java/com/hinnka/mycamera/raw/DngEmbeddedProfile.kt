@@ -110,25 +110,22 @@ internal object DngEmbeddedProfile {
             ?.takeIf { it.size >= 3 && it.take(3).all { value -> value.isFinite() && value > 0f } }
             ?.copyOf(3)
             ?: floatArrayOf(1f, 1f, 1f)
-        val cameraCalibration1 = readMatrix(raf, ifd[TAG_CAMERA_CALIBRATION1], byteOrder)
+        var cameraCalibration1 = readMatrix(raf, ifd[TAG_CAMERA_CALIBRATION1], byteOrder)
             ?: IDENTITY_3X3
         val cameraCalibration2 = readMatrix(raf, ifd[TAG_CAMERA_CALIBRATION2], byteOrder)
             ?: IDENTITY_3X3
 
         var colorMatrix1 = readMatrix(raf, ifd[TAG_COLOR_MATRIX1], byteOrder)
-            ?.let { applyDngCameraCalibration(it, cameraCalibration1, analogBalance) }
         val colorMatrix2 = readMatrix(raf, ifd[TAG_COLOR_MATRIX2], byteOrder)
-            ?.let { applyDngCameraCalibration(it, cameraCalibration2, analogBalance) }
 
         if (colorMatrix1 == null && colorMatrix2 != null) {
             colorMatrix1 = colorMatrix2
             illuminant1 = illuminant2
+            cameraCalibration1 = cameraCalibration2
         }
 
         val forwardMatrix1 = readMatrix(raf, ifd[TAG_FORWARD_MATRIX1], byteOrder)
-            ?.let(::normalizeForwardMatrix)
         val forwardMatrix2 = readMatrix(raf, ifd[TAG_FORWARD_MATRIX2], byteOrder)
-            ?.let(::normalizeForwardMatrix)
 
         val hueSatDims = readIntegerValues(raf, ifd[TAG_PROFILE_HUE_SAT_MAP_DIMS], byteOrder)
             ?.map { it.toInt() }
@@ -196,7 +193,10 @@ internal object DngEmbeddedProfile {
             hueSatDeltas1 = hueSatDeltas1,
             hueSatDeltas2 = hueSatDeltas2,
             lookTable = lookTable,
-            toneCurve = toneCurve
+            toneCurve = toneCurve,
+            analogBalance = analogBalance,
+            cameraCalibration1 = cameraCalibration1,
+            cameraCalibration2 = cameraCalibration2
         )
     }
 
@@ -269,49 +269,6 @@ internal object DngEmbeddedProfile {
     ): FloatArray? {
         val values = readRealValues(raf, entry, byteOrder) ?: return null
         return values.takeIf { it.size == 9 && it.all { value -> value.isFinite() } }?.copyOf()
-    }
-
-    private fun applyDngCameraCalibration(
-        colorMatrix: FloatArray,
-        cameraCalibration: FloatArray,
-        analogBalance: FloatArray
-    ): FloatArray {
-        val analogMatrix = floatArrayOf(
-            analogBalance[0], 0f, 0f,
-            0f, analogBalance[1], 0f,
-            0f, 0f, analogBalance[2]
-        )
-        return multiplyMatrix3x3(multiplyMatrix3x3(analogMatrix, cameraCalibration), colorMatrix)
-    }
-
-    private fun normalizeForwardMatrix(matrix: FloatArray): FloatArray {
-        val xyz = floatArrayOf(
-            matrix[0] + matrix[1] + matrix[2],
-            matrix[3] + matrix[4] + matrix[5],
-            matrix[6] + matrix[7] + matrix[8]
-        )
-        val pcsToXyz = floatArrayOf(0.9642957f, 1.0f, 0.8251046f)
-        val result = matrix.copyOf()
-        for (row in 0 until 3) {
-            val scale = if (abs(xyz[row]) > 1e-6f) pcsToXyz[row] / xyz[row] else 1f
-            result[row * 3] *= scale
-            result[row * 3 + 1] *= scale
-            result[row * 3 + 2] *= scale
-        }
-        return result
-    }
-
-    private fun multiplyMatrix3x3(left: FloatArray, right: FloatArray): FloatArray {
-        val result = FloatArray(9)
-        for (row in 0 until 3) {
-            for (col in 0 until 3) {
-                result[row * 3 + col] =
-                    left[row * 3] * right[col] +
-                        left[row * 3 + 1] * right[3 + col] +
-                        left[row * 3 + 2] * right[6 + col]
-            }
-        }
-        return result
     }
 
     private fun readTiffByteOrder(raf: RandomAccessFile): ByteOrder? {

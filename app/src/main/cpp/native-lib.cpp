@@ -1072,14 +1072,78 @@ static bool xyToXyz(const std::array<float, 2> &xy,
 }
 
 static float xyCoordToTemperature(const std::array<float, 2> &xy) {
-  float denominator = xy[1] - 0.1858f;
-  if (std::abs(denominator) < 1e-6f) {
-    denominator = denominator < 0.0f ? -1e-6f : 1e-6f;
+  struct TempEntry {
+    double reciprocal;
+    double u;
+    double v;
+    double slope;
+  };
+  static constexpr TempEntry table[] = {
+      {0.0, 0.18006, 0.26352, -0.24341},
+      {10.0, 0.18066, 0.26589, -0.25479},
+      {20.0, 0.18133, 0.26846, -0.26876},
+      {30.0, 0.18208, 0.27119, -0.28539},
+      {40.0, 0.18293, 0.27407, -0.30470},
+      {50.0, 0.18388, 0.27709, -0.32675},
+      {60.0, 0.18494, 0.28021, -0.35156},
+      {70.0, 0.18611, 0.28342, -0.37915},
+      {80.0, 0.18740, 0.28668, -0.40955},
+      {90.0, 0.18880, 0.28997, -0.44278},
+      {100.0, 0.19032, 0.29326, -0.47888},
+      {125.0, 0.19462, 0.30141, -0.58204},
+      {150.0, 0.19962, 0.30921, -0.70471},
+      {175.0, 0.20525, 0.31647, -0.84901},
+      {200.0, 0.21142, 0.32312, -1.0182},
+      {225.0, 0.21807, 0.32909, -1.2168},
+      {250.0, 0.22511, 0.33439, -1.4512},
+      {275.0, 0.23247, 0.33904, -1.7298},
+      {300.0, 0.24010, 0.34308, -2.0637},
+      {325.0, 0.24702, 0.34655, -2.4681},
+      {350.0, 0.25591, 0.34951, -2.9641},
+      {375.0, 0.26400, 0.35200, -3.5814},
+      {400.0, 0.27218, 0.35407, -4.3633},
+      {425.0, 0.28039, 0.35577, -5.3762},
+      {450.0, 0.28863, 0.35714, -6.7262},
+      {475.0, 0.29685, 0.35823, -8.5955},
+      {500.0, 0.30505, 0.35907, -11.324},
+      {525.0, 0.31320, 0.35968, -15.628},
+      {550.0, 0.32129, 0.36011, -23.325},
+      {575.0, 0.32931, 0.36038, -40.770},
+      {600.0, 0.33724, 0.36051, -116.45},
+  };
+
+  const double denominator = 1.5 - xy[0] + 6.0 * xy[1];
+  if (!std::isfinite(denominator) || std::abs(denominator) < 1e-12) {
+    return 5000.0f;
   }
-  const float n = (xy[0] - 0.3320f) / denominator;
-  const float temp = -449.0f * n * n * n + 3525.0f * n * n -
-                     6823.3f * n + 5520.33f;
-  return std::clamp(temp, 2000.0f, 50000.0f);
+  const double u = 2.0 * xy[0] / denominator;
+  const double v = 3.0 * xy[1] / denominator;
+
+  double lastDistance = 0.0;
+  for (int index = 1; index < 31; ++index) {
+    double du = 1.0;
+    double dv = table[index].slope;
+    const double length = std::sqrt(1.0 + dv * dv);
+    du /= length;
+    dv /= length;
+
+    const double uu = u - table[index].u;
+    const double vv = v - table[index].v;
+    double distance = -uu * dv + vv * du;
+    if (distance <= 0.0 || index == 30) {
+      if (distance > 0.0) {
+        distance = 0.0;
+      }
+      const double dt = -distance;
+      const double fraction = index == 1 ? 0.0 : dt / (lastDistance + dt);
+      const double reciprocal = table[index - 1].reciprocal * fraction +
+                                table[index].reciprocal * (1.0 - fraction);
+      return std::clamp(static_cast<float>(1.0e6 / reciprocal), 1000.0f,
+                        100000.0f);
+    }
+    lastDistance = distance;
+  }
+  return 5000.0f;
 }
 
 static float calculateTemperatureInterpolationWeight(
@@ -1216,6 +1280,340 @@ static float calculateDngReferenceInterpolationWeight(
                                                    whiteXy);
   }
   return calculateRatioInterpolationWeight(illuminant1, illuminant2, wb);
+}
+
+static Matrix3x3 diagonalMatrix3x3(const std::array<float, 3> &values) {
+  Matrix3x3 result;
+  result.m[0] = values[0];
+  result.m[4] = values[1];
+  result.m[8] = values[2];
+  return result;
+}
+
+static float maxVectorEntry(const std::array<float, 3> &values) {
+  float result = values[0];
+  result = std::max(result, values[1]);
+  result = std::max(result, values[2]);
+  return std::isfinite(result) ? result : 0.0f;
+}
+
+static Matrix3x3 normalizeDngColorMatrix(Matrix3x3 matrix) {
+  static constexpr std::array<float, 3> pcsToXyz = {0.9642957f, 1.0f,
+                                                    0.8251046f};
+  const std::array<float, 3> coord = multiplyMatrixVector(matrix, pcsToXyz);
+  const float maxCoord = maxVectorEntry(coord);
+  if (maxCoord > 0.0f && (maxCoord < 0.99f || maxCoord > 1.01f)) {
+    const float scale = 1.0f / maxCoord;
+    for (float &value : matrix.m) {
+      value *= scale;
+    }
+  }
+  for (float &value : matrix.m) {
+    value = std::round(value * 10000.0f) / 10000.0f;
+  }
+  return matrix;
+}
+
+static Matrix3x3 normalizeDngForwardMatrix(Matrix3x3 matrix) {
+  static constexpr std::array<float, 3> pcsToXyz = {0.9642957f, 1.0f,
+                                                    0.8251046f};
+  for (int row = 0; row < 3; ++row) {
+    const float rowSum = matrix.m[row * 3] + matrix.m[row * 3 + 1] +
+                         matrix.m[row * 3 + 2];
+    const float scale = std::abs(rowSum) > 1e-6f ? pcsToXyz[row] / rowSum : 1.0f;
+    matrix.m[row * 3] *= scale;
+    matrix.m[row * 3 + 1] *= scale;
+    matrix.m[row * 3 + 2] *= scale;
+  }
+  return matrix;
+}
+
+static Matrix3x3 dngMapWhiteMatrix(const std::array<float, 2> &white1,
+                                   const std::array<float, 2> &white2) {
+  Matrix3x3 mb;
+  const float mbValues[9] = {0.8951f,  0.2664f, -0.1614f,
+                             -0.7502f, 1.7135f, 0.0367f,
+                             0.0389f,  -0.0685f, 1.0296f};
+  std::memcpy(mb.m, mbValues, sizeof(mbValues));
+
+  std::array<float, 3> xyz1;
+  std::array<float, 3> xyz2;
+  if (!xyToXyz(white1, xyz1) || !xyToXyz(white2, xyz2)) {
+    return Matrix3x3::identity();
+  }
+  std::array<float, 3> w1 = multiplyMatrixVector(mb, xyz1);
+  std::array<float, 3> w2 = multiplyMatrixVector(mb, xyz2);
+  for (int index = 0; index < 3; ++index) {
+    w1[index] = std::max(w1[index], 0.0f);
+    w2[index] = std::max(w2[index], 0.0f);
+  }
+
+  Matrix3x3 adaptation = diagonalMatrix3x3({
+      std::clamp(w1[0] > 0.0f ? w2[0] / w1[0] : 10.0f, 0.1f, 10.0f),
+      std::clamp(w1[1] > 0.0f ? w2[1] / w1[1] : 10.0f, 0.1f, 10.0f),
+      std::clamp(w1[2] > 0.0f ? w2[2] / w1[2] : 10.0f, 0.1f, 10.0f),
+  });
+  return mb.invert().multiply(adaptation).multiply(mb);
+}
+
+struct DngSdkPreparedColor {
+  float temperature1 = 5000.0f;
+  float temperature2 = 5000.0f;
+  Matrix3x3 colorMatrix1 = Matrix3x3::identity();
+  Matrix3x3 colorMatrix2 = Matrix3x3::identity();
+  Matrix3x3 forwardMatrix1;
+  Matrix3x3 forwardMatrix2;
+  bool hasForward1 = false;
+  bool hasForward2 = false;
+  Matrix3x3 cameraCalibration1 = Matrix3x3::identity();
+  Matrix3x3 cameraCalibration2 = Matrix3x3::identity();
+  std::array<float, 3> analogBalance = {1.0f, 1.0f, 1.0f};
+};
+
+struct DngSdkMatrixForWhite {
+  Matrix3x3 colorMatrix = Matrix3x3::identity();
+  Matrix3x3 forwardMatrix;
+  bool hasForwardMatrix = false;
+  Matrix3x3 cameraCalibration = Matrix3x3::identity();
+};
+
+static Matrix3x3 applyDngCameraCalibration(const Matrix3x3 &colorMatrix,
+                                           const Matrix3x3 &cameraCalibration,
+                                           const Matrix3x3 &analogMatrix) {
+  return analogMatrix.multiply(cameraCalibration).multiply(colorMatrix);
+}
+
+static bool prepareDngSdkColor(const Matrix3x3 &colorMatrix1, bool hasColor1,
+                               const Matrix3x3 &colorMatrix2, bool hasColor2,
+                               const Matrix3x3 &forwardMatrix1,
+                               bool hasForward1,
+                               const Matrix3x3 &forwardMatrix2,
+                               bool hasForward2, int illuminant1,
+                               int illuminant2,
+                               const Matrix3x3 &cameraCalibration1,
+                               const Matrix3x3 &cameraCalibration2,
+                               const std::array<float, 3> &analogBalance,
+                               DngSdkPreparedColor &prepared) {
+  Matrix3x3 matrix1 = colorMatrix1;
+  Matrix3x3 matrix2 = colorMatrix2;
+  int ill1 = illuminant1;
+  int ill2 = illuminant2;
+  bool validColor1 = hasColor1;
+  bool validColor2 = hasColor2;
+  Matrix3x3 calibration1 = cameraCalibration1;
+  Matrix3x3 calibration2 = cameraCalibration2;
+
+  if (!validColor1 && validColor2) {
+    matrix1 = matrix2;
+    calibration1 = calibration2;
+    ill1 = ill2;
+    validColor1 = true;
+    validColor2 = false;
+  }
+  if (!validColor1) {
+    return false;
+  }
+
+  const Matrix3x3 analogMatrix = diagonalMatrix3x3(analogBalance);
+  prepared.analogBalance = analogBalance;
+  prepared.temperature1 = illuminantToTemp(ill1);
+  prepared.temperature2 = illuminantToTemp(ill2);
+  prepared.colorMatrix1 =
+      applyDngCameraCalibration(normalizeDngColorMatrix(matrix1), calibration1,
+                                analogMatrix);
+  prepared.cameraCalibration1 = calibration1;
+  prepared.forwardMatrix1 = normalizeDngForwardMatrix(forwardMatrix1);
+  prepared.hasForward1 = hasForward1;
+
+  if (!validColor2 || prepared.temperature1 <= 0.0f ||
+      prepared.temperature2 <= 0.0f ||
+      std::abs(prepared.temperature1 - prepared.temperature2) < 1e-6f) {
+    prepared.temperature1 = 5000.0f;
+    prepared.temperature2 = 5000.0f;
+    prepared.colorMatrix2 = prepared.colorMatrix1;
+    prepared.forwardMatrix2 = prepared.forwardMatrix1;
+    prepared.hasForward2 = prepared.hasForward1;
+    prepared.cameraCalibration2 = prepared.cameraCalibration1;
+    return true;
+  }
+
+  prepared.colorMatrix2 =
+      applyDngCameraCalibration(normalizeDngColorMatrix(matrix2), calibration2,
+                                analogMatrix);
+  prepared.cameraCalibration2 = calibration2;
+  prepared.forwardMatrix2 = normalizeDngForwardMatrix(forwardMatrix2);
+  prepared.hasForward2 = hasForward2;
+
+  if (prepared.temperature1 > prepared.temperature2) {
+    std::swap(prepared.temperature1, prepared.temperature2);
+    std::swap(prepared.colorMatrix1, prepared.colorMatrix2);
+    std::swap(prepared.forwardMatrix1, prepared.forwardMatrix2);
+    std::swap(prepared.hasForward1, prepared.hasForward2);
+    std::swap(prepared.cameraCalibration1, prepared.cameraCalibration2);
+  }
+  return true;
+}
+
+static DngSdkMatrixForWhite
+dngSdkFindXyzToCamera(const DngSdkPreparedColor &prepared,
+                      const std::array<float, 2> &whiteXy) {
+  const float whiteTemperature = xyCoordToTemperature(whiteXy);
+  float weight;
+  if (whiteTemperature <= prepared.temperature1) {
+    weight = 1.0f;
+  } else if (whiteTemperature >= prepared.temperature2) {
+    weight = 0.0f;
+  } else if (std::abs(prepared.temperature1 - prepared.temperature2) < 1e-6f) {
+    weight = 1.0f;
+  } else {
+    const float invWhite = 1.0f / whiteTemperature;
+    weight = (invWhite - (1.0f / prepared.temperature2)) /
+             ((1.0f / prepared.temperature1) -
+              (1.0f / prepared.temperature2));
+    weight = std::clamp(weight, 0.0f, 1.0f);
+  }
+
+  DngSdkMatrixForWhite result;
+  result.colorMatrix =
+      interpolateMatrix(prepared.colorMatrix1, prepared.colorMatrix2, weight);
+  result.cameraCalibration = interpolateMatrix(prepared.cameraCalibration1,
+                                               prepared.cameraCalibration2,
+                                               weight);
+  if (prepared.hasForward1 && prepared.hasForward2) {
+    result.forwardMatrix =
+        interpolateMatrix(prepared.forwardMatrix1, prepared.forwardMatrix2,
+                          weight);
+    result.hasForwardMatrix = true;
+  } else if (prepared.hasForward1) {
+    result.forwardMatrix = prepared.forwardMatrix1;
+    result.hasForwardMatrix = true;
+  } else if (prepared.hasForward2) {
+    result.forwardMatrix = prepared.forwardMatrix2;
+    result.hasForwardMatrix = true;
+  }
+  return result;
+}
+
+static bool dngSdkNeutralToXy(const DngSdkPreparedColor &prepared,
+                              const std::array<float, 3> &neutral,
+                              std::array<float, 2> &whiteXy) {
+  std::array<float, 2> lastXy = {0.3457f, 0.3585f};
+  for (int pass = 0; pass < 30; ++pass) {
+    const DngSdkMatrixForWhite matrices =
+        dngSdkFindXyzToCamera(prepared, lastXy);
+    const Matrix3x3 cameraToXyz = matrices.colorMatrix.invert();
+    const std::array<float, 3> nextXyz =
+        multiplyMatrixVector(cameraToXyz, neutral);
+    std::array<float, 2> nextXy;
+    if (!xyzToXy(nextXyz, nextXy)) {
+      return false;
+    }
+    if (std::abs(nextXy[0] - lastXy[0]) +
+            std::abs(nextXy[1] - lastXy[1]) <
+        1e-7f) {
+      whiteXy = nextXy;
+      return true;
+    }
+    if (pass == 29) {
+      whiteXy = {(lastXy[0] + nextXy[0]) * 0.5f,
+                 (lastXy[1] + nextXy[1]) * 0.5f};
+      return true;
+    }
+    lastXy = nextXy;
+  }
+  whiteXy = lastXy;
+  return true;
+}
+
+static bool dngSdkCameraToPcsForWhite(const DngSdkPreparedColor &prepared,
+                                      const std::array<float, 2> &whiteXy,
+                                      Matrix3x3 &cameraToPcs) {
+  static constexpr std::array<float, 2> d50Xy = {0.3457f, 0.3585f};
+  static constexpr std::array<float, 3> pcsToXyz = {0.9642957f, 1.0f,
+                                                    0.8251046f};
+  const DngSdkMatrixForWhite matrices =
+      dngSdkFindXyzToCamera(prepared, whiteXy);
+
+  std::array<float, 3> whiteXyz;
+  if (!xyToXyz(whiteXy, whiteXyz)) {
+    return false;
+  }
+  std::array<float, 3> cameraWhite =
+      multiplyMatrixVector(matrices.colorMatrix, whiteXyz);
+  const float whiteScale =
+      1.0f / std::max(maxVectorEntry(cameraWhite), 1e-6f);
+  for (float &value : cameraWhite) {
+    value = std::clamp(value * whiteScale, 0.001f, 1.0f);
+  }
+
+  Matrix3x3 pcsToCamera =
+      matrices.colorMatrix.multiply(dngMapWhiteMatrix(d50Xy, whiteXy));
+  const std::array<float, 3> pcsWhite =
+      multiplyMatrixVector(pcsToCamera, pcsToXyz);
+  const float pcsScale = 1.0f / std::max(maxVectorEntry(pcsWhite), 1e-6f);
+  for (float &value : pcsToCamera.m) {
+    value *= pcsScale;
+  }
+
+  if (matrices.hasForwardMatrix) {
+    const Matrix3x3 individualToReference =
+        diagonalMatrix3x3(prepared.analogBalance)
+            .multiply(matrices.cameraCalibration)
+            .invert();
+    const std::array<float, 3> referenceCameraWhite =
+        multiplyMatrixVector(individualToReference, cameraWhite);
+    if (referenceCameraWhite[0] <= 1e-6f ||
+        referenceCameraWhite[1] <= 1e-6f ||
+        referenceCameraWhite[2] <= 1e-6f) {
+      return false;
+    }
+    const Matrix3x3 inverseWhite = diagonalMatrix3x3({
+        1.0f / referenceCameraWhite[0],
+        1.0f / referenceCameraWhite[1],
+        1.0f / referenceCameraWhite[2],
+    });
+    cameraToPcs =
+        matrices.forwardMatrix.multiply(inverseWhite).multiply(individualToReference);
+    return true;
+  }
+
+  cameraToPcs = pcsToCamera.invert();
+  return true;
+}
+
+static bool computeDngSdkCameraToPcsD50(
+    const Matrix3x3 &colorMatrix1, bool hasColor1,
+    const Matrix3x3 &colorMatrix2, bool hasColor2,
+    const Matrix3x3 &forwardMatrix1, bool hasForward1,
+    const Matrix3x3 &forwardMatrix2, bool hasForward2, int illuminant1,
+    int illuminant2, const float wb[4], const Matrix3x3 &cameraCalibration1,
+    const Matrix3x3 &cameraCalibration2,
+    const std::array<float, 3> &analogBalance, Matrix3x3 &cameraToPcs,
+    std::array<float, 2> *outWhiteXy = nullptr) {
+  DngSdkPreparedColor prepared;
+  if (!prepareDngSdkColor(colorMatrix1, hasColor1, colorMatrix2, hasColor2,
+                          forwardMatrix1, hasForward1, forwardMatrix2,
+                          hasForward2, illuminant1, illuminant2,
+                          cameraCalibration1, cameraCalibration2,
+                          analogBalance, prepared)) {
+    return false;
+  }
+
+  const float greenOdd = wb[3] > 0.0f ? wb[3] : wb[1];
+  const float green = std::max((wb[1] + greenOdd) * 0.5f, 1e-6f);
+  const std::array<float, 3> neutral = {
+      green / std::max(wb[0], 1e-6f),
+      1.0f,
+      green / std::max(wb[2], 1e-6f),
+  };
+  std::array<float, 2> whiteXy;
+  if (!dngSdkNeutralToXy(prepared, neutral, whiteXy)) {
+    return false;
+  }
+  if (outWhiteXy) {
+    *outWhiteXy = whiteXy;
+  }
+  return dngSdkCameraToPcsForWhite(prepared, whiteXy, cameraToPcs);
 }
 
 static bool computeWbFromDngAsShotWhiteXY(const LibRaw &rawProcessor,
@@ -2710,127 +3108,101 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   }
   env->SetFloatArrayRegion(wbArray, 3, 1, &wb[2]);
 
-  // CCM (从 DNG ForwardMatrix 转换为目标色域)
+  // CCM: DNG SDK dng_color_spec semantics. WB is encoded in CameraToPCS.
   Matrix3x3 targetTransform =
       computeXYZD50ToGamut(xr, yr, xg, yg, xb, yb, xw, yw);
-  Matrix3x3 m1 = Matrix3x3::identity();
-  Matrix3x3 m2 = Matrix3x3::identity();
-  bool hasM1 = false, hasM2 = false;
+  Matrix3x3 colorMatrix1 = Matrix3x3::identity();
+  Matrix3x3 colorMatrix2 = Matrix3x3::identity();
+  Matrix3x3 forwardMatrix1 = Matrix3x3::identity();
+  Matrix3x3 forwardMatrix2 = Matrix3x3::identity();
+  Matrix3x3 cameraCalibration1 = Matrix3x3::identity();
+  Matrix3x3 cameraCalibration2 = Matrix3x3::identity();
 
-  auto getMatrix = [&](int index, Matrix3x3 &m) {
-    float sumFM = 0.0f;
+  auto readDngColorMatrix = [&](int index, Matrix3x3 &matrix) {
     for (int i = 0; i < 3; i++) {
       for (int j = 0; j < 3; j++) {
-        m.m[i * 3 + j] =
-            RawProcessor.imgdata.color.dng_color[index].forwardmatrix[i][j];
-        sumFM += std::abs(m.m[i * 3 + j]);
-      }
-    }
-    if (sumFM > 0.01f)
-      return true;
-
-    float sumCM = 0.0f;
-    Matrix3x3 xyzToCam;
-    for (int i = 0; i < 3; i++) {
-      for (int j = 0; j < 3; j++) {
-        xyzToCam.m[i * 3 + j] =
+        matrix.m[i * 3 + j] =
             RawProcessor.imgdata.color.dng_color[index].colormatrix[i][j];
-        sumCM += std::abs(xyzToCam.m[i * 3 + j]);
       }
     }
-    if (sumCM > 0.01f) {
-      // 1. 确定参考光源的 XYZ 白点 (根据 DNG 规范)
-      float lx, ly, lz;
-      int ill = RawProcessor.imgdata.color.dng_color[index].illuminant;
-
-      if (ill == 17) { // Standard Light A
-        lx = 1.0985f;
-        ly = 1.0000f;
-        lz = 0.3558f;
-      } else { // Assume D65
-        lx = 0.9504f;
-        ly = 1.0000f;
-        lz = 1.0888f;
-      }
-
-      // 2. 计算相机对该光源的响应 (Camera Neutral / White Balance)
-      // 这是 ColorMatrix 作用于光源 XYZ 的结果
-      float cameraNeutral[3];
-      for (int i = 0; i < 3; i++) {
-        cameraNeutral[i] = xyzToCam.m[i * 3 + 0] * lx +
-                           xyzToCam.m[i * 3 + 1] * ly +
-                           xyzToCam.m[i * 3 + 2] * lz;
-      }
-
-      // 3. 构造中间矩阵：ColorMatrix * ReferenceDiagonal
-      // 在 DNG 逻辑中，我们需要对 ColorMatrix 的每一列乘以对应的 CameraNeutral
-      // 分量 这样做的目的是为了让矩阵在处理该光源下的“白点”时，输出为 [1, 1, 1]
-      Matrix3x3 referenceMatrix = xyzToCam;
-      for (int col = 0; col < 3; col++) {
-        // 这一步非常关键：为了求逆后能还原，这里其实是预补偿白平衡
-        referenceMatrix.m[0 * 3 + col] /= cameraNeutral[0];
-        referenceMatrix.m[1 * 3 + col] /= cameraNeutral[1];
-        referenceMatrix.m[2 * 3 + col] /= cameraNeutral[2];
-      }
-
-      // 4. 求逆：从 Camera 空间转回该光源下的 XYZ 空间
-      // 现在 m 是从 Camera (White Balanced) -> XYZ (Illuminant Relative)
-      m = referenceMatrix.invert();
-
-      // 5. 应用色度适应 (Chromatic Adaptation) 映射到 D50
-      // ForwardMatrix 必须映射到 D50 空间
-      Matrix3x3 adapt;
-      if (ill == 17) { // A to D50 (Bradford Transform)
-        float a2d50[9] = {0.8924f,  -0.0157f, 0.0529f,  -0.1111f, 1.0505f,
-                          -0.0151f, 0.0522f,  -0.0077f, 2.2396f};
-        memcpy(adapt.m, a2d50, 9 * sizeof(float));
-      } else { // D65 to D50 (Bradford Transform)
-        float d652d50[9] = {1.0478f,  0.0229f,  -0.0501f, 0.0295f, 0.9905f,
-                            -0.0170f, -0.0092f, 0.0150f,  0.7521f};
-        memcpy(adapt.m, d652d50, 9 * sizeof(float));
-      }
-      m = adapt.multiply(m);
-      return true;
-    }
-    return false;
+    return hasMatrixSignal(matrix);
   };
 
-  hasM1 = getMatrix(0, m1);
-  hasM2 = getMatrix(1, m2);
-
-  LOGI("hasM1 = %d hasM2 = %d", hasM1, hasM2);
-
-  float weight = 0.5f;
-  if (hasM1 && hasM2) {
-    Matrix3x3 colorMatrix1;
-    Matrix3x3 colorMatrix2;
-    for (int i = 0; i < 3; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        colorMatrix1.m[i * 3 + j] =
-            RawProcessor.imgdata.color.dng_color[0].colormatrix[i][j];
-        colorMatrix2.m[i * 3 + j] =
-            RawProcessor.imgdata.color.dng_color[1].colormatrix[i][j];
+  auto readDngForwardMatrix = [&](int index, Matrix3x3 &matrix) {
+    for (int i = 0; i < 3; i++) {
+      for (int j = 0; j < 3; j++) {
+        matrix.m[i * 3 + j] =
+            RawProcessor.imgdata.color.dng_color[index].forwardmatrix[i][j];
       }
     }
-    const bool hasColor1 = hasMatrixSignal(colorMatrix1);
-    const bool hasColor2 = hasMatrixSignal(colorMatrix2);
-    weight = calculateDngReferenceInterpolationWeight(
-        RawProcessor.imgdata.color.dng_color[0].illuminant,
-        RawProcessor.imgdata.color.dng_color[1].illuminant, wb, colorMatrix1,
-        hasColor1, colorMatrix2, hasColor2);
+    return hasMatrixSignal(matrix);
+  };
+
+  auto readDngCameraCalibration = [&](int index, Matrix3x3 &matrix) {
+    matrix = Matrix3x3::identity();
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        const float value =
+            RawProcessor.imgdata.color.dng_color[index].calibration[i][j];
+        if (std::isfinite(value) && std::abs(value) > 1e-6f) {
+          matrix.m[i * 3 + j] = value;
+        }
+      }
+    }
+  };
+
+  const bool hasColor1 = readDngColorMatrix(0, colorMatrix1);
+  const bool hasColor2 = readDngColorMatrix(1, colorMatrix2);
+  const bool hasForward1 = readDngForwardMatrix(0, forwardMatrix1);
+  const bool hasForward2 = readDngForwardMatrix(1, forwardMatrix2);
+  readDngCameraCalibration(0, cameraCalibration1);
+  readDngCameraCalibration(1, cameraCalibration2);
+
+  std::array<float, 3> analogBalance = {1.0f, 1.0f, 1.0f};
+  for (int i = 0; i < 3; ++i) {
+    const float analog = RawProcessor.imgdata.color.dng_levels.analogbalance[i];
+    if (analog > 0.0f && std::isfinite(analog)) {
+      analogBalance[i] = analog;
+    }
   }
 
-  Matrix3x3 camToXYZ;
-  if (hasM1 && hasM2) {
-    for (int i = 0; i < 9; i++)
-      camToXYZ.m[i] = m1.m[i] * weight + m2.m[i] * (1.0f - weight);
-  } else if (hasM1)
-    camToXYZ = m1;
-  else if (hasM2)
-    camToXYZ = m2;
-  else {
-    // 没有任何 DNG ForwardMatrix。
-    // Bradford 变换 (D65 to D50)
+  LOGI("dng sdk color metadata: color1=%d color2=%d forward1=%d forward2=%d "
+       "ill=%d,%d analog=%f,%f,%f",
+       hasColor1 ? 1 : 0, hasColor2 ? 1 : 0, hasForward1 ? 1 : 0,
+       hasForward2 ? 1 : 0,
+       RawProcessor.imgdata.color.dng_color[0].illuminant,
+       RawProcessor.imgdata.color.dng_color[1].illuminant, analogBalance[0],
+       analogBalance[1], analogBalance[2]);
+
+  Matrix3x3 camToXYZ = Matrix3x3::identity();
+  std::array<float, 2> sdkWhiteXy = {0.3457f, 0.3585f};
+  bool hasSdkMatrix = computeDngSdkCameraToPcsD50(
+      colorMatrix1, hasColor1, colorMatrix2, hasColor2, forwardMatrix1,
+      hasForward1, forwardMatrix2, hasForward2,
+      RawProcessor.imgdata.color.dng_color[0].illuminant,
+      RawProcessor.imgdata.color.dng_color[1].illuminant, wb,
+      cameraCalibration1, cameraCalibration2, analogBalance, camToXYZ,
+      &sdkWhiteXy);
+  if (hasSdkMatrix) {
+    LOGI("Using DNG SDK color path: whiteXY=%f,%f", sdkWhiteXy[0],
+         sdkWhiteXy[1]);
+  } else {
+    Matrix3x3 identity = Matrix3x3::identity();
+    std::array<float, 3> unityAnalog = {1.0f, 1.0f, 1.0f};
+    auto computeSingleColorFallback = [&](const Matrix3x3 &xyzToCam,
+                                          const char *sourceName) {
+      std::array<float, 2> fallbackWhiteXy = {0.3457f, 0.3585f};
+      if (computeDngSdkCameraToPcsD50(
+              xyzToCam, true, identity, false, identity, false, identity,
+              false, 21, 0, wb, identity, identity, unityAnalog, camToXYZ,
+              &fallbackWhiteXy)) {
+        LOGI("Using %s fallback via DNG SDK ColorMatrix path: whiteXY=%f,%f",
+             sourceName, fallbackWhiteXy[0], fallbackWhiteXy[1]);
+        return true;
+      }
+      return false;
+    };
+
     float d652d50[9] = {1.0478112f,  0.0228866f, -0.0501270f,
                         0.0295424f,  0.9904844f, -0.0170491f,
                         -0.0092345f, 0.0150436f, 0.7521316f};
@@ -2849,33 +3221,9 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       }
     }
 
-    if (hasCamXYZ) {
-      // 1. 视为 D65 下的 XYZ-to-Camera 矩阵进行标准化 (同 ColorMatrix 处理方式)
-      float lx = 0.9504f, ly = 1.0000f, lz = 1.0888f; // D65
-      float cameraNeutral[3];
-      for (int i = 0; i < 3; i++) {
-        cameraNeutral[i] = xyzToCam.m[i * 3 + 0] * lx +
-                           xyzToCam.m[i * 3 + 1] * ly +
-                           xyzToCam.m[i * 3 + 2] * lz;
-      }
-      Matrix3x3 referenceMatrix = xyzToCam;
-      for (int col = 0; col < 3; col++) {
-        if (std::abs(cameraNeutral[0]) > 0.001f)
-          referenceMatrix.m[0 * 3 + col] /= cameraNeutral[0];
-        if (std::abs(cameraNeutral[1]) > 0.001f)
-          referenceMatrix.m[1 * 3 + col] /= cameraNeutral[1];
-        if (std::abs(cameraNeutral[2]) > 0.001f)
-          referenceMatrix.m[2 * 3 + col] /= cameraNeutral[2];
-      }
-      // 2. 求逆得到 Camera-to-XYZ
-      camToXYZ = referenceMatrix.invert();
-      // 3. 应用色度适应 D65 -> D50
-      camToXYZ = adapt.multiply(camToXYZ);
-      LOGI(
-          "Using LibRaw cam_xyz (treated as ColorMatrix) converted to XYZ D50");
+    if (hasCamXYZ && computeSingleColorFallback(xyzToCam, "LibRaw cam_xyz")) {
+      // camToXYZ set by fallback.
     } else {
-      // 2. 尝试通过 LibRaw 的 ccm 反算。
-      // 当 output_color = 0 时，ccm 通常仍然是针对默认 sRGB (D65) 的矩阵。
       Matrix3x3 camToSRGB;
       bool hasCCM = false;
       for (int i = 0; i < 3; i++) {
@@ -2893,9 +3241,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
         Matrix3x3 mSRGB2XYZ;
         memcpy(mSRGB2XYZ.m, srgb2xyz, 9 * sizeof(float));
         camToXYZ = adapt.multiply(mSRGB2XYZ.multiply(camToSRGB));
-        LOGI("Using LibRaw ccm converted to XYZ D50");
+        LOGI("Using LibRaw ccm legacy fallback converted to XYZ D50");
       } else {
-        // 3. 最后尝试 cmatrix (XYZ D65 to Camera)
         Matrix3x3 xyzToCam;
         bool hasCMatrix = false;
         for (int i = 0; i < 3; i++) {
@@ -2906,27 +3253,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
           }
         }
 
-        if (hasCMatrix) {
-          float lx = 0.9504f, ly = 1.0000f, lz = 1.0888f;
-          float cameraNeutral[3];
-          for (int i = 0; i < 3; i++) {
-            cameraNeutral[i] = xyzToCam.m[i * 3 + 0] * lx +
-                               xyzToCam.m[i * 3 + 1] * ly +
-                               xyzToCam.m[i * 3 + 2] * lz;
-          }
-          Matrix3x3 referenceMatrix = xyzToCam;
-          for (int col = 0; col < 3; col++) {
-            if (std::abs(cameraNeutral[0]) > 0.001f)
-              referenceMatrix.m[0 * 3 + col] /= cameraNeutral[0];
-            if (std::abs(cameraNeutral[1]) > 0.001f)
-              referenceMatrix.m[1 * 3 + col] /= cameraNeutral[1];
-            if (std::abs(cameraNeutral[2]) > 0.001f)
-              referenceMatrix.m[2 * 3 + col] /= cameraNeutral[2];
-          }
-          camToXYZ = referenceMatrix.invert();
-          camToXYZ = adapt.multiply(camToXYZ);
-          LOGI("Using cmatrix fallback converted to XYZ D50");
-        } else {
+        if (!hasCMatrix ||
+            !computeSingleColorFallback(xyzToCam, "LibRaw cmatrix")) {
           camToXYZ = Matrix3x3::identity();
           LOGE("No color metadata found at all, using identity");
         }

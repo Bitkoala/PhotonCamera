@@ -98,7 +98,10 @@ data class DcpProfile(
     val hueSatDeltas1: DcpHueSatMap?,
     val hueSatDeltas2: DcpHueSatMap?,
     val lookTable: DcpHueSatMap?,
-    val toneCurve: DcpToneCurve?
+    val toneCurve: DcpToneCurve?,
+    val analogBalance: FloatArray? = null,
+    val cameraCalibration1: FloatArray? = null,
+    val cameraCalibration2: FloatArray? = null
 )
 
 data class DcpRenderPlan(
@@ -176,10 +179,11 @@ object DcpProfileParser {
         workingColorSpace: ColorSpace = ColorSpace.ProPhoto
     ): DcpRenderPlan? {
         val selectedHueSat = interpolateHueSatMap(profile, metadata)
-        val selectedMatrix = computeInterpolatedCameraToXyz(profile, metadata)?.let { cameraToXyz ->
-            val xyzToWorking = computeXyzD50ToGamut(workingColorSpace) ?: return@let cameraToXyz
-            multiplyMatrix3x3(xyzToWorking, cameraToXyz)
-        } ?: metadata.colorCorrectionMatrix
+        val selectedMatrix = DngSdkColorSpec.computeCameraToWorkingMatrix(
+            profile = profile,
+            metadata = metadata,
+            workingColorSpace = workingColorSpace
+        ) ?: metadata.colorCorrectionMatrix
         return DcpRenderPlan(
             profileName = profile.profileName,
             workingColorSpace = workingColorSpace,
@@ -277,11 +281,13 @@ object DcpProfileParser {
             return first
         }
 
-        val weight = calculateInterpolationWeight(
-            profile.calibrationIlluminant1,
-            profile.calibrationIlluminant2,
-            metadata.whiteBalanceGains
-        )
+        val weight = DngSdkColorSpec.whiteXyForProfile(profile, metadata)?.let { whiteXy ->
+            DngSdkColorSpec.hueSatWeightForWhite(
+                profile.calibrationIlluminant1,
+                profile.calibrationIlluminant2,
+                whiteXy
+            )
+        } ?: 1f
         val values = FloatArray(first.values.size) { index ->
             first.values[index] * weight + second.values[index] * (1f - weight)
         }

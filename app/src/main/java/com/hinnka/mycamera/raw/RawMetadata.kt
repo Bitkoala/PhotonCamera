@@ -336,77 +336,34 @@ data class RawMetadata(
         }
 
         /**
-         * 使用 ForwardMatrix/ColorMatrix 计算色彩校正矩阵
+         * 使用 DNG SDK 的 dng_color_spec 语义计算 raw camera RGB -> working space 矩阵。
          *
-         * 1. 优先使用 ForwardMatrix，否则使用 ColorMatrix 的逆矩阵
-         * 2. 支持双光源插值（Illuminant1/Illuminant2）
-         * 3. 最终 CCM = XYZ_D50_TO_SRGB × interpolate(CamToXYZ1, CamToXYZ2, weight)
+         * WB 通过 CameraNeutral 进入 CameraToPCS，不在 demosaic 阶段预乘。
          */
         private fun computeCCMFromCharacteristics(
             characteristics: CameraCharacteristics,
             captureResult: CaptureResult,
             colorSpace: ColorSpace = ColorSpace.SRGB
         ): FloatArray {
-            // XYZ D50 到 Linear sRGB 的转换矩阵
-            val XYZ_D50_TO_SRGB = floatArrayOf(
-                3.1338561f, -1.6168667f, -0.4906146f,
-                -0.9787684f, 1.9161415f, 0.0334540f,
-                0.0719453f, -0.2289914f, 1.4052427f
-            )
-
-            // 动态计算目标色域矩阵
-            val targetPrimaries = colorSpace.primaries
-            val targetWhitePoint = colorSpace.whitePoint
-
-            // 计算 XYZ(D50) -> Target Gamut 的转换矩阵
-            val targetTransform = computeXYZD50ToGamut(targetPrimaries, targetWhitePoint)
-                ?: XYZ_D50_TO_SRGB // 如果计算失败则回退到 sRGB
-
-            // 获取参考光源
-            val illuminant1: Int? = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1)
-            val illuminant2: Int? = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
-
-            // 获取矩阵（两组）
-            val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
-            val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
-            val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
-            val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
-
-            // 获取白平衡增益（用于计算插值权重）
             val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
-
-            // 1. 计算双光源插值权重
-            val weight = calculateInterpolationWeight(
-                illuminant1,
-                illuminant2,
-                wbGains,
-                colorMatrix1,
-                colorMatrix2
-            )
-
-            // 2. 获取两个光源下的 Camera -> XYZ(D50) 矩阵
-            val m1: FloatArray? = computeCamToXYZ(forwardMatrix1, colorMatrix1, illuminant1)
-            val m2: FloatArray? = computeCamToXYZ(forwardMatrix2, colorMatrix2, illuminant2)
-
-            // 3. 插值得到最终的 Camera -> XYZ(D50) 矩阵
-            val camToXYZ = when {
-                m1 != null && m2 != null -> {
-                    // 双矩阵插值
-                    FloatArray(9) { i -> m1[i] * weight + m2[i] * (1.0f - weight) }
-                }
-
-                m1 != null -> m1
-                m2 != null -> m2
-                else -> {
-                    // Fallback: 单位矩阵
-                    Log.d(TAG, "No ForwardMatrix/ColorMatrix available, using identity matrix")
-                    floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
-                }
+            val whiteBalanceGains = if (wbGains != null) {
+                floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+            } else {
+                floatArrayOf(1f, 1f, 1f, 1f)
             }
-
-            // 4. 计算最终 CCM: targetTransform × CamToXYZ
-            val finalCCM = multiplyMatrix3x3(targetTransform, camToXYZ)
-            return finalCCM
+            return DngSdkColorSpec.computeCameraToWorkingMatrix(
+                colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)?.let(::extractCCM),
+                colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)?.let(::extractCCM),
+                forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)?.let(::extractCCM),
+                forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)?.let(::extractCCM),
+                calibrationIlluminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 0,
+                calibrationIlluminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt() ?: 0,
+                whiteBalanceGains = whiteBalanceGains,
+                workingColorSpace = colorSpace
+            ) ?: run {
+                Log.d(TAG, "No ForwardMatrix/ColorMatrix available, using identity matrix")
+                floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+            }
         }
 
         /**
