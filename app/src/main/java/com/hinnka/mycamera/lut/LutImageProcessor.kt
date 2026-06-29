@@ -90,16 +90,11 @@ class LutImageProcessor {
     private var bitmapDenoiseNlmFinishProgram = 0
     private var bitmapDenoisePassthroughProgram = 0
     private var naturalLightSrgbToLinearProgram = 0
-    private var bitmapChromaPrepareProgram = 0
-    private var bitmapChromaDecomposeProgram = 0
-    private var bitmapChromaSynthesizeProgram = 0
-    private var bitmapChromaComposeProgram = 0
+    private var bitmapChromaDenoiseProgram = 0
     private var lutSharpenProgram = 0
 
     private val bitmapDenoiseTexId = IntArray(2)
     private val bitmapDenoiseFboId = IntArray(2)
-    private val bitmapChromaDetailTexId = IntArray(ChromaDenoiseShaders.WAVELET_BANDS)
-    private val bitmapChromaDetailFboId = IntArray(ChromaDenoiseShaders.WAVELET_BANDS)
     private var bitmapDenoiseNlmU2BufferId = 0
     private var bitmapDenoiseNlmBufferPixels = 0
     private var bitmapDenoiseWidth = 0
@@ -1502,10 +1497,7 @@ class LutImageProcessor {
         bitmapDenoiseNlmFinishProgram = compileComputeProgram(DenoiseProfileShaders.FINISH_V2, "BitmapDenoise_NLM_FinishV2")
         bitmapDenoisePassthroughProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, TEXTURE_PASSTHROUGH_SHADER, "BitmapDenoise_Passthrough")
         naturalLightSrgbToLinearProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, SRGB_TO_LINEAR_SHADER, "NaturalLight_SrgbToLinear")
-        bitmapChromaPrepareProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.PREPARE_YCBCR, "BitmapChromaDenoise_PrepareYcc")
-        bitmapChromaDecomposeProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.WAVELET_DECOMPOSE, "BitmapChromaDenoise_Decompose")
-        bitmapChromaSynthesizeProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.WAVELET_SYNTHESIZE, "BitmapChromaDenoise_Synthesize")
-        bitmapChromaComposeProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.COMPOSE_RGB, "BitmapChromaDenoise_ComposeRgb")
+        bitmapChromaDenoiseProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, ChromaDenoiseShaders.PASS_CHROMA_DENOISE, "BitmapChromaDenoise_BM3DPass0")
         lutSharpenProgram = createFragmentProgram(IMAGE_VERTEX_SHADER, RawShaders.SHARPEN_FRAGMENT_SHADER, "LutSharpen")
         PLog.d(
             TAG,
@@ -1513,8 +1505,7 @@ class LutImageProcessor {
                 "init=$bitmapDenoiseNlmInitProgram fusedAccu=$bitmapDenoiseNlmFusedAccuProgram " +
                 "finish=$bitmapDenoiseNlmFinishProgram " +
                 "pass=$bitmapDenoisePassthroughProgram linearize=$naturalLightSrgbToLinearProgram " +
-                "chromaPrepare=$bitmapChromaPrepareProgram chromaDecompose=$bitmapChromaDecomposeProgram " +
-                "chromaSynthesize=$bitmapChromaSynthesizeProgram chromaCompose=$bitmapChromaComposeProgram " +
+                "chroma=$bitmapChromaDenoiseProgram " +
                 "sharpen=$lutSharpenProgram"
         )
     }
@@ -1553,24 +1544,13 @@ class LutImageProcessor {
     }
 
     private fun setupBitmapDenoiseFramebuffers(width: Int, height: Int) {
-        if (
-            bitmapDenoiseWidth == width &&
-            bitmapDenoiseHeight == height &&
-            bitmapDenoiseTexId[0] != 0 &&
-            bitmapChromaDetailTexId[0] != 0
-        ) return
+        if (bitmapDenoiseWidth == width && bitmapDenoiseHeight == height && bitmapDenoiseTexId[0] != 0) return
         bitmapDenoiseWidth = width
         bitmapDenoiseHeight = height
 
         for (i in 0..1) {
             if (bitmapDenoiseTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(bitmapDenoiseTexId[i]), 0)
             if (bitmapDenoiseFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(bitmapDenoiseFboId[i]), 0)
-        }
-        for (i in bitmapChromaDetailTexId.indices) {
-            if (bitmapChromaDetailTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(bitmapChromaDetailTexId[i]), 0)
-            if (bitmapChromaDetailFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(bitmapChromaDetailFboId[i]), 0)
-            bitmapChromaDetailTexId[i] = 0
-            bitmapChromaDetailFboId[i] = 0
         }
 
         for (i in 0..1) {
@@ -1598,33 +1578,6 @@ class LutImageProcessor {
             val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
             if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
                 PLog.e(TAG, "Bitmap denoiseprofile FBO $i incomplete: $status")
-            }
-        }
-        for (i in bitmapChromaDetailTexId.indices) {
-            val t = IntArray(1)
-            val f = IntArray(1)
-            GLES30.glGenTextures(1, t, 0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, t[0])
-            GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA16F, width, height)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
-            GLES30.glGenFramebuffers(1, f, 0)
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, f[0])
-            GLES30.glFramebufferTexture2D(
-                GLES30.GL_FRAMEBUFFER,
-                GLES30.GL_COLOR_ATTACHMENT0,
-                GLES30.GL_TEXTURE_2D,
-                t[0],
-                0
-            )
-            bitmapChromaDetailTexId[i] = t[0]
-            bitmapChromaDetailFboId[i] = f[0]
-
-            val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-            if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
-                PLog.e(TAG, "Bitmap chroma wavelet detail FBO $i incomplete: $status")
             }
         }
         setupBitmapDenoiseResources(width, height)
@@ -1672,208 +1625,41 @@ class LutImageProcessor {
 
         val strength = chromaNoiseReduction.coerceIn(0f, 1f)
         val target = targetIndex.coerceIn(0, bitmapDenoiseTexId.lastIndex)
-        if (strength <= 0f || !isBitmapChromaDenoiseReady()) {
+        if (strength <= 0f || bitmapChromaDenoiseProgram == 0) {
             renderTexturePassthrough(sourceTextureId, bitmapDenoiseFboId[target], width, height)
             return
         }
 
-        val h = strength * strength * ChromaDenoiseShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
-        val noiseA = BITMAP_DENOISE_A * 2f
-        val noiseB = BITMAP_DENOISE_B * 2f
-        val initialIndex = 1 - target
-        var currentIndex = initialIndex
-        var nextIndex = target
-
-        renderBitmapChromaPrepare(sourceTextureId, bitmapDenoiseFboId[currentIndex], width, height)
-
-        for (band in 0 until ChromaDenoiseShaders.WAVELET_BANDS) {
-            val scale = 1 shl band
-            val currentTextureId = bitmapDenoiseTexId[currentIndex]
-            renderBitmapChromaDecompose(
-                currentTextureId,
-                bitmapChromaDetailFboId[band],
-                width,
-                height,
-                h,
-                noiseA,
-                noiseB,
-                scale,
-                outputMode = 1
-            )
-            renderBitmapChromaDecompose(
-                currentTextureId,
-                bitmapDenoiseFboId[nextIndex],
-                width,
-                height,
-                h,
-                noiseA,
-                noiseB,
-                scale,
-                outputMode = 0
-            )
-            currentIndex = nextIndex
-            nextIndex = 1 - currentIndex
-        }
-
-        for (band in ChromaDenoiseShaders.WAVELET_BANDS - 1 downTo 0) {
-            renderBitmapChromaSynthesize(
-                bitmapDenoiseTexId[currentIndex],
-                bitmapChromaDetailTexId[band],
-                bitmapDenoiseFboId[nextIndex],
-                width,
-                height,
-                h,
-                noiseA,
-                noiseB,
-                chromaWaveletBandScale(band)
-            )
-            currentIndex = nextIndex
-            nextIndex = 1 - currentIndex
-        }
-
-        if (currentIndex == target) {
-            val spareIndex = 1 - target
-            renderTexturePassthrough(bitmapDenoiseTexId[currentIndex], bitmapDenoiseFboId[spareIndex], width, height)
-            currentIndex = spareIndex
-        }
-
-        renderBitmapChromaCompose(
-            sourceTextureId,
-            bitmapDenoiseTexId[currentIndex],
-            bitmapDenoiseFboId[target],
-            width,
-            height,
-            h,
-            noiseA,
-            noiseB
-        )
-        checkGlError("renderBitmapChromaDenoise")
-    }
-
-    private fun isBitmapChromaDenoiseReady(): Boolean {
-        return bitmapChromaPrepareProgram != 0 &&
-            bitmapChromaDecomposeProgram != 0 &&
-            bitmapChromaSynthesizeProgram != 0 &&
-            bitmapChromaComposeProgram != 0
-    }
-
-    private fun renderBitmapChromaPrepare(sourceTextureId: Int, targetFboId: Int, width: Int, height: Int) {
-        GLES30.glUseProgram(bitmapChromaPrepareProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaPrepareProgram, "uInputTexture"), 0)
-        setBitmapFragmentMatrix(bitmapChromaPrepareProgram)
-        drawQuad(bitmapChromaPrepareProgram)
-    }
-
-    private fun renderBitmapChromaDecompose(
-        sourceTextureId: Int,
-        targetFboId: Int,
-        width: Int,
-        height: Int,
-        h: Float,
-        noiseA: Float,
-        noiseB: Float,
-        scale: Int,
-        outputMode: Int
-    ) {
-        GLES30.glUseProgram(bitmapChromaDecomposeProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uInputTexture"), 0)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uTexelSize"),
-            1.0f / width,
-            1.0f / height
-        )
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uH"), h)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uNoiseModel"),
-            noiseA,
-            noiseB
-        )
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uScale"), scale)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaDecomposeProgram, "uOutputMode"), outputMode)
-        setBitmapFragmentMatrix(bitmapChromaDecomposeProgram)
-        drawQuad(bitmapChromaDecomposeProgram)
-    }
-
-    private fun renderBitmapChromaSynthesize(
-        coarseTextureId: Int,
-        detailTextureId: Int,
-        targetFboId: Int,
-        width: Int,
-        height: Int,
-        h: Float,
-        noiseA: Float,
-        noiseB: Float,
-        bandScale: Float
-    ) {
-        GLES30.glUseProgram(bitmapChromaSynthesizeProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, coarseTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uCoarseTexture"), 0)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, detailTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uDetailTexture"), 1)
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uTexelSize"),
-            1.0f / width,
-            1.0f / height
-        )
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uH"), h)
-        GLES30.glUniform2f(GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uNoiseModel"), noiseA, noiseB)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(bitmapChromaSynthesizeProgram, "uBandScale"), bandScale)
-        setBitmapFragmentMatrix(bitmapChromaSynthesizeProgram)
-        drawQuad(bitmapChromaSynthesizeProgram)
-    }
-
-    private fun renderBitmapChromaCompose(
-        originalTextureId: Int,
-        chromaTextureId: Int,
-        targetFboId: Int,
-        width: Int,
-        height: Int,
-        h: Float,
-        noiseA: Float,
-        noiseB: Float
-    ) {
-        GLES30.glUseProgram(bitmapChromaComposeProgram)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFboId)
-        GLES30.glViewport(0, 0, width, height)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, originalTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaComposeProgram, "uOriginalTexture"), 0)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, chromaTextureId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaComposeProgram, "uChromaTexture"), 1)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(bitmapChromaComposeProgram, "uH"), h)
-        GLES30.glUniform2f(GLES30.glGetUniformLocation(bitmapChromaComposeProgram, "uNoiseModel"), noiseA, noiseB)
-        setBitmapFragmentMatrix(bitmapChromaComposeProgram)
-        drawQuad(bitmapChromaComposeProgram)
-    }
-
-    private fun setBitmapFragmentMatrix(program: Int) {
-        val matrixLocation = GLES30.glGetUniformLocation(program, "uMVPMatrix")
-        if (matrixLocation < 0) return
         val identityMatrix = FloatArray(16)
         android.opengl.Matrix.setIdentityM(identityMatrix, 0)
-        GLES30.glUniformMatrix4fv(matrixLocation, 1, false, identityMatrix, 0)
-    }
+        val h = strength * strength * ChromaDenoiseShaders.SIGMA_STRENGTH_AT_SLIDER_ONE
 
-    private fun chromaWaveletBandScale(band: Int): Float {
-        return when (band) {
-            0 -> 0.58f
-            1 -> 0.82f
-            2 -> 1.08f
-            else -> 1.35f
-        }
+        GLES30.glUseProgram(bitmapChromaDenoiseProgram)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bitmapDenoiseFboId[target])
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(bitmapChromaDenoiseProgram, "uInputTexture"), 0)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(bitmapChromaDenoiseProgram, "uTexelSize"),
+            1.0f / width,
+            1.0f / height
+        )
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(bitmapChromaDenoiseProgram, "uMVPMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(bitmapChromaDenoiseProgram, "uH"), h)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(bitmapChromaDenoiseProgram, "uNoiseModel"),
+            BITMAP_DENOISE_A * 2f,
+            BITMAP_DENOISE_B * 2f
+        )
+        drawQuad(bitmapChromaDenoiseProgram)
+        checkGlError("renderBitmapChromaDenoise")
     }
 
     private fun resolvePreToneMapChromaDenoise(
@@ -2921,10 +2707,7 @@ class LutImageProcessor {
         if (bitmapDenoiseNlmFinishProgram != 0) GLES31.glDeleteProgram(bitmapDenoiseNlmFinishProgram)
         if (bitmapDenoisePassthroughProgram != 0) GLES30.glDeleteProgram(bitmapDenoisePassthroughProgram)
         if (naturalLightSrgbToLinearProgram != 0) GLES30.glDeleteProgram(naturalLightSrgbToLinearProgram)
-        if (bitmapChromaPrepareProgram != 0) GLES30.glDeleteProgram(bitmapChromaPrepareProgram)
-        if (bitmapChromaDecomposeProgram != 0) GLES30.glDeleteProgram(bitmapChromaDecomposeProgram)
-        if (bitmapChromaSynthesizeProgram != 0) GLES30.glDeleteProgram(bitmapChromaSynthesizeProgram)
-        if (bitmapChromaComposeProgram != 0) GLES30.glDeleteProgram(bitmapChromaComposeProgram)
+        if (bitmapChromaDenoiseProgram != 0) GLES30.glDeleteProgram(bitmapChromaDenoiseProgram)
         if (lutSharpenProgram != 0) {
             GLES30.glDeleteProgram(lutSharpenProgram)
             lutSharpenProgram = 0
@@ -2932,12 +2715,6 @@ class LutImageProcessor {
         for (i in 0..1) {
             if (bitmapDenoiseTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(bitmapDenoiseTexId[i]), 0)
             if (bitmapDenoiseFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(bitmapDenoiseFboId[i]), 0)
-        }
-        for (i in bitmapChromaDetailTexId.indices) {
-            if (bitmapChromaDetailTexId[i] != 0) GLES30.glDeleteTextures(1, intArrayOf(bitmapChromaDetailTexId[i]), 0)
-            if (bitmapChromaDetailFboId[i] != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(bitmapChromaDetailFboId[i]), 0)
-            bitmapChromaDetailTexId[i] = 0
-            bitmapChromaDetailFboId[i] = 0
         }
         releaseLutSharpenFramebuffer()
         if (bitmapDenoiseNlmU2BufferId != 0) {
