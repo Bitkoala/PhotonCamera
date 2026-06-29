@@ -12,8 +12,9 @@ object ExposureNormalization {
 
     fun compute(metadata: RawMetadata): Float {
         var gain = 1f
-        if (metadata.baselineExposure.isFinite() && metadata.baselineExposure != 0f) {
-            gain *= 2.0f.pow(metadata.baselineExposure)
+        val baselineExposure = DngBaselineExposure.sanitize(metadata.baselineExposure)
+        if (baselineExposure != 0f) {
+            gain *= 2.0f.pow(baselineExposure)
         }
         return gain.coerceIn(1f, 8f)
     }

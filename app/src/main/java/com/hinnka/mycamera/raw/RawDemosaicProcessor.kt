@@ -121,8 +121,7 @@ class RawDemosaicProcessor {
             lensShadingMapWidth = dngRawData.lensShadingMapWidth,
             lensShadingMapHeight = dngRawData.lensShadingMapHeight,
             lensShadingMapGrid = dngRawData.lensShadingMapGrid,
-            baselineExposure = if (dngRawData.baselineExposure == 0f) (baseMetadata?.baselineExposure
-                ?: 0f) else dngRawData.baselineExposure,
+            baselineExposure = DngBaselineExposure.sanitize(dngRawData.baselineExposure),
             exposureBias = if (dngRawData.exposureBias == 0f) {
                 if (baseMetadata != null && baseMetadata.exposureBias != 0f) baseMetadata.exposureBias else exposureBias
             } else dngRawData.exposureBias,
@@ -4686,8 +4685,8 @@ class RawDemosaicProcessor {
         applyDngBaselineExposure: Boolean,
         useRamp: Boolean
     ): ProfileExposureUniforms {
-        val dngBaselineExposure = if (applyDngBaselineExposure && metadata.baselineExposure.isFinite()) {
-            metadata.baselineExposure
+        val dngBaselineExposure = if (applyDngBaselineExposure) {
+            DngBaselineExposure.sanitize(metadata.baselineExposure)
         } else {
             0f
         }
@@ -4725,11 +4724,7 @@ class RawDemosaicProcessor {
     }
 
     private fun exactDngBaselineExposureGain(metadata: RawMetadata): Float {
-        return if (metadata.baselineExposure.isFinite()) {
-            2.0f.pow(metadata.baselineExposure).coerceIn(1e-6f, 65536f)
-        } else {
-            1f
-        }
+        return DngBaselineExposure.exactGain(metadata.baselineExposure)
     }
 
     private fun renderLinearRcdPass(

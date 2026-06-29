@@ -1297,6 +1297,14 @@ static float maxVectorEntry(const std::array<float, 3> &values) {
   return std::isfinite(result) ? result : 0.0f;
 }
 
+static float normalizeDngBaselineExposure(const libraw_dng_levels_t &levels) {
+  if ((levels.parsedfields & LIBRAW_DNGFM_BASELINEEXPOSURE) == 0) {
+    return 0.0f;
+  }
+  return std::isfinite(levels.baseline_exposure) ? levels.baseline_exposure
+                                                 : 0.0f;
+}
+
 static Matrix3x3 normalizeDngColorMatrix(Matrix3x3 matrix) {
   static constexpr std::array<float, 3> pcsToXyz = {0.9642957f, 1.0f,
                                                     0.8251046f};
@@ -3277,8 +3285,10 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   if (whiteLevel <= 0)
     whiteLevel = (jfloat)RawProcessor.imgdata.color.maximum;
 
-  jfloat baselineExposure =
-      RawProcessor.imgdata.color.dng_levels.baseline_exposure;
+  const bool hasDngBaselineExposure =
+      (levels.parsedfields & LIBRAW_DNGFM_BASELINEEXPOSURE) != 0;
+  jfloat rawBaselineExposure = levels.baseline_exposure;
+  jfloat baselineExposure = normalizeDngBaselineExposure(levels);
   jfloat exposureBias =
       RawProcessor.imgdata.makernotes.common.ExposureCalibrationShift;
   int iso = RawProcessor.imgdata.other.iso_speed;
@@ -3290,9 +3300,9 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jfloat aperture = RawProcessor.imgdata.other.aperture;
 
   LOGI("iso = %d, shutterSpeed = %lld aperture = %f baselineExposure = %f "
-       "exposureBias = %f",
+       "rawBaselineExposure = %f hasBaselineExposure = %d exposureBias = %f",
        iso, (long long)shutterSpeedLong, aperture, baselineExposure,
-       exposureBias);
+       rawBaselineExposure, hasDngBaselineExposure ? 1 : 0, exposureBias);
 
   // ActiveArray: use margins to define the actual active sensor area
   jintArray activeArray = env->NewIntArray(4);
