@@ -355,7 +355,7 @@ fun ZoomRulerVertical(
             // 显示文本
             val text = when (displayMode) {
                 ZoomDisplayMode.ZOOM_RATIO -> {
-                    formatZoomRatioV(stop)
+                    formatZoomRatioLabel(stop)
                 }
 
                 ZoomDisplayMode.FOCAL_LENGTH -> {
@@ -467,7 +467,7 @@ fun ZoomContinuousRulerVertical(
                     )
 
                     val text = when (displayMode) {
-                        ZoomDisplayMode.ZOOM_RATIO -> formatZoomRatioV(stepValue)
+                        ZoomDisplayMode.ZOOM_RATIO -> formatZoomRatioLabel(stepValue)
                         ZoomDisplayMode.FOCAL_LENGTH -> zoomRatioToFocalLengthV(stepValue, mainCamera)
                     }
 
@@ -533,7 +533,7 @@ fun ZoomContinuousRulerVertical(
 
             // 当前数值浮窗
             val currentText = when (displayMode) {
-                ZoomDisplayMode.ZOOM_RATIO -> formatZoomRatioV(zoomRatio)
+                ZoomDisplayMode.ZOOM_RATIO -> formatZoomRatioLabel(zoomRatio)
                 ZoomDisplayMode.FOCAL_LENGTH -> zoomRatioToFocalLengthV(zoomRatio, mainCamera) + "mm"
             }
             val currentTextLayout = textMeasurer.measure(
@@ -552,18 +552,6 @@ fun ZoomContinuousRulerVertical(
                 )
             )
         }
-    }
-}
-
-/**
- * 格式化变焦倍率显示
- */
-private fun formatZoomRatioV(ratio: Float): String {
-    val rounded = (ratio * 10).roundToInt() / 10f
-    return if (rounded == rounded.toInt().toFloat()) {
-        "${rounded.toInt()}x"
-    } else {
-        String.format("%.1fx", rounded)
     }
 }
 
