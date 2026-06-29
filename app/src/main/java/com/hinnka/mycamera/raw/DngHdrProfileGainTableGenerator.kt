@@ -22,7 +22,11 @@ internal object DngHdrProfileGainTableGenerator {
     private const val GRID_MIN_V = 6
     private const val GRID_MAX_H = 64
     private const val GRID_MAX_V = 48
-    private const val INPUT_HEADROOM = 1.12f
+    private const val DEFAULT_EFFECTIVE_INPUT_HEADROOM = 0.94f
+    private const val MIN_EFFECTIVE_INPUT_HEADROOM = 0.28f
+    private const val MAX_EFFECTIVE_INPUT_HEADROOM = 3.05f
+    private const val MIN_SCENE_MAX = 1.02f
+    private const val MAX_GAIN_VALUE = 5.40f
     private const val MIN_CURVE_INPUT = 1e-6f
     private const val SCENE_SHADOW_ANCHOR = 0.02f
     private const val SCENE_LOW_ANCHOR = 0.05f
@@ -31,16 +35,21 @@ internal object DngHdrProfileGainTableGenerator {
     private const val SCENE_WHITE_ANCHOR = 1.0f
     private const val SCENE_BRIGHT_ANCHOR = 1.5f
     private const val SCENE_SUPER_WHITE_ANCHOR = 2.0f
-    private const val MIN_SHADOW_GAIN = 1.70f
-    private const val MAX_SHADOW_GAIN = 3.50f
-    private const val MIN_MID_GAIN = 1.45f
-    private const val MAX_MID_GAIN = 2.40f
-    private const val MIN_WHITE_OUTPUT = 0.82f
-    private const val MAX_WHITE_OUTPUT = 0.93f
-    private const val MIN_BRIGHT_OUTPUT = 0.90f
-    private const val MAX_BRIGHT_OUTPUT = 0.995f
-    private const val MIN_SUPER_WHITE_OUTPUT = 0.97f
-    private const val MAX_SUPER_WHITE_OUTPUT = 0.999f
+    private const val SCENE_EXTREME_WHITE_ANCHOR = 3.0f
+    private const val MIN_SHADOW_GAIN = 1.65f
+    private const val MAX_SHADOW_GAIN = 5.40f
+    private const val MIN_MID_GAIN = 1.40f
+    private const val MAX_MID_GAIN = 2.75f
+    private const val MIN_HALF_OUTPUT = 0.56f
+    private const val MAX_HALF_OUTPUT = 0.68f
+    private const val MIN_WHITE_OUTPUT = 0.70f
+    private const val MAX_WHITE_OUTPUT = 0.995f
+    private const val MIN_BRIGHT_OUTPUT = 0.80f
+    private const val MAX_BRIGHT_OUTPUT = 1.0f
+    private const val MIN_SUPER_WHITE_OUTPUT = 0.88f
+    private const val MAX_SUPER_WHITE_OUTPUT = 1.0f
+    private const val MIN_EXTREME_WHITE_OUTPUT = 0.97f
+    private const val MAX_EXTREME_WHITE_OUTPUT = 1.0f
     private val BASE_INPUT_WEIGHTS = floatArrayOf(
         0.1495f,
         0.2935f,
@@ -134,12 +143,15 @@ internal object DngHdrProfileGainTableGenerator {
             }
         }
         val globalStats = weightedGlobalStats(cells)
+        val inputScale = hdrPgtmInputScaleForStats(globalStats, safeBaselineEv)
+        val sceneHdrStrength = sceneHdrStrength(inputScale)
         val curveParams = smoothHdrPgtmCurveParams(
             stats = Array(cellCount) { index ->
                 buildHdrPgtmCurveParams(
                     cell = cells[index] ?: globalStats,
                     global = globalStats,
-                    baselineExposureEv = safeBaselineEv
+                    baselineExposureEv = safeBaselineEv,
+                    sceneHdrStrength = sceneHdrStrength
                 )
             },
             grid = grid
@@ -148,7 +160,8 @@ internal object DngHdrProfileGainTableGenerator {
             grid = grid,
             safeBaselineEv = safeBaselineEv,
             safePointCount = safePointCount,
-            curveParams = curveParams
+            curveParams = curveParams,
+            inputScale = inputScale
         )
     }
 
@@ -157,12 +170,20 @@ internal object DngHdrProfileGainTableGenerator {
         val p50 = max(p10, safe01(stats[offset + 1]))
         val p90 = max(p50, safe01(stats[offset + 2]))
         val p98 = max(p90, safe01(stats[offset + 3]))
+        val p995Input = max(p98, safePositive(stats[offset + 6], p98))
+        val p999Input = max(p995Input, safePositive(stats[offset + 7], p995Input))
         return HdrPgtmCellStats(
             p10 = p10,
             p50 = p50,
             p90 = p90,
             p98 = p98,
             highlightFraction = safe01(stats[offset + 4]),
+            p995Input = p995Input,
+            p999Input = p999Input,
+            inputTailP95 = p995Input,
+            inputTailP98 = p995Input,
+            inputTailP99 = p999Input,
+            maxInput = p999Input,
             sampleWeight = sampleWeight
         )
     }
@@ -174,15 +195,21 @@ internal object DngHdrProfileGainTableGenerator {
         var p90 = 0f
         var p98 = 0f
         var highlightFraction = 0f
+        var p995Input = 0f
+        var p999Input = 0f
+        val validCells = ArrayList<HdrPgtmCellStats>(cells.size)
         cells.forEach { cell ->
             if (cell != null && cell.sampleWeight > 0f) {
                 val weight = cell.sampleWeight
+                validCells += cell
                 weightSum += weight
                 p10 += cell.p10 * weight
                 p50 += cell.p50 * weight
                 p90 += cell.p90 * weight
                 p98 += cell.p98 * weight
                 highlightFraction += cell.highlightFraction * weight
+                p995Input += cell.p995Input * weight
+                p999Input += cell.p999Input * weight
             }
         }
         if (weightSum <= 0f) {
@@ -192,17 +219,62 @@ internal object DngHdrProfileGainTableGenerator {
                 p90 = 0.55f,
                 p98 = 0.82f,
                 highlightFraction = 0f,
+                p995Input = 0.82f,
+                p999Input = 0.82f,
+                inputTailP95 = 0.82f,
+                inputTailP98 = 0.82f,
+                inputTailP99 = 0.82f,
+                maxInput = 0.82f,
                 sampleWeight = 1f
             )
         }
+        val inputTailP95 = weightedPercentile(validCells, 0.95f) { it.p995Input }
+        val inputTailP98 = weightedPercentile(validCells, 0.98f) { it.p995Input }
+        val inputTailP99 = weightedPercentile(validCells, 0.99f) { it.p999Input }
+        val maxInput = validCells.maxOfOrNull { it.p999Input } ?: (p999Input / weightSum)
         return HdrPgtmCellStats(
             p10 = p10 / weightSum,
             p50 = p50 / weightSum,
             p90 = p90 / weightSum,
             p98 = p98 / weightSum,
             highlightFraction = highlightFraction / weightSum,
+            p995Input = p995Input / weightSum,
+            p999Input = p999Input / weightSum,
+            inputTailP95 = inputTailP95,
+            inputTailP98 = inputTailP98,
+            inputTailP99 = inputTailP99,
+            maxInput = maxInput,
             sampleWeight = weightSum
         )
+    }
+
+    private fun weightedPercentile(
+        cells: List<HdrPgtmCellStats>,
+        percentile: Float,
+        selector: (HdrPgtmCellStats) -> Float,
+    ): Float {
+        if (cells.isEmpty()) return 0f
+        val sorted = cells
+            .mapNotNull { cell ->
+                val value = selector(cell)
+                if (value.isFinite() && cell.sampleWeight > 0f) {
+                    value to cell.sampleWeight
+                } else {
+                    null
+                }
+            }
+            .sortedBy { it.first }
+        if (sorted.isEmpty()) return 0f
+        val totalWeight = sorted.sumOf { it.second.toDouble() }.toFloat()
+        val target = totalWeight * percentile.coerceIn(0f, 1f)
+        var cumulative = 0f
+        sorted.forEach { (value, weight) ->
+            cumulative += weight
+            if (cumulative >= target) {
+                return value
+            }
+        }
+        return sorted.last().first
     }
 
     private fun buildMap(
@@ -210,7 +282,9 @@ internal object DngHdrProfileGainTableGenerator {
         safeBaselineEv: Float,
         safePointCount: Int,
         curveParams: Array<HdrPgtmCurveParams>,
+        inputScale: Float = hdrPgtmInputScaleForBaseline(safeBaselineEv),
     ): DngProfileGainTableMap {
+        val safeInputScale = sanitizeInputScale(inputScale)
         val gains = FloatArray(grid.mapPointsH * grid.mapPointsV * safePointCount)
         for (y in 0 until grid.mapPointsV) {
             for (x in 0 until grid.mapPointsH) {
@@ -219,7 +293,7 @@ internal object DngHdrProfileGainTableGenerator {
                     output = gains,
                     outputOffset = cellIndex * safePointCount,
                     pointCount = safePointCount,
-                    inputScale = hdrPgtmInputScale(safeBaselineEv),
+                    inputScale = safeInputScale,
                     params = curveParams[cellIndex]
                 )
             }
@@ -232,7 +306,7 @@ internal object DngHdrProfileGainTableGenerator {
             mapOriginV = 0.0,
             mapOriginH = 0.0,
             mapPointsN = safePointCount,
-            mapInputWeights = hdrPgtmInputWeights(safeBaselineEv),
+            mapInputWeights = hdrPgtmInputWeights(safeInputScale),
             gamma = 1f,
             gains = gains,
             sourceTag = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
@@ -256,14 +330,17 @@ internal object DngHdrProfileGainTableGenerator {
         cell: HdrPgtmCellStats,
         global: HdrPgtmCellStats,
         baselineExposureEv: Float,
+        sceneHdrStrength: Float,
     ): HdrPgtmCurveParams {
         val globalDynamicRangeEv = log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
             .coerceIn(0f, 8f)
         val sceneContrastStrength = smoothStep(1.8f, 5.5f, globalDynamicRangeEv)
-        val hdrStrength = max(
+        val hdrStrength = (max(
             smoothStep(0.35f, 3.2f, baselineExposureEv),
             0.70f * sceneContrastStrength
-        ).coerceIn(0f, 1f)
+        ) * sceneHdrStrength).coerceIn(0f, 1f)
+        val shadowSceneStrength = shadowSceneStrength(global, sceneHdrStrength)
+        val midSceneStrength = midSceneStrength(global, sceneHdrStrength, shadowSceneStrength)
         val globalMedian = global.p50.coerceIn(0.025f, 0.85f)
         val cellMedian = cell.p50.coerceIn(0.002f, 1f)
         val medianEv = log2(cellMedian / globalMedian)
@@ -279,38 +356,48 @@ internal object DngHdrProfileGainTableGenerator {
             0.60f * brightRegion * hdrStrength
         ).coerceIn(0f, 1f)
         val deepShadowLiftEv = 0.42f *
-            (1f - smoothStep(0.015f, 0.050f, cell.p90)) *
-            hdrStrength
+            (1f - smoothStep(0.020f, 0.115f, cell.p90)) *
+            shadowSceneStrength
         val localDodgeEv = (
             deepShadowLiftEv +
-                0.10f * darkRegion * (1f - smoothStep(0.05f, 0.18f, cell.p90))
+                0.16f * darkRegion *
+                (1f - smoothStep(0.08f, 0.32f, cell.p90)) *
+                shadowSceneStrength
             ).coerceIn(0f, 0.52f)
         val localBurnEv = (
             0.46f * smoothStep(0.18f, 0.88f, cell.p90) +
                 0.20f * brightRegion +
                 0.18f * combinedPressure
             ).coerceIn(0f, 0.72f) * hdrStrength
-        val shadowGain = hdrPgtmBaseShadowGain(baselineExposureEv) *
-            2.0f.pow((localDodgeEv - 0.55f * localBurnEv).coerceIn(-0.42f, 0.58f))
-        val midGain = hdrPgtmBaseMidGain(baselineExposureEv) *
-            2.0f.pow((0.34f * localDodgeEv - 0.22f * localBurnEv).coerceIn(-0.22f, 0.24f))
+        val shadowGain = hdrPgtmBaseShadowGain(baselineExposureEv, shadowSceneStrength) *
+            2.0f.pow((0.95f * localDodgeEv - 0.42f * localBurnEv).coerceIn(-0.34f, 0.42f))
+        val midGain = hdrPgtmBaseMidGain(baselineExposureEv, midSceneStrength) *
+            2.0f.pow((0.54f * localDodgeEv - 0.18f * localBurnEv).coerceIn(-0.16f, 0.28f))
         val halfOutput = (
-            0.64f -
-                0.035f * combinedPressure +
-                0.010f * darkRegion * hdrStrength
-            ).coerceIn(0.56f, 0.70f)
+            hdrPgtmBaseHalfOutput(baselineExposureEv, sceneHdrStrength) -
+                0.032f * combinedPressure +
+                0.018f * darkRegion * hdrStrength
+            ).coerceIn(MIN_HALF_OUTPUT, MAX_HALF_OUTPUT)
         val whiteOutput = (
-            0.89f -
-                0.045f * combinedPressure -
-                0.010f * brightRegion * hdrStrength
+            hdrPgtmBaseWhiteOutput(baselineExposureEv, sceneHdrStrength) -
+                0.040f * combinedPressure -
+                0.014f * brightRegion * hdrStrength
             ).coerceIn(MIN_WHITE_OUTPUT, MAX_WHITE_OUTPUT)
         val brightOutput = (
-            0.975f -
+            hdrPgtmBaseBrightOutput(baselineExposureEv, sceneHdrStrength) -
                 0.045f * combinedPressure -
-                0.010f * brightRegion * hdrStrength
-            ).coerceIn(max(whiteOutput + 0.035f, MIN_BRIGHT_OUTPUT), MAX_BRIGHT_OUTPUT)
-        val superWhiteOutput = lerp(0.997f, 0.985f, combinedPressure)
-            .coerceIn(max(brightOutput + 0.012f, MIN_SUPER_WHITE_OUTPUT), MAX_SUPER_WHITE_OUTPUT)
+                0.012f * brightRegion * hdrStrength
+            ).coerceInNonEmpty(max(whiteOutput + 0.035f, MIN_BRIGHT_OUTPUT), MAX_BRIGHT_OUTPUT)
+        val superWhiteOutput = (
+            hdrPgtmBaseSuperWhiteOutput(baselineExposureEv, sceneHdrStrength) -
+                0.042f * combinedPressure -
+                0.008f * brightRegion * hdrStrength
+            )
+            .coerceInNonEmpty(max(brightOutput + 0.012f, MIN_SUPER_WHITE_OUTPUT), MAX_SUPER_WHITE_OUTPUT)
+        val extremeWhiteOutput = (
+            hdrPgtmBaseExtremeWhiteOutput(baselineExposureEv, sceneHdrStrength) -
+                0.010f * combinedPressure
+            ).coerceInNonEmpty(max(superWhiteOutput + 0.020f, MIN_EXTREME_WHITE_OUTPUT), MAX_EXTREME_WHITE_OUTPUT)
         return HdrPgtmCurveParams(
             shadowGain = shadowGain.coerceIn(MIN_SHADOW_GAIN, MAX_SHADOW_GAIN),
             midGain = midGain.coerceIn(MIN_MID_GAIN, MAX_MID_GAIN),
@@ -318,6 +405,7 @@ internal object DngHdrProfileGainTableGenerator {
             whiteOutput = whiteOutput,
             brightOutput = brightOutput,
             superWhiteOutput = superWhiteOutput,
+            extremeWhiteOutput = extremeWhiteOutput,
             highlightPressure = combinedPressure
         )
     }
@@ -325,14 +413,13 @@ internal object DngHdrProfileGainTableGenerator {
     private fun baselineHdrPgtmCurveParams(baselineExposureEv: Float): HdrPgtmCurveParams {
         val highlightPressure = smoothStep(0.35f, 3.2f, baselineExposureEv)
         return HdrPgtmCurveParams(
-            shadowGain = hdrPgtmBaseShadowGain(baselineExposureEv),
-            midGain = hdrPgtmBaseMidGain(baselineExposureEv),
-            halfOutput = lerp(0.65f, 0.63f, highlightPressure),
-            whiteOutput = lerp(0.90f, 0.875f, highlightPressure).coerceIn(MIN_WHITE_OUTPUT, MAX_WHITE_OUTPUT),
-            brightOutput = lerp(0.98f, 0.945f, highlightPressure)
-                .coerceIn(MIN_BRIGHT_OUTPUT, MAX_BRIGHT_OUTPUT),
-            superWhiteOutput = lerp(0.997f, 0.988f, highlightPressure)
-                .coerceIn(MIN_SUPER_WHITE_OUTPUT, MAX_SUPER_WHITE_OUTPUT),
+            shadowGain = hdrPgtmBaseShadowGain(baselineExposureEv, sceneHdrStrength = 1f),
+            midGain = hdrPgtmBaseMidGain(baselineExposureEv, sceneHdrStrength = 1f),
+            halfOutput = hdrPgtmBaseHalfOutput(baselineExposureEv, sceneHdrStrength = 1f),
+            whiteOutput = hdrPgtmBaseWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
+            brightOutput = hdrPgtmBaseBrightOutput(baselineExposureEv, sceneHdrStrength = 1f),
+            superWhiteOutput = hdrPgtmBaseSuperWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
+            extremeWhiteOutput = hdrPgtmBaseExtremeWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
             highlightPressure = highlightPressure.coerceIn(0f, 1f)
         )
     }
@@ -353,6 +440,7 @@ internal object DngHdrProfileGainTableGenerator {
                     var whiteOutput = 0f
                     var brightOutput = 0f
                     var superWhiteOutput = 0f
+                    var extremeWhiteOutput = 0f
                     var highlightPressure = 0f
                     for (dy in -1..1) {
                         for (dx in -1..1) {
@@ -367,6 +455,7 @@ internal object DngHdrProfileGainTableGenerator {
                             whiteOutput += value.whiteOutput * weight
                             brightOutput += value.brightOutput * weight
                             superWhiteOutput += value.superWhiteOutput * weight
+                            extremeWhiteOutput += value.extremeWhiteOutput * weight
                             highlightPressure += value.highlightPressure * weight
                         }
                     }
@@ -378,6 +467,7 @@ internal object DngHdrProfileGainTableGenerator {
                         whiteOutput = whiteOutput / weightSum,
                         brightOutput = brightOutput / weightSum,
                         superWhiteOutput = superWhiteOutput / weightSum,
+                        extremeWhiteOutput = extremeWhiteOutput / weightSum,
                         highlightPressure = highlightPressure / weightSum,
                     )
                 }
@@ -394,7 +484,7 @@ internal object DngHdrProfileGainTableGenerator {
         inputScale: Float,
         params: HdrPgtmCurveParams,
     ) {
-        val safeInputScale = inputScale.coerceIn(1e-4f, INPUT_HEADROOM)
+        val safeInputScale = sanitizeInputScale(inputScale)
         val sceneMax = (1f / safeInputScale).coerceAtLeast(SCENE_WHITE_ANCHOR + 1e-3f)
         val anchors = buildSceneAnchors(params, sceneMax)
         for (index in 0 until pointCount) {
@@ -406,7 +496,7 @@ internal object DngHdrProfileGainTableGenerator {
             val sceneLinear = input / safeInputScale
             val outputLinear = sampleSceneCurve(anchors, sceneLinear)
             output[outputOffset + index] = (outputLinear / max(sceneLinear, MIN_CURVE_INPUT))
-                .coerceIn(0.05f, 4.0f)
+                .coerceIn(0.05f, MAX_GAIN_VALUE)
         }
     }
 
@@ -420,12 +510,14 @@ internal object DngHdrProfileGainTableGenerator {
         anchors += 0f to 0f
         val shadowGain = params.shadowGain.coerceIn(MIN_SHADOW_GAIN, MAX_SHADOW_GAIN)
         val midGain = params.midGain.coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
-        val baseHalfOutput = params.halfOutput.coerceIn(0.52f, 0.74f)
+        val baseHalfOutput = params.halfOutput.coerceIn(MIN_HALF_OUTPUT, MAX_HALF_OUTPUT)
         val baseWhiteOutput = params.whiteOutput.coerceIn(MIN_WHITE_OUTPUT, MAX_WHITE_OUTPUT)
         val baseBrightOutput = params.brightOutput
-            .coerceIn(max(baseWhiteOutput + 0.025f, MIN_BRIGHT_OUTPUT), MAX_BRIGHT_OUTPUT)
+            .coerceInNonEmpty(max(baseWhiteOutput + 0.025f, MIN_BRIGHT_OUTPUT), MAX_BRIGHT_OUTPUT)
         val baseSuperWhiteOutput = params.superWhiteOutput
-            .coerceIn(max(baseBrightOutput + 0.008f, MIN_SUPER_WHITE_OUTPUT), MAX_SUPER_WHITE_OUTPUT)
+            .coerceInNonEmpty(max(baseBrightOutput + 0.008f, MIN_SUPER_WHITE_OUTPUT), MAX_SUPER_WHITE_OUTPUT)
+        val baseExtremeWhiteOutput = params.extremeWhiteOutput
+            .coerceInNonEmpty(max(baseSuperWhiteOutput + 0.020f, MIN_EXTREME_WHITE_OUTPUT), MAX_EXTREME_WHITE_OUTPUT)
         val midOutput = SCENE_MID_ANCHOR * midGain
         addAnchor(SCENE_SHADOW_ANCHOR, SCENE_SHADOW_ANCHOR * shadowGain)
         addAnchor(SCENE_LOW_ANCHOR, SCENE_LOW_ANCHOR * shadowGain)
@@ -434,6 +526,7 @@ internal object DngHdrProfileGainTableGenerator {
         addAnchor(SCENE_WHITE_ANCHOR, baseWhiteOutput)
         addAnchor(SCENE_BRIGHT_ANCHOR, baseBrightOutput)
         addAnchor(SCENE_SUPER_WHITE_ANCHOR, baseSuperWhiteOutput)
+        addAnchor(SCENE_EXTREME_WHITE_ANCHOR, baseExtremeWhiteOutput)
         anchors += sceneMax to max(1f, (anchors.lastOrNull()?.second ?: 0f) + 1e-5f)
         return anchors
     }
@@ -457,27 +550,149 @@ internal object DngHdrProfileGainTableGenerator {
         return anchors.last().second
     }
 
-    private fun hdrPgtmInputWeights(baselineExposureEv: Float): FloatArray {
-        val scale = hdrPgtmInputScale(baselineExposureEv)
+    private fun hdrPgtmInputWeights(inputScale: Float): FloatArray {
+        val scale = sanitizeInputScale(inputScale)
         return FloatArray(MAP_INPUT_WEIGHT_COUNT) { index ->
             BASE_INPUT_WEIGHTS[index] * scale
         }
     }
 
-    private fun hdrPgtmBaseShadowGain(baselineExposureEv: Float): Float {
-        return lerp(2.45f, 2.58f, smoothStep(0.8f, 3.35f, baselineExposureEv))
+    private fun hdrPgtmBaseShadowGain(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrGain = lerp(3.55f, 3.85f, smoothStep(0.8f, 2.2f, baselineExposureEv))
+        return lerp(1.95f, hdrGain, sceneHdrStrength)
             .coerceIn(MIN_SHADOW_GAIN, MAX_SHADOW_GAIN)
     }
 
-    private fun hdrPgtmBaseMidGain(baselineExposureEv: Float): Float {
-        return lerp(1.82f, 1.93f, smoothStep(1.0f, 3.35f, baselineExposureEv))
+    private fun hdrPgtmBaseMidGain(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrGain = lerp(2.30f, 2.40f, smoothStep(0.8f, 2.2f, baselineExposureEv))
+        return lerp(1.65f, hdrGain, sceneHdrStrength)
             .coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
     }
 
-    private fun hdrPgtmInputScale(baselineExposureEv: Float): Float {
+    private fun hdrPgtmBaseHalfOutput(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrOutput = lerp(0.64f, 0.615f, smoothStep(0.35f, 2.2f, baselineExposureEv))
+        return lerp(0.655f, hdrOutput, sceneHdrStrength)
+            .coerceIn(MIN_HALF_OUTPUT, MAX_HALF_OUTPUT)
+    }
+
+    private fun hdrPgtmBaseWhiteOutput(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrOutput = lerp(0.80f, 0.76f, smoothStep(0.35f, 2.2f, baselineExposureEv))
+        return lerp(0.985f, hdrOutput, sceneHdrStrength)
+            .coerceIn(MIN_WHITE_OUTPUT, MAX_WHITE_OUTPUT)
+    }
+
+    private fun hdrPgtmBaseBrightOutput(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrOutput = lerp(0.88f, 0.845f, smoothStep(0.35f, 2.2f, baselineExposureEv))
+        return lerp(0.996f, hdrOutput, sceneHdrStrength)
+            .coerceIn(MIN_BRIGHT_OUTPUT, MAX_BRIGHT_OUTPUT)
+    }
+
+    private fun hdrPgtmBaseSuperWhiteOutput(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrOutput = lerp(0.925f, 0.905f, smoothStep(0.35f, 2.2f, baselineExposureEv))
+        return lerp(1.0f, hdrOutput, sceneHdrStrength)
+            .coerceIn(MIN_SUPER_WHITE_OUTPUT, MAX_SUPER_WHITE_OUTPUT)
+    }
+
+    private fun hdrPgtmBaseExtremeWhiteOutput(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
+        val hdrOutput = lerp(0.985f, 0.990f, smoothStep(0.35f, 2.2f, baselineExposureEv))
+        return lerp(1.0f, hdrOutput, sceneHdrStrength)
+            .coerceIn(MIN_EXTREME_WHITE_OUTPUT, MAX_EXTREME_WHITE_OUTPUT)
+    }
+
+    private fun hdrPgtmInputScaleForBaseline(baselineExposureEv: Float): Float {
         val baselineGain = 2.0f.pow(baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV))
-        return (INPUT_HEADROOM / baselineGain)
-            .coerceIn(1e-4f, INPUT_HEADROOM)
+        return sanitizeInputScale(DEFAULT_EFFECTIVE_INPUT_HEADROOM / baselineGain)
+    }
+
+    private fun hdrPgtmInputScaleForStats(
+        global: HdrPgtmCellStats,
+        baselineExposureEv: Float,
+    ): Float {
+        val baselineGain = 2.0f.pow(baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV))
+        val fallbackSceneMax = (baselineGain / DEFAULT_EFFECTIVE_INPUT_HEADROOM)
+            .coerceAtLeast(MIN_SCENE_MAX)
+        val tailP95 = global.inputTailP95.takeIf { it.isFinite() && it > 0f } ?: return 1f / fallbackSceneMax
+        val tailP98 = max(tailP95, global.inputTailP98.takeIf { it.isFinite() && it > 0f } ?: tailP95)
+        val tailP99 = max(tailP98, global.inputTailP99.takeIf { it.isFinite() && it > 0f } ?: tailP98)
+        val maxInput = max(tailP99, global.maxInput.takeIf { it.isFinite() && it > 0f } ?: tailP99)
+        val sceneMax = hdrPgtmSceneMaxFromTailStats(
+            highlightFraction = global.highlightFraction,
+            tailP95 = tailP95,
+            tailP98 = tailP98,
+            tailP99 = tailP99,
+            maxInput = maxInput
+        ).coerceIn(
+            MIN_SCENE_MAX,
+            baselineGain / MIN_EFFECTIVE_INPUT_HEADROOM
+        )
+        val effectiveHeadroom = (baselineGain / sceneMax)
+            .coerceIn(MIN_EFFECTIVE_INPUT_HEADROOM, MAX_EFFECTIVE_INPUT_HEADROOM)
+        return sanitizeInputScale(effectiveHeadroom / baselineGain)
+    }
+
+    private fun hdrPgtmSceneMaxFromTailStats(
+        highlightFraction: Float,
+        tailP95: Float,
+        tailP98: Float,
+        tailP99: Float,
+        maxInput: Float,
+    ): Float {
+        val safeHighlightFraction = highlightFraction.coerceIn(0f, 1f)
+        return when {
+            safeHighlightFraction >= 0.20f -> {
+                max(maxInput * 0.99f, tailP99 * 1.10f)
+            }
+
+            safeHighlightFraction >= 0.10f -> {
+                tailP95 * 0.94f
+            }
+
+            safeHighlightFraction >= 0.03f -> {
+                tailP99 * 1.06f
+            }
+
+            else -> {
+                val outlierGapEv = log2((tailP99 + 0.04f) / (tailP98 + 0.04f))
+                if (outlierGapEv >= 0.72f) {
+                    tailP99 * 0.94f
+                } else {
+                    min(tailP95 * 1.08f, tailP98 * 0.94f)
+                }
+            }
+        }
+    }
+
+    private fun sceneHdrStrength(inputScale: Float): Float {
+        val sceneMax = 1f / sanitizeInputScale(inputScale)
+        return smoothStep(1.12f, 2.35f, sceneMax)
+    }
+
+    private fun shadowSceneStrength(global: HdrPgtmCellStats, sceneHdrStrength: Float): Float {
+        val darkMedianStrength = 1f - smoothStep(0.035f, 0.160f, global.p50)
+        val deepShadowStrength = 1f - smoothStep(0.008f, 0.070f, global.p10)
+        return max(
+            sceneHdrStrength,
+            max(0.82f * darkMedianStrength, 0.70f * deepShadowStrength)
+        ).coerceIn(0f, 1f)
+    }
+
+    private fun midSceneStrength(
+        global: HdrPgtmCellStats,
+        sceneHdrStrength: Float,
+        shadowSceneStrength: Float,
+    ): Float {
+        val darkMedianStrength = 1f - smoothStep(0.035f, 0.160f, global.p50)
+        val deepShadowStrength = 1f - smoothStep(0.008f, 0.070f, global.p10)
+        return max(
+            0.82f * sceneHdrStrength,
+            max(0.60f * darkMedianStrength, max(0.45f * deepShadowStrength, 0.88f * shadowSceneStrength))
+        ).coerceIn(0f, 1f)
+    }
+
+    private fun sanitizeInputScale(inputScale: Float): Float {
+        return inputScale.takeIf { it.isFinite() }
+            ?.coerceIn(1e-4f, 1.0f)
+            ?: 1e-4f
     }
 
     private fun tableInputForIndex(index: Int, pointCount: Int): Float {
@@ -506,6 +721,14 @@ internal object DngHdrProfileGainTableGenerator {
         return value.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
     }
 
+    private fun safePositive(value: Float, fallback: Float): Float {
+        return value.takeIf { it.isFinite() && it > 0f } ?: fallback
+    }
+
+    private fun Float.coerceInNonEmpty(minimumValue: Float, maximumValue: Float): Float {
+        return coerceIn(minimumValue.coerceAtMost(maximumValue), maximumValue)
+    }
+
     private data class HdrPgtmGrid(
         val mapPointsH: Int,
         val mapPointsV: Int,
@@ -519,6 +742,12 @@ internal object DngHdrProfileGainTableGenerator {
         val p90: Float,
         val p98: Float,
         val highlightFraction: Float,
+        val p995Input: Float,
+        val p999Input: Float,
+        val inputTailP95: Float,
+        val inputTailP98: Float,
+        val inputTailP99: Float,
+        val maxInput: Float,
         val sampleWeight: Float,
     )
 
@@ -529,6 +758,7 @@ internal object DngHdrProfileGainTableGenerator {
         val whiteOutput: Float,
         val brightOutput: Float,
         val superWhiteOutput: Float,
+        val extremeWhiteOutput: Float,
         val highlightPressure: Float,
     )
 }

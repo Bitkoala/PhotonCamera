@@ -2325,6 +2325,7 @@ class GlesRawStacker(
             const int STATS_STRIDE = 8;
             const int SAMPLE_GRID = 16;
             shared uint hist[HIST_BINS];
+            shared float inputSamples[HIST_BINS];
             shared uint sampleCount;
             shared uint highlightCount;
 
@@ -2372,14 +2373,14 @@ class GlesRawStacker(
                 vec3 rgb = blockRgbAt(base);
                 float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
                 float maxChannel = max(rgb.r, max(rgb.g, rgb.b));
-                return clamp((0.5 * luma + 0.5 * maxChannel) * uBaselineExposureGain, 0.0, 1.0);
+                return max((0.5 * luma + 0.5 * maxChannel) * uBaselineExposureGain, 0.0);
             }
 
             void main() {
                 ivec2 cell = ivec2(gl_WorkGroupID.xy);
                 if (cell.x >= uGridSize.x || cell.y >= uGridSize.y) return;
                 ivec2 localId = ivec2(gl_LocalInvocationID.xy);
-                int localIndex = localId.y * 8 + localId.x;
+                int localIndex = localId.y * SAMPLE_GRID + localId.x;
 
                 if (localIndex < HIST_BINS) {
                     hist[localIndex] = 0u;
@@ -2406,7 +2407,9 @@ class GlesRawStacker(
                 x = clamp(x - (x & 1), startX, max(startX, endX - 2));
                 y = clamp(y - (y & 1), startY, max(startY, endY - 2));
                 float inputValue = pgtmInputAt(ivec2(x, y));
-                uint bin = uint(clamp(int(floor(inputValue * float(HIST_BINS - 1) + 0.5)), 0, HIST_BINS - 1));
+                inputSamples[localIndex] = inputValue;
+                float clampedInput = clamp(inputValue, 0.0, 1.0);
+                uint bin = uint(clamp(int(floor(clampedInput * float(HIST_BINS - 1) + 0.5)), 0, HIST_BINS - 1));
                 atomicAdd(hist[bin], 1u);
                 atomicAdd(sampleCount, 1u);
                 if (inputValue >= 0.92) {
@@ -2429,6 +2432,8 @@ class GlesRawStacker(
                 float p50 = 1.0;
                 float p90 = 1.0;
                 float p98 = 1.0;
+                float p995Input = 0.0;
+                float p999Input = 0.0;
                 bool got10 = false;
                 bool got50 = false;
                 bool got90 = false;
@@ -2453,6 +2458,15 @@ class GlesRawStacker(
                         got98 = true;
                     }
                 }
+                for (int i = 0; i < HIST_BINS; ++i) {
+                    float value = inputSamples[i];
+                    if (value >= p999Input) {
+                        p995Input = p999Input;
+                        p999Input = value;
+                    } else if (value > p995Input) {
+                        p995Input = value;
+                    }
+                }
 
                 int cellIndex = cell.y * uGridSize.x + cell.x;
                 int offset = cellIndex * STATS_STRIDE;
@@ -2462,8 +2476,8 @@ class GlesRawStacker(
                 stats[offset + 3] = samples > 0 ? p98 : 0.0;
                 stats[offset + 4] = samples > 0 ? float(highlightCount) / float(samples) : 0.0;
                 stats[offset + 5] = float(samples);
-                stats[offset + 6] = 0.0;
-                stats[offset + 7] = 0.0;
+                stats[offset + 6] = samples > 0 ? p995Input : 0.0;
+                stats[offset + 7] = samples > 0 ? p999Input : 0.0;
             }
         """.trimIndent()
 
