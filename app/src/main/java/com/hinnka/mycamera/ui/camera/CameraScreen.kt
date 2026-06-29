@@ -1393,7 +1393,11 @@ fun CameraScreen(
             isRawSupported = state.isRawSupported,
             useNaturalLight = naturalLightEnabled,
             naturalLightWarningShown = naturalLightWarningShown,
-            onNaturalLightToggle = { viewModel.setNaturalLightToneMapEnabled(it) },
+            onNaturalLightToggle = {
+                runPreviewTransition {
+                    viewModel.setNaturalLightToneMapEnabled(it)
+                }
+            },
             onNaturalLightWarningShown = { viewModel.setNaturalLightWarningShown(true) },
             rawDcpId = rawDcpId,
             availableDcps = viewModel.availableDcps,

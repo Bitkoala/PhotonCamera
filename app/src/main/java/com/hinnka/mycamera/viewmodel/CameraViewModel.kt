@@ -677,11 +677,34 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private suspend fun saveNaturalLightEnabledWithCameraReopen(
+        enabled: Boolean,
+        prefs: UserPreferences? = null
+    ) {
+        val currentPrefs = prefs ?: userPreferencesRepository.userPreferences.first()
+        if (currentPrefs.naturalLightEnabled == enabled) return
+
+        val previousTonemapMode = effectiveCameraTonemapMode(currentPrefs)
+        val nextPrefs = currentPrefs.copy(naturalLightEnabled = enabled)
+        val nextTonemapMode = effectiveCameraTonemapMode(nextPrefs)
+
+        userPreferencesRepository.saveNaturalLightEnabled(enabled)
+        if (previousTonemapMode != nextTonemapMode) {
+            cameraController.setTonemapMode(nextTonemapMode)
+        }
+        PLog.d(
+            TAG,
+            "Reopening camera for Natural Light change: enabled=$enabled, " +
+                "tonemap=$previousTonemapMode->$nextTonemapMode"
+        )
+        reopenCamera()
+    }
+
     private suspend fun disableNaturalLightIfNeeded(reason: String, prefs: UserPreferences? = null) {
         val currentPrefs = prefs ?: userPreferencesRepository.userPreferences.first()
         if (currentPrefs.naturalLightEnabled) {
             PLog.d(TAG, "Disabling Natural Light tone map: $reason")
-            userPreferencesRepository.saveNaturalLightEnabled(false)
+            saveNaturalLightEnabledWithCameraReopen(false, currentPrefs)
         }
     }
 
@@ -5585,7 +5608,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
             }
-            userPreferencesRepository.saveNaturalLightEnabled(enabled)
+            saveNaturalLightEnabledWithCameraReopen(enabled)
         }
     }
 
