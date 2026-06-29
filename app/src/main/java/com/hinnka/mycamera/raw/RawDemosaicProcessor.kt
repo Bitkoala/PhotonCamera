@@ -877,8 +877,14 @@ class RawDemosaicProcessor {
             resolvedDcpRenderPlan != null && embeddedDngRenderPlan != null -> "embedded-dng"
             else -> null
         }
+        val effectiveRequestedColorEngine = resolveColorEngineForEmbeddedDngToneCurve(
+            requestedColorEngine = requestedColorEngine,
+            usesEmbeddedDngToneCurve = !hasDcpSelection &&
+                resolvedDcpRenderPlan != null &&
+                embeddedDngRenderPlan?.toneCurveLut != null
+        )
         val spektrafilmLut =
-            if (requestedColorEngine == RawRenderingEngine.Spektrafilm &&
+            if (effectiveRequestedColorEngine == RawRenderingEngine.Spektrafilm &&
                 spectralFilmStock != null && spectralFilmPrint != null
             ) {
                 SpectralFilmProfile.loadCombinedLut(
@@ -891,14 +897,14 @@ class RawDemosaicProcessor {
                 null
             }
         val colorEngine = when {
-            requestedColorEngine == RawRenderingEngine.Spektrafilm && spektrafilmLut == null -> {
+            effectiveRequestedColorEngine == RawRenderingEngine.Spektrafilm && spektrafilmLut == null -> {
                 PLog.w(TAG, "SpectralFilm LUT unavailable, falling back to AdobeCurve")
                 RawRenderingEngine.AdobeCurve
             }
 
-            else -> requestedColorEngine
+            else -> effectiveRequestedColorEngine
         }
-        val useDcpToneCurve = requestedColorEngine == RawRenderingEngine.AdobeCurve
+        val useDcpToneCurve = effectiveRequestedColorEngine == RawRenderingEngine.AdobeCurve
         val applyDcpBaselineExposureOffset =
             shouldApplyDcpBaselineExposureOffset(resolvedDcpRenderPlan)
         val useProfileExposureRamp =
@@ -4638,6 +4644,22 @@ class RawDemosaicProcessor {
         dcpRenderPlan: DcpRenderPlan?
     ): FloatArray {
         return dcpRenderPlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix
+    }
+
+    private fun resolveColorEngineForEmbeddedDngToneCurve(
+        requestedColorEngine: RawRenderingEngine,
+        usesEmbeddedDngToneCurve: Boolean
+    ): RawRenderingEngine {
+        if (!usesEmbeddedDngToneCurve || requestedColorEngine == RawRenderingEngine.AdobeCurve) {
+            return requestedColorEngine
+        }
+
+        PLog.w(
+            TAG,
+            "Embedded DNG tone curve detected; forcing AdobeCurve instead of requested " +
+                "colorEngine=$requestedColorEngine"
+        )
+        return RawRenderingEngine.AdobeCurve
     }
 
     private fun logRawDcpPipeline(
