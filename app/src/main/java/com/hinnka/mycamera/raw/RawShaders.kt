@@ -82,6 +82,7 @@ object RawShaders {
             RawRenderingEngine.AgX -> combinedFragmentShader(
                 engineUniforms = AGX_COMBINED_UNIFORMS,
                 engineFunctions = AGX_COMBINED_FUNCTIONS,
+                includeAdobeProfilePipeline = false,
                 includeShadowsHighlights = includeShadowsHighlights
             )
 
@@ -89,24 +90,28 @@ object RawShaders {
                 engineUniforms = ADOBE_COMBINED_UNIFORMS,
                 engineFunctions =
                     "$CURVE_COMBINED_FUNCTIONS\n$ADOBE_COMBINED_FUNCTIONS",
+                includeAdobeProfilePipeline = true,
                 includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.Spektrafilm -> combinedFragmentShader(
                 engineUniforms = SPECTRAL_FILM_COMBINED_UNIFORMS,
                 engineFunctions = SPECTRAL_FILM_COMBINED_FUNCTIONS,
+                includeAdobeProfilePipeline = false,
                 includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.DarktableSigmoid -> combinedFragmentShader(
                 engineUniforms = OUTPUT_TRANSFORM_COMBINED_UNIFORMS,
                 engineFunctions = DARKTABLE_SIGMOID_COMBINED_FUNCTIONS,
+                includeAdobeProfilePipeline = false,
                 includeShadowsHighlights = includeShadowsHighlights
             )
 
             RawRenderingEngine.DarktableFilmic -> combinedFragmentShader(
                 engineUniforms = OUTPUT_TRANSFORM_COMBINED_UNIFORMS,
                 engineFunctions = DARKTABLE_FILMIC_COMBINED_FUNCTIONS,
+                includeAdobeProfilePipeline = false,
                 includeShadowsHighlights = includeShadowsHighlights
             )
         }
@@ -115,6 +120,7 @@ object RawShaders {
     private fun combinedFragmentShader(
         engineUniforms: String,
         engineFunctions: String,
+        includeAdobeProfilePipeline: Boolean,
         includeShadowsHighlights: Boolean
     ): String {
         val shadowsHighlightsUniforms = if (includeShadowsHighlights) {
@@ -159,10 +165,42 @@ object RawShaders {
         } else {
             ""
         }
+        val profileUniforms = if (includeAdobeProfilePipeline) {
+            ADOBE_PROFILE_COMBINED_UNIFORMS
+        } else {
+            PROFILE_EXPOSURE_COMBINED_UNIFORMS
+        }
+        val profileFunctions = if (includeAdobeProfilePipeline) {
+            ADOBE_PROFILE_COMBINED_FUNCTIONS
+        } else {
+            ""
+        }
+        val prepareEngineInputFunction = if (includeAdobeProfilePipeline) {
+            """
+        vec3 prepareEngineInput(vec3 color) {
+            color = applyAdobeProfilePipeline(color);
+            color = uProfileToEngineTransform * color;
+            return color;
+        }
+            """.trimIndent()
+        } else {
+            """
+        vec3 prepareEngineInput(vec3 color) {
+            color *= uProfileExposureLinearGain;
+            color = uProfileToEngineTransform * color;
+            return color;
+        }
+            """.trimIndent()
+        }
+        val sampler3DPrecision = if (includeAdobeProfilePipeline || engineUniforms.contains("sampler3D")) {
+            "precision highp sampler3D;"
+        } else {
+            ""
+        }
         return """
         #version 300 es
         precision highp float;
-        precision highp sampler3D;
+        $sampler3DPrecision
         
         in vec2 vTexCoord;
         out vec4 fragColor;
@@ -172,7 +210,7 @@ object RawShaders {
         uniform mat3 uProfileToEngineTransform;
         
         $engineUniforms
-        $DCP_PROFILE_COMBINED_UNIFORMS
+        $profileUniforms
 
         vec3 linearToSrgb(vec3 color) {
             vec3 clampedColor = max(color, vec3(0.0));
@@ -186,14 +224,10 @@ object RawShaders {
             );
         }
 
-        $DCP_COMBINED_FUNCTIONS
+        $profileFunctions
         $engineFunctions
 
-        vec3 prepareEngineInput(vec3 color) {
-            color = applyDcpMaps(color);
-            color = uProfileToEngineTransform * color;
-            return color;
-        }
+        $prepareEngineInputFunction
 
         $shadowsHighlightsFunctions
 
@@ -239,7 +273,11 @@ object RawShaders {
         uniform bool uCurveEnabled;
     """.trimIndent()
 
-    private val DCP_PROFILE_COMBINED_UNIFORMS = """
+    private val PROFILE_EXPOSURE_COMBINED_UNIFORMS = """
+        uniform float uProfileExposureLinearGain;
+    """.trimIndent()
+
+    private val ADOBE_PROFILE_COMBINED_UNIFORMS = """
         uniform sampler3D uDcpHueSatTexture;
         uniform sampler3D uDcpLookTableTexture;
         uniform bool uDcpHueSatEnabled;
@@ -248,7 +286,7 @@ object RawShaders {
         uniform ivec3 uDcpLookTableDivisions;
         uniform int uDcpHueSatEncoding;
         uniform int uDcpLookTableEncoding;
-        uniform float uProfileExposureLinearGain;
+        $PROFILE_EXPOSURE_COMBINED_UNIFORMS
         uniform bool uProfileExposureRampEnabled;
         uniform float uProfileExposureRampSlope;
         uniform float uProfileExposureRampBlack;
@@ -277,9 +315,7 @@ object RawShaders {
             if (!uCurveEnabled || uCurveSize <= 1.0) {
                 return value;
             }
-            if (value < 0.0 || value > 1.0) {
-                return value;
-            }
+            value = clamp(value, 0.0, 1.0);
             float coordX = value * ((uCurveSize - 1.0) / uCurveSize) + (0.5 / uCurveSize);
             return texture(uCurveTexture, vec2(coordX, 0.5)).r;
         }
@@ -298,6 +334,7 @@ object RawShaders {
         }
 
         vec3 applyAdobeCurve(vec3 color) {
+            color = clamp(color, vec3(0.0), vec3(1.0));
             float r = color.r;
             float g = color.g;
             float b = color.b;
@@ -324,11 +361,11 @@ object RawShaders {
                 }
             }
 
-            return vec3(r, g, b);
+            return clamp(vec3(r, g, b), vec3(0.0), vec3(1.0));
         }
     """.trimIndent()
 
-    private val DCP_COMBINED_FUNCTIONS = """
+    private val ADOBE_PROFILE_COMBINED_FUNCTIONS = """
         const float PROFILE_HIGHLIGHT_SHOULDER_START = 0.58;
         const float PROFILE_HIGHLIGHT_SHOULDER_SOFTNESS = 0.30;
         const float PROFILE_HIGHLIGHT_NEUTRAL_BLEND_MAX = 0.71;
@@ -464,23 +501,7 @@ object RawShaders {
             return edge0 * sFract0 + edge1 * sFract1;
         }
 
-        vec3 srgbToLinear(vec3 srgb) {
-            vec3 color = max(srgb, vec3(0.0));
-            bvec3 useHigh = greaterThan(color, vec3(0.04045));
-            vec3 low = color / 12.92;
-            vec3 high = pow((color + 0.055) / 1.055, vec3(2.4));
-            return vec3(
-                useHigh.r ? high.r : low.r,
-                useHigh.g ? high.g : low.g,
-                useHigh.b ? high.b : low.b
-            );
-        }
-
         vec3 applyDcpHsvMap(vec3 color, sampler3D tableTexture, ivec3 divisions, int encoding) {
-            if (min(color.r, min(color.g, color.b)) < 0.0) {
-                return color;
-            }
-
             vec3 hsv = rgbToDcpHsv(color);
             float lookupValue = hsv.z;
             float vEncoded = hsv.z;
@@ -493,7 +514,7 @@ object RawShaders {
             vec3 modify = sampleDcpMap(tableTexture, divisions, lookupHsv);
             hsv.x = mod(hsv.x + (modify.x * 6.0 / 360.0), 6.0);
             hsv.y = clampDcpTableCoordinate(hsv.y * modify.y);
-            vEncoded = max(vEncoded * modify.z, 0.0);
+            vEncoded = clamp(vEncoded * modify.z, 0.0, 1.0);
             if (encoding == 1) {
                 hsv.z = decodeScaledValue(vEncoded, encoding);
             } else {
@@ -576,7 +597,7 @@ object RawShaders {
             return color;
         }
 
-        vec3 applyDcpMaps(vec3 color) {
+        vec3 applyAdobeProfilePipeline(vec3 color) {
             color = applyDcpHueSatMap(color);
             if (uProfileExposureRampEnabled) {
                 color = applyProfileExposureRamp(color);
