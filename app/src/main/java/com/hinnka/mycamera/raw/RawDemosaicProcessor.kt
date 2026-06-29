@@ -904,6 +904,12 @@ class RawDemosaicProcessor {
 
             else -> effectiveRequestedColorEngine
         }
+        val hasProfileGainTableMap = actualMetadata.profileGainTableMap?.isValid == true
+        val skipRawAutoExposureForEmbeddedHdrRaw = shouldSkipRawAutoExposureForEmbeddedHdrRaw(
+            metadata = actualMetadata,
+            embeddedDngRenderPlan = embeddedDngRenderPlan,
+            hasDcpSelection = hasDcpSelection
+        )
         val useDcpToneCurve = effectiveRequestedColorEngine == RawRenderingEngine.AdobeCurve
         val applyDcpBaselineExposureOffset =
             shouldApplyDcpBaselineExposureOffset(resolvedDcpRenderPlan)
@@ -939,24 +945,32 @@ class RawDemosaicProcessor {
                     "profileExposureRamp=$useProfileExposureRamp"
             )
         }
-        val viewfinderThumbnailStats = if (rawAutoExposure) {
-            analyzeSrgbThumbnailForMetering(capturePreviewThumbnail).also { stats ->
-                if (stats == null) {
-                    PLog.d(TAG, "RAW auto exposure disabled: capture preview thumbnail unavailable")
-                } else {
-                    PLog.d(
-                        TAG,
-                        "RAW auto exposure thumbnail stats: size=${stats.width}x${stats.height} " +
-                            "luma=${stats.midToneLinearLuma} " +
-                            "clipLow=${stats.clipLow} clipHigh=${stats.clipHigh} " +
-                            "highlightAmount=${stats.highlightCompression.amount} " +
-                            "highlightStrength=${stats.highlightCompression.strength} " +
-                            "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount}"
-                    )
+        val viewfinderThumbnailStats = when {
+            !rawAutoExposure -> null
+            skipRawAutoExposureForEmbeddedHdrRaw -> {
+                PLog.d(
+                    TAG,
+                    "RAW auto exposure disabled: embedded HDR RAW uses ProfileGainTableMap and tone curve"
+                )
+                null
+            }
+            else -> {
+                analyzeSrgbThumbnailForMetering(capturePreviewThumbnail).also { stats ->
+                    if (stats == null) {
+                        PLog.d(TAG, "RAW auto exposure disabled: capture preview thumbnail unavailable")
+                    } else {
+                        PLog.d(
+                            TAG,
+                            "RAW auto exposure thumbnail stats: size=${stats.width}x${stats.height} " +
+                                "luma=${stats.midToneLinearLuma} " +
+                                "clipLow=${stats.clipLow} clipHigh=${stats.clipHigh} " +
+                                "highlightAmount=${stats.highlightCompression.amount} " +
+                                "highlightStrength=${stats.highlightCompression.strength} " +
+                                "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount}"
+                        )
+                    }
                 }
             }
-        } else {
-            null
         }
 
         PLog.d(
@@ -1258,37 +1272,41 @@ class RawDemosaicProcessor {
             }
             }
 
-            val hasProfileGainTableMap = actualMetadata.profileGainTableMap?.isValid == true
             // RAW AE 使用低分辨率实际渲染结果测光，使高光压缩和最终输出保持一致。
-            val meteringResult = resolveRawAutoExposureEv(
-                metadata = actualMetadata,
-                sourceTextureId = demosaicTextureId,
-                rawBlackPointCorrection = rawBlackPointCorrection,
-                rawWhitePointCorrection = rawWhitePointCorrection,
-                colorCorrectionMatrix = linearColorCorrectionMatrix,
-                dcpRenderPlan = resolvedDcpRenderPlan,
-                applyLinearDcpBaselineExposureOffset = false,
-                applyLinearDngBaselineExposure = hasProfileGainTableMap,
-                viewfinderThumbnailStats = viewfinderThumbnailStats,
-                outputBounds = bounds,
-                outputRotation = actualRotation,
-                useDcpToneCurve = useDcpToneCurve,
-                spectralFilmLut = spektrafilmLut,
-                colorEngine = colorEngine,
-                outputWorkingColorSpace = engineWorkingColorSpace,
-                profileToEngineTransform = profileToEngineTransform,
-                rawToneMappingParameters = rawToneMappingParameters,
-                useProfileExposureRamp = useProfileExposureRamp,
-                applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
-                dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
-                    dcpBaselineExposureOffsetOrZero(resolvedDcpRenderPlan)
-                } else {
-                    0f
-                },
-                renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv
-            )
+            val meteringResult = if (skipRawAutoExposureForEmbeddedHdrRaw) {
+                MeteringSystem.MeteringResult.EMPTY
+            } else {
+                resolveRawAutoExposureEv(
+                    metadata = actualMetadata,
+                    sourceTextureId = demosaicTextureId,
+                    rawBlackPointCorrection = rawBlackPointCorrection,
+                    rawWhitePointCorrection = rawWhitePointCorrection,
+                    colorCorrectionMatrix = linearColorCorrectionMatrix,
+                    dcpRenderPlan = resolvedDcpRenderPlan,
+                    applyLinearDcpBaselineExposureOffset = false,
+                    applyLinearDngBaselineExposure = hasProfileGainTableMap,
+                    viewfinderThumbnailStats = viewfinderThumbnailStats,
+                    outputBounds = bounds,
+                    outputRotation = actualRotation,
+                    useDcpToneCurve = useDcpToneCurve,
+                    spectralFilmLut = spektrafilmLut,
+                    colorEngine = colorEngine,
+                    outputWorkingColorSpace = engineWorkingColorSpace,
+                    profileToEngineTransform = profileToEngineTransform,
+                    rawToneMappingParameters = rawToneMappingParameters,
+                    useProfileExposureRamp = useProfileExposureRamp,
+                    applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
+                    dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
+                        dcpBaselineExposureOffsetOrZero(resolvedDcpRenderPlan)
+                    } else {
+                        0f
+                    },
+                    renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv
+                )
+            }
 
             val autoDevelopAvailable = rawAutoExposure &&
+                !skipRawAutoExposureForEmbeddedHdrRaw &&
                 viewfinderThumbnailStats != null &&
                 meteringResult != MeteringSystem.MeteringResult.EMPTY
             val useAutoExposureAdjustment = autoDevelopAvailable &&
@@ -4706,6 +4724,16 @@ class RawDemosaicProcessor {
 
     private fun shouldApplyDcpBaselineExposureOffset(dcpRenderPlan: DcpRenderPlan?): Boolean {
         return dcpBaselineExposureOffsetOrZero(dcpRenderPlan) != 0f
+    }
+
+    private fun shouldSkipRawAutoExposureForEmbeddedHdrRaw(
+        metadata: RawMetadata,
+        embeddedDngRenderPlan: DcpRenderPlan?,
+        hasDcpSelection: Boolean
+    ): Boolean {
+        return !hasDcpSelection &&
+            metadata.profileGainTableMap?.isValid == true &&
+            embeddedDngRenderPlan?.toneCurveLut != null
     }
 
     private fun shouldUseProfileExposureRamp(
