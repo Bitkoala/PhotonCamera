@@ -106,6 +106,7 @@ enum class VideoLogProfile(
     V_LOG("V-Log", TransferCurve.VLOG, ColorSpace.VGamut),
     LOGC4_ARRI4("LogC4", TransferCurve.LOGC4, ColorSpace.ARRI4),
     LOG3G10_RED("Log3G10", TransferCurve.LOG3G10, ColorSpace.RED),
+    LLOG_BT2020("L-Log", TransferCurve.LLOG, ColorSpace.BT2020),
     ACESCCT_AP1("ACEScct", TransferCurve.ACES_CCT, ColorSpace.ACES_AP1);
 
     val isEnabled: Boolean

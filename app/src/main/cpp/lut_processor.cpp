@@ -13,7 +13,8 @@ enum class TransferCurve {
   LOGC4 = 5,
   APPLE_LOG = 6,
   HLG = 7,
-  ACES_CCT = 8
+  ACES_CCT = 8,
+  LEICA_LLOG = 11
 };
 
 inline float clamp(float v, float min, float max) {
@@ -73,6 +74,10 @@ float fromLinear(float linear, TransferCurve curve) {
     return (linear < 0.0078125f)
                ? 10.540237f * linear + 0.072905536f
                : 0.18955931f * std::log10(std::max(linear, 1e-6f)) + 0.5547945f;
+  case TransferCurve::LEICA_LLOG:
+    return (linear <= 0.006f)
+               ? 8.0f * linear + 0.09f
+               : 0.27f * std::log10(1.3f * linear + 0.0115f) + 0.6f;
   }
   return linear;
 }
@@ -129,6 +134,10 @@ float toLinear(float value, TransferCurve curve) {
     return (value < 0.15525114f)
                ? (value - 0.072905536f) / 10.540237f
                : std::pow(10.0f, (value - 0.5547945f) / 0.18955931f);
+  case TransferCurve::LEICA_LLOG:
+    return (value <= 0.138f)
+               ? (value - 0.09f) / 8.0f
+               : (std::pow(10.0f, (value - 0.6f) / 0.27f) - 0.0115f) / 1.3f;
   }
   return value;
 }

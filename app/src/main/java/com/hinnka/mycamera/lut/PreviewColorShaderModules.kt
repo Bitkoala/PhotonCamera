@@ -387,6 +387,9 @@ internal object PreviewColorShaderModules {
             if (curveType == 9) {
                 return mix(15.1927 * l + 0.151927, 0.224282 * log10(155.975327 * l + 2.55975327), step(-0.01, l));
             }
+            if (curveType == 10) {
+                return mix(8.0 * l + 0.09, 0.27 * log10(max(1.3 * l + 0.0115, vec3(1e-6))) + 0.6, step(0.006, l));
+            }
             return l;
         }
     """.trimIndent()

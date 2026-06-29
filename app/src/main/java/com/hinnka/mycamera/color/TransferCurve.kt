@@ -75,6 +75,11 @@ enum class TransferCurve(
         5, 5,
         2231.8263f, 64.0f, 0.21524584f, -0.29590839f, 8.80302f, 0.158957f,
         -0.018057f, 0.0f, 0.2784f, 469.8f, 0
+    ),
+    LLOG(
+        11, 10,
+        1.3f, 0.0115f, 0.27f, 0.6f, 8.0f, 0.09f,
+        0.006f, 0.138f, 0.4353139f, 23.3f, 0
     );
 
     val isLog: Boolean
@@ -165,6 +170,7 @@ enum class TransferCurve(
                 "F_LOG2" -> FLOG2
                 "LOG_C" -> LOGC4
                 "LOG_3G10", "RED_LOG3G10" -> LOG3G10
+                "L_LOG", "LEICA_LLOG", "LEICA_L_LOG" -> LLOG
                 else -> entries.firstOrNull { it.name == name } ?: SRGB
             }
         }
