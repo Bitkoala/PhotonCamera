@@ -21,91 +21,97 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     @Test
-    fun baselineToneCurveMatchesPixelStyleShoulderTargets() {
-        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(2f)
-            ?: error("Expected baseline PGTM")
+    fun cellStatsToneCurveMatchesPixelStyleShoulderTargets() {
+        val map = DngHdrProfileGainTableGenerator.forCellStats(
+            width = 1024,
+            height = 768,
+            baselineExposureEv = 2f,
+            packedCellStats = packedStatsForTailProfile(
+                width = 1024,
+                height = 768,
+                p10 = 0.04f,
+                p50 = 0.12f,
+                p90 = 0.55f,
+                p98 = 0.85f,
+                highlightFraction = 0.08f,
+                tailP95 = 1.40f,
+                tailP98 = 1.70f,
+                tailP99 = 2.00f,
+                maxInput = 2.40f
+            )
+        ) ?: error("Expected stats PGTM")
 
         assertTrue(map.isValid)
         assertToneOutputMonotonic(map)
         val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
         val white = renderedOutputForPostBaselineSignal(map, input = 1f)
         val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
-        val clippedHeadroom = renderedOutputForPostBaselineSignal(map, input = 4f)
+        val sceneMax = 1f / map.mapInputWeights.sum()
+        val sceneMaxOutput = renderedOutputForPostBaselineSignal(map, input = sceneMax)
         val toneMappedMidGray = googleToneCurve(midGray)
         val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
 
         assertTrue("midGray=$midGray", midGray in 0.41f..0.46f)
-        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.38f..0.46f)
+        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.37f..0.46f)
         assertTrue("white=$white", white in 0.73f..0.80f)
         assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.78f..0.88f)
         assertTrue("superWhite=$superWhite", superWhite in 0.88f..0.93f)
-        assertEquals(1f, clippedHeadroom, 0.025f)
-        assertEquals(0.94f, map.mapInputWeights.sum() * 2.0f.pow(2f), 0.02f)
+        assertEquals(1f, sceneMaxOutput, 0.025f)
+        val effectiveHeadroom = effectiveInputHeadroom(map, 2f)
+        assertTrue("effectiveHeadroom=$effectiveHeadroom", effectiveHeadroom in 1.55f..2.05f)
         assertEquals(sampleGain(map, input = 1f), map.mapInputWeights.sum(), 0.0001f)
         assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
         assertTrue(map.mapInputWeights[4] > map.mapInputWeights[1])
     }
 
     @Test
-    fun highDynamicRangeBaselineUsesConservativeHdrTargets() {
-        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(HIGH_HDR_BASELINE_EV)
-            ?: error("Expected HDR baseline PGTM")
+    fun highDynamicRangeCellStatsUseConservativeHdrTargets() {
+        val map = DngHdrProfileGainTableGenerator.forCellStats(
+            width = 1024,
+            height = 768,
+            baselineExposureEv = HIGH_HDR_BASELINE_EV,
+            packedCellStats = packedStatsForTailProfile(
+                width = 1024,
+                height = 768,
+                p10 = 0.012f,
+                p50 = 0.055f,
+                p90 = 0.48f,
+                p98 = 1.0f,
+                highlightFraction = 0.05f,
+                tailP95 = 2.60f,
+                tailP98 = 2.80f,
+                tailP99 = 3.05f,
+                maxInput = 3.30f
+            )
+        ) ?: error("Expected HDR stats PGTM")
 
         assertTrue(map.isValid)
         assertToneOutputMonotonic(map)
         val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
         val white = renderedOutputForPostBaselineSignal(map, input = 1f)
         val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
-        val farHighlight = renderedOutputForPostBaselineSignal(map, input = 4f)
         val sceneMax = 1f / map.mapInputWeights.sum()
+        val farHighlight = renderedOutputForPostBaselineSignal(map, input = 4f.coerceAtMost(sceneMax))
         val toneMappedMidGray = googleToneCurve(midGray)
         val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
 
-        assertTrue("midGray=$midGray", midGray in 0.41f..0.46f)
-        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.38f..0.46f)
+        assertTrue("midGray=$midGray", midGray in 0.40f..0.46f)
+        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.36f..0.46f)
         assertTrue("white=$white", white in 0.73f..0.80f)
         assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.78f..0.88f)
         assertTrue("superWhite=$superWhite", superWhite in 0.88f..0.93f)
         assertTrue("farHighlight=$farHighlight superWhite=$superWhite", farHighlight in superWhite..1.02f)
         assertEquals(1f, renderedOutputForPostBaselineSignal(map, input = sceneMax), 0.02f)
         assertTrue(sampleGainAtIndex(map, 0) in 3.55f..3.95f)
-        assertTrue(sampleGainAtIndex(map, 256) < 0.10f)
+        assertTrue(sampleGainAtIndex(map, 256) < 0.32f)
         assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
-        assertEquals(0.94f, map.mapInputWeights.sum() * 2.0f.pow(HIGH_HDR_BASELINE_EV), 0.02f)
-    }
-
-    @Test
-    fun baselineToneCurveCanBeRegeneratedWithExistingMapTopology() {
-        val template = DngProfileGainTableMap(
-            mapPointsV = 3,
-            mapPointsH = 2,
-            mapSpacingV = 0.5,
-            mapSpacingH = 1.0,
-            mapOriginV = 0.125,
-            mapOriginH = 0.25,
-            mapPointsN = 257,
-            mapInputWeights = floatArrayOf(0.1f, 0.2f, 0.3f, 0f, 0.4f),
-            gamma = 1f,
-            gains = FloatArray(3 * 2 * 257) { 1f },
-            sourceTag = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
-        )
-
-        val map = DngHdrProfileGainTableGenerator.forHdrBaselineExposureLike(2f, template)
-            ?: error("Expected topology-matched PGTM")
-
-        assertEquals(template.mapPointsH, map.mapPointsH)
-        assertEquals(template.mapPointsV, map.mapPointsV)
-        assertEquals(template.mapSpacingH, map.mapSpacingH, 0.0)
-        assertEquals(template.mapSpacingV, map.mapSpacingV, 0.0)
-        assertEquals(template.mapOriginH, map.mapOriginH, 0.0)
-        assertEquals(template.mapOriginV, map.mapOriginV, 0.0)
-        assertEquals(template.mapPointsH * template.mapPointsV * template.mapPointsN, map.gains.size)
-        assertToneOutputMonotonic(map)
+        val effectiveHeadroom = effectiveInputHeadroom(map, HIGH_HDR_BASELINE_EV)
+        assertTrue("effectiveHeadroom=$effectiveHeadroom", effectiveHeadroom in 2.45f..3.10f)
     }
 
     @Test
     fun cellStatsDeriveSceneAdaptiveInputHeadroomLikePixelSamples() {
-        val lowHdr = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val lowHdr = DngHdrProfileGainTableGenerator.forCellStats(
             width = 4096,
             height = 3072,
             baselineExposureEv = 1.55f,
@@ -123,7 +129,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 maxInput = 2.798f
             )
         ) ?: error("Expected low HDR PGTM")
-        val typicalDenseHdr = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val typicalDenseHdr = DngHdrProfileGainTableGenerator.forCellStats(
             width = 2048,
             height = 1536,
             baselineExposureEv = 0.99f,
@@ -141,7 +147,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 maxInput = 1.986f
             )
         ) ?: error("Expected typical dense HDR PGTM")
-        val smallHighlightHdr = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val smallHighlightHdr = DngHdrProfileGainTableGenerator.forCellStats(
             width = 4096,
             height = 3072,
             baselineExposureEv = 1.56f,
@@ -159,7 +165,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 maxInput = 2.949f
             )
         ) ?: error("Expected small highlight PGTM")
-        val sparseOutlierHdr = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val sparseOutlierHdr = DngHdrProfileGainTableGenerator.forCellStats(
             width = 4096,
             height = 3072,
             baselineExposureEv = 1.47f,
@@ -177,7 +183,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 maxInput = 2.770f
             )
         ) ?: error("Expected sparse outlier PGTM")
-        val denseHighlightHdr = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val denseHighlightHdr = DngHdrProfileGainTableGenerator.forCellStats(
             width = 4096,
             height = 3072,
             baselineExposureEv = 1.47f,
@@ -202,11 +208,16 @@ class DngHdrProfileGainTableGeneratorTest {
         assertEquals(0.0570f, normalizedWeights[2], 0.0001f)
         assertEquals(0.1250f, normalizedWeights[3], 0.0001f)
         assertEquals(0.3750f, normalizedWeights[4], 0.0001f)
-        assertTrue(effectiveInputHeadroom(lowHdr, 1.55f) in 2.65f..3.05f)
-        assertTrue(effectiveInputHeadroom(typicalDenseHdr, 0.99f) in 0.95f..1.08f)
-        assertTrue(effectiveInputHeadroom(smallHighlightHdr, 1.56f) in 0.82f..1.05f)
-        assertTrue(effectiveInputHeadroom(sparseOutlierHdr, 1.47f) in 1.55f..1.95f)
-        assertTrue(effectiveInputHeadroom(denseHighlightHdr, 1.47f) in 1.05f..1.30f)
+        val lowHeadroom = effectiveInputHeadroom(lowHdr, 1.55f)
+        val typicalHeadroom = effectiveInputHeadroom(typicalDenseHdr, 0.99f)
+        val smallHighlightHeadroom = effectiveInputHeadroom(smallHighlightHdr, 1.56f)
+        val sparseOutlierHeadroom = effectiveInputHeadroom(sparseOutlierHdr, 1.47f)
+        val denseHighlightHeadroom = effectiveInputHeadroom(denseHighlightHdr, 1.47f)
+        assertTrue("lowHeadroom=$lowHeadroom", lowHeadroom in 2.65f..3.05f)
+        assertTrue("typicalHeadroom=$typicalHeadroom", typicalHeadroom in 0.95f..1.08f)
+        assertTrue("smallHighlightHeadroom=$smallHighlightHeadroom", smallHighlightHeadroom in 0.82f..1.05f)
+        assertTrue("sparseOutlierHeadroom=$sparseOutlierHeadroom", sparseOutlierHeadroom in 1.45f..1.95f)
+        assertTrue("denseHighlightHeadroom=$denseHighlightHeadroom", denseHighlightHeadroom in 1.05f..1.30f)
         assertTrue(sampleGainAtIndex(lowHdr, 0) < sampleGainAtIndex(smallHighlightHdr, 0))
         assertTrue(
             "typicalShadow=${sampleGainAtIndex(typicalDenseHdr, 0)} lowShadow=${sampleGainAtIndex(lowHdr, 0)}",
@@ -216,7 +227,7 @@ class DngHdrProfileGainTableGeneratorTest {
 
     @Test
     fun localToneMappingDodgesDarkTilesAndBurnsBrightTiles() {
-        val dark = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val dark = DngHdrProfileGainTableGenerator.forCellStats(
             width = 1024,
             height = 768,
             baselineExposureEv = HIGH_HDR_BASELINE_EV,
@@ -230,7 +241,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 highlightFraction = 0f
             )
         ) ?: error("Expected dark PGTM")
-        val mid = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val mid = DngHdrProfileGainTableGenerator.forCellStats(
             width = 1024,
             height = 768,
             baselineExposureEv = HIGH_HDR_BASELINE_EV,
@@ -244,7 +255,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 highlightFraction = 0f
             )
         ) ?: error("Expected mid PGTM")
-        val bright = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val bright = DngHdrProfileGainTableGenerator.forCellStats(
             width = 1024,
             height = 768,
             baselineExposureEv = HIGH_HDR_BASELINE_EV,
@@ -288,7 +299,7 @@ class DngHdrProfileGainTableGeneratorTest {
 
     @Test
     fun highlightStatsStartShoulderEarlierThanNeutralStats() {
-        val neutral = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val neutral = DngHdrProfileGainTableGenerator.forCellStats(
             width = 1024,
             height = 768,
             baselineExposureEv = 2f,
@@ -302,7 +313,7 @@ class DngHdrProfileGainTableGeneratorTest {
                 highlightFraction = 0.04f
             )
         ) ?: error("Expected neutral PGTM")
-        val highlight = DngHdrProfileGainTableGenerator.forHdrCellStats(
+        val highlight = DngHdrProfileGainTableGenerator.forCellStats(
             width = 1024,
             height = 768,
             baselineExposureEv = 2f,

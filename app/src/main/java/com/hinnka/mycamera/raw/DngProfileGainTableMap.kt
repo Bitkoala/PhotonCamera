@@ -116,16 +116,6 @@ data class DngProfileGainTableMap(
         private const val MAX_GAMMA = 8.0f
         private const val MIN_GAIN_VALUE = 0.000244140625f
         private const val MAX_GAIN_VALUE = 4096.0f
-        private const val HDR_PGTM_DEFAULT_TABLE_POINTS = 257
-
-        fun forHdrBaselineExposure(
-            baselineExposureEv: Float,
-            tablePointCount: Int = HDR_PGTM_DEFAULT_TABLE_POINTS,
-        ): DngProfileGainTableMap? = DngHdrProfileGainTableGenerator.forHdrBaselineExposure(
-            baselineExposureEv = baselineExposureEv,
-            tablePointCount = tablePointCount
-        )
-
         fun readFrom(file: File): DngProfileGainTableMap? {
             if (!file.exists() || file.length() < 16L) return null
             return runCatching {

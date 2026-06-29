@@ -6,7 +6,9 @@ data class RawToneMappingParameters(
     val agxToe: Float = AGX_TOE_DEFAULT,
     val agxShoulder: Float = AGX_SHOULDER_DEFAULT,
     val filmicBlackRelativeExposure: Float = FILMIC_BLACK_RELATIVE_EXPOSURE_DEFAULT,
-    val filmicWhiteRelativeExposure: Float = FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT
+    val filmicWhiteRelativeExposure: Float = FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT,
+    val useGooglePixelToneMap: Boolean = false,
+    val googlePixelToneMapExplicit: Boolean = false
 ) {
     fun normalized(): RawToneMappingParameters {
         val blackAgx = agxBlackRelativeExposure.coerceIn(
@@ -33,6 +35,21 @@ data class RawToneMappingParameters(
             filmicBlackRelativeExposure = minOf(blackFilmic, whiteFilmic - MIN_DYNAMIC_RANGE_EV),
             filmicWhiteRelativeExposure = maxOf(whiteFilmic, blackFilmic + MIN_DYNAMIC_RANGE_EV)
         )
+    }
+
+    fun withGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
+        return copy(
+            useGooglePixelToneMap = enabled,
+            googlePixelToneMapExplicit = true
+        ).normalized()
+    }
+
+    fun withDefaultGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
+        return if (googlePixelToneMapExplicit) {
+            normalized()
+        } else {
+            copy(useGooglePixelToneMap = enabled).normalized()
+        }
     }
 
     companion object {

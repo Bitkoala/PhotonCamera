@@ -702,6 +702,8 @@
     <string name="settings_raw_color_engine_darktable_filmic_description">Film-like tonal range rendering.</string>
     <string name="settings_raw_color_engine_spectral_film">Spektrafilm</string>
     <string name="settings_raw_color_engine_spectral_film_description">Film stock and print medium simulation with density tuning.</string>
+    <string name="settings_raw_google_pixel_tone_map">Pixel-style tone map</string>
+    <string name="settings_raw_google_pixel_tone_map_description">Use Google Pixel-style Profile Gain Table Map and profile tone curve rendering for Adobe RAW.</string>
     <string name="settings_raw_agx_white_relative_exposure">AgX White Relative Exposure</string>
     <string name="settings_raw_agx_black_relative_exposure">AgX Black Relative Exposure</string>
     <string name="settings_raw_agx_shoulder">AgX Shoulder</string>

@@ -88,6 +88,10 @@ internal object DngEmbeddedProfile {
         }.getOrNull()
     }
 
+    fun hasGoogleHdrToneCurve(file: File): Boolean {
+        return DngProfileToneCurve.isGoogleHdrToneCurve(readFrom(file)?.toneCurve)
+    }
+
     private fun decodeProfile(
         raf: RandomAccessFile,
         ifd: Map<Int, TiffEntry>,

@@ -718,6 +718,8 @@
     <string name="settings_raw_color_engine_darktable_filmic_description">偏胶片感成像。</string>
     <string name="settings_raw_color_engine_spectral_film">光谱胶片</string>
     <string name="settings_raw_color_engine_spectral_film_description">模拟胶卷和相纸介质，并支持密度微调。</string>
+    <string name="settings_raw_google_pixel_tone_map">Pixel 风格映射</string>
+    <string name="settings_raw_google_pixel_tone_map_description">Adobe RAW 使用 Google Pixel 风格的 Profile Gain Table Map 和配置曲线渲染。</string>
     <string name="settings_raw_agx_white_relative_exposure">AgX 白色相对曝光</string>
     <string name="settings_raw_agx_black_relative_exposure">AgX 黑色相对曝光</string>
     <string name="settings_raw_agx_shoulder">AgX 肩部</string>

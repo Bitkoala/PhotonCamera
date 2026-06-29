@@ -321,7 +321,12 @@ data class MediaMetadata(
                             RawToneMappingParameters.FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT
                         } else {
                             obj.optDouble("rawFilmicWhiteRelativeExposure").toFloat()
-                        }
+                        },
+                        useGooglePixelToneMap = obj.optBoolean("rawGooglePixelToneMap", false),
+                        googlePixelToneMapExplicit = obj.optBoolean(
+                            "rawGooglePixelToneMapExplicit",
+                            obj.has("rawGooglePixelToneMap")
+                        )
                     ).normalized(),
                     rawBlackLevelMode = if (obj.isNull("rawBlackLevelMode")) null else obj.optString("rawBlackLevelMode"),
                     rawCustomBlackLevel = if (obj.isNull("rawCustomBlackLevel")) null else obj.optDouble("rawCustomBlackLevel").toFloat(),

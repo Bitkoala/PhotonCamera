@@ -5,7 +5,6 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -49,7 +48,6 @@ object DngProfileGainTableMapPatcher {
     private const val TYPE_FLOAT = 11
     private const val TYPE_DOUBLE = 12
     private const val MAX_IFD_VISITS = 64
-    private const val HDR_PGTM_INPUT_HEADROOM = 0.94f
 
     fun rewriteExistingPgtm2WithCurrentGenerator(file: File): Boolean {
         if (!file.exists() || file.length() < 16L) return false
@@ -83,9 +81,10 @@ object DngProfileGainTableMapPatcher {
                     return@use false
                 }
 
-                val baselineExposureEv = scan.baselineExposure
-                    ?: inferBaselineExposureFromInputWeights(existingMap)
-                    ?: return@use false
+                val baselineExposureEv = scan.baselineExposure ?: run {
+                    PLog.w(TAG, "Skip PGTM2 rewrite for ${file.name}: missing BaselineExposure")
+                    return@use false
+                }
                 val localStats = scan.rawImages.firstNotNullOfOrNull { rawImage ->
                     buildLocalStatsFromRaw(
                         raf = raf,
@@ -97,7 +96,7 @@ object DngProfileGainTableMapPatcher {
                     return@use false
                 }
                 val rawImage = localStats.first
-                val replacementMap = DngHdrProfileGainTableGenerator.forHdrCellStats(
+                val replacementMap = DngHdrProfileGainTableGenerator.forCellStats(
                     width = rawImage.width,
                     height = rawImage.height,
                     baselineExposureEv = baselineExposureEv,
@@ -732,12 +731,6 @@ object DngProfileGainTableMapPatcher {
             else -> return null
         }.toFloat()
         return value.takeIf { it.isFinite() }
-    }
-
-    private fun inferBaselineExposureFromInputWeights(map: DngProfileGainTableMap): Float? {
-        val weightSum = map.mapInputWeights.sum().takeIf { it.isFinite() && it > 0f } ?: return null
-        val ev = (ln((HDR_PGTM_INPUT_HEADROOM / weightSum).coerceAtLeast(1e-6f).toDouble()) / ln(2.0)).toFloat()
-        return ev.takeIf { it.isFinite() && it > 0f }
     }
 
     private fun writeUndefinedEntryPointer(

@@ -1979,7 +1979,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val baselineRecipeParams = loadRawBaselineRecipeParams(baselineLutId)
             PLog.d(
                 TAG,
-                "persist RAW edit metadata: ${mediaData.id}, dro=$droMode, noise=$noiseReduction, chromaNoise=$chromaNoiseReduction"
+                "persist RAW edit metadata: ${mediaData.id}, dro=$droMode, noise=$noiseReduction, " +
+                    "chromaNoise=$chromaNoiseReduction, googlePixelToneMap=${rawToneMappingParameters.useGooglePixelToneMap}"
             )
             val updated = GalleryManager.updateMetadata(context, mediaData.id) { current ->
                 current.copy(

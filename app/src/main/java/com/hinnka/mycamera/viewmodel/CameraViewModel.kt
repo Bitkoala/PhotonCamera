@@ -512,12 +512,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         var desiredUseHdrComposition = prefs.useHdrComposition
         var desiredUseMFSR = prefs.useMFSR
         var desiredUseMultipleExposure = prefs.useMultipleExposure
+        var desiredRawRenderingEngine = prefs.rawRenderingEngine
 
         update.useRaw?.let { desiredUseRaw = it.value }
         update.useMFNR?.let { desiredUseMFNR = it.value }
         update.useHdrComposition?.let { desiredUseHdrComposition = it.value }
         update.useMFSR?.let { desiredUseMFSR = it.value }
         update.useMultipleExposure?.let { desiredUseMultipleExposure = it.value }
+        update.rawRenderingEngine?.let { desiredRawRenderingEngine = it.value }
 
         if (update.useRaw?.value == true) {
             desiredUseMultipleExposure = false
@@ -540,6 +542,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             desiredUseMFNR = false
             desiredUseMFSR = false
         }
+        desiredRawRenderingEngine = resolveHdrCompositionRawRenderingEngine(
+            requestedEngine = desiredRawRenderingEngine,
+            useHdrComposition = desiredUseHdrComposition
+        )
 
         val currentState = state.value
         val targetAspectRatio = update.aspectRatio?.value
@@ -632,7 +638,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 },
                 frameId = update.frameId?.let { PreferenceUpdateValue(it.value) },
                 rawDcpId = update.rawDcpId?.let { PreferenceUpdateValue(it.value) },
-                rawRenderingEngine = update.rawRenderingEngine?.let { PreferenceUpdateValue(it.value) },
+                rawRenderingEngine = if (update.rawRenderingEngine != null ||
+                    desiredRawRenderingEngine != prefs.rawRenderingEngine
+                ) {
+                    PreferenceUpdateValue(desiredRawRenderingEngine)
+                } else {
+                    null
+                },
                 rawSpectralFilmStock = update.rawSpectralFilmStock?.let { PreferenceUpdateValue(it.value) },
                 rawSpectralFilmPrint = update.rawSpectralFilmPrint?.let { PreferenceUpdateValue(it.value) },
                 droMode = update.droMode?.let {
@@ -659,6 +671,32 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun shouldDisableNaturalLightForHdrComposition(prefs: UserPreferences): Boolean {
         return prefs.useHdrComposition && !isRawEnabledForNaturalLightHdrGuard(prefs)
+    }
+
+    private fun resolveHdrCompositionRawRenderingEngine(
+        requestedEngine: RawRenderingEngine,
+        useHdrComposition: Boolean
+    ): RawRenderingEngine {
+        return if (useHdrComposition) RawRenderingEngine.AdobeCurve else requestedEngine
+    }
+
+    private fun resolveCaptureRawRenderingEngine(userPrefs: UserPreferences?): RawRenderingEngine {
+        return resolveHdrCompositionRawRenderingEngine(
+            requestedEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
+            useHdrComposition = userPrefs?.useHdrComposition ?: false
+        )
+    }
+
+    private fun resolveCaptureRawToneMappingParameters(
+        userPrefs: UserPreferences?,
+        captureMode: String? = null
+    ): RawToneMappingParameters {
+        return (userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT)
+            .withDefaultGooglePixelToneMap(isRawHdrCaptureMode(captureMode))
+    }
+
+    private fun isRawHdrCaptureMode(captureMode: String?): Boolean {
+        return captureMode == "raw_hdr_mfnr" || captureMode == "raw_hdr_bracket"
     }
 
     private fun effectiveCameraTonemapMode(prefs: UserPreferences): String {
@@ -1367,6 +1405,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val effectiveUseRaw = it.useRaw && !multipleExposureEnabled
                 val effectiveUseMFNR = it.useMFNR && !multipleExposureEnabled
                 val effectiveUseMFSR = it.useMFSR && !multipleExposureEnabled
+                val effectiveRawRenderingEngine = resolveCaptureRawRenderingEngine(it)
+                if (effectiveRawRenderingEngine != it.rawRenderingEngine) {
+                    viewModelScope.launch {
+                        userPreferencesRepository.saveRawColorEngine(effectiveRawRenderingEngine)
+                    }
+                }
                 if (it.naturalLightEnabled &&
                     (multipleExposureEnabled || shouldDisableNaturalLightForHdrComposition(it))
                 ) {
@@ -2004,8 +2048,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
-            rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-            rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+            rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs, captureMode),
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -3492,20 +3536,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setUseHdrComposition(enabled: Boolean) {
         viewModelScope.launch {
+            val prefs = userPreferencesRepository.userPreferences.first()
             if (enabled) {
-                val prefs = userPreferencesRepository.userPreferences.first()
-                if (shouldDisableNaturalLightForHdrComposition(prefs)) {
+                if (shouldDisableNaturalLightForHdrComposition(prefs.copy(useHdrComposition = true))) {
                     disableNaturalLightIfNeeded(
                         reason = "HDR composition enabled while RAW is off",
                         prefs = prefs
                     )
                 }
             }
-            cameraController.setUseHdrComposition(enabled)
-            if (state.value.useMFNR || state.value.useMFSR) {
-                reopenCamera()
-            }
-            userPreferencesRepository.saveUseHdrComposition(enabled)
+            applyCameraFeatureUpdate(
+                CameraFeatureUpdate(useHdrComposition = SettingValue(enabled))
+            )
         }
     }
 
@@ -4362,8 +4404,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
-                rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-                rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+                rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+                rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -4530,8 +4572,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
-                rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-                rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+                rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+                rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = if (storeRenderedLookMetadata) spectralFilmSettings.stock else null,
                 spectralFilmPrint = if (storeRenderedLookMetadata) spectralFilmSettings.print else null,
                 spectralFilmCDensityGain = if (storeRenderedLookMetadata) spectralFilmSettings.tuning.cDensityGain else 1f,
@@ -4673,8 +4715,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                     rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                     cameraId = currentCameraId,
-                    rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-                    rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+                    rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+                    rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                     spectralFilmStock = null,
                     spectralFilmPrint = null,
                     spectralFilmCDensityGain = 1f,
@@ -4842,8 +4884,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
-                rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-                rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+                rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+                rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -5373,8 +5415,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
-            rawRenderingEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-            rawToneMappingParameters = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT,
+            rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
+            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,

@@ -12,7 +12,7 @@ internal object DngHdrProfileGainTableGenerator {
     const val CELL_STATS_FLOAT_STRIDE = 8
 
     private const val MAP_INPUT_WEIGHT_COUNT = 5
-    private const val MIN_BASELINE_EV = 0.05f
+    private const val MIN_BASELINE_EV = 0f
     private const val MAX_BASELINE_EV = 8f
     private const val DEFAULT_TABLE_POINTS = 257
     private const val MIN_TABLE_POINTS = 257
@@ -22,7 +22,6 @@ internal object DngHdrProfileGainTableGenerator {
     private const val GRID_MIN_V = 6
     private const val GRID_MAX_H = 64
     private const val GRID_MAX_V = 48
-    private const val DEFAULT_EFFECTIVE_INPUT_HEADROOM = 0.94f
     private const val MIN_EFFECTIVE_INPUT_HEADROOM = 0.28f
     private const val MAX_EFFECTIVE_INPUT_HEADROOM = 3.05f
     private const val MIN_SCENE_MAX = 1.02f
@@ -63,63 +62,14 @@ internal object DngHdrProfileGainTableGenerator {
         return intArrayOf(grid.mapPointsH, grid.mapPointsV)
     }
 
-    fun forHdrBaselineExposure(
-        baselineExposureEv: Float,
-        tablePointCount: Int = DEFAULT_TABLE_POINTS,
-    ): DngProfileGainTableMap? {
-        if (!baselineExposureEv.isFinite() || baselineExposureEv <= MIN_BASELINE_EV) {
-            return null
-        }
-        val safeBaselineEv = baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV)
-        val safePointCount = tablePointCount.coerceIn(MIN_TABLE_POINTS, MAX_TABLE_POINTS)
-        return buildMap(
-            grid = HdrPgtmGrid(
-                mapPointsH = 1,
-                mapPointsV = 1,
-                mapSpacingH = 1.0,
-                mapSpacingV = 1.0
-            ),
-            safeBaselineEv = safeBaselineEv,
-            safePointCount = safePointCount,
-            curveParams = arrayOf(baselineHdrPgtmCurveParams(safeBaselineEv))
-        )
-    }
-
-    fun forHdrBaselineExposureLike(
-        baselineExposureEv: Float,
-        template: DngProfileGainTableMap,
-    ): DngProfileGainTableMap? {
-        if (!template.isValid || !baselineExposureEv.isFinite() || baselineExposureEv <= MIN_BASELINE_EV) {
-            return null
-        }
-        val safeBaselineEv = baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV)
-        val safePointCount = template.mapPointsN.coerceIn(MIN_TABLE_POINTS, MAX_TABLE_POINTS)
-        val cellCount = template.mapPointsH * template.mapPointsV
-        val params = baselineHdrPgtmCurveParams(safeBaselineEv)
-        return buildMap(
-            grid = HdrPgtmGrid(
-                mapPointsH = template.mapPointsH,
-                mapPointsV = template.mapPointsV,
-                mapSpacingH = template.mapSpacingH,
-                mapSpacingV = template.mapSpacingV
-            ),
-            safeBaselineEv = safeBaselineEv,
-            safePointCount = safePointCount,
-            curveParams = Array(cellCount) { params }
-        ).copy(
-            mapOriginH = template.mapOriginH,
-            mapOriginV = template.mapOriginV
-        )
-    }
-
-    fun forHdrCellStats(
+    fun forCellStats(
         width: Int,
         height: Int,
         baselineExposureEv: Float,
         packedCellStats: FloatArray,
         tablePointCount: Int = DEFAULT_TABLE_POINTS,
     ): DngProfileGainTableMap? {
-        if (width <= 0 || height <= 0 || !baselineExposureEv.isFinite() || baselineExposureEv <= MIN_BASELINE_EV) {
+        if (width <= 0 || height <= 0 || !baselineExposureEv.isFinite() || baselineExposureEv < MIN_BASELINE_EV) {
             return null
         }
         val grid = chooseHdrPgtmGrid(width, height)
@@ -129,7 +79,7 @@ internal object DngHdrProfileGainTableGenerator {
                 TAG,
                 "GPU PGTM stats too small: ${packedCellStats.size}, expected=${cellCount * CELL_STATS_FLOAT_STRIDE}"
             )
-            return forHdrBaselineExposure(baselineExposureEv, tablePointCount)
+            return null
         }
         val safeBaselineEv = baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV)
         val safePointCount = tablePointCount.coerceIn(MIN_TABLE_POINTS, MAX_TABLE_POINTS)
@@ -282,7 +232,7 @@ internal object DngHdrProfileGainTableGenerator {
         safeBaselineEv: Float,
         safePointCount: Int,
         curveParams: Array<HdrPgtmCurveParams>,
-        inputScale: Float = hdrPgtmInputScaleForBaseline(safeBaselineEv),
+        inputScale: Float,
     ): DngProfileGainTableMap {
         val safeInputScale = sanitizeInputScale(inputScale)
         val gains = FloatArray(grid.mapPointsH * grid.mapPointsV * safePointCount)
@@ -407,20 +357,6 @@ internal object DngHdrProfileGainTableGenerator {
             superWhiteOutput = superWhiteOutput,
             extremeWhiteOutput = extremeWhiteOutput,
             highlightPressure = combinedPressure
-        )
-    }
-
-    private fun baselineHdrPgtmCurveParams(baselineExposureEv: Float): HdrPgtmCurveParams {
-        val highlightPressure = smoothStep(0.35f, 3.2f, baselineExposureEv)
-        return HdrPgtmCurveParams(
-            shadowGain = hdrPgtmBaseShadowGain(baselineExposureEv, sceneHdrStrength = 1f),
-            midGain = hdrPgtmBaseMidGain(baselineExposureEv, sceneHdrStrength = 1f),
-            halfOutput = hdrPgtmBaseHalfOutput(baselineExposureEv, sceneHdrStrength = 1f),
-            whiteOutput = hdrPgtmBaseWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
-            brightOutput = hdrPgtmBaseBrightOutput(baselineExposureEv, sceneHdrStrength = 1f),
-            superWhiteOutput = hdrPgtmBaseSuperWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
-            extremeWhiteOutput = hdrPgtmBaseExtremeWhiteOutput(baselineExposureEv, sceneHdrStrength = 1f),
-            highlightPressure = highlightPressure.coerceIn(0f, 1f)
         )
     }
 
@@ -599,19 +535,15 @@ internal object DngHdrProfileGainTableGenerator {
             .coerceIn(MIN_EXTREME_WHITE_OUTPUT, MAX_EXTREME_WHITE_OUTPUT)
     }
 
-    private fun hdrPgtmInputScaleForBaseline(baselineExposureEv: Float): Float {
-        val baselineGain = 2.0f.pow(baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV))
-        return sanitizeInputScale(DEFAULT_EFFECTIVE_INPUT_HEADROOM / baselineGain)
-    }
-
     private fun hdrPgtmInputScaleForStats(
         global: HdrPgtmCellStats,
         baselineExposureEv: Float,
     ): Float {
         val baselineGain = 2.0f.pow(baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV))
-        val fallbackSceneMax = (baselineGain / DEFAULT_EFFECTIVE_INPUT_HEADROOM)
-            .coerceAtLeast(MIN_SCENE_MAX)
-        val tailP95 = global.inputTailP95.takeIf { it.isFinite() && it > 0f } ?: return 1f / fallbackSceneMax
+        val tailP95 = global.inputTailP95.takeIf { it.isFinite() && it > 0f }
+            ?: global.p995Input.takeIf { it.isFinite() && it > 0f }
+            ?: global.p98.takeIf { it.isFinite() && it > 0f }
+            ?: MIN_SCENE_MAX
         val tailP98 = max(tailP95, global.inputTailP98.takeIf { it.isFinite() && it > 0f } ?: tailP95)
         val tailP99 = max(tailP98, global.inputTailP99.takeIf { it.isFinite() && it > 0f } ?: tailP98)
         val maxInput = max(tailP99, global.maxInput.takeIf { it.isFinite() && it > 0f } ?: tailP99)
@@ -622,12 +554,10 @@ internal object DngHdrProfileGainTableGenerator {
             tailP99 = tailP99,
             maxInput = maxInput
         ).coerceIn(
-            MIN_SCENE_MAX,
+            max(MIN_SCENE_MAX, baselineGain / MAX_EFFECTIVE_INPUT_HEADROOM),
             baselineGain / MIN_EFFECTIVE_INPUT_HEADROOM
         )
-        val effectiveHeadroom = (baselineGain / sceneMax)
-            .coerceIn(MIN_EFFECTIVE_INPUT_HEADROOM, MAX_EFFECTIVE_INPUT_HEADROOM)
-        return sanitizeInputScale(effectiveHeadroom / baselineGain)
+        return sanitizeInputScale(1f / sceneMax)
     }
 
     private fun hdrPgtmSceneMaxFromTailStats(
@@ -644,7 +574,7 @@ internal object DngHdrProfileGainTableGenerator {
             }
 
             safeHighlightFraction >= 0.10f -> {
-                tailP95 * 0.94f
+                max(tailP95, tailP98 * 0.98f)
             }
 
             safeHighlightFraction >= 0.03f -> {
@@ -654,9 +584,9 @@ internal object DngHdrProfileGainTableGenerator {
             else -> {
                 val outlierGapEv = log2((tailP99 + 0.04f) / (tailP98 + 0.04f))
                 if (outlierGapEv >= 0.72f) {
-                    tailP99 * 0.94f
+                    tailP99
                 } else {
-                    min(tailP95 * 1.08f, tailP98 * 0.94f)
+                    min(tailP95 * 1.08f, tailP98)
                 }
             }
         }

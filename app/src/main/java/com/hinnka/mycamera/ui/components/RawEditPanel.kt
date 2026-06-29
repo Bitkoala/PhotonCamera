@@ -420,6 +420,19 @@ private fun RawToneMappingControls(
     fun formatPower(value: Float): String = String.format("%.2f", value)
 
     when (rawRenderingEngine) {
+        RawRenderingEngine.AdobeCurve -> {
+            RawSwitchSettingItem(
+                title = stringResource(R.string.settings_raw_google_pixel_tone_map),
+                description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
+                checked = params.useGooglePixelToneMap,
+                onCheckedChange = { enabled ->
+                    onParamsChange(params.withGooglePixelToneMap(enabled))
+                    onAdjustmentEnd()
+                }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         RawRenderingEngine.AgX -> {
             SliderSettingItem(
                 title = stringResource(R.string.settings_raw_agx_white_relative_exposure),

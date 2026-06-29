@@ -296,7 +296,6 @@ class GlesRawStacker(
             val readTiming = readOutput(outputBuffer)
             outputBuffer.rewind()
             val profileGainTableMap = computeHdrProfileGainTableMap(rawHdrBaselineExposureEv)
-                ?: DngHdrProfileGainTableGenerator.forHdrBaselineExposure(rawHdrBaselineExposureEv)
             returned = true
             PLog.i(
                 TAG,
@@ -571,7 +570,7 @@ class GlesRawStacker(
             } finally {
                 GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
             }
-            DngHdrProfileGainTableGenerator.forHdrCellStats(
+            DngHdrProfileGainTableGenerator.forCellStats(
                 width = width,
                 height = height,
                 baselineExposureEv = baselineExposureEv,

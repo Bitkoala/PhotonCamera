@@ -33,6 +33,7 @@ import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
+import com.hinnka.mycamera.raw.DngEmbeddedProfile
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.DngProfileGainTableMapPatcher
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
@@ -2933,7 +2934,6 @@ object GalleryManager {
                             "short=${shortCandidate.exposureProduct}"
                 )
                 val rawHdrProfileGainTableMap = stackResult.profileGainTableMap
-                    ?: DngProfileGainTableMap.forHdrBaselineExposure(rawHdrBaselineExposureEv)
                 val stackedMetadata = metadata.withBakedRawLevelCorrectionsCleared("RAW HDR stack")
                 val dngWritten = try {
                     trySaveStackedRawDng(
@@ -4074,6 +4074,17 @@ object GalleryManager {
         return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), maxEdge = 512, preserveHdr = true))
     }
 
+    private fun autoEnableGooglePixelToneMapForImportedDng(
+        metadata: MediaMetadata,
+        dngFile: File
+    ): MediaMetadata {
+        if (!DngEmbeddedProfile.hasGoogleHdrToneCurve(dngFile)) return metadata
+        PLog.d(TAG, "Imported DNG uses Google Pixel ProfileToneCurve; enabling Pixel-style tone map")
+        return metadata.copy(
+            rawToneMappingParameters = metadata.rawToneMappingParameters.withGooglePixelToneMap(true)
+        )
+    }
+
 
     /**
      * 从 URI 获取文件名
@@ -4180,7 +4191,7 @@ object GalleryManager {
                     }
 
                     // 3. 处理 RAW 以生成 JPEG 预览
-                    var updatedMetadata: MediaMetadata = metadata
+                    var updatedMetadata: MediaMetadata = autoEnableGooglePixelToneMapForImportedDng(metadata, dngFile)
                     val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, 0f)
                     val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, 0f)
                     val processedBitmap = RawDemosaicProcessor.getInstance().process(

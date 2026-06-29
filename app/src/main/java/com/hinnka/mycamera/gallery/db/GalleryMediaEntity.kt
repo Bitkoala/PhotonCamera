@@ -61,6 +61,8 @@ data class GalleryMediaEntity(
     val rawAgxShoulder: Float,
     val rawFilmicBlackRelativeExposure: Float,
     val rawFilmicWhiteRelativeExposure: Float,
+    val rawGooglePixelToneMap: Boolean,
+    val rawGooglePixelToneMapExplicit: Boolean,
     val frameId: String?,
     val width: Int,
     val height: Int,

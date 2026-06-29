@@ -1,6 +1,9 @@
 package com.hinnka.mycamera.raw
 
 internal object DngProfileToneCurve {
+    private const val POINT_TOLERANCE = 2e-4f
+    private const val LUT_TOLERANCE = 2e-3f
+
     private val GOOGLE_HDR_TONE_CURVE_Y = floatArrayOf(
         0f, 0.000817775668f, 0.00170822139f, 0.00267076469f, 0.0037048338f, 0.00480985641f, 0.00598525954f, 0.00723047229f,
         0.00854492188f, 0.00992803555f, 0.0113792419f, 0.0128979683f, 0.0144836418f, 0.0161356926f, 0.017853545f, 0.019636631f,
@@ -45,6 +48,29 @@ internal object DngProfileToneCurve {
             } else {
                 GOOGLE_HDR_TONE_CURVE_Y[pointIndex]
             }
+        }
+    }
+
+    fun googleHdrToneCurveLut(sampleCount: Int = 256): FloatArray {
+        return DcpToneCurve(googleHdrToneCurvePoints()).toLut(sampleCount)
+    }
+
+    fun isGoogleHdrToneCurve(toneCurve: DcpToneCurve?): Boolean {
+        if (toneCurve?.isValid != true) return false
+        val googlePoints = googleHdrToneCurvePoints()
+        if (toneCurve.points.size == googlePoints.size) {
+            return toneCurve.points.indices.all { index ->
+                kotlin.math.abs(toneCurve.points[index] - googlePoints[index]) <= POINT_TOLERANCE
+            }
+        }
+        return isGoogleHdrToneCurveLut(toneCurve.toLut())
+    }
+
+    fun isGoogleHdrToneCurveLut(lut: FloatArray?): Boolean {
+        if (lut == null || lut.isEmpty()) return false
+        val googleLut = googleHdrToneCurveLut(lut.size)
+        return lut.indices.all { index ->
+            kotlin.math.abs(lut[index] - googleLut[index]) <= LUT_TOLERANCE
         }
     }
 }
