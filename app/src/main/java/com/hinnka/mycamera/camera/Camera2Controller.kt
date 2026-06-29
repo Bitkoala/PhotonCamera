@@ -74,6 +74,8 @@ class Camera2Controller(private val context: Context) {
 
         // 自定义错误代码
         const val ERROR_CAMERA_DISCONNECTED = 1000
+        const val ERROR_CAMERA_OPEN_FAILED = 1001
+        const val ERROR_CAMERA_CHARACTERISTICS_UNAVAILABLE = 1002
 
         private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
         private const val BURST_CAPTURE_BATCH_SIZE = 8
@@ -735,6 +737,120 @@ class Camera2Controller(private val context: Context) {
         return state.getCurrentCameraInfo()?.getOpenCameraId() ?: state.currentCameraId
     }
 
+    private fun getActiveOpenCameraId(): String {
+        return activeOpenCameraId.takeIf { it.isNotEmpty() } ?: getCurrentOpenCameraId()
+    }
+
+    private fun clearCameraCapabilityCache() {
+        cachedCharacteristics = null
+        activeOpenCameraId = ""
+        activeOutputPhysicalCameraId = null
+        cachedSensorOrientation = 0
+        cachedLensFacing = CameraCharacteristics.LENS_FACING_BACK
+        cachedHardwareLevel = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
+        isManualSensorSupported = false
+        isManualPostProcessingSupported = false
+        isFlashSupported = false
+        maxAfRegions = 0
+        maxAeRegions = 0
+        availableAfModes = intArrayOf()
+        availableAeModes = intArrayOf()
+        availableAwbModes = intArrayOf()
+        availableEdgeModes = intArrayOf()
+        availableNoiseReductionModes = intArrayOf()
+        availableTonemapModes = intArrayOf()
+        tonemapMaxCurvePoints = 0
+        availableColorCorrectionAberrationModes = intArrayOf()
+        availableHotPixelModes = intArrayOf()
+        availableShadingModes = intArrayOf()
+        availableDistortionCorrectionModes = intArrayOf()
+        availableVideoStabilizationModes = intArrayOf()
+        availableOpticalStabilizationModes = intArrayOf()
+        availableLensShadingMapModes = intArrayOf()
+        isRawSupported = false
+        isP010Supported = false
+        isHlg10Supported = false
+        lastAfState = null
+        isZslControlSupported = null
+        availableCaptureRequestKeyNames = null
+        loggedUnavailableVendorCaptureKeys.clear()
+    }
+
+    private fun clearCameraSessionState(reason: String, closeImageReader: Boolean = true) {
+        previewSessionGeneration++
+        previewUpdateScheduled.set(false)
+        safeCloseCaptureSession(captureSession, reason)
+        captureSession = null
+        previewRequestBuilder = null
+        previewSurface = null
+        if (closeImageReader) {
+            safeCloseImageReader(imageReader)
+            imageReader = null
+        }
+    }
+
+    private fun clearCameraRuntimeState(reason: String, closeImageReader: Boolean = true) {
+        clearCameraSessionState(reason, closeImageReader)
+        clearCameraCapabilityCache()
+    }
+
+    private fun setCameraInactive(resetVideoState: Boolean = true) {
+        _state.value = if (resetVideoState) {
+            _state.value.copy(
+                isPreviewActive = false,
+                isCapturing = false,
+                videoRecordingState = VideoRecordingState()
+            )
+        } else {
+            _state.value.copy(
+                isPreviewActive = false,
+                isCapturing = false
+            )
+        }
+    }
+
+    private fun closeCameraDeviceSafely(camera: CameraDevice?, reason: String) {
+        try {
+            camera?.close()
+        } catch (e: Exception) {
+            PLog.w(TAG, "Ignoring exception while closing camera device ($reason): ${e.message}")
+        }
+    }
+
+    private fun handleCameraDeviceUnavailable(
+        camera: CameraDevice,
+        reason: String,
+        resetVideoState: Boolean = true
+    ) {
+        cameraOpenGeneration++
+        videoRecorder.forceStop()
+        stopVideoRecordingTicker()
+        clearCameraSessionState(reason)
+        closeCameraDeviceSafely(camera, reason)
+        if (cameraDevice === camera || cameraDevice?.id == camera.id) {
+            cameraDevice = null
+        }
+        clearCameraCapabilityCache()
+        livePhotoRecorder.stopRecording()
+        setCameraInactive(resetVideoState)
+    }
+
+    private fun handleCameraOpenFailure(
+        cameraId: String,
+        errorCode: Int,
+        message: String,
+        error: Exception
+    ) {
+        cameraOpenGeneration++
+        PLog.e(TAG, "Camera open failed for $cameraId: $message", error)
+        closeCameraDeviceSafely(cameraDevice, "open failure")
+        cameraDevice = null
+        clearCameraRuntimeState("open failure: $cameraId")
+        livePhotoRecorder.stopRecording()
+        setCameraInactive(resetVideoState = true)
+        onCameraError?.invoke(errorCode, message, true)
+    }
+
     private fun resolveActiveFocusCharacteristics(
         fallbackCharacteristics: CameraCharacteristics? = cachedCharacteristics
     ): Pair<String, CameraCharacteristics>? {
@@ -1031,11 +1147,14 @@ class Camera2Controller(private val context: Context) {
                 )
                 refreshHyperfocalFocusDistanceIfEnabled(updatePreview = false)
             } catch (e: Exception) {
-                PLog.e(TAG, "Failed to cache camera characteristics", e)
-                cachedCharacteristics = null
-                cachedSensorOrientation = 0
-                cachedLensFacing = CameraCharacteristics.LENS_FACING_BACK
+                handleCameraOpenFailure(
+                    cameraId = openCameraId,
+                    errorCode = ERROR_CAMERA_CHARACTERISTICS_UNAVAILABLE,
+                    message = "相机特性不可用",
+                    error = e
+                )
                 surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
+                return
             }
 
             // 配置 SurfaceTexture
@@ -1179,13 +1298,9 @@ class Camera2Controller(private val context: Context) {
                         return
                     }
                     PLog.w(TAG, "Camera disconnected: ${camera.id} - 相机被其他应用或系统接管")
-                    videoRecorder.forceStop()
-                    stopVideoRecordingTicker()
-                    camera.close()
-                    cameraDevice = null
-                    _state.value = _state.value.copy(
-                        isPreviewActive = false,
-                        videoRecordingState = VideoRecordingState()
+                    handleCameraDeviceUnavailable(
+                        camera = camera,
+                        reason = "camera disconnected: ${camera.id}"
                     )
 
                     // 通知上层：相机断开连接，可以在 onResume 时重试
@@ -1221,13 +1336,9 @@ class Camera2Controller(private val context: Context) {
                     }
 
                     PLog.e(TAG, "Camera error: ${camera.id}, error=$error - $errorMessage")
-                    videoRecorder.forceStop()
-                    stopVideoRecordingTicker()
-                    camera.close()
-                    cameraDevice = null
-                    _state.value = _state.value.copy(
-                        isPreviewActive = false,
-                        videoRecordingState = VideoRecordingState()
+                    handleCameraDeviceUnavailable(
+                        camera = camera,
+                        reason = "camera error ${camera.id}: $error"
                     )
 
                     // 判断是否可以重试
@@ -1249,7 +1360,12 @@ class Camera2Controller(private val context: Context) {
             }, cameraHandler)
 
         } catch (e: Exception) {
-            PLog.e(TAG, "Failed to open camera", e)
+            handleCameraOpenFailure(
+                cameraId = openCameraId,
+                errorCode = ERROR_CAMERA_OPEN_FAILED,
+                message = "相机打开失败",
+                error = e
+            )
         }
     }
 
@@ -2217,7 +2333,7 @@ class Camera2Controller(private val context: Context) {
      * 应用变焦设置
      */
     private fun applyZoomSettings(builder: CaptureRequest.Builder, state: CameraState) {
-        val openCameraId = getCurrentOpenCameraId()
+        val openCameraId = getActiveOpenCameraId()
         if (openCameraId.isEmpty()) return
 
         try {
@@ -3299,8 +3415,20 @@ class Camera2Controller(private val context: Context) {
             }
             return
         }
-        val openCameraId = getCurrentOpenCameraId()
-        if (openCameraId.isEmpty()) return
+        val requestedRatio = if (ratio.isFinite()) ratio.coerceAtLeast(0.01f) else 1f
+        _state.value = _state.value.copy(zoomRatio = requestedRatio)
+
+        val device = cameraDevice
+        val session = captureSession
+        val builder = previewRequestBuilder
+        val openCameraId = activeOpenCameraId
+        if (device == null || session == null || builder == null || openCameraId.isEmpty()) {
+            PLog.v(
+                TAG,
+                "setZoomRatio deferred: camera not ready (device=$device, session=$session, builder=$builder, open=$openCameraId)"
+            )
+            return
+        }
 
         try {
             val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
@@ -3308,7 +3436,7 @@ class Camera2Controller(private val context: Context) {
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
             val maxSupportedZoom = zoomRatioRange?.upper ?: maxZoom
-            val clampedRatio = ratio.coerceIn(minZoom, maxSupportedZoom)
+            val clampedRatio = requestedRatio.coerceIn(minZoom, maxSupportedZoom)
 
             _state.value = _state.value.copy(zoomRatio = clampedRatio)
             if (recreateSessionForPhysicalZoomIfNeeded(_state.value)) {
@@ -3317,10 +3445,10 @@ class Camera2Controller(private val context: Context) {
             }
 
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-            previewRequestBuilder?.apply {
+            builder.apply {
                 applyZoomRequestSettings(this, clampedRatio, activeRect, zoomRatioRange)
-                updatePreview()
             }
+            updatePreview()
 
             val zoomMode = if (zoomRatioRange != null) {
                 "CONTROL_ZOOM_RATIO"
@@ -4840,30 +4968,10 @@ class Camera2Controller(private val context: Context) {
                 _state.value = _state.value.copy(videoRecordingState = VideoRecordingState())
             }
 
-            safeCloseCaptureSession(captureSession, "closeCamera")
-            captureSession = null
-
-            cameraDevice?.close()
+            clearCameraSessionState("closeCamera")
+            closeCameraDeviceSafely(cameraDevice, "closeCamera")
             cameraDevice = null
-
-            safeCloseImageReader(imageReader)
-            imageReader = null
-
-            previewSurface = null
-            previewRequestBuilder = null
-
-            //清理所有缓存的相机特性和属性
-            cachedCharacteristics = null
-            activeOpenCameraId = ""
-            activeOutputPhysicalCameraId = null
-            cachedSensorOrientation = 0
-            cachedLensFacing = CameraCharacteristics.LENS_FACING_BACK
-            cachedHardwareLevel = CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
-            availableAfModes = intArrayOf()
-            lastAfState = null
-            isZslControlSupported = null
-            availableCaptureRequestKeyNames = null
-            loggedUnavailableVendorCaptureKeys.clear()
+            clearCameraCapabilityCache()
 
             _state.value = if (keepVideoRecording) {
                 _state.value.copy(isPreviewActive = false)

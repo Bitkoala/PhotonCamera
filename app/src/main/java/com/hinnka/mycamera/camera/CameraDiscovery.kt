@@ -114,14 +114,16 @@ class CameraDiscovery(private val context: Context) {
         preferredMainCameraId: String? = null
     ): DiscoveredCameraCandidates {
         val customLensIdSet = loadCustomLensIds().toSet()
-        val directCameraIds = appendPreferredMainCameraId(
-            baseIds = getAllCameraIds(includeDuplicateMainCameraIds),
-            preferredMainCameraId = preferredMainCameraId
-        )
+        val baseCameraIds = getAllCameraIds(includeDuplicateMainCameraIds)
         val logicalCameraDiscoveryConfig = loadLogicalCameraDiscoveryConfig()
         val logicalCameraBindings = findLogicalCameraBindings(
-            publicCameraIdSet = directCameraIds.toSet(),
+            publicCameraIdSet = baseCameraIds.toSet(),
             config = logicalCameraDiscoveryConfig
+        )
+        val directCameraIds = appendPreferredMainCameraId(
+            baseIds = baseCameraIds,
+            preferredMainCameraId = preferredMainCameraId,
+            logicalCameraBindings = logicalCameraBindings
         )
         // 获取完整的 Camera ID 列表（包括探测的隐藏摄像头和逻辑多摄暴露的物理摄像头）
         val allCameraIds = (directCameraIds + logicalCameraBindings.keys).distinct()
@@ -245,10 +247,18 @@ class CameraDiscovery(private val context: Context) {
 
     private fun appendPreferredMainCameraId(
         baseIds: List<String>,
-        preferredMainCameraId: String?
+        preferredMainCameraId: String?,
+        logicalCameraBindings: Map<String, LogicalCameraBinding>
     ): List<String> {
         val cameraId = preferredMainCameraId?.trim()?.takeIf { it.isNotEmpty() } ?: return baseIds
         if (baseIds.contains(cameraId)) return baseIds
+        logicalCameraBindings[cameraId]?.let { binding ->
+            PLog.d(
+                TAG,
+                "Preferred main camera ID $cameraId uses logical camera ${binding.logicalCameraId}"
+            )
+            return baseIds
+        }
         if (!isCustomCameraIdAvailable(cameraId)) return baseIds
 
         PLog.d(TAG, "Preferred main camera ID $cameraId added to discovery IDs")

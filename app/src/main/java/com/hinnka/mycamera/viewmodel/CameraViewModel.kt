@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CaptureResult
 import android.net.Uri
 import android.os.Build
@@ -1258,6 +1259,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var currentSurfaceTexture: SurfaceTexture? = null
     private var cameraOpenInFlight = false
     private var cameraReopenJob: Job? = null
+    private var cameraErrorRecoveryJob: Job? = null
 
     // 用于处理音量键连续按下的时间戳，防止抖动和过快响应
     private var lastVolumeKeyEventTime = 0L
@@ -1348,6 +1350,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // 这样可以避免在相机被其他应用占用时的无限重试循环
             PLog.d(TAG, "onCameraError: code=$code, message=$message, canRetry=$canRetry")
             cameraOpenInFlight = false
+            scheduleCameraListRefreshAfterError(code)
             resetExposureCompensationForCameraRestart()
             stackingImages.forEach {
                 it.close()
@@ -1895,6 +1898,24 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraOpenInFlight = false
         currentSurfaceTexture = null
         cameraController.closeCamera()
+    }
+
+    private fun scheduleCameraListRefreshAfterError(errorCode: Int) {
+        val shouldRefreshCameraList = when (errorCode) {
+            CameraDevice.StateCallback.ERROR_CAMERA_DEVICE,
+            CameraDevice.StateCallback.ERROR_CAMERA_SERVICE,
+            Camera2Controller.ERROR_CAMERA_OPEN_FAILED,
+            Camera2Controller.ERROR_CAMERA_CHARACTERISTICS_UNAVAILABLE -> true
+
+            else -> false
+        }
+        if (!shouldRefreshCameraList) return
+
+        cameraErrorRecoveryJob?.cancel()
+        cameraErrorRecoveryJob = viewModelScope.launch {
+            delay(800)
+            cameraController.refreshCameraList()
+        }
     }
 
     fun prewarmDepthEstimator() {
@@ -5585,6 +5606,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         cameraReopenJob?.cancel()
+        cameraErrorRecoveryJob?.cancel()
         cameraController.release()
         contentRepository.lutManager.clearCache()
         contentRepository.frameManager.clearCache()
