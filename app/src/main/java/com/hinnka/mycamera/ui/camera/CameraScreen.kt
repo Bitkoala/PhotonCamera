@@ -221,7 +221,9 @@ fun CameraScreen(
     val multipleExposureState = viewModel.multipleExposureState
     val canStartShutterAnimation by viewModel.canStartShutterAnimation.collectAsState()
     val currentCaptureModeForEffects by rememberUpdatedState(state.captureMode)
-    var previewRecipeParamsOverride by remember(currentLutId) { mutableStateOf<ColorRecipeParams?>(null) }
+    var previewRecipeParamsOverride by remember(currentLutId, activePresetId) {
+        mutableStateOf<ColorRecipeParams?>(null)
+    }
     var pendingCaptureAnimationBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var previewBounds by remember { mutableStateOf<Rect?>(null) }
     var zoomBarBounds by remember { mutableStateOf<Rect?>(null) }
@@ -254,6 +256,14 @@ fun CameraScreen(
         effectParamsSaveJob = null
         pendingEffectParamsToSave?.let(viewModel::setEffectParams)
         pendingEffectParamsToSave = null
+    }
+
+    fun discardTransientLookEdits() {
+        effectParamsSaveJob?.cancel()
+        effectParamsSaveJob = null
+        pendingEffectParamsToSave = null
+        previewEffectParamsOverride = null
+        previewRecipeParamsOverride = null
     }
 
     LaunchedEffect(currentEffectParams) {
@@ -1566,6 +1576,7 @@ fun CameraScreen(
                         selectedMode = lutSelectorMode,
                         onModeSelected = { viewModel.setLutSelectorMode(it) },
                         onPresetSelected = { preset ->
+                            discardTransientLookEdits()
                             if (presetRequiresPreviewTransition(preset)) {
                                 runPreviewTransition { viewModel.applyPreset(preset) }
                             } else {

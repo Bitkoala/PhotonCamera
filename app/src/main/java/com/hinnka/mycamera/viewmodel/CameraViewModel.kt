@@ -74,6 +74,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -322,21 +324,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private set
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    var currentRecipeParams = currentLutId.flatMapLatest { id ->
+    val currentRecipeParams: StateFlow<ColorRecipeParams> = currentLutId.flatMapLatest { id ->
         contentRepository.lutManager.getColorRecipeParams(id)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
         initialValue = ColorRecipeParams.DEFAULT
     )
-
-    private fun recipeFlowFor(lutId: String): StateFlow<ColorRecipeParams> {
-        return contentRepository.lutManager.getColorRecipeParams(lutId).stateIn(
-            viewModelScope,
-            started = SharingStarted.Lazily,
-            initialValue = ColorRecipeParams.DEFAULT,
-        )
-    }
 
     val currentEffectParams: StateFlow<EffectParams> = userPreferencesRepository.userPreferences
         .map { it.activeEffectParams }
@@ -408,6 +402,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile
     private var isApplyingPreset = false
+    private val presetApplyMutex = Mutex()
+    private var presetApplyGeneration = 0L
+    private var lutLoadJob: Job? = null
+    private var lutLoadGeneration = 0L
 
     fun prepareCurrentSettingsPresetDraft(name: String): com.hinnka.mycamera.model.CameraPreset {
         return com.hinnka.mycamera.model.CameraPreset(
@@ -449,21 +447,29 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun applyPreset(preset: com.hinnka.mycamera.model.CameraPreset?) {
+        val applyGeneration = ++presetApplyGeneration
+        isApplyingPreset = true
         viewModelScope.launch {
-            val resolvedPreset = preset?.withSupportedCaptureCombination()
-            isApplyingPreset = true
-            try {
-                PLog.d(
-                    TAG,
-                    "Applying preset id=${resolvedPreset?.id}, aspectRatio=${resolvedPreset?.aspectRatio}, " +
-                        "frameId=${resolvedPreset?.frameId}"
-                )
-                applyCameraFeatureUpdate(
-                    resolvedPreset.toCameraFeatureUpdate().copy(activePresetId = SettingValue(resolvedPreset?.id)),
-                    clearActivePresetOnMismatch = false
-                )
-            } finally {
-                isApplyingPreset = false
+            presetApplyMutex.withLock {
+                if (presetApplyGeneration != applyGeneration) {
+                    return@withLock
+                }
+                val resolvedPreset = preset?.withSupportedCaptureCombination()
+                try {
+                    PLog.d(
+                        TAG,
+                        "Applying preset id=${resolvedPreset?.id}, aspectRatio=${resolvedPreset?.aspectRatio}, " +
+                            "frameId=${resolvedPreset?.frameId}"
+                    )
+                    applyCameraFeatureUpdate(
+                        resolvedPreset.toCameraFeatureUpdate().copy(activePresetId = SettingValue(resolvedPreset?.id)),
+                        clearActivePresetOnMismatch = false
+                    )
+                } finally {
+                    if (presetApplyGeneration == applyGeneration) {
+                        isApplyingPreset = false
+                    }
+                }
             }
         }
     }
@@ -1875,6 +1881,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val loadedLut = withContext(Dispatchers.IO) {
                 contentRepository.lutManager.loadLut(lutId)
             }
+            if (currentLutId.value != lutId) {
+                return@launch
+            }
             currentLutConfig = loadedLut
             cameraController.setLutEnabled(loadedLut != null)
             cameraController.setLogLutActive(loadedLut?.curve?.isLog == true)
@@ -3012,8 +3021,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setLut(lutId: String?, persist: Boolean = true) {
         val normalizedLutId = lutId ?: "none"
+        val loadGeneration = ++lutLoadGeneration
+        lutLoadJob?.cancel()
         currentLutId.value = normalizedLutId
-        currentRecipeParams = recipeFlowFor(normalizedLutId)
         if (lutId == null || lutId == "none") {
             currentLutConfig = null
             // LUT 已禁用，通知相机控制器
@@ -3025,9 +3035,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 // 首次启动时先保持”未启用”状态，避免 Live Photo 在 LUT 文件尚未加载完成前录入原始画面。
                 cameraController.setLutEnabled(false)
             }
-            viewModelScope.launch {
+            lutLoadJob = viewModelScope.launch {
                 val loadedLut = withContext(Dispatchers.IO) {
                     contentRepository.lutManager.loadLut(lutId)
+                }
+                if (lutLoadGeneration != loadGeneration || currentLutId.value != normalizedLutId) {
+                    return@launch
                 }
                 if (state.value.captureMode == CaptureMode.VIDEO) {
                     val logProfile = state.value.videoConfig.logProfile
@@ -3042,6 +3055,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 currentLutConfig = loadedLut
                 cameraController.setLogLutActive(loadedLut?.curve?.isLog == true)
                 cameraController.setLutEnabled(loadedLut != null)
+                if (lutLoadGeneration == loadGeneration) {
+                    lutLoadJob = null
+                }
             }
             if (hadActiveLut) {
                 cameraController.setLutEnabled(true)
