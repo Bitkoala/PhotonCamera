@@ -181,6 +181,8 @@ class Camera2Controller(private val context: Context) {
     private var isP010Supported = false
     private var isHlg10Supported = false
     private var isZslControlSupported: Boolean? = null
+    private var availableCaptureRequestKeyNames: Set<String>? = null
+    private val loggedUnavailableVendorCaptureKeys = mutableSetOf<String>()
     private var availableAeModes: IntArray = intArrayOf()
     private var availableAwbModes: IntArray = intArrayOf()
     private var videoCaptureStatsWindowStartMs: Long = 0L
@@ -895,10 +897,13 @@ class Camera2Controller(private val context: Context) {
         )
 
         var previewSize = _state.value.currentPreviewSize
+        availableCaptureRequestKeyNames = null
+        loggedUnavailableVendorCaptureKeys.clear()
 
         try {
             try {
                 cachedCharacteristics = cameraManager.getCameraCharacteristics(openCameraId)
+                availableCaptureRequestKeyNames = loadAvailableCaptureRequestKeyNames(cachedCharacteristics)
 
                 // 缓存固定属性（传感器方向、镜头朝向、硬件级别）
                 // 这些值在相机生命周期内不会改变，避免在每帧预览中重复获取
@@ -1786,6 +1791,11 @@ class Camera2Controller(private val context: Context) {
         if (!settings.isEnabled) return
 
         settings.values.forEach { (key, value) ->
+            if (!isCaptureRequestKeyAvailable(key.requestKeyName)) {
+                logUnavailableVendorCaptureKey(lensId, key)
+                return@forEach
+            }
+
             try {
                 when (key.valueType) {
                     VendorCaptureValueType.INT -> {
@@ -1806,6 +1816,37 @@ class Camera2Controller(private val context: Context) {
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
             }
+        }
+    }
+
+    private fun isCaptureRequestKeyAvailable(requestKeyName: String): Boolean {
+        val keyNames = availableCaptureRequestKeyNames
+            ?: loadAvailableCaptureRequestKeyNames(cachedCharacteristics).also {
+                availableCaptureRequestKeyNames = it
+            }
+        return keyNames.contains(requestKeyName)
+    }
+
+    private fun loadAvailableCaptureRequestKeyNames(characteristics: CameraCharacteristics?): Set<String> {
+        if (characteristics == null) return emptySet()
+        return try {
+            characteristics.availableCaptureRequestKeys
+                .map { it.name }
+                .toSet()
+        } catch (e: Exception) {
+            PLog.w(TAG, "Failed to query available capture request keys", e)
+            emptySet()
+        }
+    }
+
+    private fun logUnavailableVendorCaptureKey(lensId: String, key: VendorCaptureKey) {
+        val logKey = "${activeOpenCameraId}:${lensId}:${key.requestKeyName}"
+        if (loggedUnavailableVendorCaptureKeys.add(logKey)) {
+            PLog.i(
+                TAG,
+                "Skipped vendor capture key for lens $lensId because it is not listed in " +
+                        "available capture request keys: ${key.requestKeyName}"
+            )
         }
     }
 
@@ -4821,6 +4862,8 @@ class Camera2Controller(private val context: Context) {
             availableAfModes = intArrayOf()
             lastAfState = null
             isZslControlSupported = null
+            availableCaptureRequestKeyNames = null
+            loggedUnavailableVendorCaptureKeys.clear()
 
             _state.value = if (keepVideoRecording) {
                 _state.value.copy(isPreviewActive = false)
