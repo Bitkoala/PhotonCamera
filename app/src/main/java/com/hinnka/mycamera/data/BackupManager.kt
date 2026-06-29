@@ -28,9 +28,11 @@ object BackupManager {
         "datastore", // DataStore 默认存放目录
         "custom_luts.json",
         "custom_frames.json",
+        "custom_dcps.json",
         "category_overrides.json",
         "custom_luts",
         "custom_frames",
+        "custom_dcps",
         "custom_fonts",
         "custom_logos"
     )

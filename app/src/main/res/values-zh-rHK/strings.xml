@@ -337,7 +337,7 @@
     <string name="settings_openai_base_url">OpenAI API 網域</string>
     <string name="settings_openai_base_url_desc">允許設定相容大語言模型的自訂介面位址</string>
     <string name="settings_backup_settings">備份設定</string>
-    <string name="settings_backup_settings_description">備份您的偏好設定以及自訂匯入的 LUT 和邊框。</string>
+    <string name="settings_backup_settings_description">備份您的偏好設定以及自訂匯入的 LUT、邊框和 DCP 設定檔。</string>
     <string name="settings_restore_settings">還原設定</string>
     <string name="settings_restore_settings_description">從先前的備份 ZIP 檔案中還原。應用可能需要重新啟動才能生效。</string>
     <string name="backup_success">備份成功</string>

@@ -450,7 +450,7 @@
     <string name="settings_openai_base_url">OpenAI API 域名</string>
     <string name="settings_openai_base_url_desc">允许设置兼容大语言模型的自定义接口地址</string>
     <string name="settings_backup_settings">备份设置</string>
-    <string name="settings_backup_settings_description">备份您的首选项以及自定义导入的 LUT 和边框。</string>
+    <string name="settings_backup_settings_description">备份您的首选项以及自定义导入的 LUT、边框和 DCP 配置。</string>
     <string name="settings_restore_settings">恢复设置</string>
     <string name="settings_restore_settings_description">从之前的备份 ZIP 文件中恢复。应用可能需要重启才能生效。</string>
     <string name="backup_success">备份成功</string>

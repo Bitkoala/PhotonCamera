@@ -398,7 +398,7 @@
     <string name="settings_openai_base_url">ชื่อโดเมน OpenAI API</string>
     <string name="settings_openai_base_url_desc">อนุญาตให้ตั้งค่าที่อยู่อินเทอร์เฟซแบบกำหนดเองที่เข้ากันได้กับโมเดลภาษาขนาดใหญ่</string>
     <string name="settings_backup_settings">การตั้งค่าการสำรองข้อมูล</string>
-    <string name="settings_backup_settings_description">สำรองข้อมูลการตั้งค่าของคุณและ LUT และเส้นขอบที่นำเข้าแบบกำหนดเอง</string>
+    <string name="settings_backup_settings_description">สำรองข้อมูลการตั้งค่าของคุณและ LUT, กรอบ และโปรไฟล์ DCP ที่นำเข้าแบบกำหนดเอง</string>
     <string name="settings_restore_settings">คืนค่าการตั้งค่า</string>
     <string name="settings_restore_settings_description">กู้คืนจากไฟล์ ZIP สำรองก่อนหน้า อาจต้องรีสตาร์ทแอปจึงจะมีผล</string>
     <string name="backup_success">สำรองข้อมูลสำเร็จ</string>

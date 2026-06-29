@@ -455,7 +455,7 @@
     <string name="settings_openai_base_url">OpenAI Base URL</string>
     <string name="settings_openai_base_url_desc">Set a custom API destination to support compatible language models</string>
     <string name="settings_backup_settings">Backup Settings</string>
-    <string name="settings_backup_settings_description">Backup your preferences and custom imported LUTs/Frames.</string>
+    <string name="settings_backup_settings_description">Backup your preferences and custom imported LUTs, frames, and DCP profiles.</string>
     <string name="settings_restore_settings">Restore Settings</string>
     <string name="settings_restore_settings_description">Restore from a previous backup ZIP file. App may require a restart to apply.</string>
     <string name="backup_success">Backup completed successfully</string>
