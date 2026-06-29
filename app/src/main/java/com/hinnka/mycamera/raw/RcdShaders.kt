@@ -30,7 +30,7 @@ object RcdShaders {
         uniform int uCfaPattern;
         uniform vec4 uBlackLevel; // R, Gr, Gb, B 或 [0,1,2,3] 四通道黑电平
         uniform float uWhiteLevel;
-        uniform vec4 uWhiteBalanceGains; // R, Gr, Gb, B 或 [0,1,2,3] 四通道白平衡增益
+        uniform vec4 uWhiteBalanceGains; // R, Gr, Gb, B 高光重建用相对白平衡增益，输出仍保持 camera RGB
         uniform float uHighlightClipThreshold;
         uniform float uHighlightCeiling;
         uniform bool uLensShadingEnabled;
@@ -110,16 +110,23 @@ object RcdShaders {
             return max(float(rawVal) - bl, 0.0) / max(wl - bl, 1.0);
         }
 
-        float linearSampleAt(ivec2 coord, int channelIndex) {
+        float cameraSampleAt(ivec2 coord, int channelIndex) {
             ivec2 sampleCoord = clampCoord(coord);
             float sensor = readSensorNormalized(sampleCoord, channelIndex);
-            float linear = sensor * getLensShadingGain(channelIndex, sampleCoord) *
-                uWhiteBalanceGains[channelIndex];
+            float linear = sensor * getLensShadingGain(channelIndex, sampleCoord);
             return min(max(linear, 0.0), uHighlightCeiling);
         }
 
-        // Inspired by RawTherapee/darktable Coloropp: estimate clipped photosites from the opposing channels in a 3x3 superpixel.
-        float estimateOpposedLinear(ivec2 coord, int color, float fallback) {
+        float reconstructionWbGain(int channelIndex) {
+            return max(uWhiteBalanceGains[channelIndex], 1e-6);
+        }
+
+        float balancedSampleAt(ivec2 coord, int channelIndex) {
+            return cameraSampleAt(coord, channelIndex) * reconstructionWbGain(channelIndex);
+        }
+
+        // Estimate clipped photosites in a white-balanced domain, then convert back to camera RGB.
+        float estimateOpposedCameraLinear(ivec2 coord, int color, int targetChannelIndex, float fallback) {
             float sumRed = 0.0;
             float sumGreen = 0.0;
             float sumBlue = 0.0;
@@ -132,16 +139,16 @@ object RcdShaders {
                     ivec2 sampleCoord = clampCoord(coord + ivec2(dx, dy));
                     int sampleColor = getBayerColor(uCfaPattern, sampleCoord.x, sampleCoord.y);
                     int channelIndex = getBlackLevelIndex(uCfaPattern, sampleCoord.x, sampleCoord.y);
-                    float linear = linearSampleAt(sampleCoord, channelIndex);
+                    float balanced = balancedSampleAt(sampleCoord, channelIndex);
 
                     if (sampleColor == RED) {
-                        sumRed += linear;
+                        sumRed += balanced;
                         countRed += 1.0;
                     } else if (sampleColor == GREEN) {
-                        sumGreen += linear;
+                        sumGreen += balanced;
                         countGreen += 1.0;
                     } else {
-                        sumBlue += linear;
+                        sumBlue += balanced;
                         countBlue += 1.0;
                     }
                 }
@@ -161,7 +168,8 @@ object RcdShaders {
                 opposedRoot = 0.5 * (rootRed + rootGreen);
             }
 
-            float reconstructed = pow(max(opposedRoot, 0.0), power);
+            float reconstructed = pow(max(opposedRoot, 0.0), power) /
+                reconstructionWbGain(targetChannelIndex);
             return max(reconstructed, fallback);
         }
 
@@ -171,7 +179,7 @@ object RcdShaders {
                 return min(max(linear, 0.0), uHighlightCeiling);
             }
 
-            float reconstructed = estimateOpposedLinear(coord, color, linear);
+            float reconstructed = estimateOpposedCameraLinear(coord, color, channelIndex, linear);
             return min(mix(linear, reconstructed, clipMask), uHighlightCeiling);
         }
 
@@ -184,7 +192,7 @@ object RcdShaders {
             int blIdx = getBlackLevelIndex(uCfaPattern, coord.x, coord.y);
             int color = getBayerColor(uCfaPattern, coord.x, coord.y);
             float sensor = readSensorNormalized(coord, blIdx);
-            float linear = linearSampleAt(coord, blIdx);
+            float linear = cameraSampleAt(coord, blIdx);
             float val = reconstructHighlightSample(coord, blIdx, color, sensor, linear);
 
             cfa[idx] = val;

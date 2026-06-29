@@ -118,15 +118,22 @@ object QuadBayerShaders {
             return max(float(rawVal) - bl, 0.0) / max(wl - bl, 1.0);
         }
 
-        float linearSampleAt(ivec2 coord, int channelIndex) {
+        float cameraSampleAt(ivec2 coord, int channelIndex) {
             ivec2 sampleCoord = clampCoord(coord, uImageSize);
             float sensor = readSensorNormalized(sampleCoord, channelIndex);
-            float linear = sensor * getLensShadingGain(sampleCoord) *
-                uWhiteBalanceGains[channelIndex];
+            float linear = sensor * getLensShadingGain(sampleCoord);
             return min(max(linear, 0.0), uHighlightCeiling);
         }
 
-        float estimateOpposedLinear(ivec2 coord, int color, float fallback) {
+        float reconstructionWbGain(int channelIndex) {
+            return max(uWhiteBalanceGains[channelIndex], 1e-6);
+        }
+
+        float balancedSampleAt(ivec2 coord, int channelIndex) {
+            return cameraSampleAt(coord, channelIndex) * reconstructionWbGain(channelIndex);
+        }
+
+        float estimateOpposedCameraLinear(ivec2 coord, int color, int targetChannelIndex, float fallback) {
             float sumRed = 0.0;
             float sumGreen = 0.0;
             float sumBlue = 0.0;
@@ -142,16 +149,16 @@ object QuadBayerShaders {
                     ivec2 sampleCoord = clampCoord(coord + ivec2(dx, dy), uImageSize);
                     int sampleChannel = getQuadChannelIndex(uCfaPattern, sampleCoord.x, sampleCoord.y);
                     int sampleColor = colorFromChannelIndex(sampleChannel);
-                    float linear = linearSampleAt(sampleCoord, sampleChannel);
+                    float balanced = balancedSampleAt(sampleCoord, sampleChannel);
 
                     if (sampleColor == RED) {
-                        sumRed += linear;
+                        sumRed += balanced;
                         countRed += 1.0;
                     } else if (sampleColor == GREEN) {
-                        sumGreen += linear;
+                        sumGreen += balanced;
                         countGreen += 1.0;
                     } else {
-                        sumBlue += linear;
+                        sumBlue += balanced;
                         countBlue += 1.0;
                     }
                 }
@@ -171,7 +178,8 @@ object QuadBayerShaders {
                 opposedRoot = 0.5 * (rootRed + rootGreen);
             }
 
-            float reconstructed = pow(max(opposedRoot, 0.0), power);
+            float reconstructed = pow(max(opposedRoot, 0.0), power) /
+                reconstructionWbGain(targetChannelIndex);
             return max(reconstructed, fallback);
         }
 
@@ -181,7 +189,7 @@ object QuadBayerShaders {
                 return min(max(linear, 0.0), uHighlightCeiling);
             }
 
-            float reconstructed = estimateOpposedLinear(coord, color, linear);
+            float reconstructed = estimateOpposedCameraLinear(coord, color, channelIndex, linear);
             return min(mix(linear, reconstructed, clipMask), uHighlightCeiling);
         }
 
@@ -193,7 +201,7 @@ object QuadBayerShaders {
             int channelIndex = getQuadChannelIndex(uCfaPattern, coord.x, coord.y);
             int color = colorFromChannelIndex(channelIndex);
             float sensor = readSensorNormalized(coord, channelIndex);
-            float linear = linearSampleAt(coord, channelIndex);
+            float linear = cameraSampleAt(coord, channelIndex);
             float val = reconstructHighlightSample(coord, channelIndex, color, sensor, linear);
 
             cfa[idx] = val;

@@ -172,7 +172,8 @@ class RawDemosaicProcessor {
         private const val RCD_VH_DIR_BINDING = 4
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD = 0.985f
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
-        private val RAW_CAMERA_STAGE_WB_GAINS = floatArrayOf(1f, 1f, 1f, 1f)
+        private const val RCD_HIGHLIGHT_RECONSTRUCTION_MIN_WB_GAIN = 1e-3f
+        private const val RCD_HIGHLIGHT_RECONSTRUCTION_MAX_WB_GAIN = 64.0f
         private const val RAW_TONE_MAPPED_AE_LUMA_FLOOR = 0.001f
         private const val RAW_TONE_MAPPED_AE_LONG_EDGE = 256
         private const val FILMIC_GREY_SOURCE = 0.1845f
@@ -423,6 +424,39 @@ class RawDemosaicProcessor {
                 mode = rawWhiteLevelMode
             ),
             mode = rawCfaCorrectionMode
+        )
+    }
+
+    private fun highlightReconstructionWbGains(metadata: RawMetadata): FloatArray {
+        val gains = metadata.whiteBalanceGains
+        fun safeGain(index: Int, fallback: Float): Float {
+            val value = gains.getOrElse(index) { fallback }
+            return if (value.isFinite() && value > 0f) value else fallback
+        }
+
+        val greenEven = safeGain(1, 1f)
+        val greenOdd = safeGain(2, greenEven)
+        val greenBase = ((greenEven + greenOdd) * 0.5f)
+            .takeIf { it.isFinite() && it > 0f }
+            ?: 1f
+
+        fun normalized(value: Float): Float {
+            val relative = value / greenBase.coerceAtLeast(1e-6f)
+            return if (relative.isFinite()) {
+                relative.coerceIn(
+                    RCD_HIGHLIGHT_RECONSTRUCTION_MIN_WB_GAIN,
+                    RCD_HIGHLIGHT_RECONSTRUCTION_MAX_WB_GAIN
+                )
+            } else {
+                1f
+            }
+        }
+
+        return floatArrayOf(
+            normalized(safeGain(0, greenBase)),
+            normalized(greenEven),
+            normalized(greenOdd),
+            normalized(safeGain(3, greenBase))
         )
     }
 
@@ -990,7 +1024,7 @@ class RawDemosaicProcessor {
             }
             GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
 
-            // 2.0 Populate (黑电平扣除与通道归一化)
+            // 2.0 Populate (黑电平扣除、镜头阴影校正与高光重建；输出保持 camera RGB)
             val blackLevel4 = FloatArray(4) { idx ->
                 actualMetadata.blackLevel.getOrElse(idx) {
                     actualMetadata.blackLevel.firstOrNull() ?: 0f
@@ -1034,13 +1068,13 @@ class RawDemosaicProcessor {
                 RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
             )
             val metadataWbGains = actualMetadata.whiteBalanceGains
-            val populateWbGains = RAW_CAMERA_STAGE_WB_GAINS
+            val highlightWbGains = highlightReconstructionWbGains(actualMetadata)
             val lscSize = lensShadingLogString(actualMetadata)
             PLog.d(
                 TAG,
                 "RCD populate: cfa=${actualMetadata.cfaPattern} black=${blackLevel4.contentToString()} " +
                         "white=${actualMetadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
-                        "populateWb=${populateWbGains.contentToString()} " +
+                        "highlightWb=${highlightWbGains.contentToString()} " +
                         "lsc=$lscSize " +
                         "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                         "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING " +
@@ -1055,7 +1089,7 @@ class RawDemosaicProcessor {
                 GLES31.glGetUniformLocation(
                     rcdPopulateProgram,
                     "uWhiteBalanceGains"
-                ), 1, populateWbGains, 0
+                ), 1, highlightWbGains, 0
             )
             GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
@@ -3074,7 +3108,7 @@ class RawDemosaicProcessor {
             }.coerceAtLeast(0f)
         }
         val metadataWbGains = metadata.whiteBalanceGains
-        val populateWbGains = RAW_CAMERA_STAGE_WB_GAINS
+        val highlightWbGains = highlightReconstructionWbGains(metadata)
         val lscSize = lensShadingLogString(metadata)
         val expandedBlockSize = RawCfaCorrection.expandedBayerBlockSize(metadata.cfaPattern)
         val outputBorder = (expandedBlockSize * 2).coerceAtLeast(4)
@@ -3117,7 +3151,7 @@ class RawDemosaicProcessor {
         GLES31.glUniform4fv(
             GLES31.glGetUniformLocation(quadPopulateProgram, "uWhiteBalanceGains"),
             1,
-            populateWbGains,
+            highlightWbGains,
             0
         )
         PLog.d(
@@ -3125,7 +3159,7 @@ class RawDemosaicProcessor {
             "Expanded Bayer populate: cfa=${metadata.cfaPattern} block=${expandedBlockSize}x$expandedBlockSize " +
                     "black=${blackLevel4.contentToString()} " +
                     "white=${metadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
-                    "populateWb=${populateWbGains.contentToString()} lsc=$lscSize " +
+                    "highlightWb=${highlightWbGains.contentToString()} lsc=$lscSize " +
                     "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                     "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING"
         )
