@@ -1298,11 +1298,11 @@ static float maxVectorEntry(const std::array<float, 3> &values) {
 }
 
 static float normalizeDngBaselineExposure(const libraw_dng_levels_t &levels) {
-  if ((levels.parsedfields & LIBRAW_DNGFM_BASELINEEXPOSURE) == 0) {
-    return 0.0f;
-  }
-  return std::isfinite(levels.baseline_exposure) ? levels.baseline_exposure
-                                                 : 0.0f;
+  constexpr float missingBaselineExposure = -999.0f;
+  return std::isfinite(levels.baseline_exposure) &&
+                 levels.baseline_exposure > missingBaselineExposure
+             ? levels.baseline_exposure
+             : 0.0f;
 }
 
 static Matrix3x3 normalizeDngColorMatrix(Matrix3x3 matrix) {
@@ -3285,9 +3285,9 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   if (whiteLevel <= 0)
     whiteLevel = (jfloat)RawProcessor.imgdata.color.maximum;
 
-  const bool hasDngBaselineExposure =
-      (levels.parsedfields & LIBRAW_DNGFM_BASELINEEXPOSURE) != 0;
   jfloat rawBaselineExposure = levels.baseline_exposure;
+  const bool hasDngBaselineExposure =
+      std::isfinite(rawBaselineExposure) && rawBaselineExposure > -999.0f;
   jfloat baselineExposure = normalizeDngBaselineExposure(levels);
   jfloat exposureBias =
       RawProcessor.imgdata.makernotes.common.ExposureCalibrationShift;

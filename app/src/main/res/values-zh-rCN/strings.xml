@@ -218,7 +218,7 @@
     <string name="raw_dcp_import_failed">导入 DCP 失败</string>
     <string name="raw_dcp_delete_success">已删除 DCP</string>
     <string name="raw_dcp_delete_failed">删除 DCP 失败</string>
-    <string name="raw_dcp_non_adobe_curve_warning">非 Adobe 色彩引擎会按 Adobe 路径应用 DCP 色彩渲染，但内置曲线和曝光偏移会被忽略。</string>
+    <string name="raw_dcp_non_adobe_curve_warning">非 Adobe 色彩引擎仍会应用 DCP 色彩渲染和曝光偏移，但不会使用 DCP 内置曲线。</string>
     <string name="settings_baseline_phantom_title">幻影模式基准色彩校正</string>
     <string name="settings_baseline_phantom_description">选择幻影模式创意 LUT 之前先应用的基准 LUT 与基准配方。</string>
     <string name="settings_baseline_dialog_description">为当前目标选择一个基准 LUT。它会在普通创意 LUT 之前应用。</string>

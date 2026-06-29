@@ -220,7 +220,7 @@
     <string name="raw_dcp_import_failed">Failed to import DCP</string>
     <string name="raw_dcp_delete_success">Deleted DCP</string>
     <string name="raw_dcp_delete_failed">Failed to delete DCP</string>
-    <string name="raw_dcp_non_adobe_curve_warning">Outside Adobe Curve, DCP color rendering follows the Adobe path, but the built-in tone curve and baseline exposure offset are ignored.</string>
+    <string name="raw_dcp_non_adobe_curve_warning">Outside Adobe Curve, DCP color rendering and baseline exposure offset still apply; the built-in DCP tone curve is ignored.</string>
     <string name="settings_baseline_phantom_title">Phantom Baseline Color Correction</string>
     <string name="settings_baseline_phantom_description">Choose the baseline LUT and recipe used before Phantom mode creative LUT processing.</string>
     <string name="settings_baseline_dialog_description">Select a baseline LUT for this target. It will be applied before the regular creative LUT.</string>

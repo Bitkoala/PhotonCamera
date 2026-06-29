@@ -896,7 +896,10 @@ class RawDemosaicProcessor {
             else -> requestedColorEngine
         }
         val useDcpToneCurve = requestedColorEngine == RawRenderingEngine.AdobeCurve
-        val applyDcpBaselineExposureOffset = resolvedDcpRenderPlan != null && useDcpToneCurve
+        val applyDcpBaselineExposureOffset =
+            shouldApplyDcpBaselineExposureOffset(resolvedDcpRenderPlan)
+        val useProfileExposureRamp =
+            shouldUseProfileExposureRamp(useDcpToneCurve, applyDcpBaselineExposureOffset)
         val engineWorkingColorSpace = colorEngine.workingColorSpace
         val profileToEngineTransform = computeWorkingToOutputTransform(
             profileWorkingColorSpace,
@@ -915,13 +918,16 @@ class RawDemosaicProcessor {
             engineWorkingColorSpace = engineWorkingColorSpace,
             profileToEngineTransform = profileToEngineTransform,
             useDcpToneCurve = useDcpToneCurve,
+            useProfileExposureRamp = useProfileExposureRamp,
             applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
         )
         if (resolvedDcpRenderPlan != null && !useDcpToneCurve) {
             PLog.d(
                 TAG,
-                "RAW DCP Adobe tone features disabled for colorEngine=$requestedColorEngine: " +
-                    "toneCurve=false baselineExposureOffset=false"
+                "RAW DCP tone curve disabled for colorEngine=$requestedColorEngine: " +
+                    "toneCurve=false baselineExposureOffset=" +
+                    "${dcpBaselineExposureOffsetOrZero(resolvedDcpRenderPlan)} " +
+                    "profileExposureRamp=$useProfileExposureRamp"
             )
         }
         val viewfinderThumbnailStats = if (rawAutoExposure) {
@@ -1263,9 +1269,10 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = engineWorkingColorSpace,
                 profileToEngineTransform = profileToEngineTransform,
                 rawToneMappingParameters = rawToneMappingParameters,
+                useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
                 dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
-                    resolvedDcpRenderPlan.baselineExposureOffset
+                    dcpBaselineExposureOffsetOrZero(resolvedDcpRenderPlan)
                 } else {
                     0f
                 },
@@ -1299,7 +1306,7 @@ class RawDemosaicProcessor {
                 dcpRenderPlan = resolvedDcpRenderPlan,
                 applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
                 applyDngBaselineExposure = !hasProfileGainTableMap,
-                useRamp = useDcpToneCurve
+                useRamp = useProfileExposureRamp
             )
             val profileLinearExposureGain = 2.0f.pow(profileExposureUniforms.exposureEv)
             val linearExposureGain = if (hasProfileGainTableMap) {
@@ -4639,6 +4646,7 @@ class RawDemosaicProcessor {
         engineWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         useDcpToneCurve: Boolean,
+        useProfileExposureRamp: Boolean,
         applyDcpBaselineExposureOffset: Boolean
     ) {
         if (profilePlanSource == null) return
@@ -4651,7 +4659,7 @@ class RawDemosaicProcessor {
         val lookEnabled = dcpRenderPlan?.lookTable?.isValid == true
         val toneCurveEnabled = useDcpToneCurve && dcpRenderPlan?.toneCurveLut != null
         val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
-            dcpRenderPlan?.baselineExposureOffset ?: 0f
+            dcpBaselineExposureOffsetOrZero(dcpRenderPlan)
         } else {
             0f
         }
@@ -4665,9 +4673,26 @@ class RawDemosaicProcessor {
                 "requestedEngine=$requestedColorEngine actualEngine=$colorEngine " +
                 "profileMapsBeforeEngine=true " +
                 "hueSat=$hueSatEnabled look=$lookEnabled " +
-                "toneCurve=$toneCurveEnabled baselineExposureOffset=$dcpBaselineExposureOffset " +
+                "toneCurve=$toneCurveEnabled profileExposureRamp=$useProfileExposureRamp " +
+                "baselineExposureOffset=$dcpBaselineExposureOffset " +
                 "profileToEngine=${formatMatrix3x3(profileToEngineTransform)}"
         )
+    }
+
+    private fun shouldApplyDcpBaselineExposureOffset(dcpRenderPlan: DcpRenderPlan?): Boolean {
+        return dcpBaselineExposureOffsetOrZero(dcpRenderPlan) != 0f
+    }
+
+    private fun shouldUseProfileExposureRamp(
+        useDcpToneCurve: Boolean,
+        applyDcpBaselineExposureOffset: Boolean
+    ): Boolean {
+        return useDcpToneCurve || applyDcpBaselineExposureOffset
+    }
+
+    private fun dcpBaselineExposureOffsetOrZero(dcpRenderPlan: DcpRenderPlan?): Float {
+        val offset = dcpRenderPlan?.baselineExposureOffset ?: return 0f
+        return if (offset.isFinite() && abs(offset) > 1e-6f) offset else 0f
     }
 
     private fun formatMatrix3x3(matrix: FloatArray): String {
@@ -4691,7 +4716,7 @@ class RawDemosaicProcessor {
             0f
         }
         val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
-            dcpRenderPlan?.baselineExposureOffset ?: 0f
+            dcpBaselineExposureOffsetOrZero(dcpRenderPlan)
         } else {
             0f
         }
@@ -4716,7 +4741,7 @@ class RawDemosaicProcessor {
             1f
         }
         val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
-            dcpRenderPlan?.baselineExposureOffset ?: 0f
+            dcpBaselineExposureOffsetOrZero(dcpRenderPlan)
         } else {
             0f
         }
@@ -4763,7 +4788,7 @@ class RawDemosaicProcessor {
         val hasActiveProfileGainTableMap = metadata.profileGainTableMap?.isValid == true &&
             applyDngBaselineExposure
         val extraLinearExposureEv = rawExposureCompensation + if (applyDcpBaselineExposureOffset) {
-            dcpRenderPlan?.baselineExposureOffset ?: 0f
+            dcpBaselineExposureOffsetOrZero(dcpRenderPlan)
         } else {
             0f
         }
@@ -4953,6 +4978,7 @@ class RawDemosaicProcessor {
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
+        useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
         dcpBaselineExposureOffset: Float,
         renderingEngineMeteringCompensationEv: Float
@@ -5018,6 +5044,7 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = outputWorkingColorSpace,
                 profileToEngineTransform = profileToEngineTransform,
                 rawToneMappingParameters = rawToneMappingParameters,
+                useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                 applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure,
                 dcpBaselineExposureOffset = dcpBaselineExposureOffset,
@@ -5115,6 +5142,7 @@ class RawDemosaicProcessor {
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
+        useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
         applyProfileDngBaselineExposure: Boolean,
         dcpBaselineExposureOffset: Float,
@@ -5142,6 +5170,7 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = outputWorkingColorSpace,
                 profileToEngineTransform = profileToEngineTransform,
                 rawToneMappingParameters = rawToneMappingParameters,
+                useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                 applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
                 readbackBounds = meteringBounds,
@@ -5170,6 +5199,7 @@ class RawDemosaicProcessor {
                     "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
                     "engineMeteringEv=$renderingEngineMeteringCompensationEv " +
                     "colorEngine=$colorEngine useDcpToneCurve=$useDcpToneCurve " +
+                    "profileExposureRamp=$useProfileExposureRamp " +
                     "profileDngBaseline=$applyProfileDngBaselineExposure " +
                     "profileDcpBaseline=$applyProfileDcpBaselineExposureOffset " +
                     "meteringTexture=${width}x$height meteringBounds=$meteringBounds " +
@@ -5210,6 +5240,7 @@ class RawDemosaicProcessor {
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
+        useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
         applyProfileDngBaselineExposure: Boolean,
         readbackBounds: Rect,
@@ -5228,7 +5259,7 @@ class RawDemosaicProcessor {
             dcpRenderPlan = dcpRenderPlan,
             applyDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
             applyDngBaselineExposure = applyProfileDngBaselineExposure,
-            useRamp = useDcpToneCurve
+            useRamp = useProfileExposureRamp
         )
         val rendered = renderCombinedPass(
             metadata = metadata,

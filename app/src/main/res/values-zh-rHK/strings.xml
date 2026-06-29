@@ -435,7 +435,7 @@
     <string name="raw_dcp_import_partial">已匯入 %1$d 個 DCP 設定檔，%2$d 個失敗</string>
     <string name="raw_dcp_delete_success">已刪除 DCP</string>
     <string name="raw_dcp_delete_failed">刪除 DCP 失敗</string>
-    <string name="raw_dcp_non_adobe_curve_warning">非 Adobe 色彩引擎會按 Adobe 路徑套用 DCP 色彩渲染，但內建曲線和曝光偏移會被忽略。</string>
+    <string name="raw_dcp_non_adobe_curve_warning">非 Adobe 色彩引擎仍會套用 DCP 色彩渲染和曝光偏移，但不會使用 DCP 內建曲線。</string>
     <string name="settings_dro_mode">RAW 動態範圍最佳化 (DRO)</string>
     <string name="settings_dro_off">關閉</string>
     <string name="settings_dro_dr100">DR100</string>
