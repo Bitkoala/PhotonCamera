@@ -175,6 +175,9 @@ class RawDemosaicProcessor {
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_MAX_WB_GAIN = 64.0f
         private const val RAW_TONE_MAPPED_AE_LUMA_FLOOR = 0.001f
         private const val RAW_TONE_MAPPED_AE_LONG_EDGE = 256
+        private const val RAW_TONE_MAPPED_AE_MAX_SOLVE_STEPS = 3
+        private const val RAW_TONE_MAPPED_AE_EV_TOLERANCE = 0.05f
+        private const val RAW_TONE_MAPPED_AE_MIN_STEP_EV = 0.025f
         private const val FILMIC_GREY_SOURCE = 0.1845f
         private const val FILMIC_OUTPUT_POWER = 3.614815775f
         private const val FILMIC_DISPLAY_BLACK = 0.0001517634f
@@ -5064,6 +5067,12 @@ class RawDemosaicProcessor {
         val stats: MeteringSystem.SrgbThumbnailMeteringStats
     )
 
+    private data class ToneMappedRawAeSolveResult(
+        val meteredEv: Float,
+        val finalSample: ToneMappedRawAeSample,
+        val renderedStepCount: Int
+    )
+
     private data class RawAeMeteringSize(
         val width: Int,
         val height: Int
@@ -5179,17 +5188,43 @@ class RawDemosaicProcessor {
                 outputRotation = outputRotation,
                 readbackBuffer = readbackBuffer
             ) ?: return null
-            val meteredEv = (-zero.errorEv).coerceIn(
-                MeteringSystem.RAW_EXPOSURE_MIN_EV,
-                MeteringSystem.RAW_EXPOSURE_MAX_EV
-            )
+            val solved = solveToneMappedRawAutoExposure(zero) { autoEv ->
+                renderToneMappedRawAeSample(
+                    metadata = metadata,
+                    linearTextureId = linearTextureId,
+                    width = width,
+                    height = height,
+                    autoEv = autoEv,
+                    targetLuma = targetLuma,
+                    dcpRenderPlan = dcpRenderPlan,
+                    useDcpToneCurve = useDcpToneCurve,
+                    spectralFilmLut = spectralFilmLut,
+                    colorEngine = colorEngine,
+                    outputWorkingColorSpace = outputWorkingColorSpace,
+                    profileToEngineTransform = profileToEngineTransform,
+                    rawToneMappingParameters = rawToneMappingParameters,
+                    useProfileExposureRamp = useProfileExposureRamp,
+                    applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
+                    applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
+                    readbackBounds = meteringBounds,
+                    readbackWidth = readbackWidth,
+                    readbackHeight = readbackHeight,
+                    outputRotation = outputRotation,
+                    readbackBuffer = readbackBuffer
+                )
+            }
+            val finalSample = solved.finalSample
+            val meteredEv = solved.meteredEv
             val highlightCompression = viewfinderThumbnailStats.highlightCompression
             PLog.d(
                 TAG,
                 "Tone-mapped RAW AE: mode=ViewfinderThumbnail target=$targetLuma " +
-                    "autoEv=$meteredEv renderedLuma=${zero.renderedLuma} " +
-                    "errorEv=${zero.errorEv} zeroProfileExposureEv=${zero.profileExposureEv} " +
-                    "clipLow=${zero.stats.clipLow} clipHigh=${zero.stats.clipHigh} " +
+                    "autoEv=$meteredEv renderedLuma=${finalSample.renderedLuma} " +
+                    "errorEv=${finalSample.errorEv} profileExposureEv=${finalSample.profileExposureEv} " +
+                    "zeroRenderedLuma=${zero.renderedLuma} zeroErrorEv=${zero.errorEv} " +
+                    "zeroProfileExposureEv=${zero.profileExposureEv} " +
+                    "solveSteps=${solved.renderedStepCount} " +
+                    "clipLow=${finalSample.stats.clipLow} clipHigh=${finalSample.stats.clipHigh} " +
                     "highlightCompressionAmount=${highlightCompression.amount} " +
                     "highlightCompressionStrength=${highlightCompression.strength} " +
                     "highlightReductionThreshold=${highlightCompression.reductionThreshold} " +
@@ -5205,24 +5240,155 @@ class RawDemosaicProcessor {
                     "meteringTexture=${width}x$height meteringBounds=$meteringBounds " +
                     "outputRotation=$outputRotation " +
                     "targetSize=${viewfinderThumbnailStats.width}x${viewfinderThumbnailStats.height} " +
-                    "renderedSize=${zero.stats.width}x${zero.stats.height} " +
+                    "renderedSize=${finalSample.stats.width}x${finalSample.stats.height} " +
                     "viewfinderSamples=${viewfinderThumbnailStats.sampleCount} " +
                     "viewfinderSanitizedSamples=${viewfinderThumbnailStats.sanitizedSampleCount} " +
-                    "renderedSamples=${zero.stats.sampleCount} " +
-                    "renderedSanitizedSamples=${zero.stats.sanitizedSampleCount}"
+                    "renderedSamples=${finalSample.stats.sampleCount} " +
+                    "renderedSanitizedSamples=${finalSample.stats.sanitizedSampleCount}"
             )
 
             MeteringSystem.MeteringResult(
                 meteredEv = meteredEv,
                 dynamicRangeGap = 0f,
-                avgLuma = zero.renderedLuma,
-                clipLow = zero.stats.clipLow,
-                clipHigh = zero.stats.clipHigh,
+                avgLuma = finalSample.renderedLuma,
+                clipLow = finalSample.stats.clipLow,
+                clipHigh = finalSample.stats.clipHigh,
                 curveWhitePoint = 1f,
                 highlightCompression = highlightCompression
             )
         } finally {
             LargeDirectBuffer.free(readbackBuffer)
+        }
+    }
+
+    private fun solveToneMappedRawAutoExposure(
+        zero: ToneMappedRawAeSample,
+        renderSample: (Float) -> ToneMappedRawAeSample?
+    ): ToneMappedRawAeSolveResult {
+        if (abs(zero.errorEv) <= RAW_TONE_MAPPED_AE_EV_TOLERANCE) {
+            return ToneMappedRawAeSolveResult(
+                meteredEv = zero.autoEv,
+                finalSample = zero,
+                renderedStepCount = 0
+            )
+        }
+
+        val samples = mutableListOf(zero)
+        var bestSample = zero
+        var renderedStepCount = 0
+        var nextEv = rawAutoExposureEvForSample(zero)
+
+        while (renderedStepCount < RAW_TONE_MAPPED_AE_MAX_SOLVE_STEPS) {
+            val candidateEv = distinctRawAutoExposureCandidate(nextEv, samples) ?: break
+            val sample = renderSample(candidateEv)
+                ?: return ToneMappedRawAeSolveResult(
+                    meteredEv = if (renderedStepCount == 0) candidateEv else bestSample.autoEv,
+                    finalSample = bestSample,
+                    renderedStepCount = renderedStepCount
+                )
+            renderedStepCount++
+            samples += sample
+
+            if (abs(sample.errorEv) < abs(bestSample.errorEv)) {
+                bestSample = sample
+            }
+            if (abs(sample.errorEv) <= RAW_TONE_MAPPED_AE_EV_TOLERANCE) {
+                return ToneMappedRawAeSolveResult(
+                    meteredEv = sample.autoEv,
+                    finalSample = sample,
+                    renderedStepCount = renderedStepCount
+                )
+            }
+
+            nextEv = nextRawAutoExposureCandidate(samples, sample)
+        }
+
+        return ToneMappedRawAeSolveResult(
+            meteredEv = bestSample.autoEv,
+            finalSample = bestSample,
+            renderedStepCount = renderedStepCount
+        )
+    }
+
+    private fun nextRawAutoExposureCandidate(
+        samples: List<ToneMappedRawAeSample>,
+        latest: ToneMappedRawAeSample
+    ): Float {
+        bracketedRawAutoExposureCandidate(samples)?.let { return it }
+        val previous = samples
+            .asReversed()
+            .firstOrNull {
+                it !== latest && abs(it.errorEv - latest.errorEv) > 0.0001f
+            }
+        val secantEv = previous?.let { interpolatedRawAutoExposureEv(it, latest) }
+        return secantEv ?: rawAutoExposureEvForSample(latest)
+    }
+
+    private fun bracketedRawAutoExposureCandidate(
+        samples: List<ToneMappedRawAeSample>
+    ): Float? {
+        val sortedSamples = samples.sortedBy { it.autoEv }
+        for (index in 0 until sortedSamples.lastIndex) {
+            val lower = sortedSamples[index]
+            val upper = sortedSamples[index + 1]
+            val crossesTarget =
+                (lower.errorEv <= 0f && upper.errorEv >= 0f) ||
+                    (lower.errorEv >= 0f && upper.errorEv <= 0f)
+            if (!crossesTarget) continue
+
+            val interpolatedEv = interpolatedRawAutoExposureEv(lower, upper)
+            return if (interpolatedEv != null &&
+                interpolatedEv >= lower.autoEv &&
+                interpolatedEv <= upper.autoEv
+            ) {
+                interpolatedEv
+            } else {
+                ((lower.autoEv + upper.autoEv) * 0.5f).coerceIn(
+                    MeteringSystem.RAW_EXPOSURE_MIN_EV,
+                    MeteringSystem.RAW_EXPOSURE_MAX_EV
+                )
+            }
+        }
+        return null
+    }
+
+    private fun interpolatedRawAutoExposureEv(
+        a: ToneMappedRawAeSample,
+        b: ToneMappedRawAeSample
+    ): Float? {
+        val errorDelta = b.errorEv - a.errorEv
+        if (!errorDelta.isFinite() || abs(errorDelta) <= 0.0001f) {
+            return null
+        }
+        return sanitizeRawAutoExposureEv(
+            a.autoEv - a.errorEv * (b.autoEv - a.autoEv) / errorDelta
+        )
+    }
+
+    private fun rawAutoExposureEvForSample(sample: ToneMappedRawAeSample): Float {
+        return sanitizeRawAutoExposureEv(sample.autoEv - sample.errorEv) ?: sample.autoEv
+    }
+
+    private fun distinctRawAutoExposureCandidate(
+        candidateEv: Float,
+        samples: List<ToneMappedRawAeSample>
+    ): Float? {
+        val safeEv = sanitizeRawAutoExposureEv(candidateEv) ?: return null
+        return if (samples.any { abs(it.autoEv - safeEv) < RAW_TONE_MAPPED_AE_MIN_STEP_EV }) {
+            null
+        } else {
+            safeEv
+        }
+    }
+
+    private fun sanitizeRawAutoExposureEv(value: Float): Float? {
+        return if (value.isFinite()) {
+            value.coerceIn(
+                MeteringSystem.RAW_EXPOSURE_MIN_EV,
+                MeteringSystem.RAW_EXPOSURE_MAX_EV
+            )
+        } else {
+            null
         }
     }
 
