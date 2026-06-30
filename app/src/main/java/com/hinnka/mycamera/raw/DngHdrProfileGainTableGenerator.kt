@@ -25,6 +25,8 @@ internal object DngHdrProfileGainTableGenerator {
     private const val MIN_EFFECTIVE_INPUT_HEADROOM = 0.28f
     private const val MAX_EFFECTIVE_INPUT_HEADROOM = 3.05f
     private const val MIN_SCENE_MAX = 1.02f
+    private const val LOW_KEY_LOCAL_TAIL_SCENE_MAX_FACTOR = 2.75f
+    private const val LOW_KEY_LOCAL_TAIL_HDR_STRENGTH = 0.58f
     private const val MAX_GAIN_VALUE = 5.40f
     private const val MIN_CURVE_INPUT = 1e-6f
     private const val SCENE_SHADOW_ANCHOR = 0.02f
@@ -94,7 +96,10 @@ internal object DngHdrProfileGainTableGenerator {
         }
         val globalStats = weightedGlobalStats(cells)
         val inputScale = hdrPgtmInputScaleForStats(globalStats, safeBaselineEv)
-        val sceneHdrStrength = sceneHdrStrength(inputScale)
+        val sceneHdrStrength = max(
+            sceneHdrStrength(inputScale),
+            LOW_KEY_LOCAL_TAIL_HDR_STRENGTH * lowKeyLocalTailStrength(globalStats)
+        ).coerceIn(0f, 1f)
         val curveParams = smoothHdrPgtmCurveParams(
             stats = Array(cellCount) { index ->
                 buildHdrPgtmCurveParams(
@@ -547,13 +552,25 @@ internal object DngHdrProfileGainTableGenerator {
         val tailP98 = max(tailP95, global.inputTailP98.takeIf { it.isFinite() && it > 0f } ?: tailP95)
         val tailP99 = max(tailP98, global.inputTailP99.takeIf { it.isFinite() && it > 0f } ?: tailP98)
         val maxInput = max(tailP99, global.maxInput.takeIf { it.isFinite() && it > 0f } ?: tailP99)
-        val sceneMax = hdrPgtmSceneMaxFromTailStats(
+        val baseSceneMax = hdrPgtmSceneMaxFromTailStats(
             highlightFraction = global.highlightFraction,
             tailP95 = tailP95,
             tailP98 = tailP98,
             tailP99 = tailP99,
             maxInput = maxInput
-        ).coerceIn(
+        )
+        val lowKeyTailStrength = lowKeyLocalTailStrength(global)
+        val lowKeySceneMax = if (lowKeyTailStrength > 0f) {
+            val localTailSceneMax = tailP99 * lerp(
+                1.0f,
+                LOW_KEY_LOCAL_TAIL_SCENE_MAX_FACTOR,
+                lowKeyTailStrength
+            )
+            max(baseSceneMax, localTailSceneMax)
+        } else {
+            baseSceneMax
+        }
+        val sceneMax = lowKeySceneMax.coerceIn(
             max(MIN_SCENE_MAX, baselineGain / MAX_EFFECTIVE_INPUT_HEADROOM),
             baselineGain / MIN_EFFECTIVE_INPUT_HEADROOM
         )
@@ -595,6 +612,17 @@ internal object DngHdrProfileGainTableGenerator {
     private fun sceneHdrStrength(inputScale: Float): Float {
         val sceneMax = 1f / sanitizeInputScale(inputScale)
         return smoothStep(1.12f, 2.35f, sceneMax)
+    }
+
+    private fun lowKeyLocalTailStrength(global: HdrPgtmCellStats): Float {
+        val tailInput = max(global.inputTailP99, global.p999Input)
+        if (!tailInput.isFinite() || tailInput <= 0f) return 0f
+        val localTailGapEv = log2((tailInput + 0.04f) / (global.p98 + 0.04f))
+        val lowUpperToneStrength = 1f - smoothStep(0.26f, 0.58f, global.p90)
+        val lowHighlightToneStrength = 1f - smoothStep(0.24f, 0.52f, global.p98)
+        val localTailStrength = smoothStep(0.82f, 1.55f, localTailGapEv)
+        return (lowUpperToneStrength * lowHighlightToneStrength * localTailStrength)
+            .coerceIn(0f, 1f)
     }
 
     private fun shadowSceneStrength(global: HdrPgtmCellStats, sceneHdrStrength: Float): Float {
