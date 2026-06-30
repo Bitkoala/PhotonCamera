@@ -5016,7 +5016,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 .coerceAtLeast(HDR_BRACKET_FRAME_COUNT)
             hdrBracketExpectedFrameCount = frameCount
             hdrBracketZeroEvFrameCount = if (isRawCaptureFormat(image.format)) {
-                (frameCount - 1).coerceAtLeast(1)
+                frameCount.coerceAtLeast(1)
             } else {
                 (frameCount - 2).coerceAtLeast(1)
             }
@@ -5301,9 +5301,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val baseImage = images.first()
             val metadataFrameIndex = selectRawHdrMetadataFrameIndex(captureResults, images.size)
             val metadataImage = images.getOrNull(metadataFrameIndex) ?: baseImage
+            val metadataCaptureResult = captureResults.getOrNull(metadataFrameIndex)
             val metadataCaptureInfo = rebuildHdrMetadataCaptureInfo(
                 fallback = captureInfo,
-                captureResult = captureResults.getOrNull(metadataFrameIndex),
+                captureResult = metadataCaptureResult,
                 image = metadataImage,
                 characteristics = characteristics
             )
@@ -5323,7 +5324,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val photoId = GalleryManager.preparePhoto(
                 context,
                 metadata,
-                lowExposureResult,
+                metadataCaptureResult ?: lowExposureResult,
                 previewThumbnail,
                 false,
                 1.0f,

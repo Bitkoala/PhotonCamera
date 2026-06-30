@@ -4312,7 +4312,7 @@ class Camera2Controller(private val context: Context) {
     ) {
         val isRawCapture = isRawCaptureReader(reader)
         val normalizedZeroEvFrameCount = zeroEvFrameCount.coerceIn(
-            1,
+            0,
             MultiFrameConfig.MAX_FRAME_COUNT
         )
         val evOffsets = buildHdrBracketEvOffsets(
@@ -4414,12 +4414,8 @@ class Camera2Controller(private val context: Context) {
 
     private fun buildHdrBracketEvOffsets(zeroEvFrameCount: Int, isRawCapture: Boolean): List<Float> {
         if (isRawCapture) {
-            val normalFrameCount = zeroEvFrameCount.coerceAtLeast(2)
-            return buildList {
-                add(-HdrBracketConfig.RAW_SIDE_EV)
-                repeat(normalFrameCount) {
-                    add(0f)
-                }
+            return List((HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT + zeroEvFrameCount).coerceAtMost(MultiFrameConfig.MAX_FRAME_COUNT)) {
+                HdrBracketConfig.RAW_REFERENCE_EV
             }
         }
         return buildList {
@@ -4583,7 +4579,7 @@ class Camera2Controller(private val context: Context) {
                 MultiFrameConfig.MAX_FRAME_COUNT
             )
         } else {
-            1
+            0
         }
     }
 

@@ -30,7 +30,6 @@ import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.lut.applyEffectsToVideoFile
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
-import com.hinnka.mycamera.processor.RawHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
@@ -68,7 +67,6 @@ import kotlin.io.deleteRecursively
 import kotlin.io.extension
 import kotlin.io.inputStream
 import kotlin.io.walkBottomUp
-import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.system.measureTimeMillis
 import kotlin.use
@@ -2124,24 +2122,27 @@ object GalleryManager {
         }
     }
 
-    private fun selectRawHdrStackFrames(
+    private fun selectRawHdrReferenceFrames(
         candidates: List<RawHdrStackCandidate>,
-    ): Pair<RawHdrStackCandidate, List<RawHdrStackCandidate>>? {
-        if (candidates.size < 2) return null
-        val shortCandidate = candidates.minByOrNull { it.exposureProduct } ?: return null
-        val normalCandidates = candidates
-            .filter { candidate ->
-                candidate.index != shortCandidate.index &&
-                    candidate.exposureProduct > shortCandidate.exposureProduct * 1.05
-            }
+    ): List<RawHdrStackCandidate>? {
+        if (candidates.size < HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT) return null
+        val referenceCandidates = candidates
             .sortedBy { it.index }
-        if (normalCandidates.isEmpty()) return null
+            .take(HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT)
+        val minProduct = referenceCandidates.minOf { it.exposureProduct }
+        val maxProduct = referenceCandidates.maxOf { it.exposureProduct }
+        val exposureSpread = if (minProduct.isFinite() && minProduct > 0.0) {
+            maxProduct / minProduct
+        } else {
+            Double.NaN
+        }
         PLog.d(
             TAG,
-            "RAW HDR stack frame selection: short=${shortCandidate.index}:${shortCandidate.exposureProduct}, " +
-                    "normal=${normalCandidates.joinToString { "${it.index}:${it.exposureProduct}" }}"
+            "RAW HDR reference frame selection: targetEv=${HdrBracketConfig.RAW_REFERENCE_EV}, " +
+                    "frames=${referenceCandidates.joinToString { "${it.index}:${it.exposureProduct}" }}, " +
+                    "spread=$exposureSpread"
         )
-        return shortCandidate to normalCandidates
+        return referenceCandidates
     }
 
     suspend fun composeHdrBracketPhoto(
@@ -2826,8 +2827,11 @@ object GalleryManager {
         }
 
         try {
-            if (images.size < 3) {
-                PLog.w(TAG, "RAW HDR bracket requires at least 3 images, got ${images.size}")
+            if (images.size < HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT) {
+                PLog.w(
+                    TAG,
+                    "RAW HDR reference stack requires ${HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT} images, got ${images.size}"
+                )
                 closeRemainingImages()
                 return@withContext false
             }
@@ -2838,18 +2842,18 @@ object GalleryManager {
                 closeRemainingImages()
                 return@withContext false
             }
-            val rawHdrStackSelection = selectRawHdrStackFrames(
+            val rawHdrReferenceCandidates = selectRawHdrReferenceFrames(
                 candidates = buildRawHdrStackCandidates(
                     images = images,
                     captureResults = captureResults,
                     fallbackResult = lowExposureCaptureResult,
                 )
             ) ?: run {
-                PLog.e(TAG, "RAW HDR stack frame selection failed; fallback fusion is disabled")
+                PLog.e(TAG, "RAW HDR reference frame selection failed; fallback fusion is disabled")
                 closeRemainingImages()
                 return@withContext false
             }
-            val rawHdrMetadataCandidate = rawHdrStackSelection.first
+            val rawHdrMetadataCandidate = rawHdrReferenceCandidates.first()
             val rawMetadataImage = rawHdrMetadataCandidate.image
             val rawMetadataResult = rawHdrMetadataCandidate.captureResult
 
@@ -2890,23 +2894,18 @@ object GalleryManager {
                 )
             }
 
-            rawHdrStackSelection.let { (shortCandidate, normalCandidates) ->
-                val normalReferenceCandidate = normalCandidates.first()
+            rawHdrReferenceCandidates.let { referenceCandidates ->
+                val normalReferenceCandidate = referenceCandidates.first()
+                val rawHdrBaselineExposureEv = calculateRawHdrDngBaselineExposureEv(
+                    referenceProduct = normalReferenceCandidate.exposureProduct,
+                )
                 if (!useGpuAcceleration) {
                     PLog.w(TAG, "RAW HDR denoise requires GLES stacker; ignoring disabled GPU acceleration setting")
                 }
-                rawHdrStackResult = MultiFrameStacker.processHdrBurstRaw(
-                    shortFrame = RawHdrStackFrame(
-                        image = shortCandidate.image,
-                        exposureProduct = shortCandidate.exposureProduct,
-                    ),
-                    normalFrames = normalCandidates.map { candidate ->
-                        RawHdrStackFrame(
-                            image = candidate.image,
-                            exposureProduct = candidate.exposureProduct,
-                        )
-                    },
+                rawHdrStackResult = MultiFrameStacker.processBurstRaw(
+                    images = referenceCandidates.map { it.image },
                     cfaPattern = stackCfaPattern,
+                    enableSuperResolution = false,
                     useGpuAcceleration = true,
                     masterBlackLevel = stackBlackLevel,
                     whiteLevel = stackWhiteLevel,
@@ -2919,19 +2918,15 @@ object GalleryManager {
                 closeImagesNow(images)
 
                 val stackResult = rawHdrStackResult ?: run {
-                    PLog.e(TAG, "Failed to stack RAW HDR short/normal frames")
+                    PLog.e(TAG, "Failed to stack RAW HDR reference frames")
                     return@withContext false
                 }
                 val fusedBayerBuffer = stackResult.fusedBayerBuffer ?: return@withContext false
-                val rawHdrBaselineExposureEv = calculateRawHdrDngBaselineExposureEv(
-                    referenceProduct = normalReferenceCandidate.exposureProduct,
-                    baseProduct = shortCandidate.exposureProduct,
-                )
                 PLog.d(
                     TAG,
                     "RAW HDR stack DNG baseline exposure: ${rawHdrBaselineExposureEv}EV, " +
-                            "outputDomain=short, normalReference=${normalReferenceCandidate.exposureProduct}, " +
-                            "short=${shortCandidate.exposureProduct}"
+                            "outputDomain=reference, reference=${normalReferenceCandidate.exposureProduct}, " +
+                            "frameCount=${referenceCandidates.size}"
                 )
                 val rawHdrProfileGainTableMap = stackResult.profileGainTableMap
                 val stackedMetadata = metadata.withBakedRawLevelCorrectionsCleared("RAW HDR stack")
@@ -2948,7 +2943,7 @@ object GalleryManager {
                         stackWhiteLevel = stackWhiteLevel,
                         isNormalizedSensorData = true,
                         characteristics = characteristics,
-                        captureResult = shortCandidate.captureResult,
+                        captureResult = normalReferenceCandidate.captureResult,
                         rotation = rotation,
                         thumbnail = null,
                         metadata = stackedMetadata,
@@ -3024,22 +3019,12 @@ object GalleryManager {
 
     private fun calculateRawHdrDngBaselineExposureEv(
         referenceProduct: Double,
-        baseProduct: Double,
     ): Float {
-        if (!referenceProduct.isFinite() || referenceProduct <= 0.0 ||
-            !baseProduct.isFinite() || baseProduct <= 0.0
-        ) {
-            return HdrBracketConfig.RAW_SIDE_EV
-        }
-        val baselineExposureEv = if (baseProduct < referenceProduct) {
-            (ln(referenceProduct / baseProduct) / ln(2.0)).toFloat()
-        } else {
-            0f
-        }.coerceIn(0f, 8f)
+        val baselineExposureEv = HdrBracketConfig.RAW_REFERENCE_BASELINE_EV.coerceIn(0f, 8f)
         PLog.d(
             TAG,
             "RAW HDR DNG baseline exposure: ${baselineExposureEv}EV, " +
-                    "referenceProduct=$referenceProduct, baseProduct=$baseProduct"
+                    "referenceProduct=$referenceProduct, targetEv=${HdrBracketConfig.RAW_REFERENCE_EV}"
         )
         return baselineExposureEv
     }
