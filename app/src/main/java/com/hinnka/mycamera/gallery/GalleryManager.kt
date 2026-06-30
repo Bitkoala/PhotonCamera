@@ -1831,6 +1831,9 @@ object GalleryManager {
                 ),
                 onRawAutoAdjustments = { adjustments ->
                     updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                },
+                onMetadata = { raw ->
+                    updatedMetadata = updatedMetadata.merge(raw)
                 }
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
@@ -2701,6 +2704,9 @@ object GalleryManager {
                 ),
                 onRawAutoAdjustments = { adjustments ->
                     updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                },
+                onMetadata = { raw ->
+                    updatedMetadata = updatedMetadata.merge(raw)
                 }
             ) ?: return@withContext
             var bitmap = rawResult.sdrBitmap
@@ -3094,6 +3100,9 @@ object GalleryManager {
             ),
             onRawAutoAdjustments = { adjustments ->
                 updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+            },
+            onMetadata = { raw ->
+                updatedMetadata = updatedMetadata.merge(raw)
             }
         ) ?: return
         var bitmap = rawResult.sdrBitmap

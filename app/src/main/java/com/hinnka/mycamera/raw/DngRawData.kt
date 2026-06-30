@@ -25,6 +25,7 @@ import java.nio.ByteBuffer
  * @param lensShadingMapGrid DNG GainMap 参数
  * [originH, originV, spacingH, spacingV, boundsLeft, boundsTop, boundsRight, boundsBottom]，
  * null 表示按 Camera2 UV 采样
+ * @param defaultCrop DNG DefaultCrop [left, top, right, bottom]，相对于 rawData 有效区
  */
 @Keep
 data class DngRawData @Keep constructor(
@@ -50,6 +51,7 @@ data class DngRawData @Keep constructor(
     val shutterSpeed: Long,
     val aperture: Float,
     val activeArray: IntArray?, // [left, top, right, bottom]
+    val defaultCrop: IntArray?, // [left, top, right, bottom] relative to rawData
     val noiseProfile: FloatArray?, // NoiseProfile [S1, O1, S2, O2, ...]
     val embeddedPreview: Bitmap? = null,
 ) : AutoCloseable {
@@ -108,6 +110,10 @@ data class DngRawData @Keep constructor(
             if (other.lensShadingMapGrid == null) return false
             if (!lensShadingMapGrid.contentEquals(other.lensShadingMapGrid)) return false
         } else if (other.lensShadingMapGrid != null) return false
+        if (defaultCrop != null) {
+            if (other.defaultCrop == null) return false
+            if (!defaultCrop.contentEquals(other.defaultCrop)) return false
+        } else if (other.defaultCrop != null) return false
         if (embeddedPreview != null) {
             if (other.embeddedPreview == null) return false
             if (!embeddedPreview.sameAs(other.embeddedPreview)) return false
@@ -134,6 +140,7 @@ data class DngRawData @Keep constructor(
         result = 31 * result + lensShadingMapWidth
         result = 31 * result + lensShadingMapHeight
         result = 31 * result + (lensShadingMapGrid?.contentHashCode() ?: 0)
+        result = 31 * result + (defaultCrop?.contentHashCode() ?: 0)
         result = 31 * result + (embeddedPreview?.hashCode() ?: 0)
         return result
     }

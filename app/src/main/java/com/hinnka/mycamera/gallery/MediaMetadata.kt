@@ -192,8 +192,10 @@ data class MediaMetadata(
      */
     fun merge(raw: RawMetadata): MediaMetadata {
         val shouldSwap = rotation == 90 || rotation == 270
-        val resolvedWidth = if (shouldSwap) raw.height else raw.width
-        val resolvedHeight = if (shouldSwap) raw.width else raw.height
+        val rawWidth = raw.defaultCrop?.width() ?: raw.width
+        val rawHeight = raw.defaultCrop?.height() ?: raw.height
+        val resolvedWidth = if (shouldSwap) rawHeight else rawWidth
+        val resolvedHeight = if (shouldSwap) rawWidth else rawHeight
         return copy(
             iso = raw.iso.takeIf { it > 0 } ?: iso,
             shutterSpeed = formatShutterSpeed(raw.shutterSpeed).takeIf { it.isNotEmpty() } ?: shutterSpeed,

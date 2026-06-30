@@ -82,6 +82,7 @@ data class RawMetadata(
     val noiseProfile: FloatArray = floatArrayOf(0f, 0f),
     val afRegions: Array<MeteringRectangle>? = null,
     val activeArray: android.graphics.Rect? = null,
+    val defaultCrop: android.graphics.Rect? = null,
     val aeMode: Int = CaptureResult.CONTROL_AE_MODE_ON,
     val exposureCompensation: Float = 0f,
     val exposureBias: Float = 0f,

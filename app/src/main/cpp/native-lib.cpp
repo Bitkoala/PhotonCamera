@@ -536,6 +536,10 @@ static void computeEffectiveBlackLevels(LibRaw &rawProcessor, int cfaPattern,
 struct DngRawTagInfo {
   bool hasActiveArea = false;
   int activeArea[4] = {0, 0, 0, 0}; // top, left, bottom, right
+  bool hasDefaultCropOrigin = false;
+  double defaultCropOrigin[2] = {0.0, 0.0}; // horizontal, vertical; relative to ActiveArea
+  bool hasDefaultCropSize = false;
+  double defaultCropSize[2] = {0.0, 0.0}; // horizontal, vertical
   bool hasAsShotWhiteXY = false;
   float asShotWhiteXY[2] = {0.0f, 0.0f};
   bool hasShadowScale = false;
@@ -2535,6 +2539,24 @@ static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
       for (int i = 0; i < 4; ++i) {
         info.activeArea[i] = tiffReadValueAt(data, type, static_cast<uint32_t>(i), littleEndian);
       }
+    } else if (tag == 0xc61f && count >= 2 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const double originH = tiffReadRealAt(data, type, 0, littleEndian);
+      const double originV = tiffReadRealAt(data, type, 1, littleEndian);
+      if (std::isfinite(originH) && std::isfinite(originV)) {
+        info.hasDefaultCropOrigin = true;
+        info.defaultCropOrigin[0] = originH;
+        info.defaultCropOrigin[1] = originV;
+      }
+    } else if (tag == 0xc620 && count >= 2 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const double sizeH = tiffReadRealAt(data, type, 0, littleEndian);
+      const double sizeV = tiffReadRealAt(data, type, 1, littleEndian);
+      if (std::isfinite(sizeH) && std::isfinite(sizeV)) {
+        info.hasDefaultCropSize = true;
+        info.defaultCropSize[0] = sizeH;
+        info.defaultCropSize[1] = sizeV;
+      }
     } else if (tag == 0xc68e && count >= 4 &&
                tiffEntryData(file, entry, littleEndian, type, count, data)) {
       info.maskedAreaCount = static_cast<int>(count / 4);
@@ -2621,8 +2643,59 @@ static bool parseDngRawTagInfo(const char *path, DngRawTagInfo &info) {
 
   const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
   parseDngRawTagIfd(file, littleEndian, firstIfd, info, 0);
-  return info.hasActiveArea || info.hasAsShotWhiteXY || info.hasShadowScale ||
-         !info.blackLevel.empty() || !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
+  return info.hasActiveArea || info.hasDefaultCropOrigin || info.hasDefaultCropSize ||
+         info.hasAsShotWhiteXY || info.hasShadowScale || !info.blackLevel.empty() ||
+         !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
+}
+
+static bool computeValidDngDefaultCrop(const DngRawTagInfo &rawTags, int bufferLeft,
+                                       int bufferTop, int bufferWidth,
+                                       int bufferHeight, int outCrop[4]) {
+  if (!rawTags.hasDefaultCropOrigin || !rawTags.hasDefaultCropSize) {
+    return false;
+  }
+
+  const int activeTop = rawTags.hasActiveArea ? rawTags.activeArea[0] : bufferTop;
+  const int activeLeft = rawTags.hasActiveArea ? rawTags.activeArea[1] : bufferLeft;
+  const int activeBottom = rawTags.hasActiveArea ? rawTags.activeArea[2]
+                                                 : bufferTop + bufferHeight;
+  const int activeRight = rawTags.hasActiveArea ? rawTags.activeArea[3]
+                                                : bufferLeft + bufferWidth;
+  const int activeWidth = activeRight - activeLeft;
+  const int activeHeight = activeBottom - activeTop;
+  const double originH = rawTags.defaultCropOrigin[0];
+  const double originV = rawTags.defaultCropOrigin[1];
+  const double sizeH = rawTags.defaultCropSize[0];
+  const double sizeV = rawTags.defaultCropSize[1];
+
+  if (activeWidth <= 0 || activeHeight <= 0 || !std::isfinite(originH) ||
+      !std::isfinite(originV) || !std::isfinite(sizeH) || !std::isfinite(sizeV) ||
+      originH < 0.0 || originV < 0.0 || sizeH <= 0.0 || sizeV <= 0.0 ||
+      originH + sizeH > static_cast<double>(activeWidth) + 1e-6 ||
+      originV + sizeV > static_cast<double>(activeHeight) + 1e-6) {
+    return false;
+  }
+
+  const int cropLeftRaw = activeLeft + static_cast<int>(std::lround(originH));
+  const int cropTopRaw = activeTop + static_cast<int>(std::lround(originV));
+  const int cropRightRaw = cropLeftRaw + static_cast<int>(std::lround(sizeH));
+  const int cropBottomRaw = cropTopRaw + static_cast<int>(std::lround(sizeV));
+
+  const int cropLeft = cropLeftRaw - bufferLeft;
+  const int cropTop = cropTopRaw - bufferTop;
+  const int cropRight = cropRightRaw - bufferLeft;
+  const int cropBottom = cropBottomRaw - bufferTop;
+  if (cropLeft < 0 || cropTop < 0 || cropRight > bufferWidth ||
+      cropBottom > bufferHeight || cropRight <= cropLeft ||
+      cropBottom <= cropTop) {
+    return false;
+  }
+
+  outCrop[0] = cropLeft;
+  outCrop[1] = cropTop;
+  outCrop[2] = cropRight;
+  outCrop[3] = cropBottom;
+  return true;
 }
 
 static int dngCfaColorAt(const DngCfaInfo &info, int row, int col) {
@@ -3090,7 +3163,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jclass dngDataClass = env->FindClass("com/hinnka/mycamera/raw/DngRawData");
   jmethodID constructor =
       env->GetMethodID(dngDataClass, "<init>",
-                       "(Ljava/nio/ByteBuffer;IIIF[F[F[F[FIIFF[FII[FFIJF[I[FLandroid/graphics/Bitmap;)V");
+                       "(Ljava/nio/ByteBuffer;IIIF[F[F[F[FIIFF[FII[FFIJF[I[I[FLandroid/graphics/Bitmap;)V");
 
   jfloatArray blackLevelArray = env->NewFloatArray(4);
   for (int i = 0; i < 4; i++) {
@@ -3328,6 +3401,25 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   // LOGI("aa: %d, %d, %d, %d", aa[0], aa[1], aa[2], aa[3]);
 
+  int defaultCrop[4] = {0, 0, 0, 0};
+  const bool hasDefaultCrop = computeValidDngDefaultCrop(
+      dngRawTagInfo, left, top, width, height, defaultCrop);
+  LOGI("dng default crop tags: origin=%d(%f,%f) size=%d(%f,%f) "
+       "valid=%d crop=%d,%d,%d,%d buffer=%d,%d,%d,%d",
+       dngRawTagInfo.hasDefaultCropOrigin ? 1 : 0,
+       dngRawTagInfo.defaultCropOrigin[0], dngRawTagInfo.defaultCropOrigin[1],
+       dngRawTagInfo.hasDefaultCropSize ? 1 : 0,
+       dngRawTagInfo.defaultCropSize[0], dngRawTagInfo.defaultCropSize[1],
+       hasDefaultCrop ? 1 : 0, defaultCrop[0], defaultCrop[1],
+       defaultCrop[2], defaultCrop[3], left, top, width, height);
+  jintArray defaultCropArray = nullptr;
+  if (hasDefaultCrop) {
+    defaultCropArray = env->NewIntArray(4);
+    jint dc[4] = {(jint)defaultCrop[0], (jint)defaultCrop[1],
+                  (jint)defaultCrop[2], (jint)defaultCrop[3]};
+    env->SetIntArrayRegion(defaultCropArray, 0, 4, dc);
+  }
+
   jfloatArray afRegions = nullptr;
   jfloatArray noiseProfileArray = nullptr;
   if (ed.hasNoiseProfile) {
@@ -3340,7 +3432,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
       cfaPattern, ed.rotation, baselineExposure, shadowScale, exportedLscArray, exportedLscWidth, exportedLscHeight,
       exportedLscGridArray, exposureBias, iso,
-      shutterSpeedLong, aperture, activeArray, noiseProfileArray,
+      shutterSpeedLong, aperture, activeArray, defaultCropArray, noiseProfileArray,
       embeddedPreviewBitmap);
 
   // 释放资源
