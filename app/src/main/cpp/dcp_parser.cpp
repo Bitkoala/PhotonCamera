@@ -101,6 +101,7 @@ std::string parseDcpToJson(const std::string &filePath) {
     out << "\"calibrationIlluminant1\":" << profile.CalibrationIlluminant1() << ",";
     out << "\"calibrationIlluminant2\":" << profile.CalibrationIlluminant2() << ",";
     out << "\"baselineExposureOffset\":" << profile.BaselineExposureOffset().As_real64() << ",";
+    out << "\"defaultBlackRender\":" << profile.DefaultBlackRender() << ",";
     appendMatrix(out, "colorMatrix1", profile.ColorMatrix1());
     out << ",";
     appendMatrix(out, "colorMatrix2", profile.ColorMatrix2());

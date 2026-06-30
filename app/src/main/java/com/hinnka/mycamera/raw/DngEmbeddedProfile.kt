@@ -43,6 +43,7 @@ internal object DngEmbeddedProfile {
     private const val TAG_PROFILE_HUE_SAT_MAP_ENCODING = 51107
     private const val TAG_PROFILE_LOOK_TABLE_ENCODING = 51108
     private const val TAG_BASELINE_EXPOSURE_OFFSET = 51109
+    private const val TAG_DEFAULT_BLACK_RENDER = 51110
 
     private val IDENTITY_3X3 = floatArrayOf(
         1f, 0f, 0f,
@@ -64,7 +65,8 @@ internal object DngEmbeddedProfile {
                         "toneCurve=${plan.toneCurveLut != null} " +
                         "hueSat=${plan.hueSatMap?.isValid == true} " +
                         "look=${plan.lookTable?.isValid == true} " +
-                        "baselineExposureOffset=${plan.baselineExposureOffset}"
+                        "baselineExposureOffset=${plan.baselineExposureOffset} " +
+                        "defaultBlackRender=${plan.defaultBlackRender}"
                 )
             }
     }
@@ -171,6 +173,11 @@ internal object DngEmbeddedProfile {
             ?.firstOrNull()
             ?.takeIf { it.isFinite() }
             ?: 0f
+        val defaultBlackRender = DcpDefaultBlackRender.fromTagValue(
+            readIntegerValues(raf, ifd[TAG_DEFAULT_BLACK_RENDER], byteOrder)
+                ?.firstOrNull()
+                ?.toInt()
+        )
 
         val hasProfileData = colorMatrix1 != null ||
             colorMatrix2 != null ||
@@ -180,7 +187,8 @@ internal object DngEmbeddedProfile {
             hueSatDeltas2 != null ||
             lookTable != null ||
             toneCurve != null ||
-            abs(baselineExposureOffset) > 1e-6f
+            abs(baselineExposureOffset) > 1e-6f ||
+            defaultBlackRender != DcpDefaultBlackRender.Auto
         if (!hasProfileData) {
             return null
         }
@@ -190,6 +198,7 @@ internal object DngEmbeddedProfile {
             calibrationIlluminant1 = illuminant1,
             calibrationIlluminant2 = illuminant2,
             baselineExposureOffset = baselineExposureOffset,
+            defaultBlackRender = defaultBlackRender,
             colorMatrix1 = colorMatrix1,
             colorMatrix2 = colorMatrix2,
             forwardMatrix1 = forwardMatrix1,

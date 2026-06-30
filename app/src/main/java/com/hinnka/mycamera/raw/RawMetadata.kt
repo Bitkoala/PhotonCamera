@@ -78,6 +78,7 @@ data class RawMetadata(
      */
     val postRawSensitivityBoost: Float = 1.0f,
     val baselineExposure: Float = 0.0f,
+    val shadowScale: Float = 1.0f,
     val noiseProfile: FloatArray = floatArrayOf(0f, 0f),
     val afRegions: Array<MeteringRectangle>? = null,
     val activeArray: android.graphics.Rect? = null,
@@ -783,6 +784,7 @@ data class RawMetadata(
         if (!whiteBalanceGains.contentEquals(other.whiteBalanceGains)) return false
         if (!colorCorrectionMatrix.contentEquals(other.colorCorrectionMatrix)) return false
         if (baselineExposure != other.baselineExposure) return false
+        if (shadowScale != other.shadowScale) return false
         if (iso != other.iso) return false
         if (shutterSpeed != other.shutterSpeed) return false
         if (frameCount != other.frameCount) return false
@@ -804,6 +806,7 @@ data class RawMetadata(
         result = 31 * result + (lensShadingMapGrid?.contentHashCode() ?: 0)
         result = 31 * result + postRawSensitivityBoost.hashCode()
         result = 31 * result + baselineExposure.hashCode()
+        result = 31 * result + shadowScale.hashCode()
         result = 31 * result + iso
         result = 31 * result + shutterSpeed.hashCode()
         result = 31 * result + frameCount

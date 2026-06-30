@@ -122,6 +122,7 @@ class RawDemosaicProcessor {
             lensShadingMapHeight = dngRawData.lensShadingMapHeight,
             lensShadingMapGrid = dngRawData.lensShadingMapGrid,
             baselineExposure = DngBaselineExposure.sanitize(dngRawData.baselineExposure),
+            shadowScale = sanitizeDngShadowScale(dngRawData.shadowScale),
             exposureBias = if (dngRawData.exposureBias == 0f) {
                 if (baseMetadata != null && baseMetadata.exposureBias != 0f) baseMetadata.exposureBias else exposureBias
             } else dngRawData.exposureBias,
@@ -1459,6 +1460,9 @@ class RawDemosaicProcessor {
                     "engineMeteringEv=${colorEngine.meteringCompensationEv} " +
                     "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
                     "profileExposureEv=${profileExposureUniforms.exposureEv} " +
+                    "defaultBlackRender=${if (useProfileExposureRamp) dcpDefaultBlackRenderOrAuto(activeDcpRenderPlan) else DcpDefaultBlackRender.None} " +
+                    "profileRampBlack=${profileExposureUniforms.rampBlack} " +
+                    "dngShadowScale=${actualMetadata.shadowScale} " +
                     "dngBaselineExposure=${actualMetadata.baselineExposure} " +
                     "dngBaselineExposureInLinear=$hasProfileGainTableMap " +
                     "dcpBaselineExposureOffsetApplied=$applyDcpBaselineExposureOffset"
@@ -4445,6 +4449,7 @@ class RawDemosaicProcessor {
                 ?: "Google Pixel Tone Map",
             workingColorSpace = basePlan?.workingColorSpace ?: workingColorSpace,
             baselineExposureOffset = basePlan?.baselineExposureOffset ?: 0f,
+            defaultBlackRender = DcpDefaultBlackRender.None,
             colorCorrectionMatrix = basePlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix,
             hueSatMap = basePlan?.hueSatMap,
             lookTable = basePlan?.lookTable,
@@ -4489,6 +4494,7 @@ class RawDemosaicProcessor {
         val hueSatEnabled = dcpRenderPlan?.hueSatMap?.isValid == true
         val lookEnabled = dcpRenderPlan?.lookTable?.isValid == true
         val profileToneCurveEnabled = useAdobeProfilePipeline && dcpRenderPlan?.toneCurveLut != null
+        val defaultBlackRender = dcpDefaultBlackRenderOrAuto(dcpRenderPlan)
         val dcpBaselineExposureOffset = if (applyDcpBaselineExposureOffset) {
             dcpBaselineExposureOffsetOrZero(dcpRenderPlan)
         } else {
@@ -4507,6 +4513,7 @@ class RawDemosaicProcessor {
                 "hueSat=$hueSatEnabled look=$lookEnabled " +
                 "profileToneCurve=$profileToneCurveEnabled " +
                 "profileExposureRamp=$useProfileExposureRamp " +
+                "defaultBlackRender=$defaultBlackRender " +
                 "baselineExposureOffset=$dcpBaselineExposureOffset " +
                 "profileToEngine=${formatMatrix3x3(profileToEngineTransform)}"
         )
@@ -4529,6 +4536,18 @@ class RawDemosaicProcessor {
     private fun dcpBaselineExposureOffsetOrZero(dcpRenderPlan: DcpRenderPlan?): Float {
         val offset = dcpRenderPlan?.baselineExposureOffset ?: return 0f
         return if (offset.isFinite() && abs(offset) > 1e-6f) offset else 0f
+    }
+
+    private fun sanitizeDngShadowScale(shadowScale: Float): Float {
+        return if (shadowScale.isFinite() && shadowScale > 0f && shadowScale <= 1f) {
+            shadowScale
+        } else {
+            1f
+        }
+    }
+
+    private fun dcpDefaultBlackRenderOrAuto(dcpRenderPlan: DcpRenderPlan?): DcpDefaultBlackRender {
+        return dcpRenderPlan?.defaultBlackRender ?: DcpDefaultBlackRender.Auto
     }
 
     private fun formatMatrix3x3(matrix: FloatArray): String {
@@ -4560,6 +4579,12 @@ class RawDemosaicProcessor {
             profileExposureCompensation = profileExposureCompensation,
             dngBaselineExposure = dngBaselineExposure,
             dcpBaselineExposureOffset = dcpBaselineExposureOffset,
+            defaultBlackRender = if (useRamp) {
+                dcpDefaultBlackRenderOrAuto(dcpRenderPlan)
+            } else {
+                DcpDefaultBlackRender.None
+            },
+            shadowScale = metadata.shadowScale,
             useRamp = useRamp
         )
     }

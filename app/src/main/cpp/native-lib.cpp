@@ -538,6 +538,8 @@ struct DngRawTagInfo {
   int activeArea[4] = {0, 0, 0, 0}; // top, left, bottom, right
   bool hasAsShotWhiteXY = false;
   float asShotWhiteXY[2] = {0.0f, 0.0f};
+  bool hasShadowScale = false;
+  float shadowScale = 1.0f;
   int maskedAreaCount = 0;
   int blackRepeatRows = 0;
   int blackRepeatCols = 0;
@@ -2569,6 +2571,13 @@ static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
         info.asShotWhiteXY[0] = static_cast<float>(x);
         info.asShotWhiteXY[1] = static_cast<float>(y);
       }
+    } else if (tag == 0xc633 && count >= 1 &&
+               tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      const double value = tiffReadRealAt(data, type, 0, littleEndian);
+      if (std::isfinite(value) && value > 0.0 && value <= 1.0) {
+        info.hasShadowScale = true;
+        info.shadowScale = static_cast<float>(value);
+      }
     } else if (tag == 0x014a &&
                tiffEntryData(file, entry, littleEndian, type, count, data)) {
       const uint32_t childCount =
@@ -2612,8 +2621,8 @@ static bool parseDngRawTagInfo(const char *path, DngRawTagInfo &info) {
 
   const uint32_t firstIfd = tiffReadU32(header + 4, littleEndian);
   parseDngRawTagIfd(file, littleEndian, firstIfd, info, 0);
-  return info.hasActiveArea || info.hasAsShotWhiteXY || !info.blackLevel.empty() ||
-         !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
+  return info.hasActiveArea || info.hasAsShotWhiteXY || info.hasShadowScale ||
+         !info.blackLevel.empty() || !info.blackDeltaH.empty() || !info.blackDeltaV.empty();
 }
 
 static int dngCfaColorAt(const DngCfaInfo &info, int row, int col) {
@@ -2959,7 +2968,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
                                    : exportedBlackLevels[3];
   LOGI("dng black delta tags: active=%d,%d,%d,%d,%d maskedAreas=%d repeat=%dx%d "
        "blackCount=%zu blackPreview=%f,%f,%f,%f deltaH=%zu[%f,%f] "
-       "deltaV=%zu[%f,%f] applied=%d",
+       "deltaV=%zu[%f,%f] shadowScale=%f(%d) applied=%d",
        dngRawTagInfo.hasActiveArea ? 1 : 0,
        dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[0] : top,
        dngRawTagInfo.hasActiveArea ? dngRawTagInfo.activeArea[1] : left,
@@ -2976,6 +2985,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        dngRawTagInfo.blackDeltaV.size(),
        dngRawTagInfo.blackDeltaV.empty() ? 0.0 : dngRawTagInfo.blackDeltaV.front(),
        dngRawTagInfo.blackDeltaV.empty() ? 0.0 : dngRawTagInfo.blackDeltaV.back(),
+       dngRawTagInfo.shadowScale,
+       dngRawTagInfo.hasShadowScale ? 1 : 0,
        blackDeltaApplied ? 1 : 0);
   LOGI("dng black levels: librawChannels=%f,%f,%f,%f active2x2=%f,%f,%f,%f "
        "exportedRGGB=%f,%f,%f,%f",
@@ -3079,7 +3090,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jclass dngDataClass = env->FindClass("com/hinnka/mycamera/raw/DngRawData");
   jmethodID constructor =
       env->GetMethodID(dngDataClass, "<init>",
-                       "(Ljava/nio/ByteBuffer;IIIF[F[F[F[FIIF[FII[FFIJF[I[FLandroid/graphics/Bitmap;)V");
+                       "(Ljava/nio/ByteBuffer;IIIF[F[F[F[FIIFF[FII[FFIJF[I[FLandroid/graphics/Bitmap;)V");
 
   jfloatArray blackLevelArray = env->NewFloatArray(4);
   for (int i = 0; i < 4; i++) {
@@ -3289,6 +3300,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   const bool hasDngBaselineExposure =
       std::isfinite(rawBaselineExposure) && rawBaselineExposure > -999.0f;
   jfloat baselineExposure = normalizeDngBaselineExposure(levels);
+  jfloat shadowScale = dngRawTagInfo.hasShadowScale ? dngRawTagInfo.shadowScale : 1.0f;
   jfloat exposureBias =
       RawProcessor.imgdata.makernotes.common.ExposureCalibrationShift;
   int iso = RawProcessor.imgdata.other.iso_speed;
@@ -3326,7 +3338,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jobject dngData = env->NewObject(
       dngDataClass, constructor, rawDataBuffer, width, height, rowStride,
       whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
-      cfaPattern, ed.rotation, baselineExposure, exportedLscArray, exportedLscWidth, exportedLscHeight,
+      cfaPattern, ed.rotation, baselineExposure, shadowScale, exportedLscArray, exportedLscWidth, exportedLscHeight,
       exportedLscGridArray, exposureBias, iso,
       shutterSpeedLong, aperture, activeArray, noiseProfileArray,
       embeddedPreviewBitmap);

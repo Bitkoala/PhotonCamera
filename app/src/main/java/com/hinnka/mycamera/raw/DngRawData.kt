@@ -18,6 +18,7 @@ import java.nio.ByteBuffer
  * @param whiteBalance 白平衡增益 [R, Gr, Gb, B]
  * @param colorMatrix 色彩校正矩阵 (3x3 = 9个元素，行主序)
  * @param rotation 旋转角度 (0, 90, 180, 270)
+ * @param shadowScale DNG ShadowScale，用于 Adobe DefaultBlackRender Auto 的暗部黑点计算
  * @param lensShadingMap Lens Shading Map (LSC) 增益表，null表示无LSC数据
  * @param lensShadingMapWidth LSC 表宽度
  * @param lensShadingMapHeight LSC 表高度
@@ -39,6 +40,7 @@ data class DngRawData @Keep constructor(
     val cfaPattern: Int, // 0..3=Bayer, 4..7=4x4 expanded Bayer, 8..11=8x8 expanded Bayer
     val rotation: Int,
     val baselineExposure: Float,
+    val shadowScale: Float = 1.0f,
     val lensShadingMap: FloatArray?,
     val lensShadingMapWidth: Int,
     val lensShadingMapHeight: Int,
@@ -95,6 +97,7 @@ data class DngRawData @Keep constructor(
         if (cfaPattern != other.cfaPattern) return false
         if (rotation != other.rotation) return false
         if (baselineExposure != other.baselineExposure) return false
+        if (shadowScale != other.shadowScale) return false
         if (lensShadingMap != null) {
             if (other.lensShadingMap == null) return false
             if (!lensShadingMap.contentEquals(other.lensShadingMap)) return false
@@ -126,6 +129,7 @@ data class DngRawData @Keep constructor(
         result = 31 * result + cfaPattern
         result = 31 * result + rotation
         result = 31 * result + baselineExposure.hashCode()
+        result = 31 * result + shadowScale.hashCode()
         result = 31 * result + (lensShadingMap?.contentHashCode() ?: 0)
         result = 31 * result + lensShadingMapWidth
         result = 31 * result + lensShadingMapHeight

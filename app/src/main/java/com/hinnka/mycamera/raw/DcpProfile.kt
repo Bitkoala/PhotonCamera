@@ -86,11 +86,23 @@ data class DcpToneCurve(
     }
 }
 
+enum class DcpDefaultBlackRender(val tagValue: Int) {
+    Auto(0),
+    None(1);
+
+    companion object {
+        fun fromTagValue(tagValue: Int?): DcpDefaultBlackRender {
+            return values().firstOrNull { it.tagValue == tagValue } ?: Auto
+        }
+    }
+}
+
 data class DcpProfile(
     val profileName: String,
     val calibrationIlluminant1: Int,
     val calibrationIlluminant2: Int,
     val baselineExposureOffset: Float,
+    val defaultBlackRender: DcpDefaultBlackRender = DcpDefaultBlackRender.Auto,
     val colorMatrix1: FloatArray?,
     val colorMatrix2: FloatArray?,
     val forwardMatrix1: FloatArray?,
@@ -108,6 +120,7 @@ data class DcpRenderPlan(
     val profileName: String,
     val workingColorSpace: ColorSpace,
     val baselineExposureOffset: Float,
+    val defaultBlackRender: DcpDefaultBlackRender,
     val colorCorrectionMatrix: FloatArray,
     val hueSatMap: DcpHueSatMap?,
     val lookTable: DcpHueSatMap?,
@@ -188,6 +201,7 @@ object DcpProfileParser {
             profileName = profile.profileName,
             workingColorSpace = workingColorSpace,
             baselineExposureOffset = profile.baselineExposureOffset,
+            defaultBlackRender = profile.defaultBlackRender,
             colorCorrectionMatrix = selectedMatrix,
             hueSatMap = selectedHueSat,
             lookTable = profile.lookTable?.takeIf { it.isValid },
@@ -245,6 +259,7 @@ object DcpProfileParser {
             calibrationIlluminant1 = root.optInt("calibrationIlluminant1", 0),
             calibrationIlluminant2 = root.optInt("calibrationIlluminant2", 0),
             baselineExposureOffset = root.optDouble("baselineExposureOffset", 0.0).toFloat(),
+            defaultBlackRender = DcpDefaultBlackRender.fromTagValue(root.optInt("defaultBlackRender", 0)),
             colorMatrix1 = root.optJSONArray("colorMatrix1")?.toFloatArray(),
             colorMatrix2 = root.optJSONArray("colorMatrix2")?.toFloatArray(),
             forwardMatrix1 = root.optJSONArray("forwardMatrix1")?.toFloatArray(),

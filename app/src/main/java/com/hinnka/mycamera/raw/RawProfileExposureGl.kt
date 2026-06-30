@@ -6,6 +6,10 @@ import kotlin.math.min
 import kotlin.math.pow
 
 object RawProfileExposureGl {
+    private const val DEFAULT_BLACK_RENDER_SHADOWS = 5f
+    private const val DEFAULT_BLACK_RENDER_SHADOW_SCALE = 1f
+    private const val DEFAULT_BLACK_RENDER_STAGE3_GAIN = 1f
+
     data class Uniforms(
         val exposureEv: Float,
         val useRamp: Boolean,
@@ -42,6 +46,8 @@ object RawProfileExposureGl {
         profileExposureCompensation: Float,
         dngBaselineExposure: Float = 0f,
         dcpBaselineExposureOffset: Float = 0f,
+        defaultBlackRender: DcpDefaultBlackRender = DcpDefaultBlackRender.None,
+        shadowScale: Float = 1f,
         useRamp: Boolean
     ): Uniforms {
         val exposureEv = profileExposureCompensation + dngBaselineExposure + dcpBaselineExposureOffset
@@ -65,7 +71,19 @@ object RawProfileExposureGl {
 
         val positiveExposureEv = max(0f, exposureEv)
         val white = 1f / 2.0f.pow(positiveExposureEv)
-        val black = 0f
+        val safeShadowScale = if (shadowScale.isFinite() && shadowScale > 0f && shadowScale <= 1f) {
+            shadowScale
+        } else {
+            DEFAULT_BLACK_RENDER_SHADOW_SCALE
+        }
+        val black = when (defaultBlackRender) {
+            DcpDefaultBlackRender.Auto -> DEFAULT_BLACK_RENDER_SHADOWS *
+                safeShadowScale *
+                DEFAULT_BLACK_RENDER_STAGE3_GAIN *
+                0.001f
+
+            DcpDefaultBlackRender.None -> 0f
+        }.coerceIn(0f, 0.99f * white)
         val slope = 1f / max(white - black, 1e-6f)
         val radius = min(0.5f * black, (1f / 16f) / max(slope, 1e-6f))
         val qScale = if (radius > 0f) slope / (4f * radius) else 0f
