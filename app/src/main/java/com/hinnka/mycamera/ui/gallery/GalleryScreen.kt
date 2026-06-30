@@ -86,12 +86,37 @@ import androidx.core.net.toUri
 private const val GALLERY_SCREEN_TAG = "GalleryScreen"
 
 private fun buildSystemGalleryMediaPickIntent(context: Context): Intent {
-    val intent = Intent(Intent.ACTION_PICK).apply {
+    val systemGalleryIntent = buildSystemGalleryActionPickIntent()
+    if (systemGalleryIntent.hasAvailableActivity(context)) {
+        return systemGalleryIntent
+    }
+
+    PLog.d(GALLERY_SCREEN_TAG, "ACTION_PICK media picker unavailable, falling back to ACTION_GET_CONTENT")
+    return buildGetContentMediaPickIntent()
+}
+
+private fun buildSystemGalleryActionPickIntent(): Intent {
+    return Intent(Intent.ACTION_PICK).apply {
         setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "*/*")
-        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+        putExtra(Intent.EXTRA_MIME_TYPES, buildGalleryMediaMimeTypes())
         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
     }
-    return intent
+}
+
+private fun buildGetContentMediaPickIntent(): Intent {
+    return Intent(Intent.ACTION_GET_CONTENT).apply {
+        type = "*/*"
+        putExtra(Intent.EXTRA_MIME_TYPES, buildGalleryMediaMimeTypes())
+        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+    }
+}
+
+private fun buildGalleryMediaMimeTypes(): Array<String> {
+    return arrayOf("image/*", "video/*")
+}
+
+private fun Intent.hasAvailableActivity(context: Context): Boolean {
+    return resolveActivity(context.packageManager) != null
 }
 
 /**
