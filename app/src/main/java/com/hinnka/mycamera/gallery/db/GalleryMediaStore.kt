@@ -79,9 +79,16 @@ object GalleryMediaStore {
         ensureMigrated(context)
         return withContext(Dispatchers.IO) {
             try {
-                GalleryDatabase.getInstance(context.applicationContext)
-                    .galleryMediaDao()
-                    .upsert(buildEntity(context.applicationContext, photoId, metadata))
+                val dao = GalleryDatabase.getInstance(context.applicationContext).galleryMediaDao()
+                val existingDateAdded = dao.getById(photoId)?.dateAdded?.takeIf { it > 0L }
+                dao.upsert(
+                    buildEntity(
+                        context.applicationContext,
+                        photoId,
+                        metadata,
+                        existingDateAdded = existingDateAdded
+                    )
+                )
                 true
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -154,7 +161,12 @@ object GalleryMediaStore {
         return buildEntity(context, photoDir.name, metadata)
     }
 
-    private fun buildEntity(context: Context, photoId: String, metadata: MediaMetadata): GalleryMediaEntity {
+    private fun buildEntity(
+        context: Context,
+        photoId: String,
+        metadata: MediaMetadata,
+        existingDateAdded: Long? = null
+    ): GalleryMediaEntity {
         val photoDir = getPhotoDir(context, photoId)
         val photoFile = File(photoDir, PHOTO_FILE)
         val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
@@ -169,13 +181,14 @@ object GalleryMediaStore {
             0L
         }
         val isVideo = metadata.mediaType == MediaType.VIDEO
-        val dateAdded = if (isVideo) {
+        val initialDateAdded = if (isVideo) {
             photoDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
         } else {
             originalFile.lastModified().takeIf { originalFile.exists() && it > 0L }
                 ?: photoDir.lastModified().takeIf { it > 0L }
                 ?: System.currentTimeMillis()
         }
+        val dateAdded = existingDateAdded ?: initialDateAdded
         return GalleryMediaEntity(
             id = photoId,
             mediaType = metadata.mediaType.name,
@@ -344,13 +357,12 @@ object GalleryMediaStore {
                 metadata = metadata
             )
         }
-        val originalFile = dngFile.takeIf { it.exists() } ?: highQualityPhotoFile.takeIf { it.exists() } ?: displayFile
         return MediaData(
             id = id,
             uri = Uri.fromFile(displayFile),
             thumbnailUri = thumbnailUri,
             displayName = displayFile.name,
-            dateAdded = originalFile.lastModified().takeIf { it > 0L } ?: dateAdded,
+            dateAdded = dateAdded,
             size = displayFile.length(),
             width = width,
             height = height,
