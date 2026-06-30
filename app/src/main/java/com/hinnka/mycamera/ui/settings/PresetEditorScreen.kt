@@ -99,6 +99,7 @@ fun PresetEditorScreen(
     var rawRenderingEngine by remember {
         mutableStateOf(RawRenderingEngine.fromPersistedName(sourcePreset?.rawRenderingEngine))
     }
+    var rawGooglePixelToneMap by remember { mutableStateOf(sourcePreset?.rawGooglePixelToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
@@ -135,6 +136,7 @@ fun PresetEditorScreen(
             frameId = frameId,
             rawDcpId = rawDcpId,
             rawRenderingEngine = rawRenderingEngine.name,
+            rawGooglePixelToneMap = rawGooglePixelToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
             rawDROMode = rawDROMode,
@@ -401,32 +403,45 @@ fun PresetEditorScreen(
                     }
                 )
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+                AnimatedVisibility(visible = rawRenderingEngine == RawRenderingEngine.AdobeCurve) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.05f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
 
-                val defaultDcpName = stringResource(R.string.none)
-                val currentDcp = availableDcps.find { it.id == rawDcpId }
-                val currentDcpName = currentDcp?.getName() ?: defaultDcpName
-                DropdownSettingItem(
-                    title = stringResource(R.string.raw_dcp_title),
-                    value = currentDcpName,
-                    options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
-                    isLoading = false,
-                    onExpanded = {},
-                    onOptionSelected = { selectedName ->
-                        rawDcpId = if (selectedName == defaultDcpName) {
-                            null
-                        } else {
-                            availableDcps.find { it.getName() == selectedName }?.id
-                        }
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_raw_google_pixel_tone_map),
+                            description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
+                            checked = rawGooglePixelToneMap,
+                            onCheckedChange = {
+                                rawGooglePixelToneMap = it
+                            }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.05f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        val defaultDcpName = stringResource(R.string.none)
+                        val currentDcp = availableDcps.find { it.id == rawDcpId }
+                        val currentDcpName = currentDcp?.getName() ?: defaultDcpName
+                        DropdownSettingItem(
+                            title = stringResource(R.string.raw_dcp_title),
+                            value = currentDcpName,
+                            options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
+                            isLoading = false,
+                            onExpanded = {},
+                            onOptionSelected = { selectedName ->
+                                rawDcpId = if (selectedName == defaultDcpName) {
+                                    null
+                                } else {
+                                    availableDcps.find { it.getName() == selectedName }?.id
+                                }
+                            }
+                        )
                     }
-                )
-                if (rawRenderingEngine != RawRenderingEngine.AdobeCurve && rawDcpId != null) {
-                    Text(
-                        text = stringResource(R.string.raw_dcp_non_adobe_curve_warning),
-                        color = Color(0xFFFFC36A).copy(alpha = 0.9f),
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp
-                    )
                 }
 
                 AnimatedVisibility(visible = rawRenderingEngine == RawRenderingEngine.Spektrafilm) {

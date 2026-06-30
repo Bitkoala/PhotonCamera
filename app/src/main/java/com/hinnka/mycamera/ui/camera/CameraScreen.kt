@@ -1435,6 +1435,7 @@ fun CameraScreen(
             },
             onRawDROModeChange = { viewModel.setDroMode(it) },
             onRawColorEngineChange = { viewModel.setRawColorEngine(it) },
+            onRawToneMappingParametersChange = { viewModel.setRawToneMappingParameters(it) },
             onRawSpectralFilmSelectionChange = { viewModel.setRawSpectralFilmSelection(it) },
             onRawSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
             meteringMode = state.meteringMode,

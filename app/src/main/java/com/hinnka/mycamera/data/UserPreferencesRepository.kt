@@ -239,6 +239,7 @@ data class CameraFeaturePreferencesUpdate(
     val frameId: PreferenceUpdateValue<String?>? = null,
     val rawDcpId: PreferenceUpdateValue<String?>? = null,
     val rawRenderingEngine: PreferenceUpdateValue<RawRenderingEngine>? = null,
+    val rawToneMappingParameters: PreferenceUpdateValue<RawToneMappingParameters>? = null,
     val rawSpectralFilmStock: PreferenceUpdateValue<String?>? = null,
     val rawSpectralFilmPrint: PreferenceUpdateValue<String?>? = null,
     val droMode: PreferenceUpdateValue<String>? = null,
@@ -1911,6 +1912,17 @@ class UserPreferencesRepository(private val context: Context) {
             }
             update.rawRenderingEngine?.let {
                 preferences[RAW_COLOR_ENGINE_KEY] = it.value.name
+            }
+            update.rawToneMappingParameters?.let {
+                val normalized = it.value.normalized()
+                preferences[RAW_AGX_BLACK_RELATIVE_EXPOSURE_KEY] = normalized.agxBlackRelativeExposure
+                preferences[RAW_AGX_WHITE_RELATIVE_EXPOSURE_KEY] = normalized.agxWhiteRelativeExposure
+                preferences[RAW_AGX_TOE_KEY] = normalized.agxToe
+                preferences[RAW_AGX_SHOULDER_KEY] = normalized.agxShoulder
+                preferences[RAW_FILMIC_BLACK_RELATIVE_EXPOSURE_KEY] = normalized.filmicBlackRelativeExposure
+                preferences[RAW_FILMIC_WHITE_RELATIVE_EXPOSURE_KEY] = normalized.filmicWhiteRelativeExposure
+                preferences[RAW_GOOGLE_PIXEL_TONE_MAP_KEY] = normalized.useGooglePixelToneMap
+                preferences[RAW_GOOGLE_PIXEL_TONE_MAP_EXPLICIT_KEY] = normalized.googlePixelToneMapExplicit
             }
             update.rawSpectralFilmStock?.let {
                 if (it.value != null) {

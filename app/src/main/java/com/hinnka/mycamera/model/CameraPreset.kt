@@ -24,6 +24,7 @@ data class CameraPreset(
     // Quick RAW 功能
     val rawDcpId: String? = null,
     val rawRenderingEngine: String = RawRenderingEngine.AdobeCurve.name,
+    val rawGooglePixelToneMap: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
     val rawDROMode: String = "OFF",

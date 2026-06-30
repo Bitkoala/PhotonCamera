@@ -97,6 +97,12 @@ fun RawEditPanel(
             .padding(vertical = 16.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
+        RawRenderingEngineSelector(
+            selectedEngine = rawRenderingEngine,
+            onSelectEngine = onRawColorEngineChange
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
         if (rawRenderingEngine == RawRenderingEngine.AdobeCurve) {
             RawDcpSelector(
                 selectedDcpId = selectedDcpId,
@@ -106,12 +112,13 @@ fun RawEditPanel(
                 onDeleteDcp = onDeleteDcp
             )
             Spacer(modifier = Modifier.height(16.dp))
+            RawPixelStyleToneMapSwitch(
+                params = rawToneMappingParameters.normalized(),
+                onParamsChange = onRawToneMappingParametersChange,
+                onAdjustmentEnd = onAdjustmentEnd
+            )
+            Spacer(modifier = Modifier.height(16.dp))
         }
-        RawRenderingEngineSelector(
-            selectedEngine = rawRenderingEngine,
-            onSelectEngine = onRawColorEngineChange
-        )
-        Spacer(modifier = Modifier.height(16.dp))
 
         if (rawRenderingEngine == RawRenderingEngine.Spektrafilm) {
             val isPositiveFilm = SpectralFilmUiInfo.isPositiveFilm(spectralFilmSelection?.id)
@@ -382,6 +389,23 @@ private fun RawNumberInputSetting(
 }
 
 @Composable
+private fun RawPixelStyleToneMapSwitch(
+    params: RawToneMappingParameters,
+    onParamsChange: (RawToneMappingParameters) -> Unit,
+    onAdjustmentEnd: () -> Unit
+) {
+    RawSwitchSettingItem(
+        title = stringResource(R.string.settings_raw_google_pixel_tone_map),
+        description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
+        checked = params.useGooglePixelToneMap,
+        onCheckedChange = { enabled ->
+            onParamsChange(params.withGooglePixelToneMap(enabled))
+            onAdjustmentEnd()
+        }
+    )
+}
+
+@Composable
 private fun RawToneMappingControls(
     rawRenderingEngine: RawRenderingEngine,
     params: RawToneMappingParameters,
@@ -420,18 +444,7 @@ private fun RawToneMappingControls(
     fun formatPower(value: Float): String = String.format("%.2f", value)
 
     when (rawRenderingEngine) {
-        RawRenderingEngine.AdobeCurve -> {
-            RawSwitchSettingItem(
-                title = stringResource(R.string.settings_raw_google_pixel_tone_map),
-                description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
-                checked = params.useGooglePixelToneMap,
-                onCheckedChange = { enabled ->
-                    onParamsChange(params.withGooglePixelToneMap(enabled))
-                    onAdjustmentEnd()
-                }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
+        RawRenderingEngine.AdobeCurve -> Unit
 
         RawRenderingEngine.AgX -> {
             SliderSettingItem(
