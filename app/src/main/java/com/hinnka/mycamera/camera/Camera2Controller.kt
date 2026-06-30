@@ -355,7 +355,13 @@ class Camera2Controller(private val context: Context) {
             MultiFrameConfig.MAX_FRAME_COUNT
         )
         val requestedImages = when {
-            currentState.useHdrComposition && (currentState.useMFNR || currentState.useMFSR) ->
+            currentState.useHdrComposition && currentState.useMFNR ->
+                maxOf(
+                    multiFrameCount + HDR_BRACKET_SIDE_FRAME_COUNT,
+                    HdrBracketConfig.rawReferenceFrameCount(multiFrameCount)
+                )
+
+            currentState.useHdrComposition && currentState.useMFSR ->
                 multiFrameCount + HDR_BRACKET_SIDE_FRAME_COUNT
 
             currentState.useMFNR || currentState.useMFSR -> multiFrameCount
@@ -4311,13 +4317,23 @@ class Camera2Controller(private val context: Context) {
         baseExposureResult: CaptureResult?
     ) {
         val isRawCapture = isRawCaptureReader(reader)
+        val currentState = _state.value
         val normalizedZeroEvFrameCount = zeroEvFrameCount.coerceIn(
             0,
             MultiFrameConfig.MAX_FRAME_COUNT
         )
+        val rawMfnrFrameCount = if (isRawCapture && currentState.useMFNR) {
+            currentState.multiFrameCount.coerceIn(
+                MultiFrameConfig.MIN_FRAME_COUNT,
+                MultiFrameConfig.MAX_FRAME_COUNT
+            )
+        } else {
+            0
+        }
         val evOffsets = buildHdrBracketEvOffsets(
             zeroEvFrameCount = normalizedZeroEvFrameCount,
             isRawCapture = isRawCapture,
+            rawMfnrFrameCount = rawMfnrFrameCount,
         )
         val hdrFrameCount = evOffsets.size
         _state.value = _state.value.copy(
@@ -4330,7 +4346,6 @@ class Camera2Controller(private val context: Context) {
             if (playShutterSound && !_state.value.useLivePhoto) {
                 onPlayShutterSound?.invoke()
             }
-            val currentState = _state.value
             val manualBaseExposure = resolveHdrBracketManualBaseExposure(currentState, baseExposureResult)
             logHdrBracketBaseExposure(currentState, baseExposureResult, manualBaseExposure)
             val requests = evOffsets.mapIndexed { index, evOffset ->
@@ -4412,10 +4427,16 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun buildHdrBracketEvOffsets(zeroEvFrameCount: Int, isRawCapture: Boolean): List<Float> {
+    private fun buildHdrBracketEvOffsets(
+        zeroEvFrameCount: Int,
+        isRawCapture: Boolean,
+        rawMfnrFrameCount: Int = 0,
+    ): List<Float> {
         if (isRawCapture) {
-            return List((HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT + zeroEvFrameCount).coerceAtMost(MultiFrameConfig.MAX_FRAME_COUNT)) {
-                HdrBracketConfig.RAW_REFERENCE_EV
+            val frameCount = HdrBracketConfig.rawReferenceFrameCount(rawMfnrFrameCount)
+            val evOffset = HdrBracketConfig.rawReferenceEv(rawMfnrFrameCount)
+            return List(frameCount) {
+                evOffset
             }
         }
         return buildList {

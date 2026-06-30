@@ -2131,7 +2131,6 @@ object GalleryManager {
         if (candidates.size < HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT) return null
         val referenceCandidates = candidates
             .sortedBy { it.index }
-            .take(HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT)
         val minProduct = referenceCandidates.minOf { it.exposureProduct }
         val maxProduct = referenceCandidates.maxOf { it.exposureProduct }
         val exposureSpread = if (minProduct.isFinite() && minProduct > 0.0) {
@@ -2139,9 +2138,10 @@ object GalleryManager {
         } else {
             Double.NaN
         }
+        val targetEv = HdrBracketConfig.rawReferenceEvForFrameCount(referenceCandidates.size)
         PLog.d(
             TAG,
-            "RAW HDR reference frame selection: targetEv=${HdrBracketConfig.RAW_REFERENCE_EV}, " +
+            "RAW HDR reference frame selection: targetEv=$targetEv, " +
                     "frames=${referenceCandidates.joinToString { "${it.index}:${it.exposureProduct}" }}, " +
                     "spread=$exposureSpread"
         )
@@ -2904,6 +2904,7 @@ object GalleryManager {
                 val normalReferenceCandidate = referenceCandidates.first()
                 val rawHdrBaselineExposureEv = calculateRawHdrDngBaselineExposureEv(
                     referenceProduct = normalReferenceCandidate.exposureProduct,
+                    frameCount = referenceCandidates.size,
                 )
                 if (!useGpuAcceleration) {
                     PLog.w(TAG, "RAW HDR denoise requires GLES stacker; ignoring disabled GPU acceleration setting")
@@ -3025,12 +3026,15 @@ object GalleryManager {
 
     private fun calculateRawHdrDngBaselineExposureEv(
         referenceProduct: Double,
+        frameCount: Int,
     ): Float {
-        val baselineExposureEv = HdrBracketConfig.RAW_REFERENCE_BASELINE_EV.coerceIn(0f, 8f)
+        val baselineExposureEv = HdrBracketConfig.rawReferenceBaselineEvForFrameCount(frameCount).coerceIn(0f, 8f)
         PLog.d(
             TAG,
             "RAW HDR DNG baseline exposure: ${baselineExposureEv}EV, " +
-                    "referenceProduct=$referenceProduct, targetEv=${HdrBracketConfig.RAW_REFERENCE_EV}"
+                    "referenceProduct=$referenceProduct, " +
+                    "targetEv=${HdrBracketConfig.rawReferenceEvForFrameCount(frameCount)}, " +
+                    "frameCount=$frameCount"
         )
         return baselineExposureEv
     }

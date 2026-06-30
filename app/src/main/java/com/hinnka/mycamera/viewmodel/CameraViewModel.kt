@@ -5314,7 +5314,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
-            val captureMode = if (zeroEvFrameCount > 1) "raw_hdr_mfnr" else "raw_hdr_bracket"
+            val captureMode = if (state.value.useMFNR) "raw_hdr_mfnr" else "raw_hdr_bracket"
             val baseImage = images.first()
             val metadataFrameIndex = selectRawHdrMetadataFrameIndex(captureResults, images.size)
             val metadataImage = images.getOrNull(metadataFrameIndex) ?: baseImage
