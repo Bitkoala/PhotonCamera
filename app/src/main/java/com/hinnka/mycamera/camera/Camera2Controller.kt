@@ -80,7 +80,7 @@ class Camera2Controller(private val context: Context) {
         private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
         private const val BURST_CAPTURE_BATCH_SIZE = 8
         private const val HDR_BRACKET_BASE_CAPTURE_COUNT = 3
-        private const val HDR_BRACKET_SIDE_FRAME_COUNT = 2
+        private const val HDR_BRACKET_SIDE_FRAME_COUNT = 4
 
         // 拍照状态机常量
         private const val STATE_PREVIEW = 0 // Showing camera preview.
