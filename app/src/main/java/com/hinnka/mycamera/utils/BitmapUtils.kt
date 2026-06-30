@@ -153,11 +153,7 @@ object BitmapUtils {
      */
     fun flipHorizontal(bitmap: Bitmap): Bitmap {
         val matrix = Matrix().apply { postScale(-1f, 1f) }
-        val flipped = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        if (flipped != bitmap) {
-            bitmap.recycle()
-        }
-        return flipped
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     /**
@@ -173,9 +169,6 @@ object BitmapUtils {
 
         val matrix = Matrix().apply { postRotate(normalizedDegrees) }
         val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        if (rotated != bitmap) {
-            bitmap.recycle()
-        }
         return rotated
     }
 
