@@ -2393,7 +2393,13 @@ class Camera2Controller(private val context: Context) {
             val zoomRatio = state.zoomRatio.coerceIn(minZoom, maxSupportedZoom)
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
 
-            applyZoomRequestSettings(builder, zoomRatio, activeRect, zoomRatioRange)
+            applyZoomRequestSettings(
+                builder = builder,
+                zoomRatio = zoomRatio,
+                activeRect = activeRect,
+                zoomRatioRange = zoomRatioRange,
+                resetCropAtUnitZoom = false
+            )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply zoom settings", e)
         }
@@ -2403,19 +2409,26 @@ class Camera2Controller(private val context: Context) {
         builder: CaptureRequest.Builder,
         zoomRatio: Float,
         activeRect: Rect?,
-        zoomRatioRange: android.util.Range<Float>?
+        zoomRatioRange: android.util.Range<Float>?,
+        resetCropAtUnitZoom: Boolean
     ) {
-        if (
-            _state.value.availableCameras.size > 1
-            && (zoomRatioRange == null || zoomRatioRange.lower >= 1f)
-            && activeRect != null
-        ) {
-            builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
-        } else if (zoomRatioRange != null) {
+        if (shouldUseControlZoomRatio(zoomRatioRange)) {
             builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoomRatio)
-        } else if (activeRect != null) {
-            builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
+            return
         }
+
+        activeRect ?: return
+        if (zoomRatio <= 1f && !resetCropAtUnitZoom) return
+
+        zoomRatioRange?.let {
+            builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, 1f)
+        }
+        builder.set(CaptureRequest.SCALER_CROP_REGION, buildCenteredCropRegion(activeRect, zoomRatio))
+    }
+
+    private fun shouldUseControlZoomRatio(zoomRatioRange: android.util.Range<Float>?): Boolean {
+        zoomRatioRange ?: return false
+        return _state.value.availableCameras.size <= 1 || zoomRatioRange.lower < 1f
     }
 
     private fun buildCenteredCropRegion(activeRect: Rect, zoomRatio: Float): Rect {
@@ -2847,7 +2860,7 @@ class Camera2Controller(private val context: Context) {
     /**
      * 切换到指定的相机 ID
      */
-    fun switchToCameraId(cameraId: String, initialZoomRatio: Float = 1f) {
+    fun switchToCameraId(cameraId: String) {
         val cameras = _state.value.availableCameras
         val targetCamera = cameras.find { it.cameraId == cameraId }
 
@@ -2861,7 +2874,7 @@ class Camera2Controller(private val context: Context) {
             _state.value = _state.value.copy(
                 currentCameraId = cam.cameraId,
                 currentLensType = cam.lensType,
-                zoomRatio = sanitizeZoomRatio(initialZoomRatio)
+                zoomRatio = 1f
             )
         } ?: PLog.w(TAG, "Camera with ID $cameraId not found")
     }
@@ -3484,13 +3497,19 @@ class Camera2Controller(private val context: Context) {
 
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             builder.apply {
-                applyZoomRequestSettings(this, clampedRatio, activeRect, zoomRatioRange)
+                applyZoomRequestSettings(
+                    builder = this,
+                    zoomRatio = clampedRatio,
+                    activeRect = activeRect,
+                    zoomRatioRange = zoomRatioRange,
+                    resetCropAtUnitZoom = true
+                )
             }
             if (cameraDevice != null && captureSession != null) {
                 updatePreview()
             }
 
-            val zoomMode = if (zoomRatioRange != null) {
+            val zoomMode = if (shouldUseControlZoomRatio(zoomRatioRange)) {
                 "CONTROL_ZOOM_RATIO"
             } else {
                 "SCALER_CROP_REGION"
