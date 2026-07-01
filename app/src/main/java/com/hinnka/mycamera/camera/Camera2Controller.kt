@@ -155,7 +155,9 @@ class Camera2Controller(private val context: Context) {
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
 
+    private val cameraCharacteristicsCache = ConcurrentHashMap<String, CameraCharacteristics>()
     private var cachedCharacteristics: CameraCharacteristics? = null
+    private var cachedCharacteristicsCameraId: String = ""
     private var activeOpenCameraId: String = ""
     private var activeOutputPhysicalCameraId: String? = null
     private val failedPhysicalOutputProfiles = mutableSetOf<PhysicalOutputFailureKey>()
@@ -184,7 +186,6 @@ class Camera2Controller(private val context: Context) {
     private var isHlg10Supported = false
     private var isZslControlSupported: Boolean? = null
     private var availableCaptureRequestKeyNames: Set<String>? = null
-    private val loggedUnavailableVendorCaptureKeys = mutableSetOf<String>()
     private var availableAeModes: IntArray = intArrayOf()
     private var availableAwbModes: IntArray = intArrayOf()
     private var videoCaptureStatsWindowStartMs: Long = 0L
@@ -747,8 +748,46 @@ class Camera2Controller(private val context: Context) {
         return activeOpenCameraId.takeIf { it.isNotEmpty() } ?: getCurrentOpenCameraId()
     }
 
+    private fun getCameraCharacteristicsCached(cameraId: String): CameraCharacteristics {
+        require(cameraId.isNotEmpty()) { "cameraId must not be empty" }
+        cachedCharacteristics?.let { characteristics ->
+            if (cachedCharacteristicsCameraId == cameraId) {
+                return characteristics
+            }
+        }
+        cameraCharacteristicsCache[cameraId]?.let { return it }
+        return cameraManager.getCameraCharacteristics(cameraId).also {
+            cameraCharacteristicsCache[cameraId] = it
+        }
+    }
+
+    private fun getCameraCharacteristicsOrNull(cameraId: String, reason: String): CameraCharacteristics? {
+        if (cameraId.isEmpty()) return null
+        return try {
+            getCameraCharacteristicsCached(cameraId)
+        } catch (e: Exception) {
+            PLog.v(TAG, "Failed to load characteristics for camera $cameraId during $reason: ${e.message}")
+            null
+        }
+    }
+
+    private fun cacheActiveCameraCharacteristics(
+        cameraId: String,
+        characteristics: CameraCharacteristics
+    ) {
+        cachedCharacteristics = characteristics
+        cachedCharacteristicsCameraId = cameraId
+        cameraCharacteristicsCache[cameraId] = characteristics
+    }
+
+    private fun getActiveOpenCameraCharacteristics(): CameraCharacteristics? {
+        val openCameraId = getActiveOpenCameraId()
+        return getCameraCharacteristicsOrNull(openCameraId, "active open camera")
+    }
+
     private fun clearCameraCapabilityCache() {
         cachedCharacteristics = null
+        cachedCharacteristicsCameraId = ""
         activeOpenCameraId = ""
         activeOutputPhysicalCameraId = null
         cachedSensorOrientation = 0
@@ -779,7 +818,6 @@ class Camera2Controller(private val context: Context) {
         lastAfState = null
         isZslControlSupported = null
         availableCaptureRequestKeyNames = null
-        loggedUnavailableVendorCaptureKeys.clear()
     }
 
     private fun clearCameraSessionState(reason: String, closeImageReader: Boolean = true) {
@@ -858,7 +896,7 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun resolveActiveFocusCharacteristics(
-        fallbackCharacteristics: CameraCharacteristics? = cachedCharacteristics
+        fallbackCharacteristics: CameraCharacteristics? = null
     ): Pair<String, CameraCharacteristics>? {
         val state = _state.value
         val camera = state.getCurrentCameraInfo()
@@ -873,14 +911,12 @@ class Camera2Controller(private val context: Context) {
         }.distinct()
 
         for (cameraId in candidateIds) {
-            try {
-                return cameraId to cameraManager.getCameraCharacteristics(cameraId)
-            } catch (e: Exception) {
-                PLog.v(TAG, "Failed to load focus characteristics for camera $cameraId: ${e.message}")
+            getCameraCharacteristicsOrNull(cameraId, "focus characteristics")?.let {
+                return cameraId to it
             }
         }
 
-        return fallbackCharacteristics?.let {
+        return (fallbackCharacteristics ?: getActiveOpenCameraCharacteristics())?.let {
             val fallbackId = activeOpenCameraId.takeIf { id -> id.isNotEmpty() }
                 ?: state.currentCameraId
             fallbackId to it
@@ -900,10 +936,10 @@ class Camera2Controller(private val context: Context) {
             return _state.value.currentPreviewSize
         }
 
-        val resolvedCharacteristics = try {
-            characteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to load video capabilities", e)
+        val resolvedCharacteristics = characteristics
+            ?: getCameraCharacteristicsOrNull(openCameraId, "video capabilities")
+        if (resolvedCharacteristics == null) {
+            PLog.e(TAG, "Failed to load video capabilities")
             return _state.value.currentPreviewSize
         }
 
@@ -934,10 +970,10 @@ class Camera2Controller(private val context: Context) {
             return _state.value.currentPreviewSize
         }
 
-        val resolvedCharacteristics = try {
-            characteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to load quick-shot capabilities", e)
+        val resolvedCharacteristics = characteristics
+            ?: getCameraCharacteristicsOrNull(openCameraId, "quick-shot capabilities")
+        if (resolvedCharacteristics == null) {
+            PLog.e(TAG, "Failed to load quick-shot capabilities")
             return _state.value.currentPreviewSize
         }
 
@@ -1020,19 +1056,19 @@ class Camera2Controller(private val context: Context) {
 
         var previewSize = _state.value.currentPreviewSize
         availableCaptureRequestKeyNames = null
-        loggedUnavailableVendorCaptureKeys.clear()
 
         try {
             try {
-                cachedCharacteristics = cameraManager.getCameraCharacteristics(openCameraId)
-                availableCaptureRequestKeyNames = loadAvailableCaptureRequestKeyNames(cachedCharacteristics)
+                val openCharacteristics = getCameraCharacteristicsCached(openCameraId)
+                cacheActiveCameraCharacteristics(openCameraId, openCharacteristics)
+                availableCaptureRequestKeyNames = loadAvailableCaptureRequestKeyNames(openCharacteristics)
 
                 // 缓存固定属性（传感器方向、镜头朝向、硬件级别）
                 // 这些值在相机生命周期内不会改变，避免在每帧预览中重复获取
-                cachedSensorOrientation = cachedCharacteristics?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-                cachedLensFacing = cachedCharacteristics?.get(CameraCharacteristics.LENS_FACING)
+                cachedSensorOrientation = openCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+                cachedLensFacing = openCharacteristics.get(CameraCharacteristics.LENS_FACING)
                     ?: CameraCharacteristics.LENS_FACING_BACK
-                cachedHardwareLevel = cachedCharacteristics?.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
+                cachedHardwareLevel = openCharacteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
                     ?: CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED
 
                 val hardwareLevelName = when (cachedHardwareLevel) {
@@ -1045,76 +1081,94 @@ class Camera2Controller(private val context: Context) {
 
                 // 更新硬件能力缓存
                 val capabilities =
-                    cachedCharacteristics?.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
-                val capabilityCameraId = requestedPhysicalCameraId ?: openCameraId
+                    openCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                var capabilityCameraId = outputPhysicalCameraId ?: openCameraId
+                val capabilityCharacteristics = if (capabilityCameraId == openCameraId) {
+                    openCharacteristics
+                } else {
+                    getCameraCharacteristicsOrNull(
+                        capabilityCameraId,
+                        "physical output capability preload"
+                    ) ?: run {
+                        PLog.w(
+                            TAG,
+                            "Physical output camera $capabilityCameraId characteristics unavailable; " +
+                                    "falling back to open camera $openCameraId"
+                        )
+                        outputPhysicalCameraId = null
+                        activeOutputPhysicalCameraId = null
+                        capabilityCameraId = openCameraId
+                        openCharacteristics
+                    }
+                }
                 isManualSensorSupported =
                     capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
                 isManualPostProcessingSupported =
                     capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)
-                isFlashSupported = cachedCharacteristics?.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
-                maxAfRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0
-                maxAeRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
-                val maxAwbRegions = cachedCharacteristics?.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AWB) ?: 0
+                isFlashSupported = openCharacteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
+                maxAfRegions = openCharacteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0
+                maxAeRegions = openCharacteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
+                val maxAwbRegions = openCharacteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AWB) ?: 0
                 availableAfModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
                 availableEdgeModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES) ?: intArrayOf()
                 availableNoiseReductionModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
+                    openCharacteristics.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
                         ?: intArrayOf()
                 availableTonemapModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES) ?: intArrayOf()
                 tonemapMaxCurvePoints =
-                    cachedCharacteristics?.get(CameraCharacteristics.TONEMAP_MAX_CURVE_POINTS) ?: 0
+                    openCharacteristics.get(CameraCharacteristics.TONEMAP_MAX_CURVE_POINTS) ?: 0
                 availableColorCorrectionAberrationModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES)
+                    openCharacteristics.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES)
                         ?: intArrayOf()
                 availableHotPixelModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES)
+                    openCharacteristics.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES)
                         ?: intArrayOf()
                 availableShadingModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.SHADING_AVAILABLE_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.SHADING_AVAILABLE_MODES) ?: intArrayOf()
                 availableDistortionCorrectionModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)
+                    openCharacteristics.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)
                         ?: intArrayOf()
                 availableVideoStabilizationModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
+                    openCharacteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)
                         ?: intArrayOf()
                 availableOpticalStabilizationModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+                    openCharacteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
                         ?: intArrayOf()
                 availableLensShadingMapModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_LENS_SHADING_MAP_MODES)
+                    openCharacteristics.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_LENS_SHADING_MAP_MODES)
                         ?: intArrayOf()
-                isRawSupported = isRawOutputSupported(capabilityCameraId) &&
-                        (requestedPhysicalCameraId?.let {
+                isRawSupported = isRawOutputSupported(capabilityCharacteristics) &&
+                        (outputPhysicalCameraId?.let {
                             !isPhysicalOutputProfileFailed(it, ImageFormat.RAW_SENSOR)
                         } ?: true)
 
                 availableAeModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES) ?: intArrayOf()
                 availableAwbModes =
-                    cachedCharacteristics?.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES) ?: intArrayOf()
+                    openCharacteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES) ?: intArrayOf()
 
                 isP010Supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                        isOutputFormatAdvertised(capabilityCameraId, ImageFormat.YCBCR_P010) &&
-                        (requestedPhysicalCameraId?.let {
+                        isOutputFormatAdvertised(capabilityCharacteristics, ImageFormat.YCBCR_P010) &&
+                        (outputPhysicalCameraId?.let {
                             !isPhysicalOutputProfileFailed(it, ImageFormat.YCBCR_P010)
                         } ?: true)
                 isHlg10Supported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isP010Supported) {
                     val dynamicRangeProfiles =
-                        cachedCharacteristics?.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)
+                        openCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)
                     dynamicRangeProfiles?.supportedProfiles?.contains(DynamicRangeProfiles.HLG10) == true
                 } else {
                     false
                 }
 
-                val resolvedVideoPreviewSize = refreshVideoCapabilities(cachedCharacteristics)
-                val resolvedQuickShotPreviewSize = refreshQuickShotCapabilities(cachedCharacteristics)
+                val resolvedVideoPreviewSize = refreshVideoCapabilities(openCharacteristics)
+                val resolvedQuickShotPreviewSize = refreshQuickShotCapabilities(openCharacteristics)
                 previewSize = when (captureMode) {
                     CaptureMode.VIDEO -> resolvedVideoPreviewSize
                     CaptureMode.QUICK_SHOT -> resolvedQuickShotPreviewSize
-                    CaptureMode.PHOTO -> CameraUtils.getFixedPreviewSize(context, openCameraId, _state.value.aspectRatio)
+                    CaptureMode.PHOTO -> CameraUtils.getFixedPreviewSize(openCharacteristics, _state.value.aspectRatio)
                 }
                 surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
 
@@ -1133,10 +1187,10 @@ class Camera2Controller(private val context: Context) {
 
                 val selectableNrModes = buildSelectableNoiseReductionModes(availableNoiseReductionModes)
 
-                val focusCharacteristics = resolveActiveFocusCharacteristics(cachedCharacteristics)?.second
-                    ?: cachedCharacteristics
+                val focusCharacteristics = resolveActiveFocusCharacteristics(openCharacteristics)?.second
+                    ?: openCharacteristics
                 val minimumFocusDistance =
-                    focusCharacteristics?.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+                    focusCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
 
                 _state.value = _state.value.copy(
                     isRawSupported = isRawSupported,
@@ -1169,9 +1223,15 @@ class Camera2Controller(private val context: Context) {
             if (captureMode == CaptureMode.PHOTO) {
                 val aspectRatio = state.value.aspectRatio
                 val effectivelyUseRaw = state.value.useRaw && isRawSupported
+                val openCharacteristics = getCameraCharacteristicsCached(openCameraId)
                 var outputCameraIdForStreams = outputPhysicalCameraId ?: openCameraId
+                var outputCharacteristicsForStreams = if (outputCameraIdForStreams == openCameraId) {
+                    openCharacteristics
+                } else {
+                    getCameraCharacteristicsCached(outputCameraIdForStreams)
+                }
                 var rawCaptureSize = if (effectivelyUseRaw) {
-                    CameraUtils.getRawCaptureSize(context, outputCameraIdForStreams)
+                    CameraUtils.getRawCaptureSize(outputCharacteristicsForStreams)
                 } else {
                     null
                 }
@@ -1181,7 +1241,7 @@ class Camera2Controller(private val context: Context) {
                         state.value.useP010
                 var captureFormat = if (rawCaptureSize != null) {
                     ImageFormat.RAW_SENSOR
-                } else if (wantsP010 && isOutputFormatAdvertised(outputCameraIdForStreams, ImageFormat.YCBCR_P010)) {
+                } else if (wantsP010 && isOutputFormatAdvertised(outputCharacteristicsForStreams, ImageFormat.YCBCR_P010)) {
                     ImageFormat.YCBCR_P010
                 } else {
                     ImageFormat.YUV_420_888
@@ -1197,19 +1257,20 @@ class Camera2Controller(private val context: Context) {
                     outputPhysicalCameraId = null
                     activeOutputPhysicalCameraId = null
                     outputCameraIdForStreams = openCameraId
+                    outputCharacteristicsForStreams = openCharacteristics
                     rawCaptureSize = null
                     captureFormat = ImageFormat.YUV_420_888
                 }
-                previewSize = CameraUtils.getFixedPreviewSize(context, outputCameraIdForStreams, aspectRatio)
+                previewSize = CameraUtils.getFixedPreviewSize(outputCharacteristicsForStreams, aspectRatio)
                 surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
                 val captureSize = if (captureFormat == ImageFormat.RAW_SENSOR && rawCaptureSize != null) {
                     rawCaptureSize
                 } else {
-                    CameraUtils.getBestCaptureSize(context, outputCameraIdForStreams, aspectRatio, captureFormat)
+                    CameraUtils.getBestCaptureSize(outputCharacteristicsForStreams, aspectRatio, captureFormat)
                 }
 
                 val isP3Supported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    cachedCharacteristics?.get(CameraCharacteristics.REQUEST_AVAILABLE_COLOR_SPACE_PROFILES)
+                    outputCharacteristicsForStreams.get(CameraCharacteristics.REQUEST_AVAILABLE_COLOR_SPACE_PROFILES)
                         ?.getSupportedColorSpaces(captureFormat)
                         ?.contains(ColorSpace.Named.DISPLAY_P3) == true
                 } else false
@@ -1230,7 +1291,7 @@ class Camera2Controller(private val context: Context) {
                             ImageFormat.YCBCR_P010 -> "P010"
                             else -> "YUV"
                         }
-                    }, isP3Supported: $isP3Supported, imageReaderMaxImages: $readerMaxImages"
+                    }, stream=$outputCameraIdForStreams, isP3Supported: $isP3Supported, imageReaderMaxImages: $readerMaxImages"
                 )
                 imageReader = ImageReader.newInstance(
                     captureSize.width,
@@ -1677,7 +1738,7 @@ class Camera2Controller(private val context: Context) {
     private fun applyInitialSessionParameters(sessionConfig: SessionConfiguration) {
         val builder = previewRequestBuilder ?: return
         val sessionKeys = try {
-            cachedCharacteristics?.availableSessionKeys
+            getActiveOpenCameraCharacteristics()?.availableSessionKeys
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to query available session keys", e)
             null
@@ -1775,21 +1836,19 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun isOutputFormatAdvertised(cameraId: String, format: Int): Boolean {
-        return try {
-            val outputFormats = cameraManager.getCameraCharacteristics(cameraId)
-                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                ?.outputFormats
-                ?: return false
-            outputFormats.contains(format)
-        } catch (e: Exception) {
-            PLog.w(TAG, "Failed to inspect output format $format for camera $cameraId", e)
-            false
-        }
+    private fun isOutputFormatAdvertised(
+        characteristics: CameraCharacteristics,
+        format: Int
+    ): Boolean {
+        val outputFormats = characteristics
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?.outputFormats
+            ?: return false
+        return outputFormats.contains(format)
     }
 
-    private fun isRawOutputSupported(cameraId: String): Boolean {
-        return CameraUtils.getRawCaptureSize(context, cameraId) != null
+    private fun isRawOutputSupported(characteristics: CameraCharacteristics): Boolean {
+        return CameraUtils.getRawCaptureSize(characteristics) != null
     }
 
     private fun onSessionConfigured(
@@ -1913,11 +1972,6 @@ class Camera2Controller(private val context: Context) {
         if (!settings.isEnabled) return
 
         settings.values.forEach { (key, value) ->
-            if (!isCaptureRequestKeyAvailable(key.requestKeyName)) {
-                logUnavailableVendorCaptureKey(lensId, key)
-                return@forEach
-            }
-
             try {
                 when (key.valueType) {
                     VendorCaptureValueType.INT -> {
@@ -1936,14 +1990,14 @@ class Camera2Controller(private val context: Context) {
                 }
                 PLog.d(TAG, "Applied vendor capture key for lens $lensId: ${key.requestKeyName}=${key.normalizeValue(value)}")
             } catch (e: Exception) {
-                PLog.e(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
+                PLog.w(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
             }
         }
     }
 
     private fun isCaptureRequestKeyAvailable(requestKeyName: String): Boolean {
         val keyNames = availableCaptureRequestKeyNames
-            ?: loadAvailableCaptureRequestKeyNames(cachedCharacteristics).also {
+            ?: loadAvailableCaptureRequestKeyNames(getActiveOpenCameraCharacteristics()).also {
                 availableCaptureRequestKeyNames = it
             }
         return keyNames.contains(requestKeyName)
@@ -1961,17 +2015,6 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun logUnavailableVendorCaptureKey(lensId: String, key: VendorCaptureKey) {
-        val logKey = "${activeOpenCameraId}:${lensId}:${key.requestKeyName}"
-        if (loggedUnavailableVendorCaptureKeys.add(logKey)) {
-            PLog.i(
-                TAG,
-                "Skipped vendor capture key for lens $lensId because it is not listed in " +
-                        "available capture request keys: ${key.requestKeyName}"
-            )
-        }
-    }
-
     private fun setZslDisabledIfSupported(builder: CaptureRequest.Builder) {
         if (!isZslControlAvailable()) return
         builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false)
@@ -1980,7 +2023,7 @@ class Camera2Controller(private val context: Context) {
     private fun isZslControlAvailable(): Boolean {
         isZslControlSupported?.let { return it }
         val supported = try {
-            cachedCharacteristics
+            getActiveOpenCameraCharacteristics()
                 ?.availableCaptureRequestKeys
                 ?.contains(CaptureRequest.CONTROL_ENABLE_ZSL)
                 ?: true
@@ -2134,8 +2177,7 @@ class Camera2Controller(private val context: Context) {
             // 拍摄时设置低帧率范围以支持长曝光
             if (isCapture && state.captureMode == CaptureMode.PHOTO) {
                 try {
-                    val characteristics =
-                        cachedCharacteristics ?: cameraManager.getCameraCharacteristics(getCurrentOpenCameraId())
+                    val characteristics = getActiveOpenCameraCharacteristics() ?: return
                     val availableFpsRanges =
                         characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
                     val lowestFpsRange = availableFpsRanges?.minByOrNull { it.upper }
@@ -2150,7 +2192,7 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
-        val characteristics = cachedCharacteristics ?: return
+        val characteristics = getActiveOpenCameraCharacteristics() ?: return
         val availableRanges =
             characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return
         
@@ -2343,7 +2385,7 @@ class Camera2Controller(private val context: Context) {
         if (openCameraId.isEmpty()) return
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = getCameraCharacteristicsCached(openCameraId)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
@@ -2805,7 +2847,7 @@ class Camera2Controller(private val context: Context) {
     /**
      * 切换到指定的相机 ID
      */
-    fun switchToCameraId(cameraId: String) {
+    fun switchToCameraId(cameraId: String, initialZoomRatio: Float = 1f) {
         val cameras = _state.value.availableCameras
         val targetCamera = cameras.find { it.cameraId == cameraId }
 
@@ -2819,7 +2861,7 @@ class Camera2Controller(private val context: Context) {
             _state.value = _state.value.copy(
                 currentCameraId = cam.cameraId,
                 currentLensType = cam.lensType,
-                zoomRatio = 1f
+                zoomRatio = sanitizeZoomRatio(initialZoomRatio)
             )
         } ?: PLog.w(TAG, "Camera with ID $cameraId not found")
     }
@@ -3003,7 +3045,7 @@ class Camera2Controller(private val context: Context) {
         if (openCameraId.isEmpty()) return false
 
         return try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = getCameraCharacteristicsCached(openCameraId)
             val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
 
             val isSupported =
@@ -3029,7 +3071,7 @@ class Camera2Controller(private val context: Context) {
         if (openCameraId.isEmpty()) return intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
 
         return try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = getCameraCharacteristicsCached(openCameraId)
             characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
                 ?: intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
         } catch (e: Exception) {
@@ -3180,7 +3222,7 @@ class Camera2Controller(private val context: Context) {
         }
 
         if (maxAeRegions <= 0) return
-        val characteristics = cachedCharacteristics ?: return
+        val characteristics = getActiveOpenCameraCharacteristics() ?: return
         val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
 
         if (mode == MeteringMode.AVERAGE) {
@@ -3421,23 +3463,13 @@ class Camera2Controller(private val context: Context) {
             }
             return
         }
-        val requestedRatio = if (ratio.isFinite()) ratio.coerceAtLeast(0.01f) else 1f
+        val requestedRatio = sanitizeZoomRatio(ratio)
         _state.value = _state.value.copy(zoomRatio = requestedRatio)
-
-        val device = cameraDevice
-        val session = captureSession
-        val builder = previewRequestBuilder
-        val openCameraId = activeOpenCameraId
-        if (device == null || session == null || builder == null || openCameraId.isEmpty()) {
-            PLog.v(
-                TAG,
-                "setZoomRatio deferred: camera not ready (device=$device, session=$session, builder=$builder, open=$openCameraId)"
-            )
-            return
-        }
+        val builder = previewRequestBuilder ?: return
+        val openCameraId = activeOpenCameraId.takeIf { it.isNotEmpty() } ?: return
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = getCameraCharacteristicsCached(openCameraId)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
@@ -3454,18 +3486,25 @@ class Camera2Controller(private val context: Context) {
             builder.apply {
                 applyZoomRequestSettings(this, clampedRatio, activeRect, zoomRatioRange)
             }
-            updatePreview()
+            if (cameraDevice != null && captureSession != null) {
+                updatePreview()
+            }
 
             val zoomMode = if (zoomRatioRange != null) {
                 "CONTROL_ZOOM_RATIO"
             } else {
                 "SCALER_CROP_REGION"
             }
-            PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio ($zoomMode)")
+            val applyTiming = if (captureSession == null) "builder-only" else "preview"
+            PLog.d(TAG, "setZoomRatio: $ratio -> $clampedRatio ($zoomMode, $applyTiming)")
 
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to set zoom", e)
         }
+    }
+
+    private fun sanitizeZoomRatio(ratio: Float): Float {
+        return if (ratio.isFinite()) ratio.coerceAtLeast(0.01f) else 1f
     }
 
     private fun recreateSessionForPhysicalZoomIfNeeded(state: CameraState): Boolean {
@@ -3786,7 +3825,7 @@ class Camera2Controller(private val context: Context) {
         sceneChangeFrameCount = 0
 
         try {
-            val characteristics = cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = getCameraCharacteristicsCached(openCameraId)
             val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
             val sensorOrientation = getSensorOrientation()
             val lensFacing = getLensFacing()
@@ -4845,7 +4884,7 @@ class Camera2Controller(private val context: Context) {
         var characteristicsForMetadata: CameraCharacteristics? = null
 
         try {
-            val characteristics = effectiveCharacteristics ?: cachedCharacteristics ?: cameraManager.getCameraCharacteristics(openCameraId)
+            val characteristics = effectiveCharacteristics ?: getCameraCharacteristicsCached(openCameraId)
             characteristicsForMetadata = characteristics
 
             // 光圈值（取第一个可用光圈）
@@ -5052,7 +5091,7 @@ class Camera2Controller(private val context: Context) {
         try {
             val width = image.width
             val height = image.height
-            var effectiveCharacteristics = cachedCharacteristics
+            var effectiveCharacteristics = getActiveOpenCameraCharacteristics()
             var effectiveResult: CaptureResult? = result
 
             // For RAW images, ensure characteristics match image dimensions to avoid DngCreator crash.
@@ -5061,15 +5100,20 @@ class Camera2Controller(private val context: Context) {
                 val checkMatch = { chars: CameraCharacteristics? ->
                     val pixelArray = chars?.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
                     val preCorrectionArray = chars?.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
-                    (pixelArray?.width == width && pixelArray?.height == height) ||
-                            (preCorrectionArray?.width() == width && preCorrectionArray?.height() == height)
+                    val matchesPixelArray = pixelArray != null &&
+                            pixelArray.width == width &&
+                            pixelArray.height == height
+                    val matchesPreCorrectionArray = preCorrectionArray != null &&
+                            preCorrectionArray.width() == width &&
+                            preCorrectionArray.height() == height
+                    matchesPixelArray || matchesPreCorrectionArray
                 }
 
                 if (!checkMatch(effectiveCharacteristics)) {
                     PLog.d(TAG, "RAW dimensions $width x $height mismatch logical characteristics. Searching physical cameras...")
                     for ((physicalId, physicalResult) in result.physicalCameraResults) {
                         try {
-                            val physicalChars = cameraManager.getCameraCharacteristics(physicalId)
+                            val physicalChars = getCameraCharacteristicsCached(physicalId)
                             if (checkMatch(physicalChars)) {
                                 PLog.i(TAG, "Found matching physical camera $physicalId for RAW image")
                                 effectiveCharacteristics = physicalChars

@@ -25,9 +25,21 @@ object CameraUtils {
         cameraId: String,
         aspectRatio: AspectRatio
     ): Size {
-        try {
+        return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            getFixedPreviewSize(characteristics, aspectRatio)
+        } catch (e: Exception) {
+            PLog.d("CameraUtils", "getFixedPreviewSize: ${e.message}")
+            Size(1440, 1080)
+        }
+    }
+
+    fun getFixedPreviewSize(
+        characteristics: CameraCharacteristics,
+        aspectRatio: AspectRatio
+    ): Size {
+        return try {
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 ?: return Size(1440, 1080)
 
@@ -93,6 +105,19 @@ object CameraUtils {
         return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            getBestCaptureSize(characteristics, aspectRatio, format)
+        } catch (e: Exception) {
+//            PLog.e(TAG, "Failed to get capture size", e)
+            Size(1920, 1080)
+        }
+    }
+
+    fun getBestCaptureSize(
+        characteristics: CameraCharacteristics,
+        aspectRatio: AspectRatio,
+        format: Int = ImageFormat.YUV_420_888
+    ): Size {
+        return try {
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = map?.getOutputSizes(format)
                 ?: map?.getOutputSizes(ImageFormat.YUV_420_888)
@@ -126,6 +151,15 @@ object CameraUtils {
         return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            getRawCaptureSize(characteristics)
+        } catch (e: Exception) {
+            PLog.e("CameraUtils", "Failed to get RAW capture size: ${e.message}")
+            null
+        }
+    }
+
+    fun getRawCaptureSize(characteristics: CameraCharacteristics): Size? {
+        return try {
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val sizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR) ?: return null
             

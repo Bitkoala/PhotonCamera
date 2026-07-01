@@ -2630,20 +2630,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun switchToLens(cameraId: String) {
         val targetCamera = state.value.availableCameras.find { it.cameraId == cameraId }
-        syncVendorCaptureSettingsToController()
-        cameraController.switchToCameraId(cameraId)
         targetCamera?.let { camera ->
-            setZoomRatioForCamera(camera.defaultVisibleZoomRatio(), camera.cameraId)
+            zoomRatioByMain = camera.defaultVisibleZoomRatio()
         }
+        cameraController.switchToCameraId(cameraId)
         reopenCamera(
             preserveVideoRecording = true
         )
     }
 
     fun switchToLensAndSetZoomRatio(cameraId: String, ratio: Float) {
-        syncVendorCaptureSettingsToController()
-        cameraController.switchToCameraId(cameraId)
-        setZoomRatioForCamera(ratio, cameraId)
+        val targetCamera = state.value.availableCameras.find { it.cameraId == cameraId }
+        zoomRatioByMain = ratio
+        cameraController.switchToCameraId(
+            cameraId = cameraId,
+            initialZoomRatio = toCameraControllerZoomRatio(ratio, targetCamera)
+        )
         reopenCamera(
             preserveVideoRecording = true
         )
@@ -2666,6 +2668,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraOpenInFlight = false
                 return@launch
             }
+            syncVendorCaptureSettingsToController()
             cameraController.openCamera(
                 surfaceTexture = texture,
                 preserveVideoRecording = preserveVideoRecording
@@ -2736,15 +2739,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         setCameraControllerZoomRatio(ratio, cameraInfo)
     }
 
-    private fun setZoomRatioForCamera(ratio: Float, cameraId: String) {
-        zoomRatioByMain = ratio
-        val cameraInfo = state.value.availableCameras.find { it.cameraId == cameraId }
-        setCameraControllerZoomRatio(ratio, cameraInfo)
+    private fun setCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?) {
+        cameraController.setZoomRatio(toCameraControllerZoomRatio(ratio, cameraInfo))
     }
 
-    private fun setCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?) {
+    private fun toCameraControllerZoomRatio(ratio: Float, cameraInfo: CameraInfo?): Float {
         val displayIntrinsicZoomRatio = cameraInfo?.displayIntrinsicZoomRatio?.takeIf { it > 0f } ?: 1.0f
-        cameraController.setZoomRatio(ratio / displayIntrinsicZoomRatio)
+        return ratio / displayIntrinsicZoomRatio
     }
 
     private fun CameraInfo.defaultVisibleZoomRatio(): Float {

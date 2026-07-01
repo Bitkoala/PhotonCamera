@@ -48,6 +48,8 @@ class CameraDiscovery(private val context: Context) {
     // 缓存已发现的摄像头 ID 列表
     private var cachedCameraIds: List<String>? = null
     private var cachedCameraIdsWithDuplicateMain: List<String>? = null
+    private var cachedRawCameraIdList: List<String>? = null
+    private val cameraCharacteristicsCache = mutableMapOf<String, CameraCharacteristics>()
 
     /**
      * 发现所有可用的摄像头（不依赖 CameraX）
@@ -134,7 +136,7 @@ class CameraDiscovery(private val context: Context) {
 
         for (cameraId in allCameraIds) {
             try {
-                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val characteristics = getCameraCharacteristics(cameraId)
                 val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING) ?: continue
 
                 // 计算 intrinsicZoomRatio
@@ -211,9 +213,23 @@ class CameraDiscovery(private val context: Context) {
         return appendCustomCameraIds(allIds)
     }
 
+    private fun getRawCameraIdList(): List<String> {
+        cachedRawCameraIdList?.let { return it }
+        return cameraManager.cameraIdList.toList().also {
+            cachedRawCameraIdList = it
+        }
+    }
+
+    private fun getCameraCharacteristics(cameraId: String): CameraCharacteristics {
+        cameraCharacteristicsCache[cameraId]?.let { return it }
+        return cameraManager.getCameraCharacteristics(cameraId).also {
+            cameraCharacteristicsCache[cameraId] = it
+        }
+    }
+
     private fun getPublicCameraIds(): List<String> {
         val rawIds = try {
-            cameraManager.cameraIdList.toList()
+            getRawCameraIdList()
         } catch (e: CameraAccessException) {
             PLog.e(TAG, "Failed to get camera ID list (CameraAccessException)", e)
             return emptyList()
@@ -292,9 +308,9 @@ class CameraDiscovery(private val context: Context) {
         publicCameraIdSet: Set<String>,
         bindings: MutableMap<String, LogicalCameraBinding>
     ) {
-        for (logicalCameraId in cameraManager.cameraIdList) {
+        for (logicalCameraId in getRawCameraIdList()) {
             try {
-                val characteristics = cameraManager.getCameraCharacteristics(logicalCameraId)
+                val characteristics = getCameraCharacteristics(logicalCameraId)
                 val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
                     ?: continue
                 if (!capabilities.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)) {
@@ -371,7 +387,7 @@ class CameraDiscovery(private val context: Context) {
         request: LogicalCameraBindingRequest
     ): LogicalCameraBinding? {
         return try {
-            val logicalCharacteristics = cameraManager.getCameraCharacteristics(request.logicalCameraId)
+            val logicalCharacteristics = getCameraCharacteristics(request.logicalCameraId)
             val capabilities = logicalCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             if (capabilities?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) != true) {
                 PLog.w(
@@ -462,9 +478,9 @@ class CameraDiscovery(private val context: Context) {
         physicalCameraId: String
     ): CameraPhysicalInfo? {
         return try {
-            val characteristics = cameraManager.getCameraCharacteristics(physicalCameraId)
+            val characteristics = getCameraCharacteristics(physicalCameraId)
             val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
-                ?: cameraManager.getCameraCharacteristics(logicalCameraId)
+                ?: getCameraCharacteristics(logicalCameraId)
                     .get(CameraCharacteristics.LENS_FACING)
                 ?: return null
             CameraPhysicalInfo(
@@ -552,7 +568,7 @@ class CameraDiscovery(private val context: Context) {
 
     private fun isCustomCameraIdAvailable(cameraId: String): Boolean {
         return try {
-            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val characteristics = getCameraCharacteristics(cameraId)
 
             characteristics.get(CameraCharacteristics.LENS_FACING) ?: return false
 
@@ -681,7 +697,7 @@ class CameraDiscovery(private val context: Context) {
             }
 
             try {
-                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val characteristics = getCameraCharacteristics(cameraId)
 
                 val availableCapabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
                 availableCapabilities ?: continue
@@ -749,7 +765,7 @@ class CameraDiscovery(private val context: Context) {
         reason: String
     ): CameraCharacteristics? {
         return try {
-            cameraManager.getCameraCharacteristics(cameraId)
+            getCameraCharacteristics(cameraId)
         } catch (e: Exception) {
             PLog.v(
                 TAG,
@@ -794,8 +810,8 @@ class CameraDiscovery(private val context: Context) {
      */
     private fun getDefault35mmEquivalent(lensFacing: Int): Float {
         try {
-            for (cameraId in cameraManager.cameraIdList) {
-                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            for (cameraId in getRawCameraIdList()) {
+                val characteristics = getCameraCharacteristics(cameraId)
                 val facing = characteristics.get(CameraCharacteristics.LENS_FACING) ?: continue
 
                 if (facing != lensFacing) continue
@@ -1168,6 +1184,8 @@ class CameraDiscovery(private val context: Context) {
     fun clearCache() {
         cachedCameraIds = null
         cachedCameraIdsWithDuplicateMain = null
+        cachedRawCameraIdList = null
+        cameraCharacteristicsCache.clear()
     }
 
     // 内部数据类
