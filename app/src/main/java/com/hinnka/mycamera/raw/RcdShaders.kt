@@ -84,6 +84,13 @@ object RcdShaders {
             return clamp(coord, ivec2(0), uImageSize - ivec2(1));
         }
 
+        int getLensShadingIndex(int channelIndex, ivec2 coord) {
+            if (uLensShadingUsesDngGrid || channelIndex == 0 || channelIndex == 3) {
+                return channelIndex;
+            }
+            return ((coord.y & 1) == 0) ? 1 : 2;
+        }
+
         float getLensShadingGain(int channelIndex, ivec2 coord) {
             if (!uLensShadingEnabled) {
                 return 1.0;
@@ -99,7 +106,7 @@ object RcdShaders {
                 uv = (mapIndex + vec2(0.5)) / max(uLensShadingMapSize, vec2(1.0));
             }
             vec4 gains = texture(uLensShadingMap, uv);
-            return max(gains[channelIndex], 0.0);
+            return max(gains[getLensShadingIndex(channelIndex, coord)], 0.0);
         }
 
         float readSensorNormalized(ivec2 coord, int channelIndex) {

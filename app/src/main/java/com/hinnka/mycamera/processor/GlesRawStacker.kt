@@ -1289,16 +1289,31 @@ class GlesRawStacker(
             precision highp int;
             precision highp usampler2D;
 
-            int bayerIndexAt(int cfaPattern, ivec2 p) {
-                int phase = (p.y & 1) * 2 + (p.x & 1);
-                if (cfaPattern == 0) return phase;
-                if (cfaPattern == 1) {
+            int baseCfaPattern(int cfaPattern) {
+                if (cfaPattern >= 8) return cfaPattern - 8;
+                if (cfaPattern >= 4) return cfaPattern - 4;
+                return cfaPattern;
+            }
+
+            int cfaBlockSize(int cfaPattern) {
+                if (cfaPattern >= 8) return 4;
+                if (cfaPattern >= 4) return 2;
+                return 1;
+            }
+
+            int cfaPeriod(int cfaPattern) {
+                return cfaBlockSize(cfaPattern) * 2;
+            }
+
+            int bayerIndexForPhase(int pattern, int phase) {
+                if (pattern == 0) return phase;
+                if (pattern == 1) {
                     if (phase == 0) return 1;
                     if (phase == 1) return 0;
                     if (phase == 2) return 3;
                     return 2;
                 }
-                if (cfaPattern == 2) {
+                if (pattern == 2) {
                     if (phase == 0) return 2;
                     if (phase == 1) return 3;
                     if (phase == 2) return 0;
@@ -1310,30 +1325,18 @@ class GlesRawStacker(
                 return 0;
             }
 
-            ivec2 bayerOffset(int cfaPattern, int planeIndex) {
-                if (cfaPattern == 0) {
-                    if (planeIndex == 0) return ivec2(0, 0);
-                    if (planeIndex == 1) return ivec2(1, 0);
-                    if (planeIndex == 2) return ivec2(0, 1);
-                    return ivec2(1, 1);
-                }
-                if (cfaPattern == 1) {
-                    if (planeIndex == 0) return ivec2(1, 0);
-                    if (planeIndex == 1) return ivec2(0, 0);
-                    if (planeIndex == 2) return ivec2(1, 1);
-                    return ivec2(0, 1);
-                }
-                if (cfaPattern == 2) {
-                    if (planeIndex == 0) return ivec2(0, 1);
-                    if (planeIndex == 1) return ivec2(1, 1);
-                    if (planeIndex == 2) return ivec2(0, 0);
-                    return ivec2(1, 0);
-                }
-                if (planeIndex == 0) return ivec2(1, 1);
-                if (planeIndex == 1) return ivec2(0, 1);
-                if (planeIndex == 2) return ivec2(1, 0);
-                return ivec2(0, 0);
+            int bayerIndexAt(int cfaPattern, ivec2 p) {
+                int blockSize = cfaBlockSize(cfaPattern);
+                int phase = ((p.y / blockSize) & 1) * 2 + ((p.x / blockSize) & 1);
+                return bayerIndexForPhase(baseCfaPattern(cfaPattern), phase);
             }
+
+            int lensShadingChannelAt(int cfaPattern, ivec2 p) {
+                int channel = bayerIndexAt(cfaPattern, p);
+                if (channel == 0 || channel == 3) return channel;
+                return ((p.y & 1) == 0) ? 1 : 2;
+            }
+
         """.trimIndent()
 
         private val RAW_PROXY_COMPUTE_SHADER = """
@@ -1358,6 +1361,13 @@ class GlesRawStacker(
 
             float greenBlock(ivec2 planeCoord) {
                 ivec2 s = clamp(planeCoord * 2, ivec2(0), uProxySize * 2 - ivec2(2));
+                if (uCfaPattern >= 4) {
+                    float p00 = rawNormAt(s);
+                    float p10 = rawNormAt(s + ivec2(1, 0));
+                    float p01 = rawNormAt(s + ivec2(0, 1));
+                    float p11 = rawNormAt(s + ivec2(1, 1));
+                    return 0.25 * (p00 + p10 + p01 + p11);
+                }
                 float g1;
                 float g2;
                 if (uCfaPattern == 0 || uCfaPattern == 3) {
@@ -1997,12 +2007,13 @@ class GlesRawStacker(
                 return texture(uTileMask, clamp(uv, vec2(0.0), vec2(1.0))).r;
             }
 
-            float lscGain(int bayerIndex, ivec2 samplePos) {
+            float lscGain(ivec2 samplePos) {
                 vec2 uv = (vec2(samplePos) + vec2(0.5)) / vec2(uImageSize);
                 vec4 gains = texture(uLensShadingMap, uv);
-                if (bayerIndex == 0) return gains.r;
-                if (bayerIndex == 1) return gains.g;
-                if (bayerIndex == 2) return gains.b;
+                int channel = lensShadingChannelAt(uCfaPattern, samplePos);
+                if (channel == 0) return gains.r;
+                if (channel == 1) return gains.g;
+                if (channel == 2) return gains.b;
                 return gains.a;
             }
 
@@ -2010,7 +2021,7 @@ class GlesRawStacker(
                 samplePos = clamp(samplePos, ivec2(0), uImageSize - ivec2(1));
                 float raw = float(texelFetch(uInputRaw, samplePos, 0).r);
                 float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
-                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(bayerIndex, samplePos) / range, 0.0, 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(samplePos) / range, 0.0, 1.0);
             }
 
             float rawSensorNormAt(ivec2 samplePos) {
@@ -2054,21 +2065,43 @@ class GlesRawStacker(
                 return clamp(max(pixelClip, 0.62 * tileClip), 0.0, 1.0);
             }
 
-            float fetchSameColor(ivec2 lattice, ivec2 offset, int bayerIndex) {
-                lattice = clamp(lattice, ivec2(0), uPlaneSize - ivec2(1));
-                return rawNormAt(offset + lattice * 2, bayerIndex);
+            ivec2 cfaPhaseOffset(int cfaPattern, ivec2 p) {
+                int period = cfaPeriod(cfaPattern);
+                return ivec2(p.x % period, p.y % period);
             }
 
-            float sampleSameColor(vec2 planePos, ivec2 offset, int bayerIndex) {
-                vec2 pos = clamp(planePos, vec2(0.0), vec2(uPlaneSize - ivec2(1)));
+            ivec2 maxLatticeForPhase(ivec2 phaseOffset, int period) {
+                return max((uImageSize - ivec2(1) - phaseOffset) / ivec2(period), ivec2(0));
+            }
+
+            float fetchSamePhase(ivec2 lattice, ivec2 phaseOffset, int period, int bayerIndex) {
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return rawNormAt(phaseOffset + lattice * period, bayerIndex);
+            }
+
+            float sampleSamePhase(vec2 rawPos, ivec2 phaseOffset, int period, int bayerIndex) {
+                ivec2 maxLattice = maxLatticeForPhase(phaseOffset, period);
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                vec2 pos = clamp(
+                    (rawPos - phase) / float(period),
+                    vec2(0.0),
+                    vec2(float(maxLattice.x), float(maxLattice.y))
+                );
                 ivec2 p0 = ivec2(floor(pos));
-                ivec2 p1 = min(p0 + ivec2(1), uPlaneSize - ivec2(1));
+                ivec2 p1 = min(p0 + ivec2(1), maxLattice);
                 vec2 f = pos - vec2(p0);
-                float v00 = fetchSameColor(p0, offset, bayerIndex);
-                float v10 = fetchSameColor(ivec2(p1.x, p0.y), offset, bayerIndex);
-                float v01 = fetchSameColor(ivec2(p0.x, p1.y), offset, bayerIndex);
-                float v11 = fetchSameColor(p1, offset, bayerIndex);
+                float v00 = fetchSamePhase(p0, phaseOffset, period, bayerIndex);
+                float v10 = fetchSamePhase(ivec2(p1.x, p0.y), phaseOffset, period, bayerIndex);
+                float v01 = fetchSamePhase(ivec2(p0.x, p1.y), phaseOffset, period, bayerIndex);
+                float v11 = fetchSamePhase(p1, phaseOffset, period, bayerIndex);
                 return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+            }
+
+            ivec2 nearestSamePhase(vec2 rawPos, ivec2 phaseOffset, int period) {
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                ivec2 lattice = ivec2(round((rawPos - phase) / float(period)));
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return phaseOffset + lattice * period;
             }
 
             vec3 kernelMatrix(vec4 params) {
@@ -2099,8 +2132,9 @@ class GlesRawStacker(
                 if (p.x >= uImageSize.x || p.y >= uImageSize.y) return;
                 vec4 prev = texelFetch(uAccumulatorInput, p, 0);
                 int bayerIndex = bayerIndexAt(uCfaPattern, p);
-                ivec2 offset = bayerOffset(uCfaPattern, bayerIndex);
-                vec2 planePos = 0.5 * (vec2(p) - vec2(offset));
+                int period = cfaPeriod(uCfaPattern);
+                ivec2 phaseOffset = cfaPhaseOffset(uCfaPattern, p);
+                vec2 planePos = vec2(float(p.x / 2), float(p.y / 2));
                 if (planePos.x < -0.001 || planePos.y < -0.001 ||
                     planePos.x > float(uPlaneSize.x - 1) + 0.001 ||
                     planePos.y > float(uPlaneSize.y - 1) + 0.001) {
@@ -2135,18 +2169,19 @@ class GlesRawStacker(
                     }
                     ivec2 kernelCoord = clamp(ivec2(round(planePos)), ivec2(0), uPlaneSize - ivec2(1));
                     vec4 kernel = texelFetch(uKernel, kernelCoord, 0);
+                    vec2 sourceRaw = vec2(p) + flow * 2.0;
                     float sumValue = 0.0;
                     float sumWeight = 0.0;
                     for (int y = -1; y <= 1; ++y) {
                         for (int x = -1; x <= 1; ++x) {
                             vec2 tap = vec2(float(x), float(y));
                             float w = kernelWeight(tap, kernel);
-                            sumValue += sampleSameColor(sourcePlane + tap, offset, bayerIndex) * w;
+                            sumValue += sampleSamePhase(sourceRaw + tap * float(period), phaseOffset, period, bayerIndex) * w;
                             sumWeight += w;
                         }
                     }
                     value = sumValue / max(sumWeight, 1e-5);
-                    ivec2 sourceSample = offset + ivec2(round(sourcePlane)) * 2;
+                    ivec2 sourceSample = nearestSamePhase(sourceRaw, phaseOffset, period);
                     clipAlpha = uHdrMode != 0 ? highlightClipAlpha(sourceSample) : 0.0;
                     float highlightSuppression = 1.0 - 0.62 * smoothstep(0.78, 0.98, value);
                     if (uHdrMode != 0) {
@@ -2503,12 +2538,13 @@ class GlesRawStacker(
             uniform float uReferenceExposureScale;
             uniform float uShortExposureScale;
 
-            float lscGain(int bayerIndex, ivec2 samplePos) {
+            float lscGain(ivec2 samplePos) {
                 vec2 uv = (vec2(samplePos) + vec2(0.5)) / vec2(uImageSize);
                 vec4 gains = texture(uLensShadingMap, uv);
-                if (bayerIndex == 0) return gains.r;
-                if (bayerIndex == 1) return gains.g;
-                if (bayerIndex == 2) return gains.b;
+                int channel = lensShadingChannelAt(uCfaPattern, samplePos);
+                if (channel == 0) return gains.r;
+                if (channel == 1) return gains.g;
+                if (channel == 2) return gains.b;
                 return gains.a;
             }
 
@@ -2516,7 +2552,7 @@ class GlesRawStacker(
                 p = clamp(p, ivec2(0), uImageSize - ivec2(1));
                 float raw = float(texelFetch(uReferenceRaw, p, 0).r);
                 float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
-                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(bayerIndex, p) / range, 0.0, 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(p) / range, 0.0, 1.0);
             }
 
             float referenceOutputNorm(ivec2 p, int bayerIndex) {
@@ -2540,7 +2576,7 @@ class GlesRawStacker(
                 p = shortAlignedPos(p);
                 float raw = float(texelFetch(uShortRaw, p, 0).r);
                 float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
-                float norm = clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(bayerIndex, p) / range, 0.0, 1.0);
+                float norm = clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(p) / range, 0.0, 1.0);
                 return clamp(norm * uShortExposureScale, 0.0, 1.0);
             }
 
@@ -2597,10 +2633,11 @@ class GlesRawStacker(
                 float mean = 0.0;
                 float mean2 = 0.0;
                 float count = 0.0;
+                int period = cfaPeriod(uCfaPattern);
                 if (uHdrMode != 0) {
                     for (int y = -1; y <= 1; ++y) {
                         for (int x = -1; x <= 1; ++x) {
-                            ivec2 q = p + ivec2(x * 2, y * 2);
+                            ivec2 q = p + ivec2(x * period, y * period);
                             if (q.x >= 0 && q.y >= 0 && q.x < uImageSize.x && q.y < uImageSize.y) {
                                 float v = meanAt(q);
                                 mean += v;
@@ -2612,7 +2649,7 @@ class GlesRawStacker(
                 } else {
                     for (int y = -2; y <= 2; ++y) {
                         for (int x = -2; x <= 2; ++x) {
-                            ivec2 q = p + ivec2(x * 2, y * 2);
+                            ivec2 q = p + ivec2(x * period, y * period);
                             if (q.x >= 0 && q.y >= 0 && q.x < uImageSize.x && q.y < uImageSize.y) {
                                 float v = meanAt(q);
                                 mean += v;

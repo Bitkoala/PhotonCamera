@@ -103,6 +103,14 @@ object RawCfaCorrection {
         }
     }
 
+    fun camera2LensShadingChannelIndexForPixel(cfaPattern: Int, x: Int, y: Int): Int {
+        return when (channelIndexForPixel(cfaPattern, x, y)) {
+            0 -> 0
+            3 -> 3
+            else -> if ((y and 1) == 0) 1 else 2
+        }
+    }
+
     fun baseBayerPattern(cfaPattern: Int): Int {
         return when {
             RawMetadata.isQuadBayer8x8(cfaPattern) -> cfaPattern - RawMetadata.CFA_QUAD_8X8_RGGB

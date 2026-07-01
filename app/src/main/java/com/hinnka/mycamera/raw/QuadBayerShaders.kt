@@ -89,7 +89,11 @@ object QuadBayerShaders {
         $COMMON
 
         int getLensShadingIndex(ivec2 coord) {
-            return getQuadChannelIndex(uCfaPattern, coord.x, coord.y);
+            int channelIndex = getQuadChannelIndex(uCfaPattern, coord.x, coord.y);
+            if (uLensShadingUsesDngGrid || channelIndex == 0 || channelIndex == 3) {
+                return channelIndex;
+            }
+            return ((coord.y & 1) == 0) ? 1 : 2;
         }
 
         float getLensShadingGain(ivec2 coord) {

@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.utils
 
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
@@ -18,8 +19,10 @@ import java.nio.channels.Channels
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 object SuperResolutionDngWriter {
     private const val TAG = "SuperResolutionDngWriter"
@@ -33,6 +36,7 @@ object SuperResolutionDngWriter {
     private const val TYPE_SRATIONAL = 10
     private const val TYPE_FLOAT = 11
     private const val TYPE_DOUBLE = 12
+    private const val MAX_TIFF_SHORT = 65_535
 
     private const val TAG_NEW_SUBFILE_TYPE = 254
     private const val TAG_IMAGE_WIDTH = 256
@@ -50,6 +54,15 @@ object SuperResolutionDngWriter {
     private const val TAG_PLANAR_CONFIGURATION = 284
     private const val TAG_SOFTWARE = 305
     private const val TAG_DATETIME = 306
+    private const val TAG_EXPOSURE_TIME = 33434
+    private const val TAG_F_NUMBER = 33437
+    private const val TAG_ISO_SPEED_RATINGS = 34855
+    private const val TAG_DATETIME_ORIGINAL = 36867
+    private const val TAG_DATETIME_DIGITIZED = 36868
+    private const val TAG_APERTURE_VALUE = 37378
+    private const val TAG_FOCAL_LENGTH = 37386
+    private const val TAG_WHITE_BALANCE = 41987
+    private const val TAG_FOCAL_LENGTH_IN_35MM_FILM = 41989
     private const val TAG_CFA_REPEAT_PATTERN_DIM = 33421
     private const val TAG_CFA_PATTERN = 33422
     private const val TAG_DNG_VERSION = 50706
@@ -202,6 +215,20 @@ object SuperResolutionDngWriter {
         val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
         val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
         val noiseProfile = buildNoiseProfile(captureResult)
+        val dateTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
+        val exposureTimeSeconds = captureResult.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            ?.takeIf { it > 0L }
+            ?.let { it.toDouble() / 1_000_000_000.0 }
+        val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY)?.takeIf { it > 0 }
+        val aperture = captureResult.get(CaptureResult.LENS_APERTURE)?.takeIf { it > 0f }
+        val focalLength = captureResult.get(CaptureResult.LENS_FOCAL_LENGTH)?.takeIf { it > 0f }
+            ?: characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                ?.firstOrNull()
+                ?.takeIf { it > 0f }
+        val focalLength35mm = calculate35mmEquivalent(characteristics, focalLength)
+        val exifWhiteBalance = captureResult.get(CaptureResult.CONTROL_AWB_MODE)?.let { awbMode ->
+            if (awbMode == CameraMetadata.CONTROL_AWB_MODE_AUTO) 0 else 1
+        }
         val opcodeList2 = buildOpcodeList2(
             captureResult = captureResult,
             cfaPattern = cfaPattern,
@@ -225,7 +252,18 @@ object SuperResolutionDngWriter {
             add(long(TAG_STRIP_BYTE_COUNTS, imageByteCount))
             add(short(TAG_PLANAR_CONFIGURATION, 1))
             add(ascii(TAG_SOFTWARE, "PhotonCamera"))
-            add(ascii(TAG_DATETIME, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())))
+            add(ascii(TAG_DATETIME, dateTime))
+            exposureTimeSeconds?.let { add(rationalArray(TAG_EXPOSURE_TIME, listOf(it))) }
+            aperture?.let {
+                add(rationalArray(TAG_F_NUMBER, listOf(it.toDouble())))
+                add(sRationalArray(TAG_APERTURE_VALUE, listOf(apexAperture(it).toDouble())))
+            }
+            iso?.let { add(short(TAG_ISO_SPEED_RATINGS, it.coerceIn(1, MAX_TIFF_SHORT))) }
+            add(ascii(TAG_DATETIME_ORIGINAL, dateTime))
+            add(ascii(TAG_DATETIME_DIGITIZED, dateTime))
+            focalLength?.let { add(rationalArray(TAG_FOCAL_LENGTH, listOf(it.toDouble()))) }
+            exifWhiteBalance?.let { add(short(TAG_WHITE_BALANCE, it)) }
+            focalLength35mm?.let { add(short(TAG_FOCAL_LENGTH_IN_35MM_FILM, it.coerceIn(1, MAX_TIFF_SHORT))) }
             add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
             add(byteArray(TAG_CFA_PATTERN, RawCfaCorrection.cfaPatternBytes(cfaPattern)))
             add(byteArray(TAG_DNG_VERSION, if (profileGainTableMap != null) {
@@ -349,6 +387,26 @@ object SuperResolutionDngWriter {
         ).joinToString(" ").ifBlank { "Photon Camera" }
     }
 
+    private fun apexAperture(fNumber: Float): Float {
+        if (fNumber <= 0f) return 0f
+        return (2.0 * ln(fNumber.toDouble()) / ln(2.0)).toFloat()
+    }
+
+    private fun calculate35mmEquivalent(
+        characteristics: CameraCharacteristics,
+        focalLength: Float?,
+    ): Int? {
+        val fl = focalLength?.takeIf { it > 0f } ?: return null
+        val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
+        val sensorDiagonal = sqrt(
+            sensorSize.width.toDouble() * sensorSize.width.toDouble() +
+                sensorSize.height.toDouble() * sensorSize.height.toDouble()
+        )
+        if (sensorDiagonal <= 0.0) return null
+        val fullFrameDiagonal = 43.2666
+        return (fl * fullFrameDiagonal / sensorDiagonal).roundToInt().takeIf { it > 0 }
+    }
+
     private fun blackLevelByCfaPosition(cfaPattern: Int, blackLevel: FloatArray): List<Float> {
         fun channel(index: Int): Float = blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
         val dim = RawCfaCorrection.repeatPatternDim(cfaPattern)
@@ -377,7 +435,7 @@ object SuperResolutionDngWriter {
         opcodes.write(beUInt(opcodeCount.toLong()))
         for (top in 0 until dim[0]) {
             for (left in 0 until dim[1]) {
-                val channel = RawCfaCorrection.channelIndexForPixel(cfaPattern, left, top)
+                val channel = RawCfaCorrection.camera2LensShadingChannelIndexForPixel(cfaPattern, left, top)
                 opcodes.write(buildGainMapOpcode(lensShadingMap, channel, top, left, dim[0], dim[1], width, height))
             }
         }

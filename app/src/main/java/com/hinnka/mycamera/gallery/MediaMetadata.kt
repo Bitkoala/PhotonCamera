@@ -197,13 +197,22 @@ data class MediaMetadata(
         val resolvedWidth = if (shouldSwap) rawHeight else rawWidth
         val resolvedHeight = if (shouldSwap) rawWidth else rawHeight
         return copy(
-            iso = raw.iso.takeIf { it > 0 } ?: iso,
+            iso = mergeIso(raw.iso),
             shutterSpeed = formatShutterSpeed(raw.shutterSpeed).takeIf { it.isNotEmpty() } ?: shutterSpeed,
             aperture = formatAperture(raw.aperture).takeIf { it.isNotEmpty() } ?: aperture,
             exposureBias = raw.exposureBias,
             width = resolvedWidth.takeIf { it > 0 } ?: width,
             height = resolvedHeight.takeIf { it > 0 } ?: height
         )
+    }
+
+    private fun mergeIso(rawIso: Int): Int? {
+        if (rawIso <= 0) return iso
+        val currentIso = iso?.takeIf { it > 0 }
+        if (currentIso != null && rawIso == RAW_ISO_FALLBACK_VALUE && currentIso != RAW_ISO_FALLBACK_VALUE) {
+            return currentIso
+        }
+        return rawIso
     }
 
     private fun formatShutterSpeed(shutterSpeedNs: Long): String {
@@ -223,6 +232,7 @@ data class MediaMetadata(
 
     companion object {
         private const val TAG = "PhotoMetadata"
+        private const val RAW_ISO_FALLBACK_VALUE = 100
         private val LOW_HARDWARE_NOISE_REDUCTION_LEVELS = setOf(0, 4)
 
         // 旧格式，以后不再更新
