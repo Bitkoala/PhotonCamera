@@ -555,10 +555,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             desiredUseMFNR = false
             desiredUseMFSR = false
         }
-        desiredRawRenderingEngine = resolveHdrCompositionRawRenderingEngine(
-            requestedEngine = desiredRawRenderingEngine,
-            useHdrComposition = desiredUseHdrComposition
-        )
+        if (shouldSyncRawHdrCompositionEngineToAdobe(
+                prefs = prefs,
+                update = update,
+                desiredUseRaw = desiredUseRaw,
+                desiredUseHdrComposition = desiredUseHdrComposition
+            )
+        ) {
+            desiredRawRenderingEngine = RawRenderingEngine.AdobeCurve
+        }
 
         val currentState = state.value
         val targetAspectRatio = update.aspectRatio?.value
@@ -689,26 +694,28 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         return prefs.useHdrComposition && !isRawEnabledForNaturalLightHdrGuard(prefs)
     }
 
-    private fun resolveHdrCompositionRawRenderingEngine(
-        requestedEngine: RawRenderingEngine,
-        useHdrComposition: Boolean
-    ): RawRenderingEngine {
-        return if (useHdrComposition) RawRenderingEngine.AdobeCurve else requestedEngine
+    private fun shouldSyncRawHdrCompositionEngineToAdobe(
+        prefs: UserPreferences,
+        update: CameraFeatureUpdate,
+        desiredUseRaw: Boolean,
+        desiredUseHdrComposition: Boolean
+    ): Boolean {
+        if (update.rawRenderingEngine != null) return false
+        val wasRawHdrComposition = prefs.useRaw && prefs.useHdrComposition
+        val isRawHdrComposition = desiredUseRaw && desiredUseHdrComposition
+        return isRawHdrComposition && !wasRawHdrComposition
     }
 
     private fun resolveCaptureRawRenderingEngine(userPrefs: UserPreferences?): RawRenderingEngine {
-        return resolveHdrCompositionRawRenderingEngine(
-            requestedEngine = userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
-            useHdrComposition = userPrefs?.useHdrComposition ?: false
-        )
+        return userPrefs?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve
     }
 
     private fun resolveCaptureRawToneMappingParameters(
         userPrefs: UserPreferences?,
         captureMode: String? = null
     ): RawToneMappingParameters {
-        return (userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT)
-            .withDefaultGooglePixelToneMap(isRawHdrCaptureMode(captureMode))
+        val base = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT
+        return base.withDefaultGooglePixelToneMap(isRawHdrCaptureMode(captureMode))
     }
 
     private fun isRawHdrCaptureMode(captureMode: String?): Boolean {
@@ -5033,11 +5040,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val frameCount = state.value.hdrBracketFrameCount
                 .coerceAtLeast(HDR_BRACKET_FRAME_COUNT)
             hdrBracketExpectedFrameCount = frameCount
-            hdrBracketZeroEvFrameCount = if (isRawCaptureFormat(image.format)) {
-                frameCount.coerceAtLeast(1)
-            } else {
-                (frameCount - 2).coerceAtLeast(1)
-            }
+            hdrBracketZeroEvFrameCount = (frameCount - 2).coerceAtLeast(1)
         }
         hdrBracketImages.add(image)
         hdrBracketCaptureResults.add(captureResult)

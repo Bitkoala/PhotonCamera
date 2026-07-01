@@ -18,13 +18,15 @@ internal object RawProfileGainTableMapBuilder {
         height: Int,
         rowStride: Int,
         metadata: RawMetadata,
+        samplesPerPixel: Int = 1,
     ): DngProfileGainTableMap? {
         val stats = buildPackedCellStats(
             rawData = rawData,
             width = width,
             height = height,
             rowStride = rowStride,
-            metadata = metadata
+            metadata = metadata,
+            samplesPerPixel = samplesPerPixel
         ) ?: return null
         return DngHdrProfileGainTableGenerator.forCellStats(
             width = width,
@@ -40,9 +42,11 @@ internal object RawProfileGainTableMapBuilder {
         height: Int,
         rowStride: Int,
         metadata: RawMetadata,
+        samplesPerPixel: Int,
     ): FloatArray? {
         if (width <= 0 || height <= 0 || metadata.whiteLevel <= 0f) return null
-        val rowBytes = width * 2
+        val sampleCountPerPixel = samplesPerPixel.coerceAtLeast(1)
+        val rowBytes = width * sampleCountPerPixel * 2
         val safeRowStride = rowStride.takeIf { it >= rowBytes } ?: rowBytes
         val source = rawData.duplicate().order(ByteOrder.nativeOrder())
         val requiredBytes = (height - 1).toLong() * safeRowStride.toLong() + rowBytes.toLong()
@@ -94,7 +98,8 @@ internal object RawProfileGainTableMapBuilder {
                             height = height,
                             baseX = x,
                             baseY = y,
-                            baselineGain = baselineGain
+                            baselineGain = baselineGain,
+                            samplesPerPixel = sampleCountPerPixel
                         )
                         inputSamples[sampleCount] = inputValue
                         val clampedInput = inputValue.coerceIn(0f, 1f)
@@ -137,7 +142,21 @@ internal object RawProfileGainTableMapBuilder {
         baseX: Int,
         baseY: Int,
         baselineGain: Float,
+        samplesPerPixel: Int,
     ): Float {
+        if (samplesPerPixel >= 3) {
+            return linearRgbPgtmInputAt(
+                rawData = rawData,
+                rowStride = rowStride,
+                metadata = metadata,
+                width = width,
+                height = height,
+                x = baseX,
+                y = baseY,
+                baselineGain = baselineGain,
+                samplesPerPixel = samplesPerPixel
+            )
+        }
         var r = 0f
         var g = 0f
         var b = 0f
@@ -174,6 +193,42 @@ internal object RawProfileGainTableMapBuilder {
         val luma = 0.2126f * red + 0.7152f * green + 0.0722f * blue
         val maxChannel = max(red, max(green, blue))
         return max((0.5f * luma + 0.5f * maxChannel) * baselineGain, 0f)
+    }
+
+    private fun linearRgbPgtmInputAt(
+        rawData: ByteBuffer,
+        rowStride: Int,
+        metadata: RawMetadata,
+        width: Int,
+        height: Int,
+        x: Int,
+        y: Int,
+        baselineGain: Float,
+        samplesPerPixel: Int,
+    ): Float {
+        val clampedX = x.coerceIn(0, width - 1)
+        val clampedY = y.coerceIn(0, height - 1)
+        val pixelOffset = clampedY * rowStride + clampedX * samplesPerPixel * 2
+        val red = normalizedLinearRgbAt(rawData, pixelOffset, metadata, 0)
+        val green = normalizedLinearRgbAt(rawData, pixelOffset + 2, metadata, 1)
+        val blue = normalizedLinearRgbAt(rawData, pixelOffset + 4, metadata, 2)
+        val luma = 0.2126f * red + 0.7152f * green + 0.0722f * blue
+        val maxChannel = max(red, max(green, blue))
+        return max((0.5f * luma + 0.5f * maxChannel) * baselineGain, 0f)
+    }
+
+    private fun normalizedLinearRgbAt(
+        rawData: ByteBuffer,
+        offset: Int,
+        metadata: RawMetadata,
+        channelIndex: Int,
+    ): Float {
+        val raw = rawData.getShort(offset).toInt() and 0xFFFF
+        val black = metadata.blackLevel.getOrElse(channelIndex) {
+            metadata.blackLevel.firstOrNull() ?: 0f
+        }
+        val range = max(metadata.whiteLevel - black, 1f)
+        return ((raw.toFloat() - black) / range).coerceIn(0f, 1f)
     }
 
     private fun normalizedRawAt(

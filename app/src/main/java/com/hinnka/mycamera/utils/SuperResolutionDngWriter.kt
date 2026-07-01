@@ -27,6 +27,19 @@ import kotlin.math.sqrt
 object SuperResolutionDngWriter {
     private const val TAG = "SuperResolutionDngWriter"
 
+    enum class ImageLayout(
+        val photometricInterpretation: Int,
+        val samplesPerPixel: Int,
+    ) {
+        CFA(32803, 1),
+        LINEAR_RAW_RGB(34892, 3),
+    }
+
+    enum class Compression(val tagValue: Int) {
+        UNCOMPRESSED(1),
+        JPEG_LOSSLESS(7),
+    }
+
     private const val TYPE_BYTE = 1
     private const val TYPE_ASCII = 2
     private const val TYPE_SHORT = 3
@@ -88,7 +101,22 @@ object SuperResolutionDngWriter {
     private const val TAG_ACTIVE_AREA = 50829
     private const val TAG_OPCODE_LIST_2 = 51009
     private const val TAG_NOISE_PROFILE = 51041
+    private const val TAG_DEFAULT_BLACK_RENDER = 51110
     private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
+
+    init {
+        runCatching { System.loadLibrary("my-native-lib") }
+    }
+
+    private external fun encodeLosslessJpegNative(
+        rawBuffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        samplesPerPixel: Int,
+        bitsPerSample: Int,
+        rowStep: Int,
+        colStep: Int,
+    ): ByteArray?
 
     fun write(
         outputStream: OutputStream,
@@ -107,12 +135,17 @@ object SuperResolutionDngWriter {
         whiteLevelMode: String? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
+        imageLayout: ImageLayout = ImageLayout.CFA,
+        compression: Compression = Compression.UNCOMPRESSED,
+        inputRowStepSamples: Int? = null,
+        inputColStepSamples: Int? = null,
     ): Boolean {
         if (width <= 0 || height <= 0) return false
 
         return runCatching {
             val input = rawBuffer.duplicate().order(ByteOrder.nativeOrder())
             input.rewind()
+            val samplesPerPixel = imageLayout.samplesPerPixel
 
             val resolvedBlackLevel = RawProcessor.resolveBlackLevelForMode(
                 defaultBlackLevel = blackLevel,
@@ -154,8 +187,34 @@ object SuperResolutionDngWriter {
                 resolvedWhiteLevel
             }
 
-            val imageByteCount = width.toLong() * height.toLong() * 2L
-            require(imageByteCount <= Int.MAX_VALUE) { "DNG image is too large for classic TIFF: ${width}x${height}" }
+            val uncompressedByteCount = width.toLong() * height.toLong() * samplesPerPixel.toLong() * 2L
+            require(uncompressedByteCount <= Int.MAX_VALUE) {
+                "DNG image is too large for classic TIFF: ${width}x${height} samples=$samplesPerPixel"
+            }
+            val rowStepSamples = inputRowStepSamples ?: width * samplesPerPixel
+            val colStepSamples = inputColStepSamples ?: samplesPerPixel
+            require(rowStepSamples >= width * colStepSamples) {
+                "Invalid DNG input stride: rowStep=$rowStepSamples colStep=$colStepSamples width=$width"
+            }
+            if (compression == Compression.UNCOMPRESSED) {
+                require(rowStepSamples == width * samplesPerPixel && colStepSamples == samplesPerPixel) {
+                    "Uncompressed DNG input must be tightly packed"
+                }
+            }
+            val imageBytes = if (compression == Compression.JPEG_LOSSLESS) {
+                encodeLosslessJpegNative(
+                    input,
+                    width,
+                    height,
+                    samplesPerPixel,
+                    16,
+                    rowStepSamples,
+                    colStepSamples,
+                ) ?: throw IllegalStateException("DNG SDK lossless JPEG encoder failed")
+            } else {
+                null
+            }
+            val imageByteCount = imageBytes?.size?.toLong() ?: uncompressedByteCount
 
             val entries = buildEntries(
                 width = width,
@@ -168,15 +227,23 @@ object SuperResolutionDngWriter {
                 whiteLevel = encodedWhiteLevel,
                 imageByteCount = imageByteCount,
                 baselineExposureEv = baselineExposureEv,
-                profileGainTableMap = profileGainTableMap?.takeIf { it.isValid }
+                profileGainTableMap = profileGainTableMap?.takeIf { it.isValid },
+                imageLayout = imageLayout,
+                compression = compression,
             )
             val header = buildHeader(entries)
             outputStream.write(header)
-            writeRawImage(outputStream, input, imageByteCount.toInt())
+            if (imageBytes != null) {
+                outputStream.write(imageBytes)
+            } else {
+                writeRawImage(outputStream, input, imageByteCount.toInt())
+            }
             outputStream.flush()
             PLog.i(
                 TAG,
                 "Wrote super-resolution DNG ${width}x${height} " +
+                    "layout=$imageLayout compression=$compression " +
+                    "rowStepSamples=$rowStepSamples colStepSamples=$colStepSamples " +
                     "blackLevel=${encodedBlackLevel.joinToString()} whiteLevel=$encodedWhiteLevel " +
                     "baselineExposureEv=$baselineExposureEv " +
                     "profileGainTable=${profileGainTableMap?.takeIf { it.isValid }?.let { "${it.mapPointsH}x${it.mapPointsV}x${it.mapPointsN}" } ?: "none"}"
@@ -199,6 +266,8 @@ object SuperResolutionDngWriter {
         imageByteCount: Long,
         baselineExposureEv: Float,
         profileGainTableMap: DngProfileGainTableMap?,
+        imageLayout: ImageLayout,
+        compression: Compression,
     ): List<TiffEntry> {
         // The custom writer is used when the fused RAW dimensions no longer
         // match the camera sensor. The fused buffer already lives in its final
@@ -229,25 +298,35 @@ object SuperResolutionDngWriter {
         val exifWhiteBalance = captureResult.get(CaptureResult.CONTROL_AWB_MODE)?.let { awbMode ->
             if (awbMode == CameraMetadata.CONTROL_AWB_MODE_AUTO) 0 else 1
         }
-        val opcodeList2 = buildOpcodeList2(
+        val isCfa = imageLayout == ImageLayout.CFA
+        val samplesPerPixel = imageLayout.samplesPerPixel
+        val opcodeList2 = if (isCfa) buildOpcodeList2(
             captureResult = captureResult,
             cfaPattern = cfaPattern,
             width = width,
             height = height
-        )
+        ) else null
+        val blackLevelRepeatDim = RawCfaCorrection.repeatPatternDim(cfaPattern)
+        val encodedBlackLevels = if (isCfa) {
+            blackLevelByCfaPosition(cfaPattern, blackLevel)
+        } else {
+            List(samplesPerPixel) { index ->
+                blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
+            }
+        }
 
         return buildList {
             add(long(TAG_NEW_SUBFILE_TYPE, 0))
             add(long(TAG_IMAGE_WIDTH, width.toLong()))
             add(long(TAG_IMAGE_LENGTH, height.toLong()))
-            add(short(TAG_BITS_PER_SAMPLE, 16))
-            add(short(TAG_COMPRESSION, 1))
-            add(short(TAG_PHOTOMETRIC_INTERPRETATION, 32803))
+            add(shortArray(TAG_BITS_PER_SAMPLE, IntArray(samplesPerPixel) { 16 }))
+            add(short(TAG_COMPRESSION, compression.tagValue))
+            add(short(TAG_PHOTOMETRIC_INTERPRETATION, imageLayout.photometricInterpretation))
             add(ascii(TAG_MAKE, Build.MANUFACTURER.ifBlank { "Android" }))
             add(ascii(TAG_MODEL, Build.MODEL.ifBlank { cameraModel }))
             add(long(TAG_STRIP_OFFSETS, 0))
             add(short(TAG_ORIENTATION, orientation))
-            add(short(TAG_SAMPLES_PER_PIXEL, 1))
+            add(short(TAG_SAMPLES_PER_PIXEL, samplesPerPixel))
             add(long(TAG_ROWS_PER_STRIP, height.toLong()))
             add(long(TAG_STRIP_BYTE_COUNTS, imageByteCount))
             add(short(TAG_PLANAR_CONFIGURATION, 1))
@@ -264,20 +343,32 @@ object SuperResolutionDngWriter {
             focalLength?.let { add(rationalArray(TAG_FOCAL_LENGTH, listOf(it.toDouble()))) }
             exifWhiteBalance?.let { add(short(TAG_WHITE_BALANCE, it)) }
             focalLength35mm?.let { add(short(TAG_FOCAL_LENGTH_IN_35MM_FILM, it.coerceIn(1, MAX_TIFF_SHORT))) }
-            add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
-            add(byteArray(TAG_CFA_PATTERN, RawCfaCorrection.cfaPatternBytes(cfaPattern)))
-            add(byteArray(TAG_DNG_VERSION, if (profileGainTableMap != null) {
-                byteArrayOf(1, 7, 0, 0)
-            } else {
-                byteArrayOf(1, 4, 0, 0)
+            if (isCfa) {
+                add(shortArray(TAG_CFA_REPEAT_PATTERN_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
+                add(byteArray(TAG_CFA_PATTERN, RawCfaCorrection.cfaPatternBytes(cfaPattern)))
+            }
+            add(byteArray(TAG_DNG_VERSION, when {
+                profileGainTableMap != null -> byteArrayOf(1, 7, 0, 0)
+                !isCfa -> byteArrayOf(1, 6, 0, 0)
+                else -> byteArrayOf(1, 4, 0, 0)
             }))
-            add(byteArray(TAG_DNG_BACKWARD_VERSION, byteArrayOf(1, 1, 0, 0)))
+            add(byteArray(TAG_DNG_BACKWARD_VERSION, if (isCfa) {
+                byteArrayOf(1, 1, 0, 0)
+            } else {
+                byteArrayOf(1, 3, 0, 0)
+            }))
             add(ascii(TAG_UNIQUE_CAMERA_MODEL, cameraModel))
-            add(byteArray(TAG_CFA_PLANE_COLOR, byteArrayOf(0, 1, 2)))
-            add(short(TAG_CFA_LAYOUT, 1))
-            add(shortArray(TAG_BLACK_LEVEL_REPEAT_DIM, RawCfaCorrection.repeatPatternDim(cfaPattern)))
-            add(rationalArray(TAG_BLACK_LEVEL, blackLevelByCfaPosition(cfaPattern, blackLevel).map { it.toDouble() }))
-            add(long(TAG_WHITE_LEVEL, whiteLevel.coerceAtLeast(1).toLong()))
+            if (isCfa) {
+                add(byteArray(TAG_CFA_PLANE_COLOR, byteArrayOf(0, 1, 2)))
+                add(short(TAG_CFA_LAYOUT, 1))
+                add(shortArray(TAG_BLACK_LEVEL_REPEAT_DIM, blackLevelRepeatDim))
+            }
+            add(rationalArray(TAG_BLACK_LEVEL, encodedBlackLevels.map { it.toDouble() }))
+            if (samplesPerPixel == 1) {
+                add(long(TAG_WHITE_LEVEL, whiteLevel.coerceAtLeast(1).toLong()))
+            } else {
+                add(longArray(TAG_WHITE_LEVEL, LongArray(samplesPerPixel) { whiteLevel.coerceAtLeast(1).toLong() }))
+            }
             add(rationalArray(TAG_DEFAULT_SCALE, listOf(defaultScaleX, defaultScaleY)))
             add(rationalArray(TAG_DEFAULT_CROP_ORIGIN, listOf(0.0, 0.0)))
             add(rationalArray(TAG_DEFAULT_CROP_SIZE, listOf(width.toDouble(), height.toDouble())))
@@ -286,6 +377,9 @@ object SuperResolutionDngWriter {
             forwardMatrix1?.let { add(sRationalArray(TAG_FORWARD_MATRIX_1, colorTransformToDngMatrix(it))) }
             forwardMatrix2?.let { add(sRationalArray(TAG_FORWARD_MATRIX_2, colorTransformToDngMatrix(it))) }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
+            if (!isCfa) {
+                add(long(TAG_DEFAULT_BLACK_RENDER, 1))
+            }
             add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(baselineExposureEv.toDouble())))
             if (profileGainTableMap != null) {
                 add(floatArray(TAG_PROFILE_TONE_CURVE, DngProfileToneCurve.googleHdrToneCurvePoints()))

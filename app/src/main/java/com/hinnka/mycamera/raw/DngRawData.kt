@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
  * @param width 图像宽度
  * @param height 图像高度
  * @param rowStride 行跨度（字节）
+ * @param samplesPerPixel 每像素样本数：1=CFA，3=LinearRaw RGB
  * @param whiteLevel 白电平值
  * @param blackLevel 黑电平值数组 [R, Gr, Gb, B]
  * @param whiteBalance 白平衡增益 [R, Gr, Gb, B]
@@ -33,6 +34,7 @@ data class DngRawData @Keep constructor(
     val width: Int,
     val height: Int,
     val rowStride: Int,
+    val samplesPerPixel: Int = 1,
     val whiteLevel: Float,
     val blackLevel: FloatArray,
     val preMul: FloatArray,
@@ -91,6 +93,7 @@ data class DngRawData @Keep constructor(
         if (width != other.width) return false
         if (height != other.height) return false
         if (rowStride != other.rowStride) return false
+        if (samplesPerPixel != other.samplesPerPixel) return false
         if (whiteLevel != other.whiteLevel) return false
         if (!blackLevel.contentEquals(other.blackLevel)) return false
         if (!preMul.contentEquals(other.preMul)) return false
@@ -127,6 +130,7 @@ data class DngRawData @Keep constructor(
         result = 31 * result + width
         result = 31 * result + height
         result = 31 * result + rowStride
+        result = 31 * result + samplesPerPixel
         result = 31 * result + whiteLevel.hashCode()
         result = 31 * result + blackLevel.contentHashCode()
         result = 31 * result + preMul.contentHashCode()

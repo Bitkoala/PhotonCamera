@@ -412,8 +412,7 @@ object GalleryMediaStore {
                 filmicWhiteRelativeExposure = rawFilmicWhiteRelativeExposure,
                 useGooglePixelToneMap = rawGooglePixelToneMap,
                 googlePixelToneMapExplicit = rawGooglePixelToneMapExplicit
-            )
-                .withDefaultGooglePixelToneMap(isRawHdrCaptureMode(captureMode)),
+            ).normalized(),
             frameId = frameId,
             width = width,
             height = height,

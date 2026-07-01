@@ -90,6 +90,7 @@ data class RawMetadata(
     val shutterSpeed: Long = 0L,
     val aperture: Float = 0f,
     val frameCount: Int = 1,
+    val rotation: Int? = null,
     val profileGainTableMap: DngProfileGainTableMap? = null
 ) {
     companion object {
@@ -789,6 +790,7 @@ data class RawMetadata(
         if (iso != other.iso) return false
         if (shutterSpeed != other.shutterSpeed) return false
         if (frameCount != other.frameCount) return false
+        if (rotation != other.rotation) return false
 
         return true
     }
@@ -811,6 +813,7 @@ data class RawMetadata(
         result = 31 * result + iso
         result = 31 * result + shutterSpeed.hashCode()
         result = 31 * result + frameCount
+        result = 31 * result + (rotation ?: 0)
         return result
     }
 }

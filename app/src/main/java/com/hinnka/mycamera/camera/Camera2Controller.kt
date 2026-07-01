@@ -80,7 +80,7 @@ class Camera2Controller(private val context: Context) {
         private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
         private const val BURST_CAPTURE_BATCH_SIZE = 8
         private const val HDR_BRACKET_BASE_CAPTURE_COUNT = 3
-        private const val HDR_BRACKET_SIDE_FRAME_COUNT = 4
+        private const val HDR_BRACKET_SIDE_FRAME_COUNT = 2
 
         // 拍照状态机常量
         private const val STATE_PREVIEW = 0 // Showing camera preview.
@@ -359,7 +359,7 @@ class Camera2Controller(private val context: Context) {
             currentState.useHdrComposition && currentState.useMFNR ->
                 maxOf(
                     multiFrameCount + HDR_BRACKET_SIDE_FRAME_COUNT,
-                    HdrBracketConfig.rawReferenceFrameCount(multiFrameCount)
+                    HdrBracketConfig.rawReferenceFrameCount()
                 )
 
             currentState.useHdrComposition && currentState.useMFSR ->
@@ -4361,18 +4361,9 @@ class Camera2Controller(private val context: Context) {
             0,
             MultiFrameConfig.MAX_FRAME_COUNT
         )
-        val rawMfnrFrameCount = if (isRawCapture && currentState.useMFNR) {
-            currentState.multiFrameCount.coerceIn(
-                MultiFrameConfig.MIN_FRAME_COUNT,
-                MultiFrameConfig.MAX_FRAME_COUNT
-            )
-        } else {
-            0
-        }
         val evOffsets = buildHdrBracketEvOffsets(
             zeroEvFrameCount = normalizedZeroEvFrameCount,
             isRawCapture = isRawCapture,
-            rawMfnrFrameCount = rawMfnrFrameCount,
         )
         val hdrFrameCount = evOffsets.size
         _state.value = _state.value.copy(
@@ -4469,20 +4460,27 @@ class Camera2Controller(private val context: Context) {
     private fun buildHdrBracketEvOffsets(
         zeroEvFrameCount: Int,
         isRawCapture: Boolean,
-        rawMfnrFrameCount: Int = 0,
     ): List<Float> {
+        val sideEv = if (isRawCapture) {
+            HdrBracketConfig.RAW_SIDE_EV
+        } else {
+            HdrBracketConfig.YUV_SIDE_EV
+        }
+        val zeroCount = zeroEvFrameCount.coerceAtLeast(1)
         if (isRawCapture) {
-            val frameCount = HdrBracketConfig.rawReferenceFrameCount(rawMfnrFrameCount)
-            val evOffset = HdrBracketConfig.rawReferenceEv(rawMfnrFrameCount)
-            return List(frameCount) {
-                evOffset
+            return buildList {
+                add(sideEv)
+                repeat(zeroCount) {
+                    add(0f)
+                }
+                add(-sideEv)
             }
         }
         return buildList {
             add(0f)
-            add(HdrBracketConfig.SIDE_EV)
-            add(-HdrBracketConfig.SIDE_EV)
-            repeat((zeroEvFrameCount - 1).coerceAtLeast(0)) {
+            add(sideEv)
+            add(-sideEv)
+            repeat((zeroCount - 1).coerceAtLeast(0)) {
                 add(0f)
             }
         }

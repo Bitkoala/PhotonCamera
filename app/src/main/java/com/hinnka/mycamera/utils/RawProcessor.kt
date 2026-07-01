@@ -288,11 +288,17 @@ object RawProcessor {
         cfaCorrectionMode: String? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
+        imageLayout: SuperResolutionDngWriter.ImageLayout = SuperResolutionDngWriter.ImageLayout.CFA,
+        compression: SuperResolutionDngWriter.Compression = SuperResolutionDngWriter.Compression.UNCOMPRESSED,
+        inputRowStepSamples: Int? = null,
+        inputColStepSamples: Int? = null,
     ): Boolean {
         val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
         val resolvedWhiteLevel = resolveWhiteLevelForMode(whiteLevel.toFloat(), whiteLevelMode).toInt()
         val hasCfaOverride = RawCfaCorrection.isOverrideMode(cfaCorrectionMode)
         val hasWhiteLevelOverride = RawWhiteLevelCorrection.isOverrideMode(whiteLevelMode)
+        val requiresCustomWriter = imageLayout != SuperResolutionDngWriter.ImageLayout.CFA ||
+                compression != SuperResolutionDngWriter.Compression.UNCOMPRESSED
         if (hasCfaOverride && resolvedCfaPattern != cfaPattern) {
             PLog.d(TAG, "RAW DNG CFA override mode=$cfaCorrectionMode cfa=$cfaPattern->$resolvedCfaPattern")
         }
@@ -306,8 +312,8 @@ object RawProcessor {
             270 -> ExifInterface.ORIENTATION_ROTATE_270
             else -> ExifInterface.ORIENTATION_NORMAL
         }
-        if (customWriter || hasCfaOverride || hasWhiteLevelOverride || !canDngCreatorWriteBuffer(width, height, characteristics)) {
-            PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height}")
+        if (customWriter || requiresCustomWriter || hasCfaOverride || hasWhiteLevelOverride || !canDngCreatorWriteBuffer(width, height, characteristics)) {
+            PLog.i(TAG, "Writing stacked RAW DNG with custom writer: ${width}x${height} layout=$imageLayout compression=$compression")
             return SuperResolutionDngWriter.write(
                 outputStream = outputStream,
                 rawBuffer = rawBuffer,
@@ -324,7 +330,11 @@ object RawProcessor {
                 customBlackLevel = customBlackLevel,
                 whiteLevelMode = whiteLevelMode,
                 baselineExposureEv = baselineExposureEv,
-                profileGainTableMap = profileGainTableMap
+                profileGainTableMap = profileGainTableMap,
+                imageLayout = imageLayout,
+                compression = compression,
+                inputRowStepSamples = inputRowStepSamples,
+                inputColStepSamples = inputColStepSamples,
             )
         }
 

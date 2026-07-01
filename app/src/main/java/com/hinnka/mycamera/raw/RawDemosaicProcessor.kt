@@ -147,6 +147,7 @@ class RawDemosaicProcessor {
             afRegions = baseMetadata?.afRegions,
             defaultCrop = defaultCrop,
             frameCount = baseMetadata?.frameCount ?: 1,
+            rotation = dngRawData.rotation,
             profileGainTableMap = baseMetadata?.profileGainTableMap
         )
     }
@@ -248,6 +249,10 @@ class RawDemosaicProcessor {
     private var quadRefineProgram = 0
     private var quadWriteOutputProgram = 0
     private var linearRcdProgram = 0
+    private var linearRawRgbProgram = 0
+    private var rawHdrLinearAccumulateProgram = 0
+    private var rawHdrLinearNormalizeProgram = 0
+    private var rawHdrLinearPreviewProgram = 0
 
     private var rawTextureId = 0
     private var profileGainTableTextureId = 0
@@ -341,6 +346,39 @@ class RawDemosaicProcessor {
         val exposureCompensation: Float,
         val highlights: Float,
         val shadows: Float
+    )
+
+    data class LinearRcdFrame(
+        val pixels: ByteBuffer,
+        val width: Int,
+        val height: Int,
+        val rowStrideBytes: Int,
+    )
+
+    data class LinearHdrFusionInputFrame(
+        val rawData: ByteBuffer,
+        val width: Int,
+        val height: Int,
+        val rowStride: Int,
+        val exposureProduct: Double,
+        val originalIndex: Int,
+        val blackLevel: FloatArray? = null,
+        val whiteLevel: Float? = null,
+        val lensShadingAlreadyApplied: Boolean = false,
+        val effectiveFrameCount: Int = 1,
+    )
+
+    data class LinearHdrFusionResult(
+        val linearRgbBuffer: ByteBuffer,
+        val width: Int,
+        val height: Int,
+        val rowStepSamples: Int,
+        val colStepSamples: Int,
+        val baselineExposureEv: Float,
+        val shortExposureProduct: Double,
+        val normalExposureProduct: Double,
+        val longExposureProduct: Double,
+        val previewBitmap: Bitmap?,
     )
 
     private data class FilmicToneCurveUniforms(
@@ -661,6 +699,354 @@ class RawDemosaicProcessor {
         }
     }
 
+    suspend fun renderLinearRcdFrame(
+        rawData: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        metadata: RawMetadata,
+        applyLensShadingCorrection: Boolean = true,
+    ): LinearRcdFrame? = withContext(glDispatcher) {
+        try {
+            if (!isInitialized && !initializeOnGlThread()) {
+                PLog.e(TAG, "Failed to initialize processor")
+                return@withContext null
+            }
+            if (width <= 0 || height <= 0 || width > maxTextureSize || height > maxTextureSize) {
+                PLog.e(TAG, "Linear RCD input ${width}x${height} exceeds GL_MAX_TEXTURE_SIZE=$maxTextureSize")
+                return@withContext null
+            }
+
+            val actualMetadata = if (applyLensShadingCorrection) {
+                metadata
+            } else {
+                metadata.copy(
+                    lensShadingMap = null,
+                    lensShadingMapWidth = 0,
+                    lensShadingMapHeight = 0,
+                    lensShadingMapGrid = null
+                )
+            }
+
+            setupFullResFramebuffer(width, height)
+            uploadRawTextureFromBuffer(rawData, width, height, rowStride)
+            if (RawMetadata.isQuadBayer(actualMetadata.cfaPattern)) {
+                runQuadBayerDemosaic(actualMetadata, width, height)
+            } else {
+                runStandardBayerRcdDemosaic(actualMetadata, width, height)
+            }
+
+            renderLinearRcdPass(
+                metadata = actualMetadata,
+                sourceTextureId = demosaicTextureId,
+                targetFramebufferId = linearOutputFramebufferId,
+                viewportWidth = width,
+                viewportHeight = height,
+                rawExposureCompensation = 0f,
+                rawBlackPointCorrection = 0f,
+                rawWhitePointCorrection = 0f,
+                colorCorrectionMatrix = floatArrayOf(
+                    1f, 0f, 0f,
+                    0f, 1f, 0f,
+                    0f, 0f, 1f
+                ),
+                applyDngBaselineExposure = false,
+                clampProfileRgb = false,
+                label = "LinearRcdExport"
+            )
+
+            if (rawTextureId != 0) {
+                GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+                rawTextureId = 0
+            }
+
+            readLinearRcdPixels(width, height)?.let { pixels ->
+                LinearRcdFrame(
+                    pixels = pixels,
+                    width = width,
+                    height = height,
+                    rowStrideBytes = width * 8,
+                )
+            }
+        } catch (e: Exception) {
+            PLog.e(TAG, "Failed to render linear RCD frame", e)
+            null
+        }
+    }
+
+    suspend fun fuseLinearRcdHdrFrames(
+        frames: List<LinearHdrFusionInputFrame>,
+        metadata: RawMetadata,
+        applyLensShadingCorrection: Boolean,
+        aspectRatio: AspectRatio,
+        rotation: Int,
+        renderPreview: Boolean = true,
+    ): LinearHdrFusionResult? = withContext(glDispatcher) {
+        if (frames.size < 3) {
+            PLog.w(TAG, "RAW HDR GPU fusion requires 3 frames, got ${frames.size}")
+            return@withContext null
+        }
+        val width = frames[0].width
+        val height = frames[0].height
+        if (width <= 0 || height <= 0 || width > maxTextureSize || height > maxTextureSize) {
+            PLog.e(TAG, "RAW HDR GPU fusion input ${width}x${height} exceeds GL_MAX_TEXTURE_SIZE=$maxTextureSize")
+            return@withContext null
+        }
+        if (frames.any { it.width != width || it.height != height }) {
+            PLog.w(TAG, "RAW HDR GPU fusion got mixed frame sizes")
+            return@withContext null
+        }
+
+        var currentTexture = 0
+        var currentFramebuffer = 0
+        var accumulatorTexture = 0
+        var accumulatorFramebuffer = 0
+        var accumulatorScratchTexture = 0
+        var accumulatorScratchFramebuffer = 0
+        var normalReferenceTexture = 0
+        var normalReferenceFramebuffer = 0
+        var longReferenceTexture = 0
+        var longReferenceFramebuffer = 0
+        var fusedTexture = 0
+        var fusedFramebuffer = 0
+        var outputBuffer: ByteBuffer? = null
+        var previewBitmap: Bitmap? = null
+        var returned = false
+        val startTime = System.currentTimeMillis()
+        return@withContext try {
+            if (!isInitialized && !initializeOnGlThread()) {
+                PLog.e(TAG, "Failed to initialize processor")
+                return@withContext null
+            }
+            if (rawHdrLinearAccumulateProgram == 0 ||
+                rawHdrLinearNormalizeProgram == 0 ||
+                (renderPreview && rawHdrLinearPreviewProgram == 0)
+            ) {
+                PLog.e(TAG, "RAW HDR GPU fusion shaders are unavailable")
+                return@withContext null
+            }
+
+            val actualMetadata = if (applyLensShadingCorrection) {
+                metadata
+            } else {
+                metadata.copy(
+                    lensShadingMap = null,
+                    lensShadingMapWidth = 0,
+                    lensShadingMapHeight = 0,
+                    lensShadingMapGrid = null
+                )
+            }
+            val shortFrame = frames.first()
+            val normalFrames = frames.subList(1, frames.lastIndex)
+            val normalReferenceFrame = normalFrames.first()
+            val longFrame = frames.last()
+            val shortProduct = validHdrExposureProduct(shortFrame.exposureProduct)
+            val normalProduct = validHdrExposureProduct(normalReferenceFrame.exposureProduct)
+            val normalFrameCount = normalFrames
+                .sumOf { it.effectiveFrameCount.coerceAtLeast(1) }
+                .coerceAtLeast(1)
+                .toFloat()
+            val longProduct = validHdrExposureProduct(longFrame.exposureProduct)
+            val hdrNoiseAlpha = actualMetadata.noiseProfile.getOrElse(0) { 0f }.coerceAtLeast(0f) / 65535.0f
+            val hdrNoiseBeta = actualMetadata.noiseProfile.getOrElse(1) { 0f }.coerceAtLeast(0f) /
+                (65535.0f * 65535.0f)
+            val baselineExposureEv = log2Hdr(normalProduct / shortProduct).coerceIn(0f, 8f)
+
+            setupFullResFramebuffer(width, height)
+            currentTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
+            currentFramebuffer = createFramebufferForTexture(currentTexture, "rawHdrCurrentLinear")
+            accumulatorTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
+            accumulatorFramebuffer = createFramebufferForTexture(accumulatorTexture, "rawHdrAccumulator")
+            accumulatorScratchTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
+            accumulatorScratchFramebuffer = createFramebufferForTexture(accumulatorScratchTexture, "rawHdrAccumulatorScratch")
+            normalReferenceTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
+            normalReferenceFramebuffer = createFramebufferForTexture(normalReferenceTexture, "rawHdrNormalReference")
+            longReferenceTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
+            longReferenceFramebuffer = createFramebufferForTexture(longReferenceTexture, "rawHdrLongReference")
+            fusedTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16UI)
+            fusedFramebuffer = createFramebufferForTexture(fusedTexture, "rawHdrFusedRgbx")
+
+            PLog.d(
+                TAG,
+                "RAW HDR GPU fusion start: ${width}x${height} " +
+                    "short=${shortProduct} normal=${normalProduct} normalCount=${normalFrameCount.toInt()} long=${longProduct}"
+            )
+            renderLinearHdrInputToFramebuffer(
+                frame = shortFrame,
+                metadata = actualMetadata,
+                targetFramebufferId = linearOutputFramebufferId,
+                label = "RAW HDR short RCD"
+            )
+            renderLinearHdrInputToFramebuffer(
+                frame = longFrame,
+                metadata = actualMetadata,
+                targetFramebufferId = longReferenceFramebuffer,
+                label = "RAW HDR long RCD"
+            )
+            renderLinearHdrInputToFramebuffer(
+                frame = normalReferenceFrame,
+                metadata = actualMetadata,
+                targetFramebufferId = normalReferenceFramebuffer,
+                label = "RAW HDR normal reference RCD"
+            )
+            clearRawHdrAccumulator(accumulatorFramebuffer, width, height)
+            var accumulatorReadTexture = accumulatorTexture
+            var accumulatorWriteTexture = accumulatorScratchTexture
+            var accumulatorWriteFramebuffer = accumulatorScratchFramebuffer
+
+            fun swapAccumulatorTargets() {
+                val previousReadTexture = accumulatorReadTexture
+                accumulatorReadTexture = accumulatorWriteTexture
+                accumulatorWriteTexture = previousReadTexture
+                accumulatorWriteFramebuffer = if (accumulatorWriteTexture == accumulatorTexture) {
+                    accumulatorFramebuffer
+                } else {
+                    accumulatorScratchFramebuffer
+                }
+            }
+
+            renderRawHdrLinearAccumulation(
+                currentTextureId = longReferenceTexture,
+                normalTextureId = normalReferenceTexture,
+                longTextureId = longReferenceTexture,
+                previousAccumulatorTextureId = accumulatorReadTexture,
+                scaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                normalFrameCount = normalFrameCount,
+                noiseAlpha = hdrNoiseAlpha,
+                noiseBeta = hdrNoiseBeta,
+                frameRole = 2,
+                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
+                width = width,
+                height = height,
+                label = "RAW HDR long accumulate"
+            )
+            swapAccumulatorTargets()
+
+            renderRawHdrLinearAccumulation(
+                currentTextureId = normalReferenceTexture,
+                normalTextureId = normalReferenceTexture,
+                longTextureId = longReferenceTexture,
+                previousAccumulatorTextureId = accumulatorReadTexture,
+                scaleToShort = (shortProduct / normalProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                normalFrameCount = normalFrameCount,
+                noiseAlpha = hdrNoiseAlpha,
+                noiseBeta = hdrNoiseBeta,
+                frameRole = 1,
+                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
+                width = width,
+                height = height,
+                label = "RAW HDR normal accumulate"
+            )
+            swapAccumulatorTargets()
+
+            normalFrames.drop(1).forEachIndexed { index, normalFrame ->
+                val frameProduct = validHdrExposureProduct(normalFrame.exposureProduct)
+                renderLinearHdrInputToFramebuffer(
+                    frame = normalFrame,
+                    metadata = actualMetadata,
+                    targetFramebufferId = currentFramebuffer,
+                    label = "RAW HDR normal RCD ${index + 1}"
+                )
+                renderRawHdrLinearAccumulation(
+                    currentTextureId = currentTexture,
+                    normalTextureId = normalReferenceTexture,
+                    longTextureId = longReferenceTexture,
+                    previousAccumulatorTextureId = accumulatorReadTexture,
+                    scaleToShort = (shortProduct / frameProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                    longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                    normalFrameCount = normalFrameCount,
+                    noiseAlpha = hdrNoiseAlpha,
+                    noiseBeta = hdrNoiseBeta,
+                    frameRole = 1,
+                    targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
+                    width = width,
+                    height = height,
+                    label = "RAW HDR normal accumulate ${index + 1}"
+                )
+                swapAccumulatorTargets()
+            }
+
+            renderRawHdrLinearAccumulation(
+                currentTextureId = linearOutputTextureId,
+                normalTextureId = normalReferenceTexture,
+                longTextureId = longReferenceTexture,
+                previousAccumulatorTextureId = accumulatorReadTexture,
+                scaleToShort = 1f,
+                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
+                normalFrameCount = normalFrameCount,
+                noiseAlpha = hdrNoiseAlpha,
+                noiseBeta = hdrNoiseBeta,
+                frameRole = 0,
+                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
+                width = width,
+                height = height,
+                label = "RAW HDR short accumulate"
+            )
+            swapAccumulatorTargets()
+
+            renderRawHdrLinearNormalize(
+                accumulatorTextureId = accumulatorReadTexture,
+                fusedFramebufferId = fusedFramebuffer,
+                width = width,
+                height = height,
+            )
+            previewBitmap = if (renderPreview) {
+                renderRawHdrLinearPreviewBitmap(
+                    fusedTextureId = fusedTexture,
+                    width = width,
+                    height = height,
+                    aspectRatio = aspectRatio,
+                    rotation = rotation,
+                    baselineExposureEv = baselineExposureEv,
+                    metadata = actualMetadata,
+                )
+            } else {
+                null
+            }
+            outputBuffer = readRawHdrLinearRgbx16(fusedFramebuffer, width, height)
+                ?: return@withContext null
+            returned = true
+            PLog.i(
+                TAG,
+                "RAW HDR GPU linear fusion completed in ${System.currentTimeMillis() - startTime}ms " +
+                    "baselineEv=$baselineExposureEv"
+            )
+            LinearHdrFusionResult(
+                linearRgbBuffer = outputBuffer,
+                width = width,
+                height = height,
+                rowStepSamples = width * 4,
+                colStepSamples = 4,
+                baselineExposureEv = baselineExposureEv,
+                shortExposureProduct = shortProduct,
+                normalExposureProduct = normalProduct,
+                longExposureProduct = longProduct,
+                previewBitmap = previewBitmap,
+            )
+        } catch (e: Exception) {
+            PLog.e(TAG, "RAW HDR GPU linear fusion failed", e)
+            null
+        } finally {
+            GLES30.glDisable(GLES30.GL_BLEND)
+            if (rawTextureId != 0) {
+                GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+                rawTextureId = 0
+            }
+            deleteTextureAndFramebuffer(currentTexture, currentFramebuffer)
+            deleteTextureAndFramebuffer(accumulatorTexture, accumulatorFramebuffer)
+            deleteTextureAndFramebuffer(accumulatorScratchTexture, accumulatorScratchFramebuffer)
+            deleteTextureAndFramebuffer(normalReferenceTexture, normalReferenceFramebuffer)
+            deleteTextureAndFramebuffer(longReferenceTexture, longReferenceFramebuffer)
+            deleteTextureAndFramebuffer(fusedTexture, fusedFramebuffer)
+            if (!returned) {
+                LargeDirectBuffer.free(outputBuffer)
+                previewBitmap?.takeIf { !it.isRecycled }?.recycle()
+            }
+        }
+    }
+
     suspend fun processForHdrSources(
         context: Context,
         dngFilePath: String,
@@ -787,6 +1173,7 @@ class RawDemosaicProcessor {
         var actualWidth = width
         var actualHeight = height
         var actualRowStride = rowStride
+        var actualSamplesPerPixel = 1
         var actualMetadata = metadata
         var actualRotation = rotation
         var dngRawDataCleanup: DngRawData? = null
@@ -823,6 +1210,7 @@ class RawDemosaicProcessor {
             actualWidth = dngRawData.width
             actualHeight = dngRawData.height
             actualRowStride = dngRawData.rowStride
+            actualSamplesPerPixel = dngRawData.samplesPerPixel.coerceAtLeast(1)
             actualMetadata = applyDngMetadataOverrides(
                 metadata = convertDngRawDataToMetadata(dngRawData, exposureBias, actualMetadata),
                 rawBlackLevelMode = rawBlackLevelMode,
@@ -838,13 +1226,11 @@ class RawDemosaicProcessor {
                 )
             }
             actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
-            if (!hasDcpSelection) {
-                embeddedDngRenderPlan = DngEmbeddedProfile.resolveRenderPlan(
-                    file = dngFile,
-                    metadata = actualMetadata,
-                    workingColorSpace = profileWorkingColorSpace
-                )
-            }
+            embeddedDngRenderPlan = DngEmbeddedProfile.resolveRenderPlan(
+                file = dngFile,
+                metadata = actualMetadata,
+                workingColorSpace = profileWorkingColorSpace
+            )
             onMetadata?.invoke(actualMetadata)
         }
 
@@ -904,59 +1290,71 @@ class RawDemosaicProcessor {
         } else {
             null
         }
-        val normalizedToneMappingParameters = rawToneMappingParameters.normalized()
-        val googlePixelToneMapRequested = useAdobeProfilePipeline &&
-            normalizedToneMappingParameters.useGooglePixelToneMap
-        val dcpToneCurveOverridesPixelToneMap = googlePixelToneMapRequested &&
-            hasDcpSelection &&
-            resolvedDcpRenderPlan?.toneCurveLut != null
-        val effectiveGooglePixelToneMapRequested =
-            googlePixelToneMapRequested && !dcpToneCurveOverridesPixelToneMap
         val embeddedGoogleToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
             ?.takeIf { DngProfileToneCurve.isGoogleHdrToneCurveLut(it) }
         val embeddedProfileGainTableMap = actualMetadata.profileGainTableMap?.takeIf { it.isValid }
-        if (dcpToneCurveOverridesPixelToneMap && embeddedProfileGainTableMap != null) {
-            actualMetadata = actualMetadata.copy(profileGainTableMap = null)
+        val embeddedDngHdrToneMapAvailable = embeddedGoogleToneCurveLut != null &&
+            embeddedProfileGainTableMap != null
+        val normalizedToneMappingParameters = rawToneMappingParameters.normalized()
+        val embeddedDngHdrToneMapDisabledByUser = embeddedDngHdrToneMapAvailable &&
+            normalizedToneMappingParameters.googlePixelToneMapExplicit &&
+            !normalizedToneMappingParameters.useGooglePixelToneMap
+        if (embeddedDngHdrToneMapAvailable) {
             PLog.d(
                 TAG,
-                "Ignoring Pixel-style DNG PGTM/ProfileToneCurve because selected DCP has tone curve: " +
-                    "profile=${resolvedDcpRenderPlan.profileName} " +
+                "Embedded DNG PGTM/ProfileToneCurve available: " +
                     "tag=${embeddedProfileGainTableMap.sourceTag} " +
                     "grid=${embeddedProfileGainTableMap.mapPointsH}x" +
                     "${embeddedProfileGainTableMap.mapPointsV}x${embeddedProfileGainTableMap.mapPointsN}"
             )
         }
-        val useEmbeddedPixelToneMap = effectiveGooglePixelToneMapRequested &&
-            embeddedGoogleToneCurveLut != null &&
-            embeddedProfileGainTableMap != null
-        val overrideEmbeddedToneMapWithPixel =
-            effectiveGooglePixelToneMapRequested && !useEmbeddedPixelToneMap
-        val disableEmbeddedPixelToneMap = !effectiveGooglePixelToneMapRequested &&
-            normalizedToneMappingParameters.googlePixelToneMapExplicit &&
-            embeddedGoogleToneCurveLut != null &&
-            !dcpToneCurveOverridesPixelToneMap
-        val clearEmbeddedProfileToneMap = overrideEmbeddedToneMapWithPixel || disableEmbeddedPixelToneMap
-        if (clearEmbeddedProfileToneMap && embeddedProfileGainTableMap != null) {
+        val embeddedDngHdrToneMapOverriddenByDcp = embeddedDngHdrToneMapAvailable &&
+            useAdobeProfilePipeline &&
+            hasDcpSelection &&
+            resolvedDcpRenderPlan?.toneCurveLut != null
+        val embeddedDngHdrToneMapRenderable = embeddedDngHdrToneMapAvailable &&
+            useAdobeProfilePipeline &&
+            !embeddedDngHdrToneMapOverriddenByDcp &&
+            !embeddedDngHdrToneMapDisabledByUser
+        if (embeddedDngHdrToneMapAvailable && !embeddedDngHdrToneMapRenderable) {
+            val reason = when {
+                embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map explicitly disabled for this photo"
+                !useAdobeProfilePipeline -> "color engine $colorEngine does not use Adobe/DNG profile tone map"
+                embeddedDngHdrToneMapOverriddenByDcp -> "selected DCP has tone curve: ${resolvedDcpRenderPlan.profileName}"
+                else -> "current render pipeline does not use embedded DNG HDR tone map"
+            }
             actualMetadata = actualMetadata.copy(profileGainTableMap = null)
             PLog.d(
                 TAG,
-                "Ignoring embedded DNG ProfileGainTableMap: " +
-                    "tag=${embeddedProfileGainTableMap.sourceTag} " +
-                    "grid=${embeddedProfileGainTableMap.mapPointsH}x" +
-                    "${embeddedProfileGainTableMap.mapPointsV}x${embeddedProfileGainTableMap.mapPointsN} " +
-                    "pixelToneMapRequested=$effectiveGooglePixelToneMapRequested " +
-                    "embeddedGoogleToneCurve=${embeddedGoogleToneCurveLut != null}"
+                "Embedded DNG PGTM/ProfileToneCurve not rendered: reason=$reason"
             )
-        } else if (useEmbeddedPixelToneMap) {
+        }
+        val requestedGeneratedPixelToneMap = useAdobeProfilePipeline &&
+            !embeddedDngHdrToneMapAvailable &&
+            normalizedToneMappingParameters.useGooglePixelToneMap
+        val generatedPixelToneMapOverriddenByDcp = requestedGeneratedPixelToneMap &&
+            hasDcpSelection &&
+            resolvedDcpRenderPlan?.toneCurveLut != null
+        val generatePixelToneMap = requestedGeneratedPixelToneMap &&
+            !generatedPixelToneMapOverriddenByDcp
+        if (generatedPixelToneMapOverriddenByDcp) {
+            PLog.d(
+                TAG,
+                "Generated Pixel-style PGTM/ProfileToneCurve not rendered because selected DCP has tone curve: " +
+                    "profile=${resolvedDcpRenderPlan.profileName}"
+            )
+        }
+        if (embeddedDngHdrToneMapRenderable) {
             PLog.d(TAG, "Using embedded Pixel-style DNG PGTM/ProfileToneCurve")
         }
-        if (overrideEmbeddedToneMapWithPixel) {
+        if (generatePixelToneMap) {
             val generatedProfileGainTableMap = RawProfileGainTableMapBuilder.build(
                 rawData = actualRawData,
                 width = actualWidth,
                 height = actualHeight,
                 rowStride = actualRowStride,
-                metadata = actualMetadata
+                metadata = actualMetadata,
+                samplesPerPixel = actualSamplesPerPixel
             )
             if (generatedProfileGainTableMap?.isValid == true) {
                 actualMetadata = actualMetadata.copy(profileGainTableMap = generatedProfileGainTableMap)
@@ -971,12 +1369,16 @@ class RawDemosaicProcessor {
                 PLog.w(TAG, "Google Pixel tone map requested but PGTM stats generation failed")
             }
         }
-        val googlePixelToneMapActive = effectiveGooglePixelToneMapRequested &&
+        val googlePixelToneMapActive = (embeddedDngHdrToneMapRenderable || generatePixelToneMap) &&
             actualMetadata.profileGainTableMap?.isValid == true
-        val profileBaseDcpRenderPlan = if (clearEmbeddedProfileToneMap && !hasDcpSelection) {
+        val profileBaseDcpRenderPlan = if (
+            embeddedDngHdrToneMapDisabledByUser &&
+            !hasDcpSelection &&
+            useAdobeProfilePipeline
+        ) {
             withoutProfileToneCurve(
                 resolvedDcpRenderPlan,
-                reason = "embedded DNG ProfileToneCurve controlled by Pixel-style tone map switch"
+                reason = "Pixel-style tone map explicitly disabled for this photo"
             )
         } else {
             resolvedDcpRenderPlan
@@ -986,7 +1388,7 @@ class RawDemosaicProcessor {
                 basePlan = profileBaseDcpRenderPlan,
                 metadata = actualMetadata,
                 workingColorSpace = profileWorkingColorSpace,
-                preferredToneCurveLut = embeddedGoogleToneCurveLut
+                preferredToneCurveLut = embeddedGoogleToneCurveLut.takeIf { embeddedDngHdrToneMapRenderable }
             )
         } else {
             profileBaseDcpRenderPlan
@@ -1106,18 +1508,38 @@ class RawDemosaicProcessor {
 
             // 4. 第一步：全分辨率处理 (Linear CCM / RCD Compute Shader Demosaic)
             setupFullResFramebuffer(actualWidth, actualHeight)
-            uploadRawTextureFromBuffer(
-                actualRawData,
-                actualWidth,
-                actualHeight,
-                actualRowStride
-            )
-            // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
-            actualRawData = null
-
-            if (RawMetadata.isQuadBayer(actualMetadata.cfaPattern)) {
-                runQuadBayerDemosaic(actualMetadata, actualWidth, actualHeight)
+            if (actualSamplesPerPixel == 3) {
+                uploadLinearRawRgbTextureFromBuffer(
+                    actualRawData,
+                    actualWidth,
+                    actualHeight,
+                    actualRowStride
+                )
+                actualRawData = null
+                renderLinearRawRgbToFramebuffer(
+                    sourceTextureId = rawTextureId,
+                    targetFramebufferId = demosaicFramebufferId,
+                    width = actualWidth,
+                    height = actualHeight
+                )
+                if (rawTextureId != 0) {
+                    GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+                    rawTextureId = 0
+                }
+                PLog.d(TAG, "LinearRaw RGB input prepared on GPU: ${actualWidth}x${actualHeight}")
             } else {
+                uploadRawTextureFromBuffer(
+                    actualRawData,
+                    actualWidth,
+                    actualHeight,
+                    actualRowStride
+                )
+                // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
+                actualRawData = null
+
+                if (RawMetadata.isQuadBayer(actualMetadata.cfaPattern)) {
+                    runQuadBayerDemosaic(actualMetadata, actualWidth, actualHeight)
+                } else {
             // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
             val ssboIds = IntArray(9)
             GLES31.glGenBuffers(9, ssboIds, 0)
@@ -1365,6 +1787,7 @@ class RawDemosaicProcessor {
             GLES31.glDeleteBuffers(9, ssboIds, 0)
             for (i in 0 until 8) {
                 GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
+            }
             }
             }
 
@@ -1941,7 +2364,7 @@ class RawDemosaicProcessor {
                 rcdStep42Program == 0 || rcdStep43Program == 0 || rcdWriteOutputProgram == 0 ||
                 quadPopulateProgram == 0 || quadGreenProgram == 0 || quadChromaProgram == 0 ||
                 quadRefineProgram == 0 || quadWriteOutputProgram == 0 ||
-                linearRcdProgram == 0
+                linearRcdProgram == 0 || linearRawRgbProgram == 0
             ) {
                 PLog.e(
                     TAG, "Critical shader programs failed to compile or link. " +
@@ -1953,7 +2376,7 @@ class RawDemosaicProcessor {
                             "quadPopulate=$quadPopulateProgram quadGreen=$quadGreenProgram " +
                             "quadChroma=$quadChromaProgram quadRefine=$quadRefineProgram " +
                             "quadWrite=$quadWriteOutputProgram " +
-                            "linearRcd=$linearRcdProgram"
+                            "linearRcd=$linearRcdProgram linearRawRgb=$linearRawRgbProgram"
                 )
                 return false
             }
@@ -2198,6 +2621,240 @@ class RawDemosaicProcessor {
         }
     """.trimIndent()
 
+    private val FRAGMENT_SHADER_LINEAR_RAW_RGB = """
+        #version 300 es
+        precision highp float;
+        precision highp usampler2D;
+
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+
+        uniform usampler2D uLinearRawTexture;
+
+        void main() {
+            uvec3 sample16 = texture(uLinearRawTexture, vTexCoord).rgb;
+            vec3 rgb = vec3(sample16) * (1.0 / 65535.0);
+            fragColor = vec4(rgb, 1.0);
+        }
+    """.trimIndent()
+
+    private val RAW_HDR_LINEAR_ACCUMULATE_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+
+        uniform sampler2D uCurrentTexture;
+        uniform sampler2D uNormalTexture;
+        uniform sampler2D uLongTexture;
+        uniform sampler2D uPreviousAccumulatorTexture;
+        uniform vec2 uTexelSize;
+        uniform float uScaleToShort;
+        uniform float uLongScaleToShort;
+        uniform float uNormalFrameCount;
+        uniform float uNoiseAlpha;
+        uniform float uNoiseBeta;
+        uniform int uFrameRole;
+
+        const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+        float lumaOf(vec3 rgb) {
+            return dot(rgb, LUMA);
+        }
+
+        vec3 readCurrentScaled(vec2 uv) {
+            return max(texture(uCurrentTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0)) * uScaleToShort;
+        }
+
+        vec3 readNormalRaw(vec2 uv) {
+            return max(texture(uNormalTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
+        }
+
+        vec3 readLongRaw(vec2 uv) {
+            return max(texture(uLongTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
+        }
+
+        vec3 readLongScaled(vec2 uv) {
+            return readLongRaw(uv) * uLongScaleToShort;
+        }
+
+        float localContrast(vec2 uv) {
+            float center = lumaOf(readCurrentScaled(uv));
+            float left = lumaOf(readCurrentScaled(uv + vec2(-uTexelSize.x, 0.0)));
+            float right = lumaOf(readCurrentScaled(uv + vec2(uTexelSize.x, 0.0)));
+            float top = lumaOf(readCurrentScaled(uv + vec2(0.0, -uTexelSize.y)));
+            float bottom = lumaOf(readCurrentScaled(uv + vec2(0.0, uTexelSize.y)));
+            return abs(center - (left + right + top + bottom) * 0.25);
+        }
+
+        float saturationOf(vec3 rgb) {
+            float meanValue = (rgb.r + rgb.g + rgb.b) / 3.0;
+            vec3 delta = rgb - vec3(meanValue);
+            float variance = dot(delta, delta) / 3.0;
+            return sqrt(max(variance, 0.0)) / max(meanValue, 0.01);
+        }
+
+        float contentWeight(vec2 uv, vec3 rgb) {
+            float contrast = localContrast(uv);
+            float saturation = saturationOf(rgb);
+            float detail = clamp(0.38 + contrast * 3.0, 0.38, 1.0);
+            float chroma = clamp(0.72 + 0.28 * (saturation / (saturation + 0.35)), 0.72, 1.0);
+            return detail * chroma;
+        }
+
+        float snrScore(float signal, float frameCount) {
+            float safeSignal = max(signal, 0.0);
+            float safeCount = max(frameCount, 1.0);
+            const float FALLBACK_READ_NOISE_VAR = 2.25e-6;
+            float variance = (uNoiseAlpha > 0.0 || uNoiseBeta > 0.0)
+                ? (uNoiseAlpha * safeSignal + max(uNoiseBeta, FALLBACK_READ_NOISE_VAR))
+                : (safeSignal + FALLBACK_READ_NOISE_VAR);
+            return sqrt(safeCount) * safeSignal / sqrt(max(variance, 1.0e-10));
+        }
+
+        float exposureReliability(vec2 uv) {
+            vec3 rawRgb = max(texture(uCurrentTexture, uv).rgb, vec3(0.0));
+            float luma = lumaOf(rawRgb);
+            float maxChannel = max(rawRgb.r, max(rawRgb.g, rawRgb.b));
+            float low = smoothstep(0.004, 0.055, luma);
+            float high = 1.0 - smoothstep(0.78, 0.98, maxChannel);
+            return clamp(low * high, 0.02, 1.0);
+        }
+
+        float deghostWeight(vec2 uv) {
+            if (uFrameRole == 2) {
+                return 1.0;
+            }
+            vec3 longRaw = readLongRaw(uv);
+            float longMax = max(longRaw.r, max(longRaw.g, longRaw.b));
+            vec3 normalRaw = readNormalRaw(uv);
+            float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
+            if (uFrameRole == 1 && longMax > 0.84) {
+                return 1.0;
+            }
+            if (uFrameRole == 0 && normalMax > 0.82) {
+                return 1.0;
+            }
+            vec2 offsets[5] = vec2[5](
+                vec2(0.0, 0.0),
+                vec2(-uTexelSize.x, 0.0),
+                vec2(uTexelSize.x, 0.0),
+                vec2(0.0, -uTexelSize.y),
+                vec2(0.0, uTexelSize.y)
+            );
+            float residualSum = 0.0;
+            for (int i = 0; i < 5; i++) {
+                vec2 sampleUv = uv + offsets[i];
+                float currentLuma = lumaOf(readCurrentScaled(sampleUv));
+                float refLuma = lumaOf(readLongScaled(sampleUv));
+                residualSum += abs(currentLuma - refLuma) / max(max(currentLuma, refLuma), 0.015);
+            }
+            float residual = residualSum * 0.2;
+            float refLuma = lumaOf(readLongScaled(uv));
+            float low = refLuma < 0.015 ? 0.35 : 0.12;
+            float motion = smoothstep(low, low + 0.28, residual);
+            float keep = clamp(1.0 - motion, 0.0, 1.0);
+            return keep * keep;
+        }
+
+        float roleWeight(vec2 uv) {
+            vec3 longRaw = readLongRaw(uv);
+            float longMax = max(longRaw.r, max(longRaw.g, longRaw.b));
+            vec3 normalRaw = readNormalRaw(uv);
+            float normalLuma = lumaOf(normalRaw);
+            float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
+            float longLuma = lumaOf(longRaw);
+            float longUsable = 1.0 - smoothstep(0.62, 0.92, longMax);
+            float normalUsable = smoothstep(0.015, 0.08, normalLuma) *
+                (1.0 - smoothstep(0.74, 0.96, normalMax));
+            float longScore = snrScore(longLuma, 1.0) * longUsable;
+            float normalScore = snrScore(normalLuma, uNormalFrameCount) * normalUsable;
+            float scoreSum = longScore * longScore + normalScore * normalScore + 1.0e-6;
+            float normalShare = (normalScore * normalScore) / scoreSum;
+            float longShare = (longScore * longScore) / scoreSum;
+            float shortNeeded = smoothstep(0.82, 0.98, normalMax);
+
+            if (uFrameRole == 2) {
+                return 0.04 + 8.0 * longShare * longUsable;
+            }
+            if (uFrameRole == 0) {
+                return 8.0 * shortNeeded;
+            }
+            return 0.06 + 8.0 * normalShare * normalUsable;
+        }
+
+        void main() {
+            vec3 rgb = readCurrentScaled(vTexCoord);
+            float reliability = exposureReliability(vTexCoord);
+            float deghost = deghostWeight(vTexCoord);
+            float role = roleWeight(vTexCoord);
+            float weight = max(contentWeight(vTexCoord, rgb) * reliability * deghost * role, 0.0);
+            fragColor = texture(uPreviousAccumulatorTexture, vTexCoord) + vec4(rgb * weight, weight);
+        }
+    """.trimIndent()
+
+    private val RAW_HDR_LINEAR_NORMALIZE_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+        precision highp int;
+
+        in vec2 vTexCoord;
+        layout(location = 0) out highp uvec4 fragColor;
+
+        uniform sampler2D uAccumulatorTexture;
+
+        uint encodeUnorm16(float value) {
+            return uint(clamp(value, 0.0, 1.0) * 65535.0 + 0.5);
+        }
+
+        void main() {
+            vec4 accum = texture(uAccumulatorTexture, vTexCoord);
+            vec3 rgb = accum.rgb / max(accum.a, 1.0e-6);
+            fragColor = uvec4(
+                encodeUnorm16(rgb.r),
+                encodeUnorm16(rgb.g),
+                encodeUnorm16(rgb.b),
+                65535u
+            );
+        }
+    """.trimIndent()
+
+    private val RAW_HDR_LINEAR_PREVIEW_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+        precision highp int;
+
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+
+        uniform highp usampler2D uFusedTexture;
+        uniform mat3 uColorCorrectionMatrix;
+        uniform float uExposureGain;
+
+        vec3 toneMap(vec3 value) {
+            return clamp(vec3(1.0) - exp(-max(value, vec3(0.0))), vec3(0.0), vec3(1.0));
+        }
+
+        vec3 linearToSrgb(vec3 value) {
+            vec3 low = value * 12.92;
+            vec3 high = 1.055 * pow(max(value, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+            return vec3(
+                value.r <= 0.0031308 ? low.r : high.r,
+                value.g <= 0.0031308 ? low.g : high.g,
+                value.b <= 0.0031308 ? low.b : high.b
+            );
+        }
+
+        void main() {
+            uvec3 packed = texture(uFusedTexture, vTexCoord).rgb;
+            vec3 rgb = vec3(packed) * (1.0 / 65535.0) * uExposureGain;
+            rgb = max(uColorCorrectionMatrix * rgb, vec3(0.0));
+            rgb = linearToSrgb(toneMap(rgb));
+            fragColor = vec4(clamp(rgb, vec3(0.0), vec3(1.0)), 1.0);
+        }
+    """.trimIndent()
+
     private fun initRcdPrograms(vShader: Int) {
         rcdPopulateProgram = compileComputeProgram(RcdShaders.POPULATE, "POPULATE")
         rcdStep1Program = compileComputeProgram(RcdShaders.STEP_1, "STEP_1")
@@ -2230,6 +2887,49 @@ class RawDemosaicProcessor {
             }
             GLES30.glDeleteShader(fShaderLinearRcd)
         }
+        linearRawRgbProgram = linkFragmentProgram(
+            vShader,
+            FRAGMENT_SHADER_LINEAR_RAW_RGB,
+            "linearRawRgb"
+        )
+        rawHdrLinearAccumulateProgram = linkFragmentProgram(
+            vShader,
+            RAW_HDR_LINEAR_ACCUMULATE_FRAGMENT_SHADER,
+            "rawHdrLinearAccumulate"
+        )
+        rawHdrLinearNormalizeProgram = linkFragmentProgram(
+            vShader,
+            RAW_HDR_LINEAR_NORMALIZE_FRAGMENT_SHADER,
+            "rawHdrLinearNormalize"
+        )
+        rawHdrLinearPreviewProgram = linkFragmentProgram(
+            vShader,
+            RAW_HDR_LINEAR_PREVIEW_FRAGMENT_SHADER,
+            "rawHdrLinearPreview"
+        )
+    }
+
+    private fun linkFragmentProgram(
+        vShader: Int,
+        fragmentSource: String,
+        name: String,
+    ): Int {
+        val fShader = compileShader(GLES30.GL_FRAGMENT_SHADER, fragmentSource, "${name}Fragment")
+        if (vShader == 0 || fShader == 0) {
+            if (fShader != 0) GLES30.glDeleteShader(fShader)
+            return 0
+        }
+        val program = GLES30.glCreateProgram()
+        GLES30.glAttachShader(program, vShader)
+        GLES30.glAttachShader(program, fShader)
+        val linkStart = System.currentTimeMillis()
+        GLES30.glLinkProgram(program)
+        if (!logProgramLinkResult(program, "${name}Program", linkStart)) {
+            GLES30.glDeleteShader(fShader)
+            return 0
+        }
+        GLES30.glDeleteShader(fShader)
+        return program
     }
 
     private fun compileComputeProgram(source: String, name: String): Int {
@@ -2912,6 +3612,444 @@ class RawDemosaicProcessor {
         checkGlError("uploadRawTextureFromBuffer")
     }
 
+    private fun uploadLinearRawRgbTextureFromBuffer(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int
+    ) {
+        if (rawTextureId == 0) {
+            val textures = IntArray(1)
+            GLES30.glGenTextures(1, textures, 0)
+            rawTextureId = textures[0]
+        }
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, rawTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        buffer.position(0)
+        val bytesPerPixel = 6
+        val rowLength = rowStride / bytesPerPixel
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 2)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, rowLength)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGB16UI,
+            width,
+            height,
+            0,
+            GLES30.GL_RGB_INTEGER,
+            GLES30.GL_UNSIGNED_SHORT,
+            buffer
+        )
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, 0)
+        checkGlError("uploadLinearRawRgbTextureFromBuffer")
+    }
+
+    private fun renderLinearRawRgbToFramebuffer(
+        sourceTextureId: Int,
+        targetFramebufferId: Int,
+        width: Int,
+        height: Int
+    ) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFramebufferId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glUseProgram(linearRawRgbProgram)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(linearRawRgbProgram, "uLinearRawTexture"), 0)
+        val identityMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(identityMatrix, 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(linearRawRgbProgram, "uTexMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        drawQuad(linearRawRgbProgram)
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError("renderLinearRawRgbToFramebuffer")
+    }
+
+    private fun renderLinearHdrInputToFramebuffer(
+        frame: LinearHdrFusionInputFrame,
+        metadata: RawMetadata,
+        targetFramebufferId: Int,
+        label: String,
+    ) {
+        val rawBuffer = frame.rawData.duplicate().order(ByteOrder.nativeOrder())
+        rawBuffer.position(0)
+        var frameMetadata = metadata
+        if (frame.blackLevel != null || frame.whiteLevel != null) {
+            frameMetadata = frameMetadata.copy(
+                blackLevel = frame.blackLevel ?: frameMetadata.blackLevel,
+                whiteLevel = frame.whiteLevel ?: frameMetadata.whiteLevel,
+            )
+        }
+        if (frame.lensShadingAlreadyApplied) {
+            frameMetadata = frameMetadata.copy(
+                lensShadingMap = null,
+                lensShadingMapWidth = 0,
+                lensShadingMapHeight = 0,
+                lensShadingMapGrid = null,
+            )
+        }
+        uploadRawTextureFromBuffer(rawBuffer, frame.width, frame.height, frame.rowStride)
+        if (RawMetadata.isQuadBayer(frameMetadata.cfaPattern)) {
+            runQuadBayerDemosaic(frameMetadata, frame.width, frame.height)
+        } else {
+            runStandardBayerRcdDemosaic(frameMetadata, frame.width, frame.height)
+        }
+        renderLinearRcdPass(
+            metadata = frameMetadata,
+            sourceTextureId = demosaicTextureId,
+            targetFramebufferId = targetFramebufferId,
+            viewportWidth = frame.width,
+            viewportHeight = frame.height,
+            rawExposureCompensation = 0f,
+            rawBlackPointCorrection = 0f,
+            rawWhitePointCorrection = 0f,
+            colorCorrectionMatrix = floatArrayOf(
+                1f, 0f, 0f,
+                0f, 1f, 0f,
+                0f, 0f, 1f
+            ),
+            applyDngBaselineExposure = false,
+            clampProfileRgb = false,
+            label = label
+        )
+        if (rawTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+            rawTextureId = 0
+        }
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError(label)
+    }
+
+    private fun createRawHdrLinearTexture(
+        width: Int,
+        height: Int,
+        internalFormat: Int,
+    ): Int {
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        val textureId = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, internalFormat, width, height)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        checkGlError("createRawHdrLinearTexture")
+        return textureId
+    }
+
+    private fun createFramebufferForTexture(textureId: Int, label: String): Int {
+        val framebuffers = IntArray(1)
+        GLES30.glGenFramebuffers(1, framebuffers, 0)
+        val framebufferId = framebuffers[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            textureId,
+            0
+        )
+        val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            throw IllegalStateException("$label framebuffer incomplete: $status")
+        }
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        checkGlError("createFramebufferForTexture $label")
+        return framebufferId
+    }
+
+    private fun deleteTextureAndFramebuffer(textureId: Int, framebufferId: Int) {
+        if (textureId != 0) GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
+        if (framebufferId != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(framebufferId), 0)
+    }
+
+    private fun clearRawHdrAccumulator(framebufferId: Int, width: Int, height: Int) {
+        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glClearColor(0f, 0f, 0f, 0f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        checkGlError("clearRawHdrAccumulator")
+    }
+
+    private fun renderRawHdrLinearAccumulation(
+        currentTextureId: Int,
+        normalTextureId: Int,
+        longTextureId: Int,
+        previousAccumulatorTextureId: Int,
+        scaleToShort: Float,
+        longScaleToShort: Float,
+        normalFrameCount: Float,
+        noiseAlpha: Float,
+        noiseBeta: Float,
+        frameRole: Int,
+        targetAccumulatorFramebufferId: Int,
+        width: Int,
+        height: Int,
+        label: String,
+    ) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetAccumulatorFramebufferId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glUseProgram(rawHdrLinearAccumulateProgram)
+        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, currentTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uCurrentTexture"), 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, normalTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uNormalTexture"), 1)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, longTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uLongTexture"), 2)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, previousAccumulatorTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uPreviousAccumulatorTexture"),
+            3
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uTexelSize"),
+            1f / width.toFloat(),
+            1f / height.toFloat()
+        )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uScaleToShort"), scaleToShort)
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uLongScaleToShort"),
+            longScaleToShort
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uNormalFrameCount"),
+            normalFrameCount.coerceAtLeast(1f)
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uNoiseAlpha"),
+            noiseAlpha.coerceAtLeast(0f)
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uNoiseBeta"),
+            noiseBeta.coerceAtLeast(0f)
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uFrameRole"),
+            frameRole
+        )
+        val identityMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(identityMatrix, 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uTexMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        drawQuad(rawHdrLinearAccumulateProgram)
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError(label)
+    }
+
+    private fun renderRawHdrLinearNormalize(
+        accumulatorTextureId: Int,
+        fusedFramebufferId: Int,
+        width: Int,
+        height: Int,
+    ) {
+        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fusedFramebufferId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glUseProgram(rawHdrLinearNormalizeProgram)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, accumulatorTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLinearNormalizeProgram, "uAccumulatorTexture"), 0)
+        val identityMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(identityMatrix, 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(rawHdrLinearNormalizeProgram, "uTexMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        drawQuad(rawHdrLinearNormalizeProgram)
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError("renderRawHdrLinearNormalize")
+    }
+
+    private fun readRawHdrLinearRgbx16(
+        fusedFramebufferId: Int,
+        width: Int,
+        height: Int,
+    ): ByteBuffer? {
+        val pixelSize = width.toLong() * height.toLong() * 8L
+        if (pixelSize <= 0L || pixelSize > Int.MAX_VALUE) {
+            PLog.e(TAG, "RAW HDR RGBX16 readback size invalid: ${width}x$height")
+            return null
+        }
+        val pixelBuffer = LargeDirectBuffer.allocate(pixelSize, "RAW HDR linear RGBX16")
+            ?.order(ByteOrder.nativeOrder())
+            ?: return null
+        return try {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fusedFramebufferId)
+            GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 8)
+            GLES30.glReadPixels(
+                0,
+                0,
+                width,
+                height,
+                GLES30.GL_RGBA_INTEGER,
+                GLES30.GL_UNSIGNED_SHORT,
+                pixelBuffer
+            )
+            pixelBuffer.position(0)
+            checkGlError("RAW HDR RGBX16 readback")
+            pixelBuffer
+        } catch (e: Exception) {
+            LargeDirectBuffer.free(pixelBuffer)
+            throw e
+        } finally {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        }
+    }
+
+    private fun renderRawHdrLinearPreviewBitmap(
+        fusedTextureId: Int,
+        width: Int,
+        height: Int,
+        aspectRatio: AspectRatio,
+        rotation: Int,
+        baselineExposureEv: Float,
+        metadata: RawMetadata,
+    ): Bitmap? {
+        val bounds = BitmapUtils.calculateProcessedRect(width, height, aspectRatio, null, rotation)
+        if (bounds.isEmpty) return null
+        setupCombinedFramebuffer(bounds.width(), bounds.height())
+        renderRawHdrLinearPreviewPass(
+            fusedTextureId = fusedTextureId,
+            width = width,
+            height = height,
+            bounds = bounds,
+            rotation = rotation,
+            baselineExposureEv = baselineExposureEv,
+            metadata = metadata,
+        )
+        return readCombinedArgb8888Bitmap(bounds.width(), bounds.height())
+    }
+
+    private fun renderRawHdrLinearPreviewPass(
+        fusedTextureId: Int,
+        width: Int,
+        height: Int,
+        bounds: Rect,
+        rotation: Int,
+        baselineExposureEv: Float,
+        metadata: RawMetadata,
+    ) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, combinedFramebufferId)
+        GLES30.glViewport(0, 0, bounds.width(), bounds.height())
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glUseProgram(rawHdrLinearPreviewProgram)
+        val isSwapped = rotation == 90 || rotation == 270
+        val cropW: Float
+        val cropH: Float
+        val cropCenterX: Float
+        val cropCenterY: Float
+        if (isSwapped) {
+            cropW = bounds.height().toFloat()
+            cropH = bounds.width().toFloat()
+            cropCenterX = bounds.top + bounds.height() / 2f
+            cropCenterY = bounds.left + bounds.width() / 2f
+        } else {
+            cropW = bounds.width().toFloat()
+            cropH = bounds.height().toFloat()
+            cropCenterX = bounds.centerX().toFloat()
+            cropCenterY = bounds.centerY().toFloat()
+        }
+        val texMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(texMatrix, 0)
+        GlMatrix.translateM(texMatrix, 0, cropCenterX / width, cropCenterY / height, 0f)
+        GlMatrix.scaleM(texMatrix, 0, cropW / width, cropH / height, 1.0f)
+        GlMatrix.rotateM(texMatrix, 0, -rotation.toFloat(), 0f, 0f, 1f)
+        GlMatrix.translateM(texMatrix, 0, -0.5f, -0.5f, 0f)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(rawHdrLinearPreviewProgram, "uTexMatrix"),
+            1,
+            false,
+            texMatrix,
+            0
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, fusedTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(rawHdrLinearPreviewProgram, "uFusedTexture"), 0)
+        val previewColorMatrix = multiplyMatrix3x3(
+            computeWorkingToOutputTransform(RawRenderingEngine.AdobeCurve.workingColorSpace, ColorSpace.SRGB),
+            metadata.colorCorrectionMatrix
+        )
+        GLES30.glUniformMatrix3fv(
+            GLES30.glGetUniformLocation(rawHdrLinearPreviewProgram, "uColorCorrectionMatrix"),
+            1,
+            false,
+            transposeMatrix3x3(previewColorMatrix),
+            0
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(rawHdrLinearPreviewProgram, "uExposureGain"),
+            2.0f.pow(baselineExposureEv)
+        )
+        drawQuad(rawHdrLinearPreviewProgram)
+        checkGlError("renderRawHdrLinearPreviewPass")
+    }
+
+    private fun readCombinedArgb8888Bitmap(width: Int, height: Int): Bitmap? {
+        val pixelSize = width * height * 4
+        val pixelBuffer = try {
+            obtainReadbackBuffer(pixelSize)
+        } catch (e: OutOfMemoryError) {
+            PLog.e(TAG, "OOM allocating RAW HDR preview buffer ($width x $height)", e)
+            return null
+        }
+        pixelBuffer.clear()
+        pixelBuffer.limit(pixelSize)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, combinedFramebufferId)
+        GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
+        GLES30.glReadPixels(
+            0,
+            0,
+            width,
+            height,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            pixelBuffer
+        )
+        pixelBuffer.position(0)
+        checkGlError("RAW HDR preview readback")
+        return try {
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+                bitmap.copyPixelsFromBuffer(pixelBuffer)
+            }
+        } catch (e: OutOfMemoryError) {
+            PLog.e(TAG, "OOM creating RAW HDR preview bitmap ($width x $height)", e)
+            null
+        }
+    }
+
+    private fun validHdrExposureProduct(product: Double): Double =
+        product.takeIf { it.isFinite() && it > 1.0e-9 } ?: 1.0e-9
+
+    private fun log2Hdr(value: Double): Float =
+        (ln(value.coerceAtLeast(1.0e-9)) / ln(2.0)).toFloat()
+
     /**
      * 上传 RAW 数据到纹理（从 Image 对象）
      *
@@ -3032,6 +4170,158 @@ class RawDemosaicProcessor {
             }
             else -> {
                 "${metadata.lensShadingMapWidth}x${metadata.lensShadingMapHeight},camera2"
+            }
+        }
+    }
+
+    private fun runStandardBayerRcdDemosaic(
+        metadata: RawMetadata,
+        width: Int,
+        height: Int
+    ) {
+        val ssboIds = IntArray(9)
+        GLES31.glGenBuffers(9, ssboIds, 0)
+        val extraMargin = 1024 * 1024
+        val fullSize = width * height * 4 + extraMargin
+        for (i in 0 until 9) {
+            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, ssboIds[i])
+            GLES31.glBufferData(
+                GLES31.GL_SHADER_STORAGE_BUFFER,
+                fullSize,
+                null,
+                GLES31.GL_DYNAMIC_DRAW
+            )
+            if (i < 8) {
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, ssboIds[i])
+            }
+        }
+        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
+
+        val blackLevel4 = FloatArray(4) { idx ->
+            metadata.blackLevel.getOrElse(idx) {
+                metadata.blackLevel.firstOrNull() ?: 0f
+            }.coerceAtLeast(0f)
+        }
+        val metadataWbGains = metadata.whiteBalanceGains
+        val highlightWbGains = highlightReconstructionWbGains(metadata)
+        val lscSize = lensShadingLogString(metadata)
+
+        try {
+            GLES31.glUseProgram(rcdPopulateProgram)
+            GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_RAW_TEXTURE_UNIT)
+            GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rawTextureId)
+            GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uRawTexture"),
+                RCD_RAW_TEXTURE_UNIT
+            )
+            bindLensShadingForRcdPopulate(metadata)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProgram, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glUniform4fv(GLES31.glGetUniformLocation(rcdPopulateProgram, "uBlackLevel"), 1, blackLevel4, 0)
+            GLES31.glUniform1f(GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteLevel"), metadata.whiteLevel)
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightClipThreshold"),
+                RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightCeiling"),
+                RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
+            )
+            GLES31.glUniform4fv(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteBalanceGains"),
+                1,
+                highlightWbGains,
+                0
+            )
+            PLog.d(
+                TAG,
+                "Linear RCD populate: cfa=${metadata.cfaPattern} black=${blackLevel4.contentToString()} " +
+                    "white=${metadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
+                    "highlightWb=${highlightWbGains.contentToString()} lsc=$lscSize"
+            )
+            GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Populate")
+
+            GLES31.glUseProgram(rcdStep1Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep1Program, "uImageSize"), width, height)
+            GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 1")
+
+            GLES31.glUseProgram(rcdStep2Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep2Program, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep2Program, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 2")
+
+            GLES31.glUseProgram(rcdStep3Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep3Program, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep3Program, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 3")
+
+            GLES31.glUseProgram(rcdStep40Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep40Program, "uImageSize"), width, height)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 4_0")
+
+            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_PQ_WRITE_BINDING, ssboIds[8])
+            GLES31.glUseProgram(rcdStep41Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep41Program, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep41Program, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 4_1")
+
+            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_PQ_READ_BINDING, ssboIds[8])
+            GLES31.glUseProgram(rcdStep42Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep42Program, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep42Program, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 4_2")
+
+            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, RCD_VH_DIR_BINDING, ssboIds[4])
+            GLES31.glUseProgram(rcdStep43Program)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep43Program, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep43Program, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glDispatchCompute((width / 2 + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            checkGlError("Linear RCD Step 4_3")
+
+            GLES31.glUseProgram(rcdWriteOutputProgram)
+            GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uImageSize"), width, height)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), 4)
+            GLES31.glBindImageTexture(
+                RCD_OUTPUT_IMAGE_UNIT,
+                demosaicTextureId,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES31.GL_RGBA16F
+            )
+            GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
+            GLES31.glMemoryBarrier(GLES31.GL_ALL_BARRIER_BITS)
+            checkGlError("Linear RCD Write Output")
+            GLES31.glBindImageTexture(
+                RCD_OUTPUT_IMAGE_UNIT,
+                0,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES31.GL_RGBA16F
+            )
+            GLES30.glFinish()
+        } finally {
+            GLES31.glDeleteBuffers(9, ssboIds, 0)
+            for (i in 0 until 8) {
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
             }
         }
     }
@@ -5645,6 +6935,38 @@ class RawDemosaicProcessor {
         if (texCoordHandle >= 0) GLES30.glDisableVertexAttribArray(texCoordHandle)
     }
 
+    private fun readLinearRcdPixels(width: Int, height: Int): ByteBuffer? {
+        val pixelSize = width.toLong() * height.toLong() * 8L
+        if (pixelSize <= 0L || pixelSize > Int.MAX_VALUE) {
+            PLog.e(TAG, "Linear RCD readback size invalid: ${width}x$height")
+            return null
+        }
+        val pixelBuffer = LargeDirectBuffer.allocate(pixelSize, "linear RCD RGBA16F")
+            ?.order(ByteOrder.nativeOrder())
+            ?: return null
+        return try {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, linearOutputFramebufferId)
+            GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 8)
+            GLES30.glReadPixels(
+                0,
+                0,
+                width,
+                height,
+                GLES30.GL_RGBA,
+                GLES30.GL_HALF_FLOAT,
+                pixelBuffer
+            )
+            pixelBuffer.position(0)
+            checkGlError("Linear RCD readback")
+            pixelBuffer
+        } catch (e: Exception) {
+            LargeDirectBuffer.free(pixelBuffer)
+            throw e
+        } finally {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        }
+    }
+
     /**
      * 从当前 outputFramebuffer 读取像素并创建 Bitmap。
      *
@@ -5837,6 +7159,10 @@ class RawDemosaicProcessor {
         if (quadRefineProgram != 0) GLES31.glDeleteProgram(quadRefineProgram)
         if (quadWriteOutputProgram != 0) GLES31.glDeleteProgram(quadWriteOutputProgram)
         if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
+        if (linearRawRgbProgram != 0) GLES31.glDeleteProgram(linearRawRgbProgram)
+        if (rawHdrLinearAccumulateProgram != 0) GLES31.glDeleteProgram(rawHdrLinearAccumulateProgram)
+        if (rawHdrLinearNormalizeProgram != 0) GLES31.glDeleteProgram(rawHdrLinearNormalizeProgram)
+        if (rawHdrLinearPreviewProgram != 0) GLES31.glDeleteProgram(rawHdrLinearPreviewProgram)
 
         // darktable denoiseprofile compute programs
         if (denoisePreconditionV2Program != 0) GLES31.glDeleteProgram(denoisePreconditionV2Program)

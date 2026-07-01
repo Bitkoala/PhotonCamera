@@ -12,6 +12,7 @@
 #include <exception>
 #include <fstream>
 #include <jni.h>
+#include <limits>
 #include <map>
 #include <omp.h>
 #include <string>
@@ -19,6 +20,9 @@
 #include <vector>
 
 #include "common.h"
+#include "dng_lossless_jpeg.h"
+#include "dng_memory.h"
+#include "dng_memory_stream.h"
 #include "libraw/libraw.h"
 #include "math_utils.h"
 #include "stacking_utils.h"
@@ -2879,6 +2883,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   LibRaw RawProcessor;
   ExifData ed;
+  RawProcessor.imgdata.rawparams.use_dngsdk = 0;
   RawProcessor.set_exifparser_handler(exif_callback, &ed);
 
   int ret = RawProcessor.open_file(path);
@@ -2928,8 +2933,18 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
          libraw_strerror(ret));
   }*/
 
-  if (!RawProcessor.imgdata.rawdata.raw_image) {
-    LOGE("processDngNative: raw_image is null after unpack");
+  const bool hasBayerRaw = RawProcessor.imgdata.rawdata.raw_image != nullptr;
+  const bool hasLinearRawColor3 = RawProcessor.imgdata.rawdata.color3_image != nullptr;
+  const bool hasLinearRawColor4 =
+      RawProcessor.imgdata.rawdata.color4_image != nullptr &&
+      RawProcessor.imgdata.idata.filters == 0 &&
+      RawProcessor.imgdata.idata.colors >= 3;
+  const bool hasLinearRawImage =
+      RawProcessor.imgdata.image != nullptr &&
+      RawProcessor.imgdata.idata.filters == 0 &&
+      RawProcessor.imgdata.idata.colors >= 3;
+  if (!hasBayerRaw && !hasLinearRawColor3 && !hasLinearRawColor4 && !hasLinearRawImage) {
+    LOGE("processDngNative: raw_image/color3_image/color4_image/image is null after unpack");
     env->ReleaseStringUTFChars(filePath, path);
     return nullptr;
   }
@@ -2939,68 +2954,86 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   int width = RawProcessor.imgdata.sizes.width;
   int height = RawProcessor.imgdata.sizes.height;
   int rawWidth = RawProcessor.imgdata.sizes.raw_width;
+  int rawPitch = RawProcessor.imgdata.sizes.raw_pitch;
+  const bool useLinearRawRgb =
+      !hasBayerRaw && (hasLinearRawColor3 || hasLinearRawColor4 || hasLinearRawImage);
+  const jint samplesPerPixel = useLinearRawRgb ? 3 : 1;
+
+  DngRawTagInfo dngRawTagInfo;
+  parseDngRawTagInfo(path, dngRawTagInfo);
+  jint cfaPattern = 0;
 
   // 判定 CFA 模式。LibRaw COLOR()/FC() folds DNG CFAPattern into the dcraw
   // 2-column filters representation, so Quad Bayer must be detected from the
   // original DNG CFARepeatPatternDim/CFAPattern tags.
-  int libRawCfa4x4[4][4];
-  for (int row = 0; row < 4; ++row) {
-    for (int col = 0; col < 4; ++col) {
-      libRawCfa4x4[row][col] = RawProcessor.COLOR(top + row, left + col);
+  if (useLinearRawRgb) {
+    const int color3RowPixels =
+        hasLinearRawColor3 && rawPitch > 0
+            ? rawPitch / (3 * static_cast<int>(sizeof(unsigned short)))
+            : rawWidth;
+    LOGI("processDngNative: LinearRaw RGB unpacked "
+         "active=%dx%d margin=%d,%d raw=%dx%d rawPitch=%d rowPixels=%d color3=%d color4=%d image=%d",
+         width, height, left, top, rawWidth, RawProcessor.imgdata.sizes.raw_height,
+         rawPitch, color3RowPixels, hasLinearRawColor3 ? 1 : 0,
+         hasLinearRawColor4 ? 1 : 0, hasLinearRawImage ? 1 : 0);
+  } else {
+    int libRawCfa4x4[4][4];
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        libRawCfa4x4[row][col] = RawProcessor.COLOR(top + row, left + col);
+      }
     }
-  }
-  int dngCfa4x4[4][4] = {{-1, -1, -1, -1},
-                         {-1, -1, -1, -1},
-                         {-1, -1, -1, -1},
-                         {-1, -1, -1, -1}};
-  int c00 = libRawCfa4x4[0][0];
-  int c01 = libRawCfa4x4[0][1];
-  int c10 = libRawCfa4x4[1][0];
-  int c11 = libRawCfa4x4[1][1];
-  jint cfaPattern = -1;
-  auto normalizedColor = [](int c) { return (c == 3) ? 1 : c; };
-  auto isG = [&](int c) { return normalizedColor(c) == 1; };
+    int dngCfa4x4[4][4] = {{-1, -1, -1, -1},
+                           {-1, -1, -1, -1},
+                           {-1, -1, -1, -1},
+                           {-1, -1, -1, -1}};
+    int c00 = libRawCfa4x4[0][0];
+    int c01 = libRawCfa4x4[0][1];
+    int c10 = libRawCfa4x4[1][0];
+    int c11 = libRawCfa4x4[1][1];
+    cfaPattern = -1;
+    auto normalizedColor = [](int c) { return (c == 3) ? 1 : c; };
+    auto isG = [&](int c) { return normalizedColor(c) == 1; };
 
-  DngCfaInfo dngCfaInfo;
-  const bool hasDngCfaInfo = parseDngCfaInfo(path, dngCfaInfo);
-  DngRawTagInfo dngRawTagInfo;
-  parseDngRawTagInfo(path, dngRawTagInfo);
-  if (hasDngCfaInfo) {
-    cfaPattern = identifyQuadCfaFromDng(dngCfaInfo, left, top, dngCfa4x4);
-    LOGI("processDngNative: DNG CFA tags repeat=%dx%d patternLen=%d "
-         "planeColorLen=%d active4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] expandedPattern=%d",
-         dngCfaInfo.repeatRows, dngCfaInfo.repeatCols, dngCfaInfo.patternLen,
-         dngCfaInfo.planeColorLen,
-         dngCfa4x4[0][0], dngCfa4x4[0][1], dngCfa4x4[0][2], dngCfa4x4[0][3],
-         dngCfa4x4[1][0], dngCfa4x4[1][1], dngCfa4x4[1][2], dngCfa4x4[1][3],
-         dngCfa4x4[2][0], dngCfa4x4[2][1], dngCfa4x4[2][2], dngCfa4x4[2][3],
-         dngCfa4x4[3][0], dngCfa4x4[3][1], dngCfa4x4[3][2], dngCfa4x4[3][3],
+    DngCfaInfo dngCfaInfo;
+    const bool hasDngCfaInfo = parseDngCfaInfo(path, dngCfaInfo);
+    if (hasDngCfaInfo) {
+      cfaPattern = identifyQuadCfaFromDng(dngCfaInfo, left, top, dngCfa4x4);
+      LOGI("processDngNative: DNG CFA tags repeat=%dx%d patternLen=%d "
+           "planeColorLen=%d active4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] expandedPattern=%d",
+           dngCfaInfo.repeatRows, dngCfaInfo.repeatCols, dngCfaInfo.patternLen,
+           dngCfaInfo.planeColorLen,
+           dngCfa4x4[0][0], dngCfa4x4[0][1], dngCfa4x4[0][2], dngCfa4x4[0][3],
+           dngCfa4x4[1][0], dngCfa4x4[1][1], dngCfa4x4[1][2], dngCfa4x4[1][3],
+           dngCfa4x4[2][0], dngCfa4x4[2][1], dngCfa4x4[2][2], dngCfa4x4[2][3],
+           dngCfa4x4[3][0], dngCfa4x4[3][1], dngCfa4x4[3][2], dngCfa4x4[3][3],
+           cfaPattern);
+    }
+
+    if (cfaPattern == -1) {
+      if (c00 == 0 && isG(c01) && isG(c10) && c11 == 2) {
+        cfaPattern = 0; // RGGB
+      } else if (isG(c00) && c01 == 0 && c10 == 2 && isG(c11)) {
+        cfaPattern = 1; // GRBG
+      } else if (isG(c00) && c01 == 2 && c10 == 0 && isG(c11)) {
+        cfaPattern = 2; // GBRG
+      } else if (c00 == 2 && isG(c01) && isG(c10) && c11 == 0) {
+        cfaPattern = 3; // BGGR
+      }
+    }
+    if (cfaPattern == -1) {
+      LOGW("processDngNative: Unknown CFA matrix (%d,%d,%d,%d), fallback to RGGB(0) to avoid GPU out-of-bounds crash", c00, c01, c10, c11);
+      cfaPattern = 0;
+    }
+    LOGI("processDngNative: CFA pattern identified from pixel [%d,%d] "
+         "libraw2x2=(%d,%d,%d,%d) libraw4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] -> %d",
+         top, left, c00, c01, c10, c11,
+         libRawCfa4x4[0][0], libRawCfa4x4[0][1], libRawCfa4x4[0][2], libRawCfa4x4[0][3],
+         libRawCfa4x4[1][0], libRawCfa4x4[1][1], libRawCfa4x4[1][2], libRawCfa4x4[1][3],
+         libRawCfa4x4[2][0], libRawCfa4x4[2][1], libRawCfa4x4[2][2], libRawCfa4x4[2][3],
+         libRawCfa4x4[3][0], libRawCfa4x4[3][1], libRawCfa4x4[3][2], libRawCfa4x4[3][3],
          cfaPattern);
   }
-
-  if (cfaPattern == -1) {
-    if (c00 == 0 && isG(c01) && isG(c10) && c11 == 2) {
-      cfaPattern = 0; // RGGB
-    } else if (isG(c00) && c01 == 0 && c10 == 2 && isG(c11)) {
-      cfaPattern = 1; // GRBG
-    } else if (isG(c00) && c01 == 2 && c10 == 0 && isG(c11)) {
-      cfaPattern = 2; // GBRG
-    } else if (c00 == 2 && isG(c01) && isG(c10) && c11 == 0) {
-      cfaPattern = 3; // BGGR
-    }
-  }
-  if (cfaPattern == -1) {
-    LOGW("processDngNative: Unknown CFA matrix (%d,%d,%d,%d), fallback to RGGB(0) to avoid GPU out-of-bounds crash", c00, c01, c10, c11);
-    cfaPattern = 0;
-  }
-  LOGI("processDngNative: CFA pattern identified from pixel [%d,%d] "
-       "libraw2x2=(%d,%d,%d,%d) libraw4x4=[%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d/%d,%d,%d,%d] -> %d",
-       top, left, c00, c01, c10, c11,
-       libRawCfa4x4[0][0], libRawCfa4x4[0][1], libRawCfa4x4[0][2], libRawCfa4x4[0][3],
-       libRawCfa4x4[1][0], libRawCfa4x4[1][1], libRawCfa4x4[1][2], libRawCfa4x4[1][3],
-       libRawCfa4x4[2][0], libRawCfa4x4[2][1], libRawCfa4x4[2][2], libRawCfa4x4[2][3],
-       libRawCfa4x4[3][0], libRawCfa4x4[3][1], libRawCfa4x4[3][2], libRawCfa4x4[3][3],
-       cfaPattern);
 
   const auto &levels = RawProcessor.imgdata.color.dng_levels;
   LOGI("dng black metadata: color.black=%d cblack=%d,%d,%d,%d repeat=%d,%d "
@@ -3016,17 +3049,20 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        static_cast<int>(levels.dng_cblack[4]),
        static_cast<int>(levels.dng_cblack[5]));
 
-  const bool blackDeltaApplied = applyDngBlackLevelDeltas(RawProcessor, dngRawTagInfo);
+  const bool blackDeltaApplied =
+      useLinearRawRgb ? false : applyDngBlackLevelDeltas(RawProcessor, dngRawTagInfo);
 
   // Read the TOTAL effective black level per LibRaw channel.
   // LibRaw stores it as: color.black + cblack[channel] + repeat_pattern[position].
   float librawBlackLevels[4] = {};
   float activeBlackLevels[4] = {};
   float exportedBlackLevels[4] = {};
-  computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, librawBlackLevels);
-  mapLibRawBlackLevelsForGpu(RawProcessor, cfaPattern, left, top,
-                             librawBlackLevels, activeBlackLevels,
-                             exportedBlackLevels);
+  if (!useLinearRawRgb) {
+    computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, librawBlackLevels);
+    mapLibRawBlackLevelsForGpu(RawProcessor, cfaPattern, left, top,
+                               librawBlackLevels, activeBlackLevels,
+                               exportedBlackLevels);
+  }
   const double blackPreview0 = !dngRawTagInfo.blackLevel.empty()
                                    ? dngRawTagInfo.blackLevel[0]
                                    : exportedBlackLevels[0];
@@ -3071,9 +3107,12 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   float exportedLscGrid[8] = {
       0.0f, 0.0f, 1.0f, 1.0f,
       0.0f, 0.0f, static_cast<float>(std::max(1, width)), static_cast<float>(std::max(1, height))};
-  jfloatArray exportedLscArray = buildDngLensShadingArray(
-      env, RawProcessor, cfaPattern, left, top, exportedLscWidth,
-      exportedLscHeight, exportedLscGrid);
+  jfloatArray exportedLscArray = nullptr;
+  if (!useLinearRawRgb) {
+    exportedLscArray = buildDngLensShadingArray(
+        env, RawProcessor, cfaPattern, left, top, exportedLscWidth,
+        exportedLscHeight, exportedLscGrid);
+  }
   jfloatArray exportedLscGridArray = nullptr;
   if (exportedLscArray) {
     exportedLscGridArray = env->NewFloatArray(8);
@@ -3124,7 +3163,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        dngRawTagInfo.asShotWhiteXY[1], selectedWb[0], selectedWb[1],
        selectedWb[2], selectedWb[3]);
 
-  if (useRawAutoWhiteBalanceEstimate == JNI_TRUE) {
+  if (useRawAutoWhiteBalanceEstimate == JNI_TRUE && !useLinearRawRgb) {
     float estimatedWb[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     int awbSamples = 0;
     if (estimateRawAutoWhiteBalance(RawProcessor, librawBlackLevels, estimatedWb, awbSamples)) {
@@ -3139,12 +3178,15 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     } else {
       LOGI("raw awb estimate: enabled but insufficient samples, using camera wb");
     }
+  } else if (useLinearRawRgb) {
+    LOGI("raw awb estimate: disabled for LinearRaw RGB input");
   } else {
     LOGI("raw awb estimate: disabled, using camera wb");
   }
 
-  // 准备返回结果：仅拷贝有效 Bayer 像素区域的单通道数据，以极大地减少 JNI 开销
-  size_t outputSize = (size_t)width * height * 2; // 16-bit single channel
+  // 准备返回结果：仅拷贝有效像素区域，避免把传感器 padding 传回 Kotlin。
+  jint rowStride = width * samplesPerPixel * 2;
+  size_t outputSize = static_cast<size_t>(rowStride) * height;
   void *outData = malloc(outputSize);
   if (!outData) {
     LOGE("processDngNative: Out of memory");
@@ -3152,10 +3194,70 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     return nullptr;
   }
 
-  unsigned short *src = RawProcessor.imgdata.rawdata.raw_image;
   unsigned short *dst = (unsigned short *)outData;
-  for (int y = 0; y < height; y++) {
-    memcpy(dst + y * width, src + (y + top) * rawWidth + left, width * 2);
+  if (useLinearRawRgb) {
+    if (hasLinearRawColor3) {
+      unsigned short(*src3)[3] = RawProcessor.imgdata.rawdata.color3_image;
+      const int color3RowPixels =
+          rawPitch > 0 ? rawPitch / (3 * static_cast<int>(sizeof(unsigned short)))
+                       : rawWidth;
+      if (color3RowPixels <= 0 || left + width > color3RowPixels) {
+        LOGE("processDngNative: invalid LinearRaw RGB pitch: rowPixels=%d left=%d width=%d rawPitch=%d",
+             color3RowPixels, left, width, rawPitch);
+        free(outData);
+        env->ReleaseStringUTFChars(filePath, path);
+        return nullptr;
+      }
+      for (int y = 0; y < height; y++) {
+        unsigned short(*srcRow)[3] = src3 + (y + top) * color3RowPixels + left;
+        memcpy(dst + static_cast<size_t>(y) * width * 3, srcRow,
+               static_cast<size_t>(width) * 3 * sizeof(unsigned short));
+      }
+    } else if (hasLinearRawColor4) {
+      unsigned short(*src4)[4] = RawProcessor.imgdata.rawdata.color4_image;
+      const int color4RowPixels =
+          rawPitch > 0 ? rawPitch / (4 * static_cast<int>(sizeof(unsigned short)))
+                       : rawWidth;
+      if (color4RowPixels <= 0 || left + width > color4RowPixels) {
+        LOGE("processDngNative: invalid LinearRaw RGB color4 pitch: rowPixels=%d left=%d width=%d rawPitch=%d",
+             color4RowPixels, left, width, rawPitch);
+        free(outData);
+        env->ReleaseStringUTFChars(filePath, path);
+        return nullptr;
+      }
+      for (int y = 0; y < height; y++) {
+        unsigned short(*srcRow)[4] = src4 + static_cast<size_t>(y + top) * color4RowPixels + left;
+        unsigned short *dstRow = dst + static_cast<size_t>(y) * width * 3;
+        for (int x = 0; x < width; x++) {
+          dstRow[x * 3 + 0] = srcRow[x][0];
+          dstRow[x * 3 + 1] = srcRow[x][1];
+          dstRow[x * 3 + 2] = srcRow[x][2];
+        }
+      }
+    } else {
+      unsigned short(*src4)[4] = RawProcessor.imgdata.image;
+      if (rawWidth <= 0 || left + width > rawWidth) {
+        LOGE("processDngNative: invalid LinearRaw image pitch: rawWidth=%d left=%d width=%d",
+             rawWidth, left, width);
+        free(outData);
+        env->ReleaseStringUTFChars(filePath, path);
+        return nullptr;
+      }
+      for (int y = 0; y < height; y++) {
+        unsigned short(*srcRow)[4] = src4 + static_cast<size_t>(y + top) * rawWidth + left;
+        unsigned short *dstRow = dst + static_cast<size_t>(y) * width * 3;
+        for (int x = 0; x < width; x++) {
+          dstRow[x * 3 + 0] = srcRow[x][0];
+          dstRow[x * 3 + 1] = srcRow[x][1];
+          dstRow[x * 3 + 2] = srcRow[x][2];
+        }
+      }
+    }
+  } else {
+    unsigned short *src = RawProcessor.imgdata.rawdata.raw_image;
+    for (int y = 0; y < height; y++) {
+      memcpy(dst + y * width, src + (y + top) * rawWidth + left, width * 2);
+    }
   }
   jobject rawDataBuffer = env->NewDirectByteBuffer(outData, outputSize);
 
@@ -3163,7 +3265,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jclass dngDataClass = env->FindClass("com/hinnka/mycamera/raw/DngRawData");
   jmethodID constructor =
       env->GetMethodID(dngDataClass, "<init>",
-                       "(Ljava/nio/ByteBuffer;IIIF[F[F[F[FIIFF[FII[FFIJF[I[I[FLandroid/graphics/Bitmap;)V");
+                       "(Ljava/nio/ByteBuffer;IIIIF[F[F[F[FIIFF[FII[FFIJF[I[I[FLandroid/graphics/Bitmap;)V");
 
   jfloatArray blackLevelArray = env->NewFloatArray(4);
   for (int i = 0; i < 4; i++) {
@@ -3200,7 +3302,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   }
   env->SetFloatArrayRegion(wbArray, 3, 1, &wb[2]);
 
-  // CCM: DNG SDK dng_color_spec semantics. WB is encoded in CameraToPCS.
+  // CCM: DNG color specification semantics. WB is encoded in CameraToPCS.
   Matrix3x3 targetTransform =
       computeXYZD50ToGamut(xr, yr, xg, yg, xb, yb, xw, yw);
   Matrix3x3 colorMatrix1 = Matrix3x3::identity();
@@ -3258,7 +3360,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     }
   }
 
-  LOGI("dng sdk color metadata: color1=%d color2=%d forward1=%d forward2=%d "
+  LOGI("dng color metadata: color1=%d color2=%d forward1=%d forward2=%d "
        "ill=%d,%d analog=%f,%f,%f",
        hasColor1 ? 1 : 0, hasColor2 ? 1 : 0, hasForward1 ? 1 : 0,
        hasForward2 ? 1 : 0,
@@ -3276,7 +3378,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       cameraCalibration1, cameraCalibration2, analogBalance, camToXYZ,
       &sdkWhiteXy);
   if (hasSdkMatrix) {
-    LOGI("Using DNG SDK color path: whiteXY=%f,%f", sdkWhiteXy[0],
+    LOGI("Using DNG color spec path: whiteXY=%f,%f", sdkWhiteXy[0],
          sdkWhiteXy[1]);
   } else {
     Matrix3x3 identity = Matrix3x3::identity();
@@ -3288,7 +3390,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
               xyzToCam, true, identity, false, identity, false, identity,
               false, 21, 0, wb, identity, identity, unityAnalog, camToXYZ,
               &fallbackWhiteXy)) {
-        LOGI("Using %s fallback via DNG SDK ColorMatrix path: whiteXY=%f,%f",
+        LOGI("Using %s fallback via DNG ColorMatrix path: whiteXY=%f,%f",
              sourceName, fallbackWhiteXy[0], fallbackWhiteXy[1]);
         return true;
       }
@@ -3363,10 +3465,11 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        finalCCM.m[5], finalCCM.m[6], finalCCM.m[7], finalCCM.m[8]);
 
   // 其它
-  jint rowStride = width * 2; // Single channel 16-bit Bayer
   jfloat whiteLevel =
       (jfloat)RawProcessor.imgdata.color.dng_levels.dng_whitelevel[0];
-  if (whiteLevel <= 0)
+  if (whiteLevel <= 0 && useLinearRawRgb)
+    whiteLevel = 65535.0f;
+  else if (whiteLevel <= 0)
     whiteLevel = (jfloat)RawProcessor.imgdata.color.maximum;
 
   jfloat rawBaselineExposure = levels.baseline_exposure;
@@ -3429,7 +3532,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   jobject dngData = env->NewObject(
       dngDataClass, constructor, rawDataBuffer, width, height, rowStride,
-      whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
+      samplesPerPixel, whiteLevel, blackLevelArray, preMulArray, wbArray, colorMatrixArray,
       cfaPattern, ed.rotation, baselineExposure, shadowScale, exportedLscArray, exportedLscWidth, exportedLscHeight,
       exportedLscGridArray, exposureBias, iso,
       shutterSpeedLong, aperture, activeArray, defaultCropArray, noiseProfileArray,
@@ -3634,6 +3737,71 @@ Java_com_hinnka_mycamera_utils_DirectBufferAllocator_allocateNative(
     return nullptr;
   }
   return env->NewDirectByteBuffer(ptr, capacity);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_hinnka_mycamera_utils_SuperResolutionDngWriter_encodeLosslessJpegNative(
+    JNIEnv *env, jobject, jobject rawBuffer, jint width, jint height,
+    jint samplesPerPixel, jint bitsPerSample, jint rowStep, jint colStep) {
+  if (!rawBuffer || width <= 0 || height <= 0 || samplesPerPixel <= 0 ||
+      samplesPerPixel > 4 || bitsPerSample <= 0 || bitsPerSample > 16 ||
+      rowStep <= 0 || colStep <= 0) {
+    LOGE("encodeLosslessJpegNative: invalid args w=%d h=%d spp=%d bps=%d rowStep=%d colStep=%d",
+         width, height, samplesPerPixel, bitsPerSample, rowStep, colStep);
+    return nullptr;
+  }
+
+  void *rawPtr = env->GetDirectBufferAddress(rawBuffer);
+  jlong capacity = env->GetDirectBufferCapacity(rawBuffer);
+  const jlong requiredBytes =
+      static_cast<jlong>(height - 1) * rowStep * 2 +
+      static_cast<jlong>(width - 1) * colStep * 2 +
+      static_cast<jlong>(samplesPerPixel) * 2;
+  if (!rawPtr || capacity < requiredBytes) {
+    LOGE("encodeLosslessJpegNative: buffer invalid ptr=%p capacity=%lld required=%lld",
+         rawPtr, static_cast<long long>(capacity),
+         static_cast<long long>(requiredBytes));
+    return nullptr;
+  }
+
+  try {
+    dng_memory_stream stream(gDefaultDNGMemoryAllocator);
+    EncodeLosslessJPEG(reinterpret_cast<const uint16 *>(rawPtr),
+                       static_cast<uint32>(height),
+                       static_cast<uint32>(width),
+                       static_cast<uint32>(samplesPerPixel),
+                       static_cast<uint32>(bitsPerSample),
+                       static_cast<int32>(rowStep),
+                       static_cast<int32>(colStep),
+                       stream);
+    AutoPtr<dng_memory_block> block(
+        stream.AsMemoryBlock(gDefaultDNGMemoryAllocator));
+    if (!block.Get() || block->LogicalSize() == 0) {
+      LOGE("encodeLosslessJpegNative: DNG SDK returned empty JPEG stream");
+      return nullptr;
+    }
+    if (block->LogicalSize() > static_cast<uint32>(std::numeric_limits<jsize>::max())) {
+      LOGE("encodeLosslessJpegNative: JPEG stream too large: %u",
+           block->LogicalSize());
+      return nullptr;
+    }
+    auto size = static_cast<jsize>(block->LogicalSize());
+    jbyteArray result = env->NewByteArray(size);
+    if (!result) {
+      LOGE("encodeLosslessJpegNative: failed to allocate result byte array");
+      return nullptr;
+    }
+    env->SetByteArrayRegion(
+        result, 0, size,
+        reinterpret_cast<const jbyte *>(block->Buffer()));
+    return result;
+  } catch (const std::exception &e) {
+    LOGE("encodeLosslessJpegNative: exception: %s", e.what());
+    return nullptr;
+  } catch (...) {
+    LOGE("encodeLosslessJpegNative: unknown exception");
+    return nullptr;
+  }
 }
 
 JNIEXPORT void JNICALL

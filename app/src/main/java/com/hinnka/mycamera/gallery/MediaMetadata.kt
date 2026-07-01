@@ -191,7 +191,8 @@ data class MediaMetadata(
      * 从 RawMetadata 补齐信息
      */
     fun merge(raw: RawMetadata): MediaMetadata {
-        val shouldSwap = rotation == 90 || rotation == 270
+        val resolvedRotation = raw.rotation ?: rotation
+        val shouldSwap = resolvedRotation == 90 || resolvedRotation == 270
         val rawWidth = raw.defaultCrop?.width() ?: raw.width
         val rawHeight = raw.defaultCrop?.height() ?: raw.height
         val resolvedWidth = if (shouldSwap) rawHeight else rawWidth
@@ -202,7 +203,8 @@ data class MediaMetadata(
             aperture = formatAperture(raw.aperture).takeIf { it.isNotEmpty() } ?: aperture,
             exposureBias = raw.exposureBias,
             width = resolvedWidth.takeIf { it > 0 } ?: width,
-            height = resolvedHeight.takeIf { it > 0 } ?: height
+            height = resolvedHeight.takeIf { it > 0 } ?: height,
+            rotation = resolvedRotation
         )
     }
 
