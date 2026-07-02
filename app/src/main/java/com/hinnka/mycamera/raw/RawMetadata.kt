@@ -60,6 +60,11 @@ data class RawMetadata(
     val colorCorrectionMatrix: FloatArray,
 
     /**
+     * DNG SDK CameraWhite clip vector for camera RGB before CameraToPCS.
+     */
+    val cameraWhite: FloatArray = floatArrayOf(1f, 1f, 1f),
+
+    /**
      * 镜头阴影校正图（Gain Map）
      * 这是一个 4xNxM 的数组，N 和 M 是网格尺寸
      */
@@ -261,6 +266,7 @@ data class RawMetadata(
             // 5. 获取色彩校正矩阵
             // 优先使用 ForwardMatrix/ColorMatrix 计算 CCM
             val colorCorrectionMatrix = computeCCMFromCharacteristics(characteristics, captureResult, colorSpace)
+            val cameraWhite = computeCameraWhiteFromCharacteristics(characteristics, captureResult)
 
             // 6. 获取镜头阴影校正
             val shadingMap = captureResult.get(CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP)
@@ -302,6 +308,7 @@ data class RawMetadata(
                 whiteBalanceGains = whiteBalanceGains,
                 preMul = whiteBalanceGains.copyOf(),
                 colorCorrectionMatrix = colorCorrectionMatrix,
+                cameraWhite = cameraWhite,
                 lensShadingMap = lensShadingMap,
                 lensShadingMapWidth = shadingWidth,
                 lensShadingMapHeight = shadingHeight,
@@ -367,6 +374,27 @@ data class RawMetadata(
                 Log.d(TAG, "No ForwardMatrix/ColorMatrix available, using identity matrix")
                 floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
             }
+        }
+
+        private fun computeCameraWhiteFromCharacteristics(
+            characteristics: CameraCharacteristics,
+            captureResult: CaptureResult
+        ): FloatArray {
+            val wbGains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            val whiteBalanceGains = if (wbGains != null) {
+                floatArrayOf(wbGains.red, wbGains.greenEven, wbGains.greenOdd, wbGains.blue)
+            } else {
+                floatArrayOf(1f, 1f, 1f, 1f)
+            }
+            return DngSdkColorSpec.computeCameraWhite(
+                colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)?.let(::extractCCM),
+                colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)?.let(::extractCCM),
+                forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)?.let(::extractCCM),
+                forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)?.let(::extractCCM),
+                calibrationIlluminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 0,
+                calibrationIlluminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt() ?: 0,
+                whiteBalanceGains = whiteBalanceGains
+            ) ?: floatArrayOf(1f, 1f, 1f)
         }
 
         /**
@@ -785,6 +813,7 @@ data class RawMetadata(
         if (whiteLevel != other.whiteLevel) return false
         if (!whiteBalanceGains.contentEquals(other.whiteBalanceGains)) return false
         if (!colorCorrectionMatrix.contentEquals(other.colorCorrectionMatrix)) return false
+        if (!cameraWhite.contentEquals(other.cameraWhite)) return false
         if (baselineExposure != other.baselineExposure) return false
         if (shadowScale != other.shadowScale) return false
         if (iso != other.iso) return false
@@ -803,6 +832,7 @@ data class RawMetadata(
         result = 31 * result + whiteLevel.hashCode()
         result = 31 * result + whiteBalanceGains.contentHashCode()
         result = 31 * result + colorCorrectionMatrix.contentHashCode()
+        result = 31 * result + cameraWhite.contentHashCode()
         result = 31 * result + (lensShadingMap?.contentHashCode() ?: 0)
         result = 31 * result + lensShadingMapWidth
         result = 31 * result + lensShadingMapHeight

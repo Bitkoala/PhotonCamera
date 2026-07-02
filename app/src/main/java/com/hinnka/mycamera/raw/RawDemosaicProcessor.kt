@@ -122,6 +122,7 @@ class RawDemosaicProcessor {
             whiteBalanceGains = whiteBalanceGains,
             preMul = preMul,
             colorCorrectionMatrix = colorCorrectionMatrix,
+            cameraWhite = baseMetadata?.cameraWhite ?: floatArrayOf(1f, 1f, 1f),
             lensShadingMap = dngRawData.lensShadingMap,
             lensShadingMapWidth = dngRawData.lensShadingMapWidth,
             lensShadingMapHeight = dngRawData.lensShadingMapHeight,
@@ -193,6 +194,15 @@ class RawDemosaicProcessor {
         private const val FILMIC_DEFAULT_CONTRAST = 1.433801098f
         private const val FILMIC_LATITUDE = 0.0001f
         private const val FILMIC_SAFETY_MARGIN = 0.01f
+        private const val DARKTABLE_FILMIC_HR_RECONSTRUCT_THRESHOLD_EV = 0f
+        private const val DARKTABLE_FILMIC_HR_RECONSTRUCT_FEATHER_EV = 3f
+        private const val DARKTABLE_FILMIC_HR_NOISE_LEVEL = 0.2f
+        private const val DARKTABLE_FILMIC_HR_GAMMA = 0.5f
+        private const val DARKTABLE_FILMIC_HR_GAMMA_COMP = 0.5f
+        private const val DARKTABLE_FILMIC_HR_BETA = 1f
+        private const val DARKTABLE_FILMIC_HR_BETA_COMP = 0f
+        private const val DARKTABLE_FILMIC_HR_DELTA = 1f
+        private const val DARKTABLE_FILMIC_HR_HIGH_QUALITY_ITERATIONS = 1
         private const val DNG_DEFAULT_CROP_ASPECT_TOLERANCE = 0.005f
         private val BRADFORD_D65_TO_D50 = floatArrayOf(
             1.0478112f, 0.0228866f, -0.0501270f,
@@ -253,6 +263,15 @@ class RawDemosaicProcessor {
     private var rawHdrLinearAccumulateProgram = 0
     private var rawHdrLinearNormalizeProgram = 0
     private var rawHdrLinearPreviewProgram = 0
+    private var filmicHrMaskProgram = 0
+    private var filmicHrInpaintNoiseProgram = 0
+    private var filmicHrInitReconstructProgram = 0
+    private var filmicHrBsplineProgram = 0
+    private var filmicHrHighFrequencyProgram = 0
+    private var filmicHrWaveletsReconstructProgram = 0
+    private var filmicHrComputeNormsProgram = 0
+    private var filmicHrComputeRatiosProgram = 0
+    private var filmicHrRestoreRatiosProgram = 0
 
     private var rawTextureId = 0
     private var profileGainTableTextureId = 0
@@ -314,6 +333,27 @@ class RawDemosaicProcessor {
     private var gfFboId = intArrayOf(0, 0)
     private var gfWidth = 0
     private var gfHeight = 0
+
+    private var filmicHrWidth = 0
+    private var filmicHrHeight = 0
+    private var filmicHrMaskTextureId = 0
+    private var filmicHrMaskFramebufferId = 0
+    private var filmicHrWorkingTextureId = 0
+    private var filmicHrWorkingFramebufferId = 0
+    private var filmicHrTempTextureId = 0
+    private var filmicHrTempFramebufferId = 0
+    private var filmicHrLfEvenTextureId = 0
+    private var filmicHrLfEvenFramebufferId = 0
+    private var filmicHrLfOddTextureId = 0
+    private var filmicHrLfOddFramebufferId = 0
+    private var filmicHrHighFrequencyTextureId = 0
+    private var filmicHrHighFrequencyFramebufferId = 0
+    private var filmicHrHighFrequencyRgbTextureId = 0
+    private var filmicHrHighFrequencyRgbFramebufferId = 0
+    private var filmicHrNormsTextureId = 0
+    private var filmicHrNormsFramebufferId = 0
+    private val filmicHrReconstructedTextureIds = intArrayOf(0, 0)
+    private val filmicHrReconstructedFramebufferIds = intArrayOf(0, 0)
 
     suspend fun prewarmDepthEstimator(context: Context) = withContext(Dispatchers.Default) {
         val start = System.currentTimeMillis()
@@ -1193,6 +1233,10 @@ class RawDemosaicProcessor {
             metadata = actualMetadata,
             dcpRenderPlan = activeDcpRenderPlan
         )
+        val linearCameraWhite = resolveLinearCameraWhite(
+            metadata = actualMetadata,
+            dcpRenderPlan = activeDcpRenderPlan
+        )
         logRawDcpPipeline(
             profilePlanSource = profilePlanSource,
             requestedColorEngine = requestedColorEngine,
@@ -1299,8 +1343,16 @@ class RawDemosaicProcessor {
                 // GPU 已消费 rawData，立即释放 CPU 侧引用，帮助 GC 回收（超分时约 288 MB）
                 actualRawData = null
 
+                // darktable feeds Filmic after the raw highlight reconstruction module;
+                // keep the raw-domain repair enabled before Filmic HR.
+                val rawDomainHighlightReconstructionEnabled = true
                 if (RawMetadata.isQuadBayer(actualMetadata.cfaPattern)) {
-                    runQuadBayerDemosaic(actualMetadata, actualWidth, actualHeight)
+                    runQuadBayerDemosaic(
+                        actualMetadata,
+                        actualWidth,
+                        actualHeight,
+                        highlightReconstructionEnabled = rawDomainHighlightReconstructionEnabled
+                    )
                 } else {
             // Bayer RCD Compute Shader 处理路径 (1:1 直接映射自 darktable RCD)
             val ssboIds = IntArray(9)
@@ -1375,6 +1427,10 @@ class RawDemosaicProcessor {
                 GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightCeiling"),
                 RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
             )
+            GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightReconstructionEnabled"),
+                if (rawDomainHighlightReconstructionEnabled) 1 else 0
+            )
             val metadataWbGains = actualMetadata.whiteBalanceGains
             val highlightWbGains = highlightReconstructionWbGains(actualMetadata)
             val lscSize = lensShadingLogString(actualMetadata)
@@ -1384,6 +1440,7 @@ class RawDemosaicProcessor {
                         "white=${actualMetadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
                         "highlightWb=${highlightWbGains.contentToString()} " +
                         "lsc=$lscSize " +
+                        "highlightReconstruction=$rawDomainHighlightReconstructionEnabled " +
                         "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                         "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING " +
                         "linearBlackPoint=${rawBlackPointCorrection.coerceIn(0f, 0.99f)} " +
@@ -1563,6 +1620,7 @@ class RawDemosaicProcessor {
                     rawBlackPointCorrection = rawBlackPointCorrection,
                     rawWhitePointCorrection = rawWhitePointCorrection,
                     colorCorrectionMatrix = linearColorCorrectionMatrix,
+                    cameraWhite = linearCameraWhite,
                     dcpRenderPlan = activeDcpRenderPlan,
                     applyLinearDngBaselineExposure = hasProfileGainTableMap,
                     clampProfileRgb = useAdobeProfilePipeline,
@@ -1674,6 +1732,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
+                cameraWhite = linearCameraWhite,
                 applyDngBaselineExposure = hasProfileGainTableMap,
                 clampProfileRgb = useAdobeProfilePipeline,
                 label = "LinearRcdPass"
@@ -1766,20 +1825,53 @@ class RawDemosaicProcessor {
             }
 
             // 5. 第二步：Combined Pass (HDR Linear -> LDR sRGB + LUT)
+            val combinedInputTexture = if (colorEngine == RawRenderingEngine.DarktableFilmic) {
+                val reconstructedTexture = renderDarktableFilmicHighlightReconstruction(
+                    sourceTextureId = outputTexture,
+                    width = actualWidth,
+                    height = actualHeight,
+                    rawToneMappingParameters = rawToneMappingParameters,
+                    profileExposureUniforms = profileExposureUniforms,
+                    profileToEngineTransform = profileToEngineTransform
+                )
+                if (reconstructedTexture == 0) {
+                    PLog.e(TAG, "Darktable Filmic highlight reconstruction failed")
+                    return@withContext null
+                }
+                reconstructedTexture
+            } else {
+                outputTexture
+            }
+            val combinedProfileExposureUniforms =
+                if (colorEngine == RawRenderingEngine.DarktableFilmic) {
+                    ProfileExposureUniforms.NEUTRAL
+                } else {
+                    profileExposureUniforms
+                }
+            val combinedProfileToEngineTransform =
+                if (colorEngine == RawRenderingEngine.DarktableFilmic) {
+                    identityMatrix3x3()
+                } else {
+                    profileToEngineTransform
+                }
+
             setupCombinedFramebuffer(actualWidth, actualHeight)
             val combinedStart = System.currentTimeMillis()
             val combinedRendered = renderCombinedPass(
                 metadata = actualMetadata,
-                inputTextureId = outputTexture,
+                inputTextureId = combinedInputTexture,
                 dcpRenderPlan = activeDcpRenderPlan,
-                profileExposureUniforms = profileExposureUniforms,
+                profileExposureUniforms = combinedProfileExposureUniforms,
                 spectralFilmLut = spektrafilmLut,
                 colorEngine = colorEngine,
                 outputWorkingColorSpace = engineWorkingColorSpace,
-                profileToEngineTransform = profileToEngineTransform,
+                profileToEngineTransform = combinedProfileToEngineTransform,
                 shadowsHighlightsParams = shadowsHighlightsParams,
                 rawToneMappingParameters = rawToneMappingParameters
             )
+            if (colorEngine == RawRenderingEngine.DarktableFilmic) {
+                releaseDarktableFilmicHighlightReconstructionFramebuffers()
+            }
             if (!combinedRendered) {
                 PLog.e(TAG, "Combined Pass failed for colorEngine=$colorEngine")
                 return@withContext null
@@ -2315,6 +2407,7 @@ class RawDemosaicProcessor {
         uniform sampler2D uDemosaickedTexture;
         uniform sampler2D uProfileGainTableMap;
         uniform mat3 uColorCorrectionMatrix;
+        uniform vec3 uCameraWhite;
         uniform float uExposureGain;
         uniform float uBlackPoint;
         uniform float uWhitePoint;
@@ -2394,6 +2487,9 @@ class RawDemosaicProcessor {
             float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
             float whitePoint = max(uWhitePoint, blackPoint + 0.01);
             rgb = max((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), vec3(0.0));
+            if (uClampProfileRgb != 0) {
+                rgb = min(rgb, max(uCameraWhite, vec3(0.001)));
+            }
             rgb = uColorCorrectionMatrix * rgb;
             vec3 profileInputRgb = rgb * uProfileGainBaselineGain;
             float tableInput = profileGainTableInput(profileInputRgb);
@@ -2716,6 +2812,111 @@ class RawDemosaicProcessor {
         }
         GLES30.glDeleteShader(fShader)
         return program
+    }
+
+    private fun ensureDarktableFilmicHighlightReconstructionPrograms(): Boolean {
+        if (filmicHrMaskProgram != 0 &&
+            filmicHrInpaintNoiseProgram != 0 &&
+            filmicHrInitReconstructProgram != 0 &&
+            filmicHrBsplineProgram != 0 &&
+            filmicHrHighFrequencyProgram != 0 &&
+            filmicHrWaveletsReconstructProgram != 0 &&
+            filmicHrComputeNormsProgram != 0 &&
+            filmicHrComputeRatiosProgram != 0 &&
+            filmicHrRestoreRatiosProgram != 0
+        ) {
+            return true
+        }
+
+        releaseDarktableFilmicHighlightReconstructionPrograms()
+        val vShader = compileShader(
+            GLES30.GL_VERTEX_SHADER,
+            RawShaders.VERTEX_SHADER,
+            "darktableFilmicHrVertex"
+        )
+        if (vShader == 0) return false
+
+        filmicHrMaskProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.MASK_FRAGMENT_SHADER,
+            "darktableFilmicHrMask"
+        )
+        filmicHrInpaintNoiseProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.INPAINT_NOISE_FRAGMENT_SHADER,
+            "darktableFilmicHrInpaintNoise"
+        )
+        filmicHrInitReconstructProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.INIT_RECONSTRUCT_FRAGMENT_SHADER,
+            "darktableFilmicHrInitReconstruct"
+        )
+        filmicHrBsplineProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.BSPLINE_FRAGMENT_SHADER,
+            "darktableFilmicHrBspline"
+        )
+        filmicHrHighFrequencyProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.HIGH_FREQUENCY_FRAGMENT_SHADER,
+            "darktableFilmicHrHighFrequency"
+        )
+        filmicHrWaveletsReconstructProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.WAVELETS_RECONSTRUCT_FRAGMENT_SHADER,
+            "darktableFilmicHrWaveletsReconstruct"
+        )
+        filmicHrComputeNormsProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.COMPUTE_NORMS_FRAGMENT_SHADER,
+            "darktableFilmicHrComputeNorms"
+        )
+        filmicHrComputeRatiosProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.COMPUTE_RATIOS_FRAGMENT_SHADER,
+            "darktableFilmicHrComputeRatios"
+        )
+        filmicHrRestoreRatiosProgram = linkFragmentProgram(
+            vShader,
+            DarktableFilmicHighlightReconstructionShaders.RESTORE_RATIOS_FRAGMENT_SHADER,
+            "darktableFilmicHrRestoreRatios"
+        )
+        GLES30.glDeleteShader(vShader)
+
+        val ok = filmicHrMaskProgram != 0 &&
+            filmicHrInpaintNoiseProgram != 0 &&
+            filmicHrInitReconstructProgram != 0 &&
+            filmicHrBsplineProgram != 0 &&
+            filmicHrHighFrequencyProgram != 0 &&
+            filmicHrWaveletsReconstructProgram != 0 &&
+            filmicHrComputeNormsProgram != 0 &&
+            filmicHrComputeRatiosProgram != 0 &&
+            filmicHrRestoreRatiosProgram != 0
+        if (!ok) {
+            releaseDarktableFilmicHighlightReconstructionPrograms()
+        }
+        return ok
+    }
+
+    private fun releaseDarktableFilmicHighlightReconstructionPrograms() {
+        if (filmicHrMaskProgram != 0) GLES30.glDeleteProgram(filmicHrMaskProgram)
+        if (filmicHrInpaintNoiseProgram != 0) GLES30.glDeleteProgram(filmicHrInpaintNoiseProgram)
+        if (filmicHrInitReconstructProgram != 0) GLES30.glDeleteProgram(filmicHrInitReconstructProgram)
+        if (filmicHrBsplineProgram != 0) GLES30.glDeleteProgram(filmicHrBsplineProgram)
+        if (filmicHrHighFrequencyProgram != 0) GLES30.glDeleteProgram(filmicHrHighFrequencyProgram)
+        if (filmicHrWaveletsReconstructProgram != 0) GLES30.glDeleteProgram(filmicHrWaveletsReconstructProgram)
+        if (filmicHrComputeNormsProgram != 0) GLES30.glDeleteProgram(filmicHrComputeNormsProgram)
+        if (filmicHrComputeRatiosProgram != 0) GLES30.glDeleteProgram(filmicHrComputeRatiosProgram)
+        if (filmicHrRestoreRatiosProgram != 0) GLES30.glDeleteProgram(filmicHrRestoreRatiosProgram)
+        filmicHrMaskProgram = 0
+        filmicHrInpaintNoiseProgram = 0
+        filmicHrInitReconstructProgram = 0
+        filmicHrBsplineProgram = 0
+        filmicHrHighFrequencyProgram = 0
+        filmicHrWaveletsReconstructProgram = 0
+        filmicHrComputeNormsProgram = 0
+        filmicHrComputeRatiosProgram = 0
+        filmicHrRestoreRatiosProgram = 0
     }
 
     private fun compileComputeProgram(source: String, name: String): Int {
@@ -4020,6 +4221,10 @@ class RawDemosaicProcessor {
                 GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightCeiling"),
                 RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
             )
+            GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(rcdPopulateProgram, "uHighlightReconstructionEnabled"),
+                1
+            )
             GLES31.glUniform4fv(
                 GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteBalanceGains"),
                 1,
@@ -4122,7 +4327,8 @@ class RawDemosaicProcessor {
     private fun runQuadBayerDemosaic(
         metadata: RawMetadata,
         width: Int,
-        height: Int
+        height: Int,
+        highlightReconstructionEnabled: Boolean = true
     ) {
         val ssboIds = IntArray(6)
         GLES31.glGenBuffers(6, ssboIds, 0)
@@ -4186,6 +4392,10 @@ class RawDemosaicProcessor {
             GLES31.glGetUniformLocation(quadPopulateProgram, "uHighlightCeiling"),
             RCD_HIGHLIGHT_RECONSTRUCTION_CEILING
         )
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(quadPopulateProgram, "uHighlightReconstructionEnabled"),
+            if (highlightReconstructionEnabled) 1 else 0
+        )
         GLES31.glUniform4fv(
             GLES31.glGetUniformLocation(quadPopulateProgram, "uWhiteBalanceGains"),
             1,
@@ -4198,6 +4408,7 @@ class RawDemosaicProcessor {
                     "black=${blackLevel4.contentToString()} " +
                     "white=${metadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
                     "highlightWb=${highlightWbGains.contentToString()} lsc=$lscSize " +
+                    "highlightReconstruction=$highlightReconstructionEnabled " +
                     "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                     "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING"
         )
@@ -4465,6 +4676,115 @@ class RawDemosaicProcessor {
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
         checkGlError("setupFullResFramebuffer Double Buffered")
+    }
+
+    private fun setupDarktableFilmicHighlightReconstructionFramebuffers(width: Int, height: Int) {
+        if (filmicHrWidth == width && filmicHrHeight == height &&
+            filmicHrMaskFramebufferId != 0 && filmicHrWorkingFramebufferId != 0 &&
+            filmicHrReconstructedFramebufferIds.all { it != 0 }
+        ) {
+            return
+        }
+
+        releaseDarktableFilmicHighlightReconstructionFramebuffers()
+        filmicHrWidth = width
+        filmicHrHeight = height
+
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_R16F, "filmicHrMask").also {
+            filmicHrMaskTextureId = it.first
+            filmicHrMaskFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrWorking").also {
+            filmicHrWorkingTextureId = it.first
+            filmicHrWorkingFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrTemp").also {
+            filmicHrTempTextureId = it.first
+            filmicHrTempFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrLfEven").also {
+            filmicHrLfEvenTextureId = it.first
+            filmicHrLfEvenFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrLfOdd").also {
+            filmicHrLfOddTextureId = it.first
+            filmicHrLfOddFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrHighFrequency").also {
+            filmicHrHighFrequencyTextureId = it.first
+            filmicHrHighFrequencyFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrHighFrequencyRgb").also {
+            filmicHrHighFrequencyRgbTextureId = it.first
+            filmicHrHighFrequencyRgbFramebufferId = it.second
+        }
+        createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_R16F, "filmicHrNorms").also {
+            filmicHrNormsTextureId = it.first
+            filmicHrNormsFramebufferId = it.second
+        }
+        for (i in filmicHrReconstructedTextureIds.indices) {
+            createFilmicHrTextureAndFramebuffer(width, height, GLES30.GL_RGBA16F, "filmicHrReconstructed$i").also {
+                filmicHrReconstructedTextureIds[i] = it.first
+                filmicHrReconstructedFramebufferIds[i] = it.second
+            }
+        }
+        checkGlError("setupDarktableFilmicHighlightReconstructionFramebuffers")
+    }
+
+    private fun createFilmicHrTextureAndFramebuffer(
+        width: Int,
+        height: Int,
+        internalFormat: Int,
+        label: String,
+    ): Pair<Int, Int> {
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        val textureId = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, internalFormat, width, height)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        return textureId to createFramebufferForTexture(textureId, label)
+    }
+
+    private fun releaseDarktableFilmicHighlightReconstructionFramebuffers() {
+        deleteTextureAndFramebuffer(filmicHrMaskTextureId, filmicHrMaskFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrWorkingTextureId, filmicHrWorkingFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrTempTextureId, filmicHrTempFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrLfEvenTextureId, filmicHrLfEvenFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrLfOddTextureId, filmicHrLfOddFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrHighFrequencyTextureId, filmicHrHighFrequencyFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrHighFrequencyRgbTextureId, filmicHrHighFrequencyRgbFramebufferId)
+        deleteTextureAndFramebuffer(filmicHrNormsTextureId, filmicHrNormsFramebufferId)
+        for (i in filmicHrReconstructedTextureIds.indices) {
+            deleteTextureAndFramebuffer(
+                filmicHrReconstructedTextureIds[i],
+                filmicHrReconstructedFramebufferIds[i]
+            )
+            filmicHrReconstructedTextureIds[i] = 0
+            filmicHrReconstructedFramebufferIds[i] = 0
+        }
+        filmicHrMaskTextureId = 0
+        filmicHrMaskFramebufferId = 0
+        filmicHrWorkingTextureId = 0
+        filmicHrWorkingFramebufferId = 0
+        filmicHrTempTextureId = 0
+        filmicHrTempFramebufferId = 0
+        filmicHrLfEvenTextureId = 0
+        filmicHrLfEvenFramebufferId = 0
+        filmicHrLfOddTextureId = 0
+        filmicHrLfOddFramebufferId = 0
+        filmicHrHighFrequencyTextureId = 0
+        filmicHrHighFrequencyFramebufferId = 0
+        filmicHrHighFrequencyRgbTextureId = 0
+        filmicHrHighFrequencyRgbFramebufferId = 0
+        filmicHrNormsTextureId = 0
+        filmicHrNormsFramebufferId = 0
+        filmicHrWidth = 0
+        filmicHrHeight = 0
     }
 
     private fun setupCombinedFramebuffer(width: Int, height: Int) {
@@ -5247,6 +5567,337 @@ class RawDemosaicProcessor {
         RawToneMappingGl.bindRawToneMappingUniforms(program, params)
     }
 
+    private fun renderDarktableFilmicHighlightReconstruction(
+        sourceTextureId: Int,
+        width: Int,
+        height: Int,
+        rawToneMappingParameters: RawToneMappingParameters,
+        profileExposureUniforms: ProfileExposureUniforms,
+        profileToEngineTransform: FloatArray,
+    ): Int {
+        if (!ensureDarktableFilmicHighlightReconstructionPrograms()) {
+            PLog.e(TAG, "Darktable Filmic highlight reconstruction programs unavailable")
+            return 0
+        }
+
+        setupDarktableFilmicHighlightReconstructionFramebuffers(width, height)
+
+        val normalizedTone = rawToneMappingParameters.normalized()
+        val reconstructThreshold = max(
+            2.0f.pow(
+                normalizedTone.filmicWhiteRelativeExposure +
+                    DARKTABLE_FILMIC_HR_RECONSTRUCT_THRESHOLD_EV
+            ) * FILMIC_GREY_SOURCE,
+            1e-8f
+        )
+        val reconstructFeather = 2.0f.pow(12f / DARKTABLE_FILMIC_HR_RECONSTRUCT_FEATHER_EV)
+        val normalize = reconstructFeather / reconstructThreshold
+        val scales = darktableFilmicHighlightScaleCount(width, height)
+
+        PLog.d(
+            TAG,
+            "Darktable Filmic highlight reconstruction: ${width}x$height " +
+                "scales=$scales whiteSourceEv=${normalizedTone.filmicWhiteRelativeExposure} " +
+                "threshold=$reconstructThreshold exposureEv=${profileExposureUniforms.exposureEv} " +
+                "exposureGain=${profileExposureUniforms.linearGain} " +
+                "feather=$reconstructFeather"
+        )
+
+        renderFilmicHrPass(
+            program = filmicHrMaskProgram,
+            framebufferId = filmicHrMaskFramebufferId,
+            width = width,
+            height = height,
+            label = "darktableFilmicHrMask"
+        ) { program ->
+            bindFilmicHrTexture(program, "uInputTexture", 0, sourceTextureId)
+            bindFilmicHrPreparedInputUniforms(program, profileExposureUniforms, profileToEngineTransform)
+            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uNormalize"), normalize)
+            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uFeathering"), reconstructFeather)
+        }
+
+        renderFilmicHrPass(
+            program = filmicHrInpaintNoiseProgram,
+            framebufferId = filmicHrWorkingFramebufferId,
+            width = width,
+            height = height,
+            label = "darktableFilmicHrInpaintNoise"
+        ) { program ->
+            bindFilmicHrTexture(program, "uInputTexture", 0, sourceTextureId)
+            bindFilmicHrTexture(program, "uMaskTexture", 1, filmicHrMaskTextureId)
+            bindFilmicHrPreparedInputUniforms(program, profileExposureUniforms, profileToEngineTransform)
+            GLES30.glUniform1f(
+                GLES30.glGetUniformLocation(program, "uNoiseLevel"),
+                DARKTABLE_FILMIC_HR_NOISE_LEVEL
+            )
+            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uThreshold"), reconstructThreshold)
+        }
+
+        var reconstructedTextureId = reconstructDarktableFilmicHighlightsWavelets(
+            inputTextureId = filmicHrWorkingTextureId,
+            width = width,
+            height = height,
+            scales = scales,
+            variant = DarktableFilmicHighlightReconstructionShaders.RECONSTRUCT_RGB
+        )
+
+        repeat(DARKTABLE_FILMIC_HR_HIGH_QUALITY_ITERATIONS) {
+            renderFilmicHrPass(
+                program = filmicHrComputeNormsProgram,
+                framebufferId = filmicHrNormsFramebufferId,
+                width = width,
+                height = height,
+                label = "darktableFilmicHrComputeNorms"
+            ) { program ->
+                bindFilmicHrTexture(program, "uInputTexture", 0, reconstructedTextureId)
+            }
+            renderFilmicHrPass(
+                program = filmicHrComputeRatiosProgram,
+                framebufferId = filmicHrWorkingFramebufferId,
+                width = width,
+                height = height,
+                label = "darktableFilmicHrComputeRatios"
+            ) { program ->
+                bindFilmicHrTexture(program, "uInputTexture", 0, reconstructedTextureId)
+                bindFilmicHrTexture(program, "uNormsTexture", 1, filmicHrNormsTextureId)
+            }
+            reconstructedTextureId = reconstructDarktableFilmicHighlightsWavelets(
+                inputTextureId = filmicHrWorkingTextureId,
+                width = width,
+                height = height,
+                scales = scales,
+                variant = DarktableFilmicHighlightReconstructionShaders.RECONSTRUCT_RATIOS
+            )
+            reconstructedTextureId = restoreDarktableFilmicHighlightRatios(
+                ratiosTextureId = reconstructedTextureId,
+                width = width,
+                height = height
+            )
+        }
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        checkGlError("renderDarktableFilmicHighlightReconstruction")
+        return reconstructedTextureId
+    }
+
+    private fun darktableFilmicHighlightScaleCount(width: Int, height: Int): Int {
+        val size = max(width, height).coerceAtLeast(1).toDouble()
+        val filterSize = DarktableFilmicHighlightReconstructionShaders.BSPLINE_FSIZE.toDouble()
+        val argument = (2.0 * size / ((filterSize - 1.0) * filterSize)) - 1.0
+        val scales = floor(ln(max(argument, 1.0)) / ln(2.0)).toInt()
+        return scales.coerceIn(1, DarktableFilmicHighlightReconstructionShaders.MAX_NUM_SCALES)
+    }
+
+    private fun reconstructDarktableFilmicHighlightsWavelets(
+        inputTextureId: Int,
+        width: Int,
+        height: Int,
+        scales: Int,
+        variant: Int,
+    ): Int {
+        renderFilmicHrPass(
+            program = filmicHrInitReconstructProgram,
+            framebufferId = filmicHrReconstructedFramebufferIds[0],
+            width = width,
+            height = height,
+            label = "darktableFilmicHrInitReconstruct"
+        ) { program ->
+            bindFilmicHrTexture(program, "uInputTexture", 0, inputTextureId)
+            bindFilmicHrTexture(program, "uMaskTexture", 1, filmicHrMaskTextureId)
+        }
+
+        var reconstructedReadIndex = 0
+        var previousLowFrequencyTextureId = 0
+        for (scale in 0 until scales) {
+            val detailTextureId = if (scale == 0) inputTextureId else previousLowFrequencyTextureId
+            val lowFrequencyTextureId = if (scale % 2 == 0) {
+                filmicHrLfOddTextureId
+            } else {
+                filmicHrLfEvenTextureId
+            }
+            val lowFrequencyFramebufferId = if (scale % 2 == 0) {
+                filmicHrLfOddFramebufferId
+            } else {
+                filmicHrLfEvenFramebufferId
+            }
+            val mult = 1 shl scale
+
+            renderDarktableFilmicBsplineBlur(
+                inputTextureId = detailTextureId,
+                outputFramebufferId = lowFrequencyFramebufferId,
+                width = width,
+                height = height,
+                mult = mult,
+                label = "darktableFilmicHrLfScale$scale"
+            )
+            renderFilmicHrPass(
+                program = filmicHrHighFrequencyProgram,
+                framebufferId = filmicHrHighFrequencyFramebufferId,
+                width = width,
+                height = height,
+                label = "darktableFilmicHrHighFrequency$scale"
+            ) { program ->
+                bindFilmicHrTexture(program, "uDetailTexture", 0, detailTextureId)
+                bindFilmicHrTexture(program, "uLowFrequencyTexture", 1, lowFrequencyTextureId)
+            }
+            renderDarktableFilmicBsplineBlur(
+                inputTextureId = filmicHrHighFrequencyTextureId,
+                outputFramebufferId = filmicHrHighFrequencyRgbFramebufferId,
+                width = width,
+                height = height,
+                mult = 1,
+                label = "darktableFilmicHrHighFrequencyRgb$scale"
+            )
+
+            val reconstructedWriteIndex = 1 - reconstructedReadIndex
+            renderFilmicHrPass(
+                program = filmicHrWaveletsReconstructProgram,
+                framebufferId = filmicHrReconstructedFramebufferIds[reconstructedWriteIndex],
+                width = width,
+                height = height,
+                label = "darktableFilmicHrWaveletsReconstruct$scale"
+            ) { program ->
+                bindFilmicHrTexture(program, "uHighFrequencyTexture", 0, filmicHrHighFrequencyRgbTextureId)
+                bindFilmicHrTexture(program, "uLowFrequencyTexture", 1, lowFrequencyTextureId)
+                bindFilmicHrTexture(program, "uTextureTexture", 2, filmicHrHighFrequencyTextureId)
+                bindFilmicHrTexture(program, "uMaskTexture", 3, filmicHrMaskTextureId)
+                bindFilmicHrTexture(
+                    program,
+                    "uReconstructedTexture",
+                    4,
+                    filmicHrReconstructedTextureIds[reconstructedReadIndex]
+                )
+                GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uGamma"), DARKTABLE_FILMIC_HR_GAMMA)
+                GLES30.glUniform1f(
+                    GLES30.glGetUniformLocation(program, "uGammaComp"),
+                    DARKTABLE_FILMIC_HR_GAMMA_COMP
+                )
+                GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uBeta"), DARKTABLE_FILMIC_HR_BETA)
+                GLES30.glUniform1f(
+                    GLES30.glGetUniformLocation(program, "uBetaComp"),
+                    DARKTABLE_FILMIC_HR_BETA_COMP
+                )
+                GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uDelta"), DARKTABLE_FILMIC_HR_DELTA)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uScaleIndex"), scale)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uScaleCount"), scales)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uVariant"), variant)
+            }
+
+            reconstructedReadIndex = reconstructedWriteIndex
+            previousLowFrequencyTextureId = lowFrequencyTextureId
+        }
+
+        return filmicHrReconstructedTextureIds[reconstructedReadIndex]
+    }
+
+    private fun renderDarktableFilmicBsplineBlur(
+        inputTextureId: Int,
+        outputFramebufferId: Int,
+        width: Int,
+        height: Int,
+        mult: Int,
+        label: String,
+    ) {
+        renderFilmicHrPass(
+            program = filmicHrBsplineProgram,
+            framebufferId = filmicHrTempFramebufferId,
+            width = width,
+            height = height,
+            label = "$label-vertical"
+        ) { program ->
+            bindFilmicHrTexture(program, "uInputTexture", 0, inputTextureId)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uWidth"), width)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uHeight"), height)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uMult"), mult)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uDirection"), 0)
+        }
+        renderFilmicHrPass(
+            program = filmicHrBsplineProgram,
+            framebufferId = outputFramebufferId,
+            width = width,
+            height = height,
+            label = "$label-horizontal"
+        ) { program ->
+            bindFilmicHrTexture(program, "uInputTexture", 0, filmicHrTempTextureId)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uWidth"), width)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uHeight"), height)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uMult"), mult)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uDirection"), 1)
+        }
+    }
+
+    private fun restoreDarktableFilmicHighlightRatios(
+        ratiosTextureId: Int,
+        width: Int,
+        height: Int,
+    ): Int {
+        val outputIndex = if (ratiosTextureId == filmicHrReconstructedTextureIds[0]) 1 else 0
+        renderFilmicHrPass(
+            program = filmicHrRestoreRatiosProgram,
+            framebufferId = filmicHrReconstructedFramebufferIds[outputIndex],
+            width = width,
+            height = height,
+            label = "darktableFilmicHrRestoreRatios"
+        ) { program ->
+            bindFilmicHrTexture(program, "uRatiosTexture", 0, ratiosTextureId)
+            bindFilmicHrTexture(program, "uNormsTexture", 1, filmicHrNormsTextureId)
+        }
+        return filmicHrReconstructedTextureIds[outputIndex]
+    }
+
+    private fun renderFilmicHrPass(
+        program: Int,
+        framebufferId: Int,
+        width: Int,
+        height: Int,
+        label: String,
+        bindUniforms: (Int) -> Unit,
+    ) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
+        GLES30.glDrawBuffers(1, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0), 0)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glUseProgram(program)
+
+        val identityMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(identityMatrix, 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(program, "uTexMatrix"),
+            1,
+            false,
+            identityMatrix,
+            0
+        )
+        bindUniforms(program)
+        drawQuad(program)
+        GLES31.glMemoryBarrier(GLES31.GL_FRAMEBUFFER_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        checkGlError(label)
+    }
+
+    private fun bindFilmicHrTexture(program: Int, name: String, unit: Int, textureId: Int) {
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, name), unit)
+    }
+
+    private fun bindFilmicHrPreparedInputUniforms(
+        program: Int,
+        exposure: ProfileExposureUniforms,
+        profileToEngineTransform: FloatArray,
+    ) {
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uProfileExposureLinearGain"),
+            exposure.linearGain
+        )
+        GLES30.glUniformMatrix3fv(
+            GLES30.glGetUniformLocation(program, "uProfileToEngineTransform"),
+            1,
+            false,
+            transposeMatrix3x3(profileToEngineTransform),
+            0
+        )
+    }
+
     private fun computeFilmicToneCurveUniforms(params: RawToneMappingParameters): FilmicToneCurveUniforms {
         val blackSource = min(
             params.filmicBlackRelativeExposure,
@@ -5690,6 +6341,7 @@ class RawDemosaicProcessor {
             baselineExposureOffset = basePlan?.baselineExposureOffset ?: 0f,
             defaultBlackRender = DcpDefaultBlackRender.None,
             colorCorrectionMatrix = basePlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix,
+            cameraWhite = basePlan?.cameraWhite ?: metadata.cameraWhite,
             hueSatMap = basePlan?.hueSatMap,
             lookTable = basePlan?.lookTable,
             toneCurveLut = googleToneCurve
@@ -5710,6 +6362,30 @@ class RawDemosaicProcessor {
         dcpRenderPlan: DcpRenderPlan?
     ): FloatArray {
         return dcpRenderPlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix
+    }
+
+    private fun resolveLinearCameraWhite(
+        metadata: RawMetadata,
+        dcpRenderPlan: DcpRenderPlan?
+    ): FloatArray {
+        return sanitizeCameraWhite(dcpRenderPlan?.cameraWhite ?: metadata.cameraWhite)
+    }
+
+    private fun sanitizeCameraWhite(cameraWhite: FloatArray?): FloatArray {
+        if (cameraWhite == null || cameraWhite.size < 3) {
+            return floatArrayOf(1f, 1f, 1f)
+        }
+        val red = cameraWhite[0]
+        val green = cameraWhite[1]
+        val blue = cameraWhite[2]
+        if (!red.isFinite() || !green.isFinite() || !blue.isFinite()) {
+            return floatArrayOf(1f, 1f, 1f)
+        }
+        return floatArrayOf(
+            red.coerceIn(0.001f, 1f),
+            green.coerceIn(0.001f, 1f),
+            blue.coerceIn(0.001f, 1f)
+        )
     }
 
     private fun logRawDcpPipeline(
@@ -5739,6 +6415,7 @@ class RawDemosaicProcessor {
         } else {
             0f
         }
+        val cameraWhite = sanitizeCameraWhite(dcpRenderPlan?.cameraWhite)
         val matrixSource = if (dcpRenderPlan != null) "DCP" else "metadata-fallback"
         val profileMapsBeforeEngine = dcpRenderPlan != null
         PLog.d(
@@ -5754,6 +6431,7 @@ class RawDemosaicProcessor {
                 "profileExposureRamp=$useProfileExposureRamp " +
                 "defaultBlackRender=$defaultBlackRender " +
                 "baselineExposureOffset=$dcpBaselineExposureOffset " +
+                "cameraWhite=${cameraWhite.contentToString()} " +
                 "profileToEngine=${formatMatrix3x3(profileToEngineTransform)}"
         )
     }
@@ -5855,6 +6533,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
         colorCorrectionMatrix: FloatArray,
+        cameraWhite: FloatArray = metadata.cameraWhite,
         applyDngBaselineExposure: Boolean,
         clampProfileRgb: Boolean,
         label: String
@@ -5876,6 +6555,13 @@ class RawDemosaicProcessor {
             false,
             transposedCCM,
             0
+        )
+        val linearCameraWhite = sanitizeCameraWhite(cameraWhite)
+        GLES30.glUniform3f(
+            GLES30.glGetUniformLocation(linearRcdProgram, "uCameraWhite"),
+            linearCameraWhite[0],
+            linearCameraWhite[1],
+            linearCameraWhite[2]
         )
         val hasActiveProfileGainTableMap = metadata.profileGainTableMap?.isValid == true &&
             applyDngBaselineExposure
@@ -6061,6 +6747,7 @@ class RawDemosaicProcessor {
         rawBlackPointCorrection: Float,
         rawWhitePointCorrection: Float,
         colorCorrectionMatrix: FloatArray,
+        cameraWhite: FloatArray,
         dcpRenderPlan: DcpRenderPlan?,
         applyLinearDngBaselineExposure: Boolean,
         clampProfileRgb: Boolean,
@@ -6098,6 +6785,7 @@ class RawDemosaicProcessor {
                 rawBlackPointCorrection = rawBlackPointCorrection,
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = colorCorrectionMatrix,
+                cameraWhite = cameraWhite,
                 applyDngBaselineExposure = applyLinearDngBaselineExposure,
                 clampProfileRgb = clampProfileRgb,
                 label = "LinearMeteringPass"
@@ -6941,6 +7629,7 @@ class RawDemosaicProcessor {
         if (passthroughProgram != 0) GLES30.glDeleteProgram(passthroughProgram)
         if (hdrReferenceProgram != 0) GLES30.glDeleteProgram(hdrReferenceProgram)
         if (chromaDenoiseProgram != 0) GLES30.glDeleteProgram(chromaDenoiseProgram)
+        releaseDarktableFilmicHighlightReconstructionPrograms()
 
         // RCD Compute Programs
         if (rcdPopulateProgram != 0) GLES31.glDeleteProgram(rcdPopulateProgram)
@@ -6978,6 +7667,7 @@ class RawDemosaicProcessor {
             denoiseNlmU2BufferId = 0
         }
         denoiseNlmBufferPixels = 0
+        releaseDarktableFilmicHighlightReconstructionFramebuffers()
 
         if (rawTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
         if (profileGainTableTextureId != 0) {

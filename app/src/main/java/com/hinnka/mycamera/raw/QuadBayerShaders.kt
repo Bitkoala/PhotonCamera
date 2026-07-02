@@ -79,6 +79,7 @@ object QuadBayerShaders {
         uniform vec4 uWhiteBalanceGains;
         uniform float uHighlightClipThreshold;
         uniform float uHighlightCeiling;
+        uniform bool uHighlightReconstructionEnabled;
         uniform bool uLensShadingEnabled;
         uniform bool uLensShadingUsesDngGrid;
         uniform vec2 uLensShadingMapSize;
@@ -188,6 +189,10 @@ object QuadBayerShaders {
         }
 
         float reconstructHighlightSample(ivec2 coord, int channelIndex, int color, float sensor, float linear) {
+            if (!uHighlightReconstructionEnabled) {
+                return min(max(linear, 0.0), uHighlightCeiling);
+            }
+
             float clipMask = smoothstep(uHighlightClipThreshold, 1.0, sensor);
             if (clipMask <= 0.0) {
                 return min(max(linear, 0.0), uHighlightCeiling);

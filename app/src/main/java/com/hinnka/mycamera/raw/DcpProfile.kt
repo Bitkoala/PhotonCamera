@@ -122,6 +122,7 @@ data class DcpRenderPlan(
     val baselineExposureOffset: Float,
     val defaultBlackRender: DcpDefaultBlackRender,
     val colorCorrectionMatrix: FloatArray,
+    val cameraWhite: FloatArray = floatArrayOf(1f, 1f, 1f),
     val hueSatMap: DcpHueSatMap?,
     val lookTable: DcpHueSatMap?,
     val toneCurveLut: FloatArray?
@@ -197,12 +198,17 @@ object DcpProfileParser {
             metadata = metadata,
             workingColorSpace = workingColorSpace
         ) ?: metadata.colorCorrectionMatrix
+        val selectedCameraWhite = DngSdkColorSpec.computeCameraWhite(
+            profile = profile,
+            metadata = metadata
+        ) ?: metadata.cameraWhite
         return DcpRenderPlan(
             profileName = profile.profileName,
             workingColorSpace = workingColorSpace,
             baselineExposureOffset = profile.baselineExposureOffset,
             defaultBlackRender = profile.defaultBlackRender,
             colorCorrectionMatrix = selectedMatrix,
+            cameraWhite = selectedCameraWhite,
             hueSatMap = selectedHueSat,
             lookTable = profile.lookTable?.takeIf { it.isValid },
             toneCurveLut = profile.toneCurve?.takeIf { it.isValid }?.toLut()

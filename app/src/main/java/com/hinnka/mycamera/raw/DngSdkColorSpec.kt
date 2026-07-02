@@ -55,6 +55,24 @@ internal object DngSdkColorSpec {
         )
     }
 
+    fun computeCameraWhite(
+        profile: DcpProfile,
+        metadata: RawMetadata
+    ): FloatArray? {
+        return computeCameraWhite(
+            colorMatrix1 = profile.colorMatrix1,
+            colorMatrix2 = profile.colorMatrix2,
+            forwardMatrix1 = profile.forwardMatrix1,
+            forwardMatrix2 = profile.forwardMatrix2,
+            calibrationIlluminant1 = profile.calibrationIlluminant1,
+            calibrationIlluminant2 = profile.calibrationIlluminant2,
+            whiteBalanceGains = metadata.whiteBalanceGains,
+            analogBalance = profile.analogBalance,
+            cameraCalibration1 = profile.cameraCalibration1,
+            cameraCalibration2 = profile.cameraCalibration2
+        )
+    }
+
     fun computeCameraToWorkingMatrix(
         colorMatrix1: FloatArray?,
         colorMatrix2: FloatArray?,
@@ -82,6 +100,34 @@ internal object DngSdkColorSpec {
         ) ?: return null
         val xyzToWorking = computeXyzD50ToGamut(workingColorSpace) ?: return null
         return multiplyMatrix3x3(xyzToWorking, cameraToPcs)
+    }
+
+    fun computeCameraWhite(
+        colorMatrix1: FloatArray?,
+        colorMatrix2: FloatArray?,
+        forwardMatrix1: FloatArray?,
+        forwardMatrix2: FloatArray?,
+        calibrationIlluminant1: Int,
+        calibrationIlluminant2: Int,
+        whiteBalanceGains: FloatArray,
+        analogBalance: FloatArray? = null,
+        cameraCalibration1: FloatArray? = null,
+        cameraCalibration2: FloatArray? = null
+    ): FloatArray? {
+        val prepared = prepareProfile(
+            colorMatrix1 = colorMatrix1,
+            colorMatrix2 = colorMatrix2,
+            forwardMatrix1 = forwardMatrix1,
+            forwardMatrix2 = forwardMatrix2,
+            calibrationIlluminant1 = calibrationIlluminant1,
+            calibrationIlluminant2 = calibrationIlluminant2,
+            analogBalance = analogBalance,
+            cameraCalibration1 = cameraCalibration1,
+            cameraCalibration2 = cameraCalibration2
+        ) ?: return null
+
+        val whiteXy = neutralToXy(prepared, cameraNeutralFromWb(whiteBalanceGains)) ?: return null
+        return cameraWhiteForWhite(prepared, whiteXy)
     }
 
     fun computeCameraToPcsD50(
@@ -305,12 +351,7 @@ internal object DngSdkColorSpec {
 
     private fun cameraToPcsForWhite(profile: PreparedProfile, whiteXy: FloatArray): FloatArray? {
         val matrices = findXyzToCamera(profile, whiteXy)
-        val whiteXyz = xyToXyz(whiteXy) ?: return null
-        val cameraWhite = multiplyMatrixVector(matrices.colorMatrix, whiteXyz)
-        val whiteScale = 1f / cameraWhite.maxOrNullValue().coerceAtLeast(EPSILON)
-        for (index in cameraWhite.indices) {
-            cameraWhite[index] = (cameraWhite[index] * whiteScale).coerceIn(0.001f, 1f)
-        }
+        val cameraWhite = cameraWhiteForWhite(profile, whiteXy) ?: return null
 
         val pcsToCamera = multiplyMatrix3x3(
             matrices.colorMatrix,
@@ -341,6 +382,17 @@ internal object DngSdkColorSpec {
         }
 
         return invertMatrix3x3(scaledPcsToCamera)
+    }
+
+    private fun cameraWhiteForWhite(profile: PreparedProfile, whiteXy: FloatArray): FloatArray? {
+        val matrices = findXyzToCamera(profile, whiteXy)
+        val whiteXyz = xyToXyz(whiteXy) ?: return null
+        val cameraWhite = multiplyMatrixVector(matrices.colorMatrix, whiteXyz)
+        val whiteScale = 1f / cameraWhite.maxOrNullValue().coerceAtLeast(EPSILON)
+        for (index in cameraWhite.indices) {
+            cameraWhite[index] = (cameraWhite[index] * whiteScale).coerceIn(0.001f, 1f)
+        }
+        return cameraWhite
     }
 
     private fun neutralToXy(profile: PreparedProfile, neutral: FloatArray): FloatArray? {

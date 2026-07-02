@@ -33,6 +33,7 @@ object RcdShaders {
         uniform vec4 uWhiteBalanceGains; // R, Gr, Gb, B 高光重建用相对白平衡增益，输出仍保持 camera RGB
         uniform float uHighlightClipThreshold;
         uniform float uHighlightCeiling;
+        uniform bool uHighlightReconstructionEnabled;
         uniform bool uLensShadingEnabled;
         uniform bool uLensShadingUsesDngGrid;
         uniform vec2 uLensShadingMapSize;
@@ -181,6 +182,10 @@ object RcdShaders {
         }
 
         float reconstructHighlightSample(ivec2 coord, int channelIndex, int color, float sensor, float linear) {
+            if (!uHighlightReconstructionEnabled) {
+                return min(max(linear, 0.0), uHighlightCeiling);
+            }
+
             float clipMask = smoothstep(uHighlightClipThreshold, 1.0, sensor);
             if (clipMask <= 0.0) {
                 return min(max(linear, 0.0), uHighlightCeiling);
