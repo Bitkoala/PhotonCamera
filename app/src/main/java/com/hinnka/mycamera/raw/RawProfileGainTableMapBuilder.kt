@@ -28,11 +28,13 @@ internal object RawProfileGainTableMapBuilder {
             metadata = metadata,
             samplesPerPixel = samplesPerPixel
         ) ?: return null
+        val diagnosticBand = DngPgtmDiagnostic.activeBandForSource(TAG)
         return DngHdrProfileGainTableGenerator.forCellStats(
             width = width,
             height = height,
             baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure),
-            packedCellStats = stats
+            packedCellStats = stats,
+            diagnosticBand = diagnosticBand
         )
     }
 
@@ -190,9 +192,13 @@ internal object RawProfileGainTableMapBuilder {
         val red = if (rc > 0f) r / rc else fallback
         val green = if (gc > 0f) g / gc else fallback
         val blue = if (bc > 0f) b / bc else fallback
-        val luma = 0.2126f * red + 0.7152f * green + 0.0722f * blue
-        val maxChannel = max(red, max(green, blue))
-        return max((0.5f * luma + 0.5f * maxChannel) * baselineGain, 0f)
+        return DngHdrProfileGainTableGenerator.sceneInputFromLinearRgb(
+            red = red,
+            green = green,
+            blue = blue,
+            baselineGain = baselineGain,
+            colorCorrectionMatrix = metadata.colorCorrectionMatrix
+        )
     }
 
     private fun linearRgbPgtmInputAt(
@@ -212,9 +218,13 @@ internal object RawProfileGainTableMapBuilder {
         val red = normalizedLinearRgbAt(rawData, pixelOffset, metadata, 0)
         val green = normalizedLinearRgbAt(rawData, pixelOffset + 2, metadata, 1)
         val blue = normalizedLinearRgbAt(rawData, pixelOffset + 4, metadata, 2)
-        val luma = 0.2126f * red + 0.7152f * green + 0.0722f * blue
-        val maxChannel = max(red, max(green, blue))
-        return max((0.5f * luma + 0.5f * maxChannel) * baselineGain, 0f)
+        return DngHdrProfileGainTableGenerator.sceneInputFromLinearRgb(
+            red = red,
+            green = green,
+            blue = blue,
+            baselineGain = baselineGain,
+            colorCorrectionMatrix = metadata.colorCorrectionMatrix
+        )
     }
 
     private fun normalizedLinearRgbAt(

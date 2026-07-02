@@ -942,7 +942,10 @@ class RawDemosaicProcessor {
         var embeddedDngRenderPlan: DcpRenderPlan? = null
 
         if (dngFile != null) {
-            val profileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)
+            val profileGainTableMap = DngPgtmDiagnostic.applyToEmbeddedMap(
+                DngProfileGainTableMap.readFrom(dngFile),
+                "DNG render"
+            )
             val dngRawData = processDngNative(
                 dngFile.absolutePath,
                 profileWorkingColorSpace.xr, profileWorkingColorSpace.yr,
@@ -2323,6 +2326,7 @@ class RawDemosaicProcessor {
         uniform float uProfileGainWeightMax;
         uniform float uProfileGainGamma;
         uniform float uProfileGainBaselineGain;
+        uniform int uProfileGainDebugOverlay;
 
         float profileGainTableValue(int tableX, int tableY, float tableIndex) {
             int pointCount = max(uProfileGainTableSize.z, 1);
@@ -2336,7 +2340,15 @@ class RawDemosaicProcessor {
             return mix(g0, g1, t);
         }
 
-        float profileGain(vec3 rgb) {
+        float profileGainTableInput(vec3 rgb) {
+            float rgbMin = min(rgb.r, min(rgb.g, rgb.b));
+            float rgbMax = max(rgb.r, max(rgb.g, rgb.b));
+            float weightedInput = dot(vec4(rgb, rgbMin), uProfileGainWeights0) +
+                rgbMax * uProfileGainWeightMax;
+            return pow(clamp(weightedInput, 0.0, 1.0), uProfileGainGamma);
+        }
+
+        float profileGain(vec3 rgb, float tableInput) {
             if (uProfileGainEnabled == 0) {
                 return 1.0;
             }
@@ -2352,17 +2364,29 @@ class RawDemosaicProcessor {
             int y1 = min(y0 + 1, mapV - 1);
             float tx = mapPosition.x - float(x0);
             float ty = mapPosition.y - float(y0);
-            float rgbMin = min(rgb.r, min(rgb.g, rgb.b));
-            float rgbMax = max(rgb.r, max(rgb.g, rgb.b));
-            float weightedInput = dot(vec4(rgb, rgbMin), uProfileGainWeights0) +
-                rgbMax * uProfileGainWeightMax;
-            float tableInput = pow(clamp(weightedInput, 0.0, 1.0), uProfileGainGamma);
             float tableIndex = tableInput * float(max(uProfileGainTableSize.z, 1));
             float g00 = profileGainTableValue(x0, y0, tableIndex);
             float g10 = profileGainTableValue(x1, y0, tableIndex);
             float g01 = profileGainTableValue(x0, y1, tableIndex);
             float g11 = profileGainTableValue(x1, y1, tableIndex);
             return max(mix(mix(g00, g10, tx), mix(g01, g11, tx), ty), 0.0);
+        }
+
+        vec3 profileGainDebugColor(float tableInput) {
+            float bin = floor((tableInput - 0.080) * 200.0);
+            if (bin < 0.0 || bin >= 12.0) return vec3(0.0);
+            if (bin < 1.0) return vec3(1.0, 0.05, 0.02);   // 0.080..0.085 red
+            if (bin < 2.0) return vec3(1.0, 0.32, 0.00);   // 0.085..0.090 orange
+            if (bin < 3.0) return vec3(1.0, 0.82, 0.00);   // 0.090..0.095 yellow
+            if (bin < 4.0) return vec3(0.62, 1.0, 0.00);   // 0.095..0.100 lime
+            if (bin < 5.0) return vec3(0.05, 0.90, 0.10);  // 0.100..0.105 green
+            if (bin < 6.0) return vec3(0.00, 0.92, 0.55);  // 0.105..0.110 teal
+            if (bin < 7.0) return vec3(0.00, 0.92, 1.0);   // 0.110..0.115 cyan
+            if (bin < 8.0) return vec3(0.00, 0.45, 1.0);   // 0.115..0.120 blue
+            if (bin < 9.0) return vec3(0.32, 0.10, 1.0);   // 0.120..0.125 violet
+            if (bin < 10.0) return vec3(0.82, 0.00, 1.0);  // 0.125..0.130 purple
+            if (bin < 11.0) return vec3(1.0, 0.00, 0.68);  // 0.130..0.135 magenta
+            return vec3(1.0, 0.75, 0.92);                  // 0.135..0.140 pink
         }
         
         void main() {
@@ -2371,11 +2395,20 @@ class RawDemosaicProcessor {
             float whitePoint = max(uWhitePoint, blackPoint + 0.01);
             rgb = max((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), vec3(0.0));
             rgb = uColorCorrectionMatrix * rgb;
+            vec3 profileInputRgb = rgb * uProfileGainBaselineGain;
+            float tableInput = profileGainTableInput(profileInputRgb);
+            rgb *= profileGain(profileInputRgb, tableInput);
             if (uClampProfileRgb != 0) {
                 rgb = clamp(rgb, vec3(0.0), vec3(1.0));
             }
-            rgb *= profileGain(rgb * uProfileGainBaselineGain);
             rgb *= uExposureGain;
+            if (uProfileGainDebugOverlay != 0 && uProfileGainEnabled != 0) {
+                vec3 debugColor = profileGainDebugColor(tableInput);
+                float inDebugRange = step(0.080, tableInput) * (1.0 - step(0.140, tableInput));
+                float luma = dot(clamp(rgb, vec3(0.0), vec3(1.0)), vec3(0.2126, 0.7152, 0.0722));
+                rgb = mix(vec3(luma * 0.42), rgb, 0.18);
+                rgb = mix(rgb, debugColor, 0.90 * inDebugRange);
+            }
             fragColor = vec4(rgb, 1.0);
         }
     """.trimIndent()
@@ -5895,12 +5928,14 @@ class RawDemosaicProcessor {
         val profileGainTableMap = metadata.profileGainTableMap?.takeIf { it.isValid }
         if (profileGainTableMap == null || !applyAfterDngBaselineExposure) {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainDebugOverlay"), 0)
             return
         }
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + PROFILE_GAIN_TABLE_TEXTURE_UNIT)
         val textureId = ensureProfileGainTableTexture(profileGainTableMap)
         if (textureId == 0) {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainDebugOverlay"), 0)
             return
         }
 
@@ -5943,6 +5978,10 @@ class RawDemosaicProcessor {
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(program, "uProfileGainBaselineGain"),
             exactDngBaselineExposureGain(metadata)
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(program, "uProfileGainDebugOverlay"),
+            DngPgtmDiagnostic.visualOverlayModeForSource(TAG)
         )
     }
 

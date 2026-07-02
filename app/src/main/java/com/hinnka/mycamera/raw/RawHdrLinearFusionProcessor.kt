@@ -112,6 +112,7 @@ object RawHdrLinearFusionProcessor {
             lensShading = metadata.lensShadingMap.takeIf { applyLensShadingCorrection },
             lensShadingWidth = if (applyLensShadingCorrection) metadata.lensShadingMapWidth else 0,
             lensShadingHeight = if (applyLensShadingCorrection) metadata.lensShadingMapHeight else 0,
+            colorCorrectionMatrix = metadata.colorCorrectionMatrix,
         )
         val stackResult = stacker.process(normalFrames.map { it.image })
             ?: throw IllegalStateException("Failed to stack RAW HDR normal frames")

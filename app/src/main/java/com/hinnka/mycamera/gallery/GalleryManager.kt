@@ -34,7 +34,6 @@ import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
-import com.hinnka.mycamera.raw.DngProfileGainTableMapPatcher
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrLinearFusionProcessor
 import com.hinnka.mycamera.raw.RawMetadata
@@ -82,7 +81,6 @@ import kotlin.use
  */
 object GalleryManager {
     private const val TAG = "PhotoManager"
-    private const val DEBUG_REWRITE_RAW_PREVIEW_PGTM2 = true
     private val metadataMutex = Mutex()
     private const val THUMBNAIL_MAX_EDGE = 512
     private const val PHOTOS_DIR = "photos"
@@ -4375,10 +4373,6 @@ object GalleryManager {
                 val thumbnailFile = File(photoDir, THUMBNAIL_FILE)
 
                 if (!dngFile.exists()) return@withContext null
-                if (BuildConfig.DEBUG && DEBUG_REWRITE_RAW_PREVIEW_PGTM2) {
-                    DngProfileGainTableMapPatcher.rewriteExistingPgtm2WithCurrentGenerator(dngFile)
-                }
-
                 // 2. 读取元数据以获取旋转信息
                 val metadata = loadMetadata(context, photoId)
 

@@ -10,6 +10,7 @@ import android.opengl.GLES30
 import android.opengl.GLES31
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.raw.DngHdrProfileGainTableGenerator
+import com.hinnka.mycamera.raw.DngPgtmDiagnostic
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
@@ -28,6 +29,7 @@ class GlesRawStacker(
     private val lensShading: FloatArray?,
     private val lensShadingWidth: Int,
     private val lensShadingHeight: Int,
+    colorCorrectionMatrix: FloatArray? = null,
 ) {
     private data class TextureLevel(val texture: Int, val width: Int, val height: Int)
     private data class ReadOutputTiming(
@@ -57,6 +59,12 @@ class GlesRawStacker(
     private val normalizedWhiteLevel = whiteLevel.coerceAtLeast(1).toFloat()
     private val noiseAlpha = noiseModel.getOrElse(0) { 0f }.coerceAtLeast(0f) / 65535.0f
     private val noiseBeta = noiseModel.getOrElse(1) { 0f }.coerceAtLeast(0f) / (65535.0f * 65535.0f)
+    private val pgtmColorCorrectionMatrix = FloatArray(9) { index ->
+        colorCorrectionMatrix
+            ?.getOrNull(index)
+            ?.takeIf { it.isFinite() }
+            ?: if (index % 4 == 0) 1f else 0f
+    }
 
     private val planeWidth = max(1, width / 2)
     private val planeHeight = max(1, height / 2)
@@ -548,6 +556,13 @@ class GlesRawStacker(
                 GLES31.glGetUniformLocation(pgtmStatsProgram, "uBaselineExposureGain"),
                 2.0f.pow(baselineExposureEv.coerceIn(0f, 8f))
             )
+            GLES31.glUniformMatrix3fv(
+                GLES31.glGetUniformLocation(pgtmStatsProgram, "uColorCorrectionMatrix"),
+                1,
+                false,
+                transposeMatrix3x3(pgtmColorCorrectionMatrix),
+                0
+            )
             GLES31.glDispatchCompute(pgtmGridWidth, pgtmGridHeight, 1)
             GLES31.glMemoryBarrier(
                 GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT
@@ -574,7 +589,8 @@ class GlesRawStacker(
                 width = width,
                 height = height,
                 baselineExposureEv = baselineExposureEv,
-                packedCellStats = stats
+                packedCellStats = stats,
+                diagnosticBand = DngPgtmDiagnostic.activeBandForSource("$TAG GPU stacker")
             )
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to compute GPU HDR PGTM stats", e)
@@ -1214,6 +1230,14 @@ class GlesRawStacker(
     }
 
     private fun groupCount(value: Int): Int = (value + LOCAL_SIZE - 1) / LOCAL_SIZE
+
+    private fun transposeMatrix3x3(matrix: FloatArray): FloatArray {
+        return floatArrayOf(
+            matrix.getOrElse(0) { 1f }, matrix.getOrElse(3) { 0f }, matrix.getOrElse(6) { 0f },
+            matrix.getOrElse(1) { 0f }, matrix.getOrElse(4) { 1f }, matrix.getOrElse(7) { 0f },
+            matrix.getOrElse(2) { 0f }, matrix.getOrElse(5) { 0f }, matrix.getOrElse(8) { 1f }
+        )
+    }
 
     private fun release() {
         if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
@@ -2351,6 +2375,7 @@ class GlesRawStacker(
             uniform ivec2 uGridSize;
             uniform int uCfaPattern;
             uniform float uBaselineExposureGain;
+            uniform mat3 uColorCorrectionMatrix;
             layout(std430, binding = $PGTM_STATS_BUFFER_BINDING) buffer PgtmStats {
                 float stats[];
             };
@@ -2405,9 +2430,17 @@ class GlesRawStacker(
 
             float pgtmInputAt(ivec2 base) {
                 vec3 rgb = blockRgbAt(base);
-                float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-                float maxChannel = max(rgb.r, max(rgb.g, rgb.b));
-                return max((0.5 * luma + 0.5 * maxChannel) * uBaselineExposureGain, 0.0);
+                vec3 profileRgb = uColorCorrectionMatrix * rgb * uBaselineExposureGain;
+                float minChannel = min(profileRgb.r, min(profileRgb.g, profileRgb.b));
+                float maxChannel = max(profileRgb.r, max(profileRgb.g, profileRgb.b));
+                return max(
+                    0.1495 * profileRgb.r +
+                    0.2935 * profileRgb.g +
+                    0.0570 * profileRgb.b +
+                    0.1250 * minChannel +
+                    0.3750 * maxChannel,
+                    0.0
+                );
             }
 
             void main() {
