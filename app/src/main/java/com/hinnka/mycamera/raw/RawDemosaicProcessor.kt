@@ -1114,15 +1114,21 @@ class RawDemosaicProcessor {
             useAdobeProfilePipeline &&
             hasDcpSelection &&
             resolvedDcpRenderPlan?.toneCurveLut != null
+        val regenerateEmbeddedDngHdrToneMap = embeddedDngHdrToneMapAvailable &&
+            useAdobeProfilePipeline &&
+            normalizedToneMappingParameters.googlePixelToneMapExplicit &&
+            normalizedToneMappingParameters.useGooglePixelToneMap
         val embeddedDngHdrToneMapRenderable = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
             !embeddedDngHdrToneMapOverriddenByDcp &&
-            !embeddedDngHdrToneMapDisabledByUser
+            !embeddedDngHdrToneMapDisabledByUser &&
+            !regenerateEmbeddedDngHdrToneMap
         if (embeddedDngHdrToneMapAvailable && !embeddedDngHdrToneMapRenderable) {
             val reason = when {
                 embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map explicitly disabled for this photo"
                 !useAdobeProfilePipeline -> "color engine $colorEngine does not use Adobe/DNG profile tone map"
                 embeddedDngHdrToneMapOverriddenByDcp -> "selected DCP has tone curve: ${resolvedDcpRenderPlan.profileName}"
+                regenerateEmbeddedDngHdrToneMap -> "Pixel-style tone map explicitly requested generated PGTM"
                 else -> "current render pipeline does not use embedded DNG HDR tone map"
             }
             actualMetadata = actualMetadata.copy(profileGainTableMap = null)
@@ -1132,8 +1138,8 @@ class RawDemosaicProcessor {
             )
         }
         val requestedGeneratedPixelToneMap = useAdobeProfilePipeline &&
-            !embeddedDngHdrToneMapAvailable &&
-            normalizedToneMappingParameters.useGooglePixelToneMap
+            normalizedToneMappingParameters.useGooglePixelToneMap &&
+            (!embeddedDngHdrToneMapAvailable || regenerateEmbeddedDngHdrToneMap)
         val generatedPixelToneMapOverriddenByDcp = requestedGeneratedPixelToneMap &&
             hasDcpSelection &&
             resolvedDcpRenderPlan?.toneCurveLut != null

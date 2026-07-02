@@ -4111,7 +4111,7 @@ object GalleryManager {
         if (!hasProfileGainTableMap || !DngEmbeddedProfile.hasGoogleHdrToneCurve(dngFile)) return this
         PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map by default")
         return copy(
-            rawToneMappingParameters = rawToneMappingParameters.withGooglePixelToneMap(true)
+            rawToneMappingParameters = rawToneMappingParameters.withDefaultGooglePixelToneMap(true)
         )
     }
 

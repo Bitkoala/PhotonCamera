@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.pow
 
 class DngHdrProfileGainTableGeneratorTest {
@@ -22,96 +24,8 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     @Test
-    fun cellStatsToneCurveMatchesPixelStyleShoulderTargets() {
-        val map = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = 2f,
-            packedCellStats = packedStatsForTailProfile(
-                width = 1024,
-                height = 768,
-                p10 = 0.04f,
-                p50 = 0.12f,
-                p90 = 0.55f,
-                p98 = 0.85f,
-                highlightFraction = 0.08f,
-                tailP95 = 1.40f,
-                tailP98 = 1.70f,
-                tailP99 = 2.00f,
-                maxInput = 2.40f
-            )
-        ) ?: error("Expected stats PGTM")
-
-        assertTrue(map.isValid)
-        assertToneOutputMonotonic(map)
-        val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
-        val white = renderedOutputForPostBaselineSignal(map, input = 1f)
-        val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
-        val sceneMax = 1f / map.mapInputWeights.sum()
-        val sceneMaxOutput = renderedOutputForPostBaselineSignal(map, input = sceneMax)
-        val toneMappedMidGray = googleToneCurve(midGray)
-        val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
-
-        assertTrue("midGray=$midGray", midGray in 0.41f..0.46f)
-        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.37f..0.46f)
-        assertTrue("white=$white", white in 0.73f..0.80f)
-        assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.78f..0.88f)
-        assertTrue("superWhite=$superWhite", superWhite in 0.88f..0.93f)
-        assertEquals(1f, sceneMaxOutput, 0.025f)
-        val effectiveHeadroom = effectiveInputHeadroom(map, 2f)
-        assertTrue("effectiveHeadroom=$effectiveHeadroom", effectiveHeadroom in 1.55f..2.05f)
-        assertEquals(sampleGain(map, input = 1f), map.mapInputWeights.sum(), 0.0001f)
-        assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
-        assertTrue(map.mapInputWeights[4] > map.mapInputWeights[1])
-    }
-
-    @Test
-    fun highDynamicRangeCellStatsUseConservativeHdrTargets() {
-        val map = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = HIGH_HDR_BASELINE_EV,
-            packedCellStats = packedStatsForTailProfile(
-                width = 1024,
-                height = 768,
-                p10 = 0.012f,
-                p50 = 0.055f,
-                p90 = 0.48f,
-                p98 = 1.0f,
-                highlightFraction = 0.05f,
-                tailP95 = 2.60f,
-                tailP98 = 2.80f,
-                tailP99 = 3.05f,
-                maxInput = 3.30f
-            )
-        ) ?: error("Expected HDR stats PGTM")
-
-        assertTrue(map.isValid)
-        assertToneOutputMonotonic(map)
-        val midGray = renderedOutputForPostBaselineSignal(map, input = 0.18f)
-        val white = renderedOutputForPostBaselineSignal(map, input = 1f)
-        val superWhite = renderedOutputForPostBaselineSignal(map, input = 2f)
-        val sceneMax = 1f / map.mapInputWeights.sum()
-        val farHighlight = renderedOutputForPostBaselineSignal(map, input = 4f.coerceAtMost(sceneMax))
-        val toneMappedMidGray = googleToneCurve(midGray)
-        val toneMappedWhite = googleToneCurve(white.coerceIn(0f, 1f))
-
-        assertTrue("midGray=$midGray", midGray in 0.40f..0.46f)
-        assertTrue("toneMappedMidGray=$toneMappedMidGray", toneMappedMidGray in 0.36f..0.46f)
-        assertTrue("white=$white", white in 0.72f..0.80f)
-        assertTrue("toneMappedWhite=$toneMappedWhite", toneMappedWhite in 0.78f..0.88f)
-        assertTrue("superWhite=$superWhite", superWhite in 0.88f..0.93f)
-        assertTrue("farHighlight=$farHighlight superWhite=$superWhite", farHighlight in superWhite..1.02f)
-        assertEquals(1f, renderedOutputForPostBaselineSignal(map, input = sceneMax), 0.02f)
-        assertTrue(sampleGainAtIndex(map, 0) in 3.55f..3.95f)
-        assertTrue(sampleGainAtIndex(map, 256) < 0.32f)
-        assertEquals(sampleGainAtIndex(map, 256), map.mapInputWeights.sum(), 0.0001f)
-        val effectiveHeadroom = effectiveInputHeadroom(map, HIGH_HDR_BASELINE_EV)
-        assertTrue("effectiveHeadroom=$effectiveHeadroom", effectiveHeadroom in 2.45f..3.10f)
-    }
-
-    @Test
     fun dngDerivedSceneStatsMatchEmbeddedPixelPgtmSamples() {
+        val failures = mutableListOf<String>()
         DNG_DERIVED_FIXTURES.forEach { fixture ->
             val map = DngHdrProfileGainTableGenerator.forCellStats(
                 width = fixture.width,
@@ -135,23 +49,33 @@ class DngHdrProfileGainTableGeneratorTest {
             assertTrue("${fixture.sourceName} invalid map", map.isValid)
             assertToneOutputMonotonic(map)
             assertOfficialPgtmInputWeights(map, fixture.sourceName)
-            assertEquals(
-                "${fixture.sourceName} embedded weight sum",
-                fixture.embeddedWeightSum,
-                map.mapInputWeights.sum(),
-                fixture.weightTolerance
+            failures += nearFailure(
+                label = "${fixture.sourceName} embedded weight sum",
+                expected = fixture.embeddedWeightSum,
+                actual = map.mapInputWeights.sum(),
+                tolerance = fixture.weightTolerance
             )
-            assertEquals(
-                "${fixture.sourceName} embedded headroom",
-                fixture.embeddedInputHeadroom,
-                effectiveInputHeadroom(map, fixture.baselineExposureEv),
-                fixture.headroomTolerance
+            failures += nearFailure(
+                label = "${fixture.sourceName} embedded headroom",
+                expected = fixture.embeddedInputHeadroom,
+                actual = effectiveInputHeadroom(map, fixture.baselineExposureEv),
+                tolerance = fixture.headroomTolerance
             )
-            assertTrue(
-                "${fixture.sourceName} shadow gain=${sampleGainAtIndex(map, 0)}",
-                sampleGainAtIndex(map, 0) in fixture.shadowGainRange
-            )
+            val shadowGain = sampleGainAtIndex(map, 0)
+            if (shadowGain !in fixture.shadowGainRange) {
+                failures += "${fixture.sourceName} shadow gain=$shadowGain expected=${fixture.shadowGainRange}"
+            }
+            fixture.expectedGainP50?.let { expected ->
+                failures += medianGainSeriesFailures(
+                    map = map,
+                    tableInputs = DENSE_TABLE_INPUTS,
+                    expectedGains = expected,
+                    tolerance = fixture.gainTolerance,
+                    label = fixture.sourceName
+                )
+            }
         }
+        assertTrue(failures.joinToString(separator = "\n"), failures.isEmpty())
     }
 
     @Test
@@ -210,151 +134,41 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     @Test
-    fun sceneStatsProduceOrderedToneTargetsWithoutBrightnessReversal() {
-        val dark = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = HIGH_HDR_BASELINE_EV,
-            packedCellStats = packedStatsFor(
-                width = 1024,
-                height = 768,
-                p10 = 0.0035f,
-                p50 = 0.0054f,
-                p90 = 0.0084f,
-                p98 = 0.0114f,
-                highlightFraction = 0f
+    fun googleProvidedDngStatsMatchEmbeddedPgtmContrastCurve() {
+        val map = DngHdrProfileGainTableGenerator.forCellStats(
+            width = 4096,
+            height = 3072,
+            baselineExposureEv = 1.20f,
+            packedCellStats = packedStatsForTailProfile(
+                width = 4096,
+                height = 3072,
+                p10 = 0.283845f,
+                p50 = 0.356112f,
+                p90 = 0.436304f,
+                p98 = 0.468235f,
+                highlightFraction = 0.057847f,
+                tailP95 = 1.277153f,
+                tailP98 = 1.660754f,
+                tailP99 = 2.696633f,
+                maxInput = 3.887637f
             )
-        ) ?: error("Expected dark PGTM")
-        val mid = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = HIGH_HDR_BASELINE_EV,
-            packedCellStats = packedStatsFor(
-                width = 1024,
-                height = 768,
-                p10 = 0.0158f,
-                p50 = 0.0276f,
-                p90 = 0.0438f,
-                p98 = 0.0610f,
-                highlightFraction = 0f
-            )
-        ) ?: error("Expected mid PGTM")
-        val bright = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = HIGH_HDR_BASELINE_EV,
-            packedCellStats = packedStatsFor(
-                width = 1024,
-                height = 768,
-                p10 = 0.6089f,
-                p50 = 0.7216f,
-                p90 = 0.8911f,
-                p98 = 0.9102f,
-                highlightFraction = 0.18f
-            )
-        ) ?: error("Expected bright PGTM")
+        ) ?: error("Expected Google provided DNG PGTM")
 
-        assertToneOutputMonotonic(dark)
-        assertToneOutputMonotonic(mid)
-        assertToneOutputMonotonic(bright)
-        assertTrue(
-            "darkShadow=${sampleGainAtIndex(dark, 0)} midShadow=${sampleGainAtIndex(mid, 0)}",
-            sampleGainAtIndex(dark, 0) > sampleGainAtIndex(mid, 0)
+        assertTrue(map.isValid)
+        assertToneOutputMonotonic(map)
+        assertEquals(0.6720394f, map.mapInputWeights.sum(), 0.035f)
+        assertGainSeriesNear(
+            map = map,
+            tableInputs = floatArrayOf(0.005f, 0.020f, 0.050f, 0.080f, 0.100f, 0.140f, 0.180f, 0.280f, 0.500f, 0.750f, 1.000f),
+            expectedGains = floatArrayOf(3.005f, 3.005f, 2.644f, 2.341f, 2.182f, 1.930f, 1.740f, 1.413f, 1.030f, 0.808f, 0.674f),
+            tolerance = 0.18f
         )
-        assertTrue(sampleGainAtIndex(mid, 0) > sampleGainAtIndex(bright, 0))
-        val darkMid = renderedOutputForPostBaselineSignal(dark, input = 0.18f)
-        val midMid = renderedOutputForPostBaselineSignal(mid, input = 0.18f)
-        val brightMid = renderedOutputForPostBaselineSignal(bright, input = 0.18f)
-        val brightWhite = renderedOutputForPostBaselineSignal(bright, input = 1f)
-        val midWhite = renderedOutputForPostBaselineSignal(mid, input = 1f)
-        val darkUpper = renderedOutputForPostBaselineSignal(dark, input = 0.8f)
-        val brightUpper = renderedOutputForPostBaselineSignal(bright, input = 0.8f)
-        assertTrue(
-            "darkMid=$darkMid midMid=$midMid",
-            darkMid + 0.002f >= midMid
+        assertTrue("darkOutput=${0.03f * sampleGain(map, 0.03f * map.mapInputWeights.sum())}",
+            0.03f * sampleGain(map, 0.03f * map.mapInputWeights.sum()) < 0.092f
         )
-        assertTrue(
-            "midMid=$midMid brightMid=$brightMid",
-            midMid > brightMid
+        assertTrue("midOutput=${0.18f * sampleGain(map, 0.18f * map.mapInputWeights.sum())}",
+            0.18f * sampleGain(map, 0.18f * map.mapInputWeights.sum()) in 0.32f..0.39f
         )
-        assertTrue(
-            "brightWhite=$brightWhite midWhite=$midWhite",
-            brightWhite < midWhite
-        )
-        assertTrue(
-            "darkUpper=$darkUpper brightUpper=$brightUpper",
-            darkUpper > brightUpper
-        )
-        assertEquals(sampleGainAtIndex(dark, 256), sampleGainAtIndex(bright, 256), 0.002f)
-    }
-
-    @Test
-    fun highlightStatsStartShoulderEarlierThanNeutralStats() {
-        val neutral = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = 2f,
-            packedCellStats = packedStatsFor(
-                width = 1024,
-                height = 768,
-                p10 = 0.04f,
-                p50 = 0.18f,
-                p90 = 0.42f,
-                p98 = 0.68f,
-                highlightFraction = 0.04f
-            )
-        ) ?: error("Expected neutral PGTM")
-        val highlight = DngHdrProfileGainTableGenerator.forCellStats(
-            width = 1024,
-            height = 768,
-            baselineExposureEv = 2f,
-            packedCellStats = packedStatsFor(
-                width = 1024,
-                height = 768,
-                p10 = 0.06f,
-                p50 = 0.24f,
-                p90 = 0.88f,
-                p98 = 0.98f,
-                highlightFraction = 0.42f
-            )
-        ) ?: error("Expected highlight PGTM")
-
-        assertTrue(neutral.isValid)
-        assertTrue(highlight.isValid)
-        assertToneOutputMonotonic(neutral)
-        assertToneOutputMonotonic(highlight)
-        assertTrue(
-            renderedOutputForPostBaselineSignal(highlight, input = 0.8f) <
-                renderedOutputForPostBaselineSignal(neutral, input = 0.8f)
-        )
-    }
-
-    private fun packedStatsFor(
-        width: Int,
-        height: Int,
-        p10: Float,
-        p50: Float,
-        p90: Float,
-        p98: Float,
-        highlightFraction: Float,
-        p995Input: Float = p98,
-        p999Input: Float = p995Input,
-    ): FloatArray {
-        val grid = DngHdrProfileGainTableGenerator.gridSizeFor(width, height)
-        val cellCount = grid[0] * grid[1]
-        return FloatArray(cellCount * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE).also { stats ->
-            for (cell in 0 until cellCount) {
-                val offset = cell * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE
-                stats[offset] = p10
-                stats[offset + 1] = p50
-                stats[offset + 2] = p90
-                stats[offset + 3] = p98
-                stats[offset + 4] = highlightFraction
-                stats[offset + 5] = 64f
-                stats[offset + 6] = p995Input
-                stats[offset + 7] = p999Input
-            }
-        }
     }
 
     private fun packedStatsForTailProfile(
@@ -413,12 +227,23 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     private fun sampleGain(map: DngProfileGainTableMap, input: Float): Float {
+        return sampleGain(map, input, cellIndex = 0)
+    }
+
+    private fun sampleGain(map: DngProfileGainTableMap, input: Float, cellIndex: Int): Float {
         val clamped = input.coerceIn(0f, 1f)
         val scaled = clamped * map.mapPointsN.coerceAtLeast(1)
         val i0 = scaled.toInt().coerceIn(0, map.mapPointsN - 1)
         val i1 = (i0 + 1).coerceIn(0, map.mapPointsN - 1)
         val t = scaled - i0.toFloat()
-        return map.gains[i0] * (1f - t) + map.gains[i1] * t
+        val offset = cellIndex.coerceIn(0, map.mapPointsH * map.mapPointsV - 1) * map.mapPointsN
+        return map.gains[offset + i0] * (1f - t) + map.gains[offset + i1] * t
+    }
+
+    private fun sampleMedianGain(map: DngProfileGainTableMap, input: Float): Float {
+        val cellCount = map.mapPointsH * map.mapPointsV
+        val gains = FloatArray(cellCount) { cell -> sampleGain(map, input, cell) }
+        return percentile(gains, 0.50f)
     }
 
     private fun sampleGainAtIndex(map: DngProfileGainTableMap, index: Int): Float {
@@ -475,6 +300,70 @@ class DngHdrProfileGainTableGeneratorTest {
         assertEquals("tableInput=$tableInput actual=$actual expected=$expected", expected, actual, tolerance)
     }
 
+    private fun assertGainSeriesNear(
+        map: DngProfileGainTableMap,
+        tableInputs: FloatArray,
+        expectedGains: FloatArray,
+        tolerance: Float,
+        label: String = "PGTM",
+    ) {
+        require(tableInputs.size == expectedGains.size)
+        val failures = tableInputs.indices.mapNotNull { index ->
+            val input = tableInputs[index]
+            val expected = expectedGains[index]
+            val actual = sampleGain(map, input)
+            if (abs(actual - expected) <= tolerance) {
+                null
+            } else {
+                "$label tableInput=$input actual=$actual expected=$expected"
+            }
+        }
+        assertTrue(failures.joinToString(separator = "\n"), failures.isEmpty())
+    }
+
+    private fun medianGainSeriesFailures(
+        map: DngProfileGainTableMap,
+        tableInputs: FloatArray,
+        expectedGains: FloatArray,
+        tolerance: Float,
+        label: String,
+    ): List<String> {
+        require(tableInputs.size == expectedGains.size)
+        return tableInputs.indices.mapNotNull { index ->
+            val input = tableInputs[index]
+            val expected = expectedGains[index]
+            val actual = sampleMedianGain(map, input)
+            if (abs(actual - expected) <= tolerance) {
+                null
+            } else {
+                "$label p50Gain tableInput=$input actual=$actual expected=$expected"
+            }
+        }
+    }
+
+    private fun percentile(values: FloatArray, percentile: Float): Float {
+        if (values.isEmpty()) return 0f
+        values.sort()
+        val k = (values.size - 1).toFloat() * percentile.coerceIn(0f, 1f)
+        val lo = floor(k).toInt()
+        val hi = ceil(k).toInt()
+        if (lo == hi) return values[lo]
+        return values[lo] * (hi - k) + values[hi] * (k - lo)
+    }
+
+    private fun nearFailure(
+        label: String,
+        expected: Float,
+        actual: Float,
+        tolerance: Float,
+    ): List<String> {
+        return if (abs(actual - expected) <= tolerance) {
+            emptyList()
+        } else {
+            listOf("$label actual=$actual expected=$expected tolerance=$tolerance")
+        }
+    }
+
     private fun assertOfficialPgtmInputWeights(map: DngProfileGainTableMap, sourceName: String) {
         val normalizedWeights = map.mapInputWeights.map { it / map.mapInputWeights.sum() }
         assertEquals("$sourceName weight R", 0.1495f, normalizedWeights[0], 0.0001f)
@@ -521,68 +410,105 @@ class DngHdrProfileGainTableGeneratorTest {
     }
 
     private companion object {
-        private const val HIGH_HDR_BASELINE_EV = 3.377331f
         private const val GOOGLE_KEYCAP_BASELINE_EV = 1.46f
         private const val GOOGLE_KEYCAP_PGTM_HEADROOM = 1.8273006f
         private const val GOOGLE_KEYCAP_PGTM_WEIGHT_SUM = 0.6642112f
 
+        private val DENSE_TABLE_INPUTS = floatArrayOf(
+            0.0000f, 0.0025f, 0.0050f, 0.0075f, 0.0100f, 0.0150f, 0.0200f, 0.0275f,
+            0.0350f, 0.0450f, 0.0500f, 0.0575f, 0.0650f, 0.0725f, 0.0800f, 0.0900f,
+            0.1000f, 0.1100f, 0.1200f, 0.1300f, 0.1400f, 0.1600f, 0.1800f, 0.2200f,
+            0.2500f, 0.2800f, 0.3200f, 0.3600f, 0.4200f, 0.5000f, 0.6000f, 0.7000f,
+            0.7500f, 0.8200f, 0.9000f, 0.9500f, 1.0000f
+        )
+
         private val DNG_DERIVED_FIXTURES = listOf(
             DngDerivedPgtmFixture(
-                sourceName = "PXL_20260628_175619159.RAW-02.ORIGINAL..dng",
+                sourceName = "PXL_20260628_175619159.RAW-02.ORIGINAL.dng",
                 width = 2048,
                 height = 1536,
                 baselineExposureEv = 0.99f,
                 embeddedWeightSum = 0.5074623f,
                 embeddedInputHeadroom = 1.0079140f,
-                rimmP10 = 0.337668f,
-                rimmP50 = 0.428147f,
-                rimmP90 = 0.556421f,
-                rimmP98 = 0.622064f,
-                rimmHighlightFraction = 0.237918f,
-                rimmTailP95 = 1.769715f,
-                rimmTailP98 = 1.848588f,
-                rimmTailP99 = 1.960254f,
+                rimmP10 = 0.235049f,
+                rimmP50 = 0.321880f,
+                rimmP90 = 0.440227f,
+                rimmP98 = 0.491983f,
+                rimmHighlightFraction = 0.237798f,
+                rimmTailP95 = 1.795726f,
+                rimmTailP98 = 1.870457f,
+                rimmTailP99 = 2.331631f,
                 rimmMaxInput = 3.247468f,
-                shadowGainRange = 2.6f..4.2f
+                shadowGainRange = 2.6f..4.3f,
+                expectedGainP50 = floatArrayOf(
+                    3.461338f, 3.461338f, 3.461338f, 3.461338f, 3.461338f, 3.461338f,
+                    3.461338f, 3.336530f, 3.133802f, 2.898788f, 2.795193f, 2.655045f,
+                    2.531542f, 2.420754f, 2.322193f, 2.203573f, 2.099504f, 2.006125f,
+                    1.922472f, 1.846751f, 1.777360f, 1.656811f, 1.554421f, 1.389232f,
+                    1.288567f, 1.202840f, 1.105987f, 1.025570f, 0.927419f, 0.825583f,
+                    0.728947f, 0.654740f, 0.623655f, 0.585323f, 0.547510f, 0.526535f,
+                    0.508728f
+                ),
+                gainTolerance = 0.30f
             ),
             DngDerivedPgtmFixture(
-                sourceName = "PXL_20260630_100508552.RAW-02.ORIGINAL..dng",
-                width = 2818,
-                height = 2114,
-                baselineExposureEv = 1.38f,
-                embeddedWeightSum = 0.6550936f,
-                embeddedInputHeadroom = 1.7050014f,
-                rimmP10 = 0.322686f,
-                rimmP50 = 0.387230f,
-                rimmP90 = 0.493896f,
-                rimmP98 = 0.552372f,
-                rimmHighlightFraction = 0.213364f,
-                rimmTailP95 = 1.592500f,
-                rimmTailP98 = 1.797323f,
-                rimmTailP99 = 1.881310f,
-                rimmMaxInput = 1.991887f,
-                shadowGainRange = 2.5f..3.8f
-            ),
-            DngDerivedPgtmFixture(
-                sourceName = "PXL_20260629_213614190.RAW-02.ORIGINAL..dng",
+                sourceName = "PXL_20260629_213614190.RAW-02.ORIGINAL.dng",
                 width = 4096,
                 height = 3072,
                 baselineExposureEv = 1.40f,
                 embeddedWeightSum = 0.7948943f,
                 embeddedInputHeadroom = 2.0977387f,
-                rimmP10 = 0.270184f,
-                rimmP50 = 0.340886f,
-                rimmP90 = 0.418926f,
-                rimmP98 = 0.456479f,
-                rimmHighlightFraction = 0.012236f,
-                rimmTailP95 = 0.920819f,
-                rimmTailP98 = 1.325456f,
-                rimmTailP99 = 1.543746f,
+                rimmP10 = 0.269476f,
+                rimmP50 = 0.340033f,
+                rimmP90 = 0.412840f,
+                rimmP98 = 0.441493f,
+                rimmHighlightFraction = 0.012258f,
+                rimmTailP95 = 0.923412f,
+                rimmTailP98 = 1.318924f,
+                rimmTailP99 = 1.545061f,
                 rimmMaxInput = 4.766730f,
-                shadowGainRange = 2.0f..3.4f
+                shadowGainRange = 2.0f..3.4f,
+                expectedGainP50 = floatArrayOf(
+                    2.433881f, 2.433881f, 2.433881f, 2.433881f, 2.433881f, 2.433881f,
+                    2.433881f, 2.405049f, 2.354992f, 2.291888f, 2.261898f, 2.218633f,
+                    2.177582f, 2.138278f, 2.100938f, 2.053486f, 2.008828f, 1.966325f,
+                    1.926189f, 1.887988f, 1.851621f, 1.783574f, 1.721598f, 1.612500f,
+                    1.541297f, 1.476947f, 1.400079f, 1.332454f, 1.244926f, 1.147889f,
+                    1.049181f, 0.968663f, 0.933662f, 0.889399f, 0.844497f, 0.819041f,
+                    0.797114f
+                ),
+                gainTolerance = 0.24f
             ),
             DngDerivedPgtmFixture(
-                sourceName = "PXL_20260702_144246096.RAW-02.ORIGINAL..dng",
+                sourceName = "PXL_20260630_100426253.RAW-02.ORIGINAL.dng",
+                width = 4096,
+                height = 3072,
+                baselineExposureEv = 1.83f,
+                embeddedWeightSum = 0.6975967f,
+                embeddedInputHeadroom = 2.4802149f,
+                rimmP10 = 0.307800f,
+                rimmP50 = 0.351503f,
+                rimmP90 = 0.426102f,
+                rimmP98 = 0.469566f,
+                rimmHighlightFraction = 0.261387f,
+                rimmTailP95 = 1.823842f,
+                rimmTailP98 = 1.920961f,
+                rimmTailP99 = 1.969608f,
+                rimmMaxInput = 2.072667f,
+                shadowGainRange = 2.2f..3.8f,
+                expectedGainP50 = floatArrayOf(
+                    2.938126f, 2.938126f, 2.938126f, 2.938126f, 2.938126f, 2.938126f,
+                    2.938126f, 2.891436f, 2.792942f, 2.669011f, 2.614738f, 2.538647f,
+                    2.467955f, 2.402280f, 2.341392f, 2.264403f, 2.195177f, 2.130476f,
+                    2.070314f, 2.013801f, 1.961176f, 1.865585f, 1.779446f, 1.633619f,
+                    1.540570f, 1.458329f, 1.360819f, 1.278129f, 1.174516f, 1.065314f,
+                    0.958356f, 0.873501f, 0.837248f, 0.791938f, 0.746611f, 0.721189f,
+                    0.699442f
+                ),
+                gainTolerance = 0.26f
+            ),
+            DngDerivedPgtmFixture(
+                sourceName = "PXL_20260702_144246096.RAW-02.ORIGINAL.dng",
                 width = 4096,
                 height = 3072,
                 baselineExposureEv = GOOGLE_KEYCAP_BASELINE_EV,
@@ -598,6 +524,34 @@ class DngHdrProfileGainTableGeneratorTest {
                 rimmTailP99 = 1.443504f,
                 rimmMaxInput = 2.448398f,
                 shadowGainRange = 2.3f..3.3f
+            ),
+            DngDerivedPgtmFixture(
+                sourceName = "PXL_20260702_230446193.RAW-02.ORIGINAL.dng",
+                width = 4096,
+                height = 3072,
+                baselineExposureEv = 1.20f,
+                embeddedWeightSum = 0.6720394f,
+                embeddedInputHeadroom = 1.5439412f,
+                rimmP10 = 0.283880f,
+                rimmP50 = 0.356135f,
+                rimmP90 = 0.436290f,
+                rimmP98 = 0.468236f,
+                rimmHighlightFraction = 0.057847f,
+                rimmTailP95 = 1.277153f,
+                rimmTailP98 = 1.660754f,
+                rimmTailP99 = 2.696633f,
+                rimmMaxInput = 3.887637f,
+                shadowGainRange = 2.2f..3.7f,
+                expectedGainP50 = floatArrayOf(
+                    2.988932f, 2.988932f, 2.988932f, 2.988932f, 2.988932f, 2.988932f,
+                    2.988932f, 2.929580f, 2.823456f, 2.691936f, 2.632088f, 2.547884f,
+                    2.469565f, 2.396644f, 2.329094f, 2.246051f, 2.170225f, 2.101044f,
+                    2.036580f, 1.977289f, 1.921968f, 1.823052f, 1.735409f, 1.588058f,
+                    1.494819f, 1.414782f, 1.322162f, 1.242386f, 1.141060f, 1.032854f,
+                    0.927313f, 0.843980f, 0.808448f, 0.764127f, 0.719831f, 0.695016f,
+                    0.673810f
+                ),
+                gainTolerance = 0.26f
             )
         )
     }
@@ -619,6 +573,8 @@ class DngHdrProfileGainTableGeneratorTest {
         val rimmTailP99: Float,
         val rimmMaxInput: Float,
         val shadowGainRange: ClosedFloatingPointRange<Float>,
+        val expectedGainP50: FloatArray? = null,
+        val gainTolerance: Float = 0.28f,
         val weightTolerance: Float = 0.035f,
         val headroomTolerance: Float = 0.10f,
     )

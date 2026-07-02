@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.raw
 
 import com.hinnka.mycamera.utils.PLog
+import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -26,9 +27,9 @@ internal object DngHdrProfileGainTableGenerator {
     private const val GRID_MIN_V = 6
     private const val GRID_MAX_H = 64
     private const val GRID_MAX_V = 48
-    private const val MIN_EFFECTIVE_INPUT_HEADROOM = 0.28f
-    private const val MAX_EFFECTIVE_INPUT_HEADROOM = 3.05f
     private const val MIN_SCENE_MAX = 1.02f
+    private const val MAX_SCENE_MAX = 4.80f
+    private const val SCENE_BASE_TAIL_FACTOR = 1.12f
     private const val SCENE_TAIL_EXPANSION_FACTOR = 2.75f
     private const val SCENE_TAIL_HDR_STRENGTH = 0.58f
     private const val SCENE_TAIL_EXPANSION_STRENGTH_GAIN = 2.10f
@@ -67,6 +68,8 @@ internal object DngHdrProfileGainTableGenerator {
     private const val MAX_TOE_SLOPE = 0.88f
     private const val MIN_SHOULDER_POWER = 0.82f
     private const val MAX_SHOULDER_POWER = 1.28f
+    private const val LOCAL_CURVE_MAX_BLEND = 0.90f
+    private const val LOCAL_CURVE_SMOOTH_PASSES = 1
     internal const val BASE_INPUT_WEIGHT_RED = 0.1495f
     internal const val BASE_INPUT_WEIGHT_GREEN = 0.2935f
     internal const val BASE_INPUT_WEIGHT_BLUE = 0.0570f
@@ -162,17 +165,23 @@ internal object DngHdrProfileGainTableGenerator {
             }
         }
         val globalStats = weightedGlobalStats(cells)
-        val inputScale = hdrPgtmInputScaleForStats(globalStats, safeBaselineEv)
+        val inputScale = hdrPgtmInputScaleForStats(globalStats)
         val sceneMax = 1f / sanitizeInputScale(inputScale)
         val sceneHdrStrength = (sceneHdrStrength(globalStats, inputScale) * GCAM_HDR_EFFECT_INTENSITY)
             .coerceIn(0f, 1f)
         val globalCurveParams = buildHdrPgtmCurveParams(
             global = globalStats,
-            baselineExposureEv = safeBaselineEv,
             sceneHdrStrength = sceneHdrStrength,
             sceneMax = sceneMax
         )
-        val curveParams = Array(cellCount) { globalCurveParams }
+        val curveParams = buildSpatialCurveParams(
+            cells = cells,
+            grid = grid,
+            global = globalStats,
+            globalCurveParams = globalCurveParams,
+            sceneHdrStrength = sceneHdrStrength,
+            sceneMax = sceneMax
+        )
         return buildMap(
             grid = grid,
             safeBaselineEv = safeBaselineEv,
@@ -180,6 +189,119 @@ internal object DngHdrProfileGainTableGenerator {
             curveParams = curveParams,
             inputScale = inputScale,
             diagnosticBand = diagnosticBand?.sanitized()
+        )
+    }
+
+    private fun buildSpatialCurveParams(
+        cells: Array<HdrPgtmCellStats?>,
+        grid: HdrPgtmGrid,
+        global: HdrPgtmCellStats,
+        globalCurveParams: HdrPgtmCurveParams,
+        sceneHdrStrength: Float,
+        sceneMax: Float,
+    ): Array<HdrPgtmCurveParams> {
+        val cellCount = grid.mapPointsH * grid.mapPointsV
+        val localParams = Array(cellCount) { index ->
+            val cell = cells.getOrNull(index)
+            if (cell == null || cell.sampleWeight <= 0f) {
+                globalCurveParams
+            } else {
+                val cellCurveParams = buildHdrPgtmCurveParams(
+                    global = cell,
+                    sceneHdrStrength = sceneHdrStrength,
+                    sceneMax = sceneMax
+                )
+                blendCurveParams(
+                    globalCurveParams,
+                    cellCurveParams,
+                    localCurveBlend(cell, global)
+                )
+            }
+        }
+        return smoothSpatialCurveParams(localParams, grid)
+    }
+
+    private fun localCurveBlend(cell: HdrPgtmCellStats, global: HdrPgtmCellStats): Float {
+        val p50DeltaEv = abs(log2((cell.p50 + 0.006f) / (global.p50 + 0.006f)))
+        val p90DeltaEv = abs(log2((cell.p90 + 0.006f) / (global.p90 + 0.006f)))
+        val p98DeltaEv = abs(log2((cell.p98 + 0.006f) / (global.p98 + 0.006f)))
+        val tailDeltaEv = abs(log2((cell.p999Input + 0.04f) / (global.p999Input + 0.04f)))
+        val highlightDelta = abs(cell.highlightFraction - global.highlightFraction)
+        val toneDelta = 0.42f * p50DeltaEv +
+            0.32f * p90DeltaEv +
+            0.18f * p98DeltaEv +
+            0.12f * tailDeltaEv +
+            0.70f * highlightDelta
+        val variation = smoothStep(0.08f, 0.70f, toneDelta)
+        val confidence = smoothStep(24f, 96f, cell.sampleWeight)
+        val highlightStability = 1f - 0.35f * smoothStep(0.72f, 0.96f, cell.p98)
+        return (LOCAL_CURVE_MAX_BLEND * variation * confidence * highlightStability)
+            .coerceIn(0f, LOCAL_CURVE_MAX_BLEND)
+    }
+
+    private fun smoothSpatialCurveParams(
+        source: Array<HdrPgtmCurveParams>,
+        grid: HdrPgtmGrid,
+    ): Array<HdrPgtmCurveParams> {
+        var current = source
+        repeat(LOCAL_CURVE_SMOOTH_PASSES) {
+            current = Array(current.size) { index ->
+                val x = index % grid.mapPointsH
+                val y = index / grid.mapPointsH
+                var weightSum = 0f
+                var midOutput = 0f
+                var blackGain = 0f
+                var toeSlope = 0f
+                var shoulderPower = 0f
+                var highlightPressure = 0f
+                var lowDetailGainFactor = 0f
+                for (dy in -1..1) {
+                    val yy = y + dy
+                    if (yy !in 0 until grid.mapPointsV) continue
+                    for (dx in -1..1) {
+                        val xx = x + dx
+                        if (xx !in 0 until grid.mapPointsH) continue
+                        val weight = when {
+                            dx == 0 && dy == 0 -> 4f
+                            dx == 0 || dy == 0 -> 2f
+                            else -> 1f
+                        }
+                        val params = current[yy * grid.mapPointsH + xx]
+                        weightSum += weight
+                        midOutput += params.midOutput * weight
+                        blackGain += params.blackGain * weight
+                        toeSlope += params.toeSlope * weight
+                        shoulderPower += params.shoulderPower * weight
+                        highlightPressure += params.highlightPressure * weight
+                        lowDetailGainFactor += params.lowDetailGainFactor * weight
+                    }
+                }
+                HdrPgtmCurveParams(
+                    midOutput = midOutput / weightSum,
+                    blackGain = blackGain / weightSum,
+                    toeSlope = toeSlope / weightSum,
+                    shoulderPower = shoulderPower / weightSum,
+                    highlightPressure = highlightPressure / weightSum,
+                    lowDetailGainFactor = lowDetailGainFactor / weightSum
+                )
+            }
+        }
+        return current
+    }
+
+    private fun blendCurveParams(
+        first: HdrPgtmCurveParams,
+        second: HdrPgtmCurveParams,
+        amount: Float,
+    ): HdrPgtmCurveParams {
+        val t = amount.coerceIn(0f, 1f)
+        return HdrPgtmCurveParams(
+            midOutput = lerp(first.midOutput, second.midOutput, t),
+            blackGain = lerp(first.blackGain, second.blackGain, t),
+            toeSlope = lerp(first.toeSlope, second.toeSlope, t),
+            shoulderPower = lerp(first.shoulderPower, second.shoulderPower, t),
+            highlightPressure = lerp(first.highlightPressure, second.highlightPressure, t),
+            lowDetailGainFactor = lerp(first.lowDetailGainFactor, second.lowDetailGainFactor, t)
         )
     }
 
@@ -450,17 +572,16 @@ internal object DngHdrProfileGainTableGenerator {
 
     private fun buildHdrPgtmCurveParams(
         global: HdrPgtmCellStats,
-        baselineExposureEv: Float,
         sceneHdrStrength: Float,
         sceneMax: Float,
     ): HdrPgtmCurveParams {
         val globalDynamicRangeEv = log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
             .coerceIn(0f, 8f)
         val sceneContrastStrength = smoothStep(1.8f, 5.5f, globalDynamicRangeEv)
-        val hdrStrength = (max(
-            smoothStep(0.35f, 3.2f, baselineExposureEv),
-            0.70f * sceneContrastStrength
-        ) * sceneHdrStrength).coerceIn(0f, 1f)
+        val rangeCompression = sceneDynamicRangeCompression(global, sceneMax)
+        val statsHdrStrength = sceneHdrStrength * lerp(0.34f, 1f, rangeCompression)
+        val hdrStrength = max(statsHdrStrength, 0.70f * sceneContrastStrength * rangeCompression)
+            .coerceIn(0f, 1f)
         val highlightPressure = (
             0.45f * smoothStep(0.48f, 0.88f, global.p90) +
                 0.35f * smoothStep(0.70f, 0.985f, global.p98) +
@@ -471,7 +592,7 @@ internal object DngHdrProfileGainTableGenerator {
             highlightPressure = highlightPressure,
             hdrStrength = hdrStrength
         )
-        val baseMidGain = hdrRangeMidGain(baselineExposureEv, sceneHdrStrength)
+        val baseMidGain = hdrRangeMidGain(global, sceneHdrStrength)
         val midGain = (baseMidGain * 2.0f.pow(rangeCenterEv))
             .coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
         val effectiveUpperRangeEv = log2(sceneMax / SCENE_MID_ANCHOR)
@@ -487,14 +608,17 @@ internal object DngHdrProfileGainTableGenerator {
             midGain = midGain,
             sceneHdrStrength = sceneHdrStrength,
             rangeCenterEv = rangeCenterEv,
-            highlightPressure = highlightPressure
+            highlightPressure = highlightPressure,
+            rangeCompression = rangeCompression
         )
+        val lowDetailGainFactor = hdrRangeLowDetailGainFactor(global, sceneMax)
         return HdrPgtmCurveParams(
             midOutput = SCENE_MID_ANCHOR * midGain,
             blackGain = blackGain.coerceIn(MIN_BLACK_GAIN, MAX_BLACK_GAIN),
             toeSlope = toeSlope,
             shoulderPower = shoulderPower,
-            highlightPressure = highlightPressure
+            highlightPressure = highlightPressure,
+            lowDetailGainFactor = lowDetailGainFactor
         )
     }
 
@@ -638,7 +762,7 @@ internal object DngHdrProfileGainTableGenerator {
         val midGain = params.midOutput / SCENE_MID_ANCHOR
         return max(
             params.blackGain,
-            midGain * LOW_DETAIL_MID_GAIN_FACTOR
+            midGain * params.lowDetailGainFactor
         ).coerceIn(MIN_BLACK_GAIN, MAX_BLACK_GAIN)
     }
 
@@ -677,10 +801,28 @@ internal object DngHdrProfileGainTableGenerator {
         }
     }
 
-    private fun hdrRangeMidGain(baselineExposureEv: Float, sceneHdrStrength: Float): Float {
-        val hdrGain = lerp(2.30f, 2.40f, smoothStep(0.8f, 2.2f, baselineExposureEv))
-        return lerp(1.88f, hdrGain, sceneHdrStrength)
+    private fun hdrRangeMidGain(global: HdrPgtmCellStats, sceneHdrStrength: Float): Float {
+        val hdrGain = lerp(2.36f, 2.46f, sceneHdrStrength)
+        val baseGain = lerp(1.90f, hdrGain, sceneHdrStrength)
+        val lowSceneLift = (1f - smoothStep(0.055f, 0.18f, global.p50)) *
+            smoothStep(0.45f, 0.95f, global.p98)
+        return (baseGain * 2.0f.pow(0.34f * lowSceneLift))
             .coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
+    }
+
+    private fun sceneDynamicRangeCompression(global: HdrPgtmCellStats, sceneMax: Float): Float {
+        val tailInput = max(max(global.inputTailP95, global.p995Input), global.p98)
+        val percentileRangeEv = log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
+            .coerceIn(0f, 8f)
+        val tailRangeEv = log2((tailInput + 0.020f) / (global.p10 + 0.006f))
+            .coerceIn(0f, 8f)
+        val sceneMaxStrength = smoothStep(1.65f, 3.20f, sceneMax)
+        val percentileStrength = smoothStep(2.2f, 4.8f, percentileRangeEv)
+        val tailStrength = smoothStep(2.6f, 5.8f, tailRangeEv)
+        val highlightStrength = smoothStep(0.08f, 0.24f, global.highlightFraction) *
+            smoothStep(0.55f, 0.90f, global.p98)
+        return (sceneMaxStrength * max(max(percentileStrength, tailStrength), highlightStrength))
+            .coerceIn(0f, 1f)
     }
 
     private fun hdrRangeCenterOffsetEv(
@@ -702,11 +844,25 @@ internal object DngHdrProfileGainTableGenerator {
         sceneHdrStrength: Float,
         rangeCenterEv: Float,
         highlightPressure: Float,
+        rangeCompression: Float,
     ): Float {
-        val rangeToeLift = lerp(0.18f, 0.78f, sceneHdrStrength)
+        val rangeToeLift = lerp(0.18f, 0.78f, sceneHdrStrength) *
+            lerp(1f, 0.54f, rangeCompression)
         return (midGain * (1f + rangeToeLift) *
             2.0f.pow(0.48f * rangeCenterEv - 0.18f * highlightPressure))
             .coerceIn(MIN_BLACK_GAIN, MAX_BLACK_GAIN)
+    }
+
+    private fun hdrRangeLowDetailGainFactor(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        val compactScene = 1f - smoothStep(1.34f, 1.62f, sceneMax)
+        val lowHighlightDensity = 1f - smoothStep(0.018f, 0.055f, global.highlightFraction)
+        val flatUpperTone = 1f - smoothStep(0.44f, 0.54f, global.p98)
+        val reduction = (compactScene * lowHighlightDensity * flatUpperTone).coerceIn(0f, 1f)
+        return (LOW_DETAIL_MID_GAIN_FACTOR * lerp(1f, 0.80f, reduction))
+            .coerceIn(1.22f, LOW_DETAIL_MID_GAIN_FACTOR)
     }
 
     private fun hdrRangeToeSlope(sceneHdrStrength: Float, highlightPressure: Float): Float {
@@ -748,11 +904,7 @@ internal object DngHdrProfileGainTableGenerator {
         return (base + kneeLift - rolloff - terminalRolloff).coerceIn(0f, 1f)
     }
 
-    private fun hdrPgtmInputScaleForStats(
-        global: HdrPgtmCellStats,
-        baselineExposureEv: Float,
-    ): Float {
-        val baselineGain = 2.0f.pow(baselineExposureEv.coerceIn(0f, MAX_BASELINE_EV))
+    private fun hdrPgtmInputScaleForStats(global: HdrPgtmCellStats): Float {
         val tailP95 = global.inputTailP95.takeIf { it.isFinite() && it > 0f }
             ?: global.p995Input.takeIf { it.isFinite() && it > 0f }
             ?: global.p98.takeIf { it.isFinite() && it > 0f }
@@ -767,10 +919,7 @@ internal object DngHdrProfileGainTableGenerator {
             tailP99 = tailP99,
             maxInput = maxInput
         )
-        val sceneMax = baseSceneMax.coerceIn(
-            max(MIN_SCENE_MAX, baselineGain / MAX_EFFECTIVE_INPUT_HEADROOM),
-            baselineGain / MIN_EFFECTIVE_INPUT_HEADROOM
-        )
+        val sceneMax = baseSceneMax.coerceIn(MIN_SCENE_MAX, MAX_SCENE_MAX)
         return sanitizeInputScale(1f / sceneMax)
     }
 
@@ -783,12 +932,14 @@ internal object DngHdrProfileGainTableGenerator {
     ): Float {
         val highlightDensity = global.highlightFraction.coerceIn(0f, 1f)
         val outlierGapEv = log2((tailP99 + 0.04f) / (tailP98 + 0.04f))
-        val sparseOutlierStrength = smoothStep(0.50f, 0.95f, outlierGapEv)
+        val tailUsability = tailOutlierUsability(outlierGapEv)
+        val sparseOutlierStrength = smoothStep(0.50f, 0.95f, outlierGapEv) * tailUsability
         val isolatedHighlightStrength = smoothStep(0.025f, 0.08f, highlightDensity) *
-            (1f - smoothStep(0.10f, 0.18f, highlightDensity))
+            (1f - smoothStep(0.10f, 0.18f, highlightDensity)) *
+            tailUsability
         val broadHighlightStrength = smoothStep(0.08f, 0.17f, highlightDensity)
         val denseHighlightStrength = smoothStep(0.17f, 0.22f, highlightDensity)
-        val baseSceneMax = min(tailP95 * 1.08f, tailP98)
+        val baseSceneMax = min(tailP95 * SCENE_BASE_TAIL_FACTOR, tailP98)
         val outlierSceneMax = lerp(baseSceneMax, tailP99, sparseOutlierStrength)
         val isolatedHighlightSceneMax = lerp(
             outlierSceneMax,
@@ -806,11 +957,35 @@ internal object DngHdrProfileGainTableGenerator {
             denseHighlightStrength
         )
         val expandedTailSceneMax = max(denseHighlightSceneMax, tailP99 * SCENE_TAIL_EXPANSION_FACTOR)
-        return lerp(
+        val statsSceneMax = lerp(
             denseHighlightSceneMax,
             expandedTailSceneMax,
             sceneTailExpansionStrength(global)
         )
+        return adjustSceneMaxForToneDistribution(global, statsSceneMax)
+            .coerceIn(MIN_SCENE_MAX, MAX_SCENE_MAX)
+    }
+
+    private fun adjustSceneMaxForToneDistribution(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        val toneSeparationEv = log2((global.p98 + 0.006f) / (global.p50 + 0.006f))
+            .coerceIn(0f, 4f)
+        val separatedHighlight = smoothStep(0.52f, 0.62f, toneSeparationEv) *
+            smoothStep(0.16f, 0.24f, global.highlightFraction)
+        val flatDenseHighlight = smoothStep(0.20f, 0.28f, global.highlightFraction) *
+            (1f - smoothStep(0.46f, 0.60f, toneSeparationEv))
+        val compactLowHighlight = (1f - smoothStep(0.015f, 0.050f, global.highlightFraction)) *
+            (1f - smoothStep(0.44f, 0.50f, global.p98))
+        return sceneMax *
+            lerp(1f, 1.10f, separatedHighlight) *
+            lerp(1f, 0.74f, flatDenseHighlight) *
+            lerp(1f, 0.92f, compactLowHighlight)
+    }
+
+    private fun tailOutlierUsability(outlierGapEv: Float): Float {
+        return 1f - smoothStep(0.48f, 0.72f, outlierGapEv)
     }
 
     private fun denseHighlightSceneMaxTarget(
@@ -839,12 +1014,15 @@ internal object DngHdrProfileGainTableGenerator {
     private fun sceneTailExpansionStrength(global: HdrPgtmCellStats): Float {
         val tailInput = max(global.inputTailP99, global.p999Input)
         if (!tailInput.isFinite() || tailInput <= 0f) return 0f
+        val tailP98 = max(global.inputTailP98, global.p995Input)
+        val outlierGapEv = log2((tailInput + 0.04f) / (tailP98 + 0.04f))
         val localTailGapEv = log2((tailInput + 0.04f) / (global.p98 + 0.04f))
         val medianToneGate = midToneTailGate(global)
         val upperToneGate = 1f - smoothStep(0.26f, 0.58f, global.p90)
         val highlightToneGate = 1f - smoothStep(0.24f, 0.52f, global.p98)
         val tailGapStrength = smoothStep(0.82f, 1.55f, localTailGapEv)
         return (medianToneGate * upperToneGate * highlightToneGate * tailGapStrength *
+            tailOutlierUsability(outlierGapEv) *
             SCENE_TAIL_EXPANSION_STRENGTH_GAIN)
             .coerceIn(0f, 1f)
     }
@@ -917,6 +1095,7 @@ internal object DngHdrProfileGainTableGenerator {
         val toeSlope: Float,
         val shoulderPower: Float,
         val highlightPressure: Float,
+        val lowDetailGainFactor: Float,
     )
 
     private data class SceneToneCurve(
