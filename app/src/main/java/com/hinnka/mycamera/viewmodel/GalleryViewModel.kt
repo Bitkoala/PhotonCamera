@@ -956,11 +956,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private fun applyPhotoMetadataUpdateToMemory(photoId: String, metadata: MediaMetadata) {
         _photos.update { current ->
             current.map { photo ->
-                if (photo.id == photoId) photo.copy(metadata = metadata) else photo
+                if (photo.id == photoId) photo.withMetadataSnapshot(metadata) else photo
             }
         }
         _latestPhoto.update { latest ->
-            if (latest?.id == photoId) latest.copy(metadata = metadata) else latest
+            if (latest?.id == photoId) latest.withMetadataSnapshot(metadata) else latest
         }
 
         val isCurrentPhoto = getCurrentPhoto()?.id == photoId
@@ -1065,15 +1065,25 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             if (metadata != null) {
                 if (selectedTab == GalleryTab.SYSTEM) {
                     _systemPhotos.update { current ->
-                        current.map { if (it.id == photo.id) it.copy(metadata = metadata) else it }
+                        current.map { if (it.id == photo.id) it.withMetadataSnapshot(metadata) else it }
                     }
                 } else {
                     _photos.update { current ->
-                        current.map { if (it.id == photo.id) it.copy(metadata = metadata) else it }
+                        current.map { if (it.id == photo.id) it.withMetadataSnapshot(metadata) else it }
                     }
                 }
             }
         }
+    }
+
+    private fun MediaData.withMetadataSnapshot(metadata: MediaMetadata): MediaData {
+        val resolvedWidth = metadata.width.takeIf { it > 0 } ?: width
+        val resolvedHeight = metadata.height.takeIf { it > 0 } ?: height
+        return copy(
+            width = resolvedWidth,
+            height = resolvedHeight,
+            metadata = metadata
+        )
     }
 
     private fun restoreCropEditState(photo: MediaData?, metadata: MediaMetadata?) {

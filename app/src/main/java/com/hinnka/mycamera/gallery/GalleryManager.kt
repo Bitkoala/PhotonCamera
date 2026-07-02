@@ -1844,11 +1844,13 @@ object GalleryManager {
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
+            updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
 
             FileOutputStream(tempFile).use { outputStream ->
                 writeFinalJpeg(bitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
+            saveMetadata(context, photoId, updatedMetadata)
             generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
             val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
                 photoProcessor.prepareUltraHdrSourceFromRawResult(
@@ -1886,7 +1888,6 @@ object GalleryManager {
                 )
             }
             updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
-            saveMetadata(context, photoId, updatedMetadata)
             if (shouldAutoSave) {
                 exportPhoto(
                     context,
@@ -2716,12 +2717,14 @@ object GalleryManager {
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
+            updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
 
             // Save Original (Stacked Result)
             FileOutputStream(tempFile).use { outputStream ->
                 writeFinalJpeg(bitmap, outputStream, photoQuality)
             }
             tempFile.renameTo(photoFile)
+            saveMetadata(context, photoId, updatedMetadata)
             generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
 
             val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
@@ -2761,7 +2764,6 @@ object GalleryManager {
             }
 
             updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
-            saveMetadata(context, photoId, updatedMetadata)
             // Auto Save
             if (shouldAutoSave) {
                 exportPhoto(
@@ -3137,11 +3139,13 @@ object GalleryManager {
         if (updatedMetadata.isMirrored) {
             bitmap = BitmapUtils.flipHorizontal(bitmap)
         }
+        updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
 
         FileOutputStream(tempFile).use { outputStream ->
             writeFinalJpeg(bitmap, outputStream, photoQuality)
         }
         tempFile.renameTo(photoFile)
+        saveMetadata(context, photoId, updatedMetadata)
         generateBokehPhoto(context, photoId, updatedMetadata, bitmap)
 
         val preparedUltraHdrSource = if (updatedMetadata.manualHdrEffectEnabled) {
@@ -3181,7 +3185,6 @@ object GalleryManager {
         }
 
         updateThumbnail(context, photoId, photoProcessor, updatedMetadata, bitmap)
-        saveMetadata(context, photoId, updatedMetadata)
         if (shouldAutoSave) {
             exportPhoto(
                 context,
@@ -4437,7 +4440,11 @@ object GalleryManager {
                     getAiDenoiseFile(context, photoId).takeIf { it.exists() }?.delete()
 
                     updatedMetadata?.let {
-                        val finalMetadata = it.copy(hasAiDenoisedBase = false)
+                        val finalMetadata = it.copy(
+                            width = processedBitmap.width,
+                            height = processedBitmap.height,
+                            hasAiDenoisedBase = false
+                        )
                         generateBokehPhoto(context, photoId, finalMetadata, processedBitmap.copy(Bitmap.Config.ARGB_8888, true))
                         saveMetadata(context, photoId, finalMetadata)
                         if (finalMetadata.manualHdrEffectEnabled) {
