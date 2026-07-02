@@ -355,32 +355,6 @@ class RawDemosaicProcessor {
         val rowStrideBytes: Int,
     )
 
-    data class LinearHdrFusionInputFrame(
-        val rawData: ByteBuffer,
-        val width: Int,
-        val height: Int,
-        val rowStride: Int,
-        val exposureProduct: Double,
-        val originalIndex: Int,
-        val blackLevel: FloatArray? = null,
-        val whiteLevel: Float? = null,
-        val lensShadingAlreadyApplied: Boolean = false,
-        val effectiveFrameCount: Int = 1,
-    )
-
-    data class LinearHdrFusionResult(
-        val linearRgbBuffer: ByteBuffer,
-        val width: Int,
-        val height: Int,
-        val rowStepSamples: Int,
-        val colStepSamples: Int,
-        val baselineExposureEv: Float,
-        val shortExposureProduct: Double,
-        val normalExposureProduct: Double,
-        val longExposureProduct: Double,
-        val previewBitmap: Bitmap?,
-    )
-
     private data class FilmicToneCurveUniforms(
         val blackRelativeExposure: Float,
         val whiteRelativeExposure: Float,
@@ -409,6 +383,45 @@ class RawDemosaicProcessor {
 
     private var isInitialized = false
     private var maxTextureSize = 8192 // default, queried at init
+
+    internal val rawHdrMaxTextureSize: Int
+        get() = maxTextureSize
+
+    internal val rawHdrLinearOutputFramebufferId: Int
+        get() = linearOutputFramebufferId
+
+    internal val rawHdrLinearOutputTextureId: Int
+        get() = linearOutputTextureId
+
+    internal suspend fun ensureRawHdrLinearFusionInitialized(): Boolean {
+        return isInitialized || initializeOnGlThread()
+    }
+
+    internal fun hasRawHdrLinearFusionPrograms(renderPreview: Boolean): Boolean {
+        return rawHdrLinearAccumulateProgram != 0 &&
+            rawHdrLinearNormalizeProgram != 0 &&
+            (!renderPreview || rawHdrLinearPreviewProgram != 0)
+    }
+
+    internal fun setupRawHdrFullResFramebuffer(width: Int, height: Int) {
+        setupFullResFramebuffer(width, height)
+    }
+
+    internal fun deleteRawHdrUploadTextureIfNeeded() {
+        if (rawTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
+            rawTextureId = 0
+        }
+    }
+
+    internal fun setRawHdrTextureFilter(textureId: Int, filter: Int) {
+        if (textureId == 0) return
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, filter)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, filter)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        checkGlError("setRawHdrTextureFilter")
+    }
 
     fun getRawColorSpace(rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve): ColorSpace {
         return rawRenderingEngine.workingColorSpace
@@ -782,269 +795,15 @@ class RawDemosaicProcessor {
         rotation: Int,
         renderPreview: Boolean = true,
     ): LinearHdrFusionResult? = withContext(glDispatcher) {
-        if (frames.size < 3) {
-            PLog.w(TAG, "RAW HDR GPU fusion requires 3 frames, got ${frames.size}")
-            return@withContext null
-        }
-        val width = frames[0].width
-        val height = frames[0].height
-        if (width <= 0 || height <= 0 || width > maxTextureSize || height > maxTextureSize) {
-            PLog.e(TAG, "RAW HDR GPU fusion input ${width}x${height} exceeds GL_MAX_TEXTURE_SIZE=$maxTextureSize")
-            return@withContext null
-        }
-        if (frames.any { it.width != width || it.height != height }) {
-            PLog.w(TAG, "RAW HDR GPU fusion got mixed frame sizes")
-            return@withContext null
-        }
-
-        var currentTexture = 0
-        var currentFramebuffer = 0
-        var accumulatorTexture = 0
-        var accumulatorFramebuffer = 0
-        var accumulatorScratchTexture = 0
-        var accumulatorScratchFramebuffer = 0
-        var normalReferenceTexture = 0
-        var normalReferenceFramebuffer = 0
-        var longReferenceTexture = 0
-        var longReferenceFramebuffer = 0
-        var fusedTexture = 0
-        var fusedFramebuffer = 0
-        var outputBuffer: ByteBuffer? = null
-        var previewBitmap: Bitmap? = null
-        var returned = false
-        val startTime = System.currentTimeMillis()
-        return@withContext try {
-            if (!isInitialized && !initializeOnGlThread()) {
-                PLog.e(TAG, "Failed to initialize processor")
-                return@withContext null
-            }
-            if (rawHdrLinearAccumulateProgram == 0 ||
-                rawHdrLinearNormalizeProgram == 0 ||
-                (renderPreview && rawHdrLinearPreviewProgram == 0)
-            ) {
-                PLog.e(TAG, "RAW HDR GPU fusion shaders are unavailable")
-                return@withContext null
-            }
-
-            val actualMetadata = if (applyLensShadingCorrection) {
-                metadata
-            } else {
-                metadata.copy(
-                    lensShadingMap = null,
-                    lensShadingMapWidth = 0,
-                    lensShadingMapHeight = 0,
-                    lensShadingMapGrid = null
-                )
-            }
-            val shortFrame = frames.first()
-            val normalFrames = frames.subList(1, frames.lastIndex)
-            val normalReferenceFrame = normalFrames.first()
-            val longFrame = frames.last()
-            val shortProduct = validHdrExposureProduct(shortFrame.exposureProduct)
-            val normalProduct = validHdrExposureProduct(normalReferenceFrame.exposureProduct)
-            val normalFrameCount = normalFrames
-                .sumOf { it.effectiveFrameCount.coerceAtLeast(1) }
-                .coerceAtLeast(1)
-                .toFloat()
-            val longProduct = validHdrExposureProduct(longFrame.exposureProduct)
-            val hdrNoiseAlpha = actualMetadata.noiseProfile.getOrElse(0) { 0f }.coerceAtLeast(0f) / 65535.0f
-            val hdrNoiseBeta = actualMetadata.noiseProfile.getOrElse(1) { 0f }.coerceAtLeast(0f) /
-                (65535.0f * 65535.0f)
-            val baselineExposureEv = log2Hdr(normalProduct / shortProduct).coerceIn(0f, 8f)
-
-            setupFullResFramebuffer(width, height)
-            currentTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
-            currentFramebuffer = createFramebufferForTexture(currentTexture, "rawHdrCurrentLinear")
-            accumulatorTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
-            accumulatorFramebuffer = createFramebufferForTexture(accumulatorTexture, "rawHdrAccumulator")
-            accumulatorScratchTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
-            accumulatorScratchFramebuffer = createFramebufferForTexture(accumulatorScratchTexture, "rawHdrAccumulatorScratch")
-            normalReferenceTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
-            normalReferenceFramebuffer = createFramebufferForTexture(normalReferenceTexture, "rawHdrNormalReference")
-            longReferenceTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16F)
-            longReferenceFramebuffer = createFramebufferForTexture(longReferenceTexture, "rawHdrLongReference")
-            fusedTexture = createRawHdrLinearTexture(width, height, GLES30.GL_RGBA16UI)
-            fusedFramebuffer = createFramebufferForTexture(fusedTexture, "rawHdrFusedRgbx")
-
-            PLog.d(
-                TAG,
-                "RAW HDR GPU fusion start: ${width}x${height} " +
-                    "short=${shortProduct} normal=${normalProduct} normalCount=${normalFrameCount.toInt()} long=${longProduct}"
-            )
-            renderLinearHdrInputToFramebuffer(
-                frame = shortFrame,
-                metadata = actualMetadata,
-                targetFramebufferId = linearOutputFramebufferId,
-                label = "RAW HDR short RCD"
-            )
-            renderLinearHdrInputToFramebuffer(
-                frame = longFrame,
-                metadata = actualMetadata,
-                targetFramebufferId = longReferenceFramebuffer,
-                label = "RAW HDR long RCD"
-            )
-            renderLinearHdrInputToFramebuffer(
-                frame = normalReferenceFrame,
-                metadata = actualMetadata,
-                targetFramebufferId = normalReferenceFramebuffer,
-                label = "RAW HDR normal reference RCD"
-            )
-            clearRawHdrAccumulator(accumulatorFramebuffer, width, height)
-            var accumulatorReadTexture = accumulatorTexture
-            var accumulatorWriteTexture = accumulatorScratchTexture
-            var accumulatorWriteFramebuffer = accumulatorScratchFramebuffer
-
-            fun swapAccumulatorTargets() {
-                val previousReadTexture = accumulatorReadTexture
-                accumulatorReadTexture = accumulatorWriteTexture
-                accumulatorWriteTexture = previousReadTexture
-                accumulatorWriteFramebuffer = if (accumulatorWriteTexture == accumulatorTexture) {
-                    accumulatorFramebuffer
-                } else {
-                    accumulatorScratchFramebuffer
-                }
-            }
-
-            renderRawHdrLinearAccumulation(
-                currentTextureId = longReferenceTexture,
-                normalTextureId = normalReferenceTexture,
-                longTextureId = longReferenceTexture,
-                previousAccumulatorTextureId = accumulatorReadTexture,
-                scaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                normalFrameCount = normalFrameCount,
-                noiseAlpha = hdrNoiseAlpha,
-                noiseBeta = hdrNoiseBeta,
-                frameRole = 2,
-                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
-                width = width,
-                height = height,
-                label = "RAW HDR long accumulate"
-            )
-            swapAccumulatorTargets()
-
-            renderRawHdrLinearAccumulation(
-                currentTextureId = normalReferenceTexture,
-                normalTextureId = normalReferenceTexture,
-                longTextureId = longReferenceTexture,
-                previousAccumulatorTextureId = accumulatorReadTexture,
-                scaleToShort = (shortProduct / normalProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                normalFrameCount = normalFrameCount,
-                noiseAlpha = hdrNoiseAlpha,
-                noiseBeta = hdrNoiseBeta,
-                frameRole = 1,
-                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
-                width = width,
-                height = height,
-                label = "RAW HDR normal accumulate"
-            )
-            swapAccumulatorTargets()
-
-            normalFrames.drop(1).forEachIndexed { index, normalFrame ->
-                val frameProduct = validHdrExposureProduct(normalFrame.exposureProduct)
-                renderLinearHdrInputToFramebuffer(
-                    frame = normalFrame,
-                    metadata = actualMetadata,
-                    targetFramebufferId = currentFramebuffer,
-                    label = "RAW HDR normal RCD ${index + 1}"
-                )
-                renderRawHdrLinearAccumulation(
-                    currentTextureId = currentTexture,
-                    normalTextureId = normalReferenceTexture,
-                    longTextureId = longReferenceTexture,
-                    previousAccumulatorTextureId = accumulatorReadTexture,
-                    scaleToShort = (shortProduct / frameProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                    longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                    normalFrameCount = normalFrameCount,
-                    noiseAlpha = hdrNoiseAlpha,
-                    noiseBeta = hdrNoiseBeta,
-                    frameRole = 1,
-                    targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
-                    width = width,
-                    height = height,
-                    label = "RAW HDR normal accumulate ${index + 1}"
-                )
-                swapAccumulatorTargets()
-            }
-
-            renderRawHdrLinearAccumulation(
-                currentTextureId = linearOutputTextureId,
-                normalTextureId = normalReferenceTexture,
-                longTextureId = longReferenceTexture,
-                previousAccumulatorTextureId = accumulatorReadTexture,
-                scaleToShort = 1f,
-                longScaleToShort = (shortProduct / longProduct).toFloat().coerceIn(1.0e-6f, 1f),
-                normalFrameCount = normalFrameCount,
-                noiseAlpha = hdrNoiseAlpha,
-                noiseBeta = hdrNoiseBeta,
-                frameRole = 0,
-                targetAccumulatorFramebufferId = accumulatorWriteFramebuffer,
-                width = width,
-                height = height,
-                label = "RAW HDR short accumulate"
-            )
-            swapAccumulatorTargets()
-
-            renderRawHdrLinearNormalize(
-                accumulatorTextureId = accumulatorReadTexture,
-                fusedFramebufferId = fusedFramebuffer,
-                width = width,
-                height = height,
-            )
-            previewBitmap = if (renderPreview) {
-                renderRawHdrLinearPreviewBitmap(
-                    fusedTextureId = fusedTexture,
-                    width = width,
-                    height = height,
-                    aspectRatio = aspectRatio,
-                    rotation = rotation,
-                    baselineExposureEv = baselineExposureEv,
-                    metadata = actualMetadata,
-                )
-            } else {
-                null
-            }
-            outputBuffer = readRawHdrLinearRgbx16(fusedFramebuffer, width, height)
-                ?: return@withContext null
-            returned = true
-            PLog.i(
-                TAG,
-                "RAW HDR GPU linear fusion completed in ${System.currentTimeMillis() - startTime}ms " +
-                    "baselineEv=$baselineExposureEv"
-            )
-            LinearHdrFusionResult(
-                linearRgbBuffer = outputBuffer,
-                width = width,
-                height = height,
-                rowStepSamples = width * 4,
-                colStepSamples = 4,
-                baselineExposureEv = baselineExposureEv,
-                shortExposureProduct = shortProduct,
-                normalExposureProduct = normalProduct,
-                longExposureProduct = longProduct,
-                previewBitmap = previewBitmap,
-            )
-        } catch (e: Exception) {
-            PLog.e(TAG, "RAW HDR GPU linear fusion failed", e)
-            null
-        } finally {
-            GLES30.glDisable(GLES30.GL_BLEND)
-            if (rawTextureId != 0) {
-                GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
-                rawTextureId = 0
-            }
-            deleteTextureAndFramebuffer(currentTexture, currentFramebuffer)
-            deleteTextureAndFramebuffer(accumulatorTexture, accumulatorFramebuffer)
-            deleteTextureAndFramebuffer(accumulatorScratchTexture, accumulatorScratchFramebuffer)
-            deleteTextureAndFramebuffer(normalReferenceTexture, normalReferenceFramebuffer)
-            deleteTextureAndFramebuffer(longReferenceTexture, longReferenceFramebuffer)
-            deleteTextureAndFramebuffer(fusedTexture, fusedFramebuffer)
-            if (!returned) {
-                LargeDirectBuffer.free(outputBuffer)
-                previewBitmap?.takeIf { !it.isRecycled }?.recycle()
-            }
-        }
+        RawHdrLinearFusionPipeline.fuse(
+            processor = this@RawDemosaicProcessor,
+            frames = frames,
+            metadata = metadata,
+            applyLensShadingCorrection = applyLensShadingCorrection,
+            aspectRatio = aspectRatio,
+            rotation = rotation,
+            renderPreview = renderPreview,
+        )
     }
 
     suspend fun processForHdrSources(
@@ -2649,6 +2408,7 @@ class RawDemosaicProcessor {
         uniform sampler2D uNormalTexture;
         uniform sampler2D uLongTexture;
         uniform sampler2D uPreviousAccumulatorTexture;
+        uniform sampler2D uAlignmentRobustnessTexture;
         uniform vec2 uTexelSize;
         uniform float uScaleToShort;
         uniform float uLongScaleToShort;
@@ -2656,6 +2416,7 @@ class RawDemosaicProcessor {
         uniform float uNoiseAlpha;
         uniform float uNoiseBeta;
         uniform int uFrameRole;
+        uniform int uUseAlignmentRobustness;
 
         const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
@@ -2663,8 +2424,24 @@ class RawDemosaicProcessor {
             return dot(rgb, LUMA);
         }
 
+        vec4 alignmentMapAt(vec2 uv) {
+            if (uUseAlignmentRobustness == 0) {
+                return vec4(0.0, 0.0, 1.0, 1.0);
+            }
+            return texture(uAlignmentRobustnessTexture, clamp(uv, vec2(0.0), vec2(1.0)));
+        }
+
+        vec2 alignedCurrentUv(vec2 uv) {
+            vec4 mapValue = alignmentMapAt(uv);
+            return clamp(uv + mapValue.xy * uTexelSize * 2.0, vec2(0.0), vec2(1.0));
+        }
+
+        vec3 readCurrentRaw(vec2 uv) {
+            return max(texture(uCurrentTexture, alignedCurrentUv(uv)).rgb, vec3(0.0));
+        }
+
         vec3 readCurrentScaled(vec2 uv) {
-            return max(texture(uCurrentTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0)) * uScaleToShort;
+            return readCurrentRaw(uv) * uScaleToShort;
         }
 
         vec3 readNormalRaw(vec2 uv) {
@@ -2677,6 +2454,17 @@ class RawDemosaicProcessor {
 
         vec3 readLongScaled(vec2 uv) {
             return readLongRaw(uv) * uLongScaleToShort;
+        }
+
+        float alignmentDeghostWeight(vec2 uv) {
+            if (uUseAlignmentRobustness == 0) {
+                return 1.0;
+            }
+            vec4 mapValue = alignmentMapAt(uv);
+            float robust = clamp(mapValue.z, 0.0, 1.0);
+            float local = clamp(mapValue.w, 0.0, 1.0);
+            float keep = local * max(robust, 0.01 * local);
+            return clamp(keep, 0.0, 1.0);
         }
 
         float localContrast(vec2 uv) {
@@ -2714,7 +2502,7 @@ class RawDemosaicProcessor {
         }
 
         float exposureReliability(vec2 uv) {
-            vec3 rawRgb = max(texture(uCurrentTexture, uv).rgb, vec3(0.0));
+            vec3 rawRgb = readCurrentRaw(uv);
             float luma = lumaOf(rawRgb);
             float maxChannel = max(rawRgb.r, max(rawRgb.g, rawRgb.b));
             float low = smoothstep(0.004, 0.055, luma);
@@ -2722,46 +2510,10 @@ class RawDemosaicProcessor {
             return clamp(low * high, 0.02, 1.0);
         }
 
-        float deghostWeight(vec2 uv) {
-            if (uFrameRole == 2) {
-                return 1.0;
-            }
-            vec3 longRaw = readLongRaw(uv);
+        float roleWeight(vec2 uv, vec3 currentRaw) {
+            vec3 longRaw = uFrameRole == 2 ? currentRaw : readLongRaw(uv);
             float longMax = max(longRaw.r, max(longRaw.g, longRaw.b));
-            vec3 normalRaw = readNormalRaw(uv);
-            float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
-            if (uFrameRole == 1 && longMax > 0.84) {
-                return 1.0;
-            }
-            if (uFrameRole == 0 && normalMax > 0.82) {
-                return 1.0;
-            }
-            vec2 offsets[5] = vec2[5](
-                vec2(0.0, 0.0),
-                vec2(-uTexelSize.x, 0.0),
-                vec2(uTexelSize.x, 0.0),
-                vec2(0.0, -uTexelSize.y),
-                vec2(0.0, uTexelSize.y)
-            );
-            float residualSum = 0.0;
-            for (int i = 0; i < 5; i++) {
-                vec2 sampleUv = uv + offsets[i];
-                float currentLuma = lumaOf(readCurrentScaled(sampleUv));
-                float refLuma = lumaOf(readLongScaled(sampleUv));
-                residualSum += abs(currentLuma - refLuma) / max(max(currentLuma, refLuma), 0.015);
-            }
-            float residual = residualSum * 0.2;
-            float refLuma = lumaOf(readLongScaled(uv));
-            float low = refLuma < 0.015 ? 0.35 : 0.12;
-            float motion = smoothstep(low, low + 0.28, residual);
-            float keep = clamp(1.0 - motion, 0.0, 1.0);
-            return keep * keep;
-        }
-
-        float roleWeight(vec2 uv) {
-            vec3 longRaw = readLongRaw(uv);
-            float longMax = max(longRaw.r, max(longRaw.g, longRaw.b));
-            vec3 normalRaw = readNormalRaw(uv);
+            vec3 normalRaw = uFrameRole == 1 ? currentRaw : readNormalRaw(uv);
             float normalLuma = lumaOf(normalRaw);
             float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
             float longLuma = lumaOf(longRaw);
@@ -2785,10 +2537,11 @@ class RawDemosaicProcessor {
         }
 
         void main() {
-            vec3 rgb = readCurrentScaled(vTexCoord);
+            vec3 currentRaw = readCurrentRaw(vTexCoord);
+            vec3 rgb = currentRaw * uScaleToShort;
             float reliability = exposureReliability(vTexCoord);
-            float deghost = deghostWeight(vTexCoord);
-            float role = roleWeight(vTexCoord);
+            float deghost = alignmentDeghostWeight(vTexCoord);
+            float role = roleWeight(vTexCoord, currentRaw);
             float weight = max(contentWeight(vTexCoord, rgb) * reliability * deghost * role, 0.0);
             fragColor = texture(uPreviousAccumulatorTexture, vTexCoord) + vec4(rgb * weight, weight);
         }
@@ -3676,7 +3429,7 @@ class RawDemosaicProcessor {
         checkGlError("renderLinearRawRgbToFramebuffer")
     }
 
-    private fun renderLinearHdrInputToFramebuffer(
+    internal fun renderLinearHdrInputToFramebuffer(
         frame: LinearHdrFusionInputFrame,
         metadata: RawMetadata,
         targetFramebufferId: Int,
@@ -3731,18 +3484,19 @@ class RawDemosaicProcessor {
         checkGlError(label)
     }
 
-    private fun createRawHdrLinearTexture(
+    internal fun createRawHdrLinearTexture(
         width: Int,
         height: Int,
         internalFormat: Int,
+        filter: Int = GLES30.GL_NEAREST,
     ): Int {
         val textures = IntArray(1)
         GLES30.glGenTextures(1, textures, 0)
         val textureId = textures[0]
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, internalFormat, width, height)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, filter)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, filter)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
@@ -3750,7 +3504,7 @@ class RawDemosaicProcessor {
         return textureId
     }
 
-    private fun createFramebufferForTexture(textureId: Int, label: String): Int {
+    internal fun createFramebufferForTexture(textureId: Int, label: String): Int {
         val framebuffers = IntArray(1)
         GLES30.glGenFramebuffers(1, framebuffers, 0)
         val framebufferId = framebuffers[0]
@@ -3771,12 +3525,12 @@ class RawDemosaicProcessor {
         return framebufferId
     }
 
-    private fun deleteTextureAndFramebuffer(textureId: Int, framebufferId: Int) {
+    internal fun deleteTextureAndFramebuffer(textureId: Int, framebufferId: Int) {
         if (textureId != 0) GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
         if (framebufferId != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(framebufferId), 0)
     }
 
-    private fun clearRawHdrAccumulator(framebufferId: Int, width: Int, height: Int) {
+    internal fun clearRawHdrAccumulator(framebufferId: Int, width: Int, height: Int) {
         GLES30.glDisable(GLES30.GL_BLEND)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
         GLES30.glViewport(0, 0, width, height)
@@ -3785,11 +3539,13 @@ class RawDemosaicProcessor {
         checkGlError("clearRawHdrAccumulator")
     }
 
-    private fun renderRawHdrLinearAccumulation(
+    internal fun renderRawHdrLinearAccumulation(
         currentTextureId: Int,
         normalTextureId: Int,
         longTextureId: Int,
         previousAccumulatorTextureId: Int,
+        alignmentRobustnessTextureId: Int,
+        useAlignmentRobustness: Boolean,
         scaleToShort: Float,
         longScaleToShort: Float,
         normalFrameCount: Float,
@@ -3819,6 +3575,16 @@ class RawDemosaicProcessor {
         GLES30.glUniform1i(
             GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uPreviousAccumulatorTexture"),
             3
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE4)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, alignmentRobustnessTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uAlignmentRobustnessTexture"),
+            4
+        )
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uUseAlignmentRobustness"),
+            if (useAlignmentRobustness) 1 else 0
         )
         GLES30.glUniform2f(
             GLES30.glGetUniformLocation(rawHdrLinearAccumulateProgram, "uTexelSize"),
@@ -3860,7 +3626,7 @@ class RawDemosaicProcessor {
         checkGlError(label)
     }
 
-    private fun renderRawHdrLinearNormalize(
+    internal fun renderRawHdrLinearNormalize(
         accumulatorTextureId: Int,
         fusedFramebufferId: Int,
         width: Int,
@@ -3887,7 +3653,7 @@ class RawDemosaicProcessor {
         checkGlError("renderRawHdrLinearNormalize")
     }
 
-    private fun readRawHdrLinearRgbx16(
+    internal fun readRawHdrLinearRgbx16(
         fusedFramebufferId: Int,
         width: Int,
         height: Int,
@@ -3923,7 +3689,7 @@ class RawDemosaicProcessor {
         }
     }
 
-    private fun renderRawHdrLinearPreviewBitmap(
+    internal fun renderRawHdrLinearPreviewBitmap(
         fusedTextureId: Int,
         width: Int,
         height: Int,
@@ -4043,12 +3809,6 @@ class RawDemosaicProcessor {
             null
         }
     }
-
-    private fun validHdrExposureProduct(product: Double): Double =
-        product.takeIf { it.isFinite() && it > 1.0e-9 } ?: 1.0e-9
-
-    private fun log2Hdr(value: Double): Float =
-        (ln(value.coerceAtLeast(1.0e-9)) / ln(2.0)).toFloat()
 
     /**
      * 上传 RAW 数据到纹理（从 Image 对象）

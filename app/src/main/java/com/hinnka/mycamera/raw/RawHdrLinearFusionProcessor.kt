@@ -79,11 +79,11 @@ object RawHdrLinearFusionProcessor {
         }
     }
 
-    private fun InputFrame.toLinearInputFrame(): RawDemosaicProcessor.LinearHdrFusionInputFrame {
+    private fun InputFrame.toLinearInputFrame(): LinearHdrFusionInputFrame {
         val plane = image.planes[0]
         val rawBuffer = plane.buffer.duplicate().order(ByteOrder.nativeOrder())
         rawBuffer.position(0)
-        return RawDemosaicProcessor.LinearHdrFusionInputFrame(
+        return LinearHdrFusionInputFrame(
             rawData = rawBuffer,
             width = image.width,
             height = image.height,
@@ -97,7 +97,7 @@ object RawHdrLinearFusionProcessor {
         normalFrames: List<InputFrame>,
         metadata: RawMetadata,
         applyLensShadingCorrection: Boolean,
-    ): RawDemosaicProcessor.LinearHdrFusionInputFrame {
+    ): LinearHdrFusionInputFrame {
         if (normalFrames.size == 1) {
             return normalFrames.first().toLinearInputFrame()
         }
@@ -123,7 +123,7 @@ object RawHdrLinearFusionProcessor {
             "RAW HDR normal 0EV stack prepared before RCD: frames=${normalFrames.size} " +
                 "reference=${first.originalIndex}:${first.exposureProduct}"
         )
-        return RawDemosaicProcessor.LinearHdrFusionInputFrame(
+        return LinearHdrFusionInputFrame(
             rawData = fusedNormalBuffer,
             width = stackResult.width,
             height = stackResult.height,
