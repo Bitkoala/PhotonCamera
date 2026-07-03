@@ -236,7 +236,9 @@ class RawDemosaicProcessor {
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
 
     // GL 资源
-    private val combinedPrograms = IntArray(RawRenderingEngine.entries.size)
+    private val engineTonePrograms = IntArray(RawRenderingEngine.entries.size)
+    private var adjustmentProgram = 0
+    private var srgbProgram = 0
     private var sharpenProgram = 0
     private var passthroughProgram = 0
     private var hdrReferenceProgram = 0
@@ -288,6 +290,14 @@ class RawDemosaicProcessor {
     private var combinedTextureId = 0
     private var combinedWidth = 0
     private var combinedHeight = 0
+    private var engineToneFramebufferId = 0
+    private var engineToneTextureId = 0
+    private var engineToneWidth = 0
+    private var engineToneHeight = 0
+    private var adjustmentFramebufferId = 0
+    private var adjustmentTextureId = 0
+    private var adjustmentWidth = 0
+    private var adjustmentHeight = 0
 
     private var linearMeteringFramebufferId = 0
     private var linearMeteringTextureId = 0
@@ -2358,20 +2368,20 @@ class RawDemosaicProcessor {
         )
     }
 
-    private fun getOrCreateCombinedProgram(colorEngine: RawRenderingEngine): Int {
-        val cachedProgram = combinedPrograms[colorEngine.ordinal]
+    private fun getOrCreateEngineToneProgram(colorEngine: RawRenderingEngine): Int {
+        val cachedProgram = engineTonePrograms[colorEngine.ordinal]
         if (cachedProgram != 0) return cachedProgram
 
         val vShader = compileShader(
             GLES30.GL_VERTEX_SHADER,
             RawShaders.VERTEX_SHADER,
-            "combined${colorEngine.name}Vertex"
+            "engineTone${colorEngine.name}Vertex"
         )
-        val fragmentSource = RawShaders.combinedFragmentShaderFor(colorEngine)
+        val fragmentSource = RawEngineTonePassShaders.fragmentShaderFor(colorEngine)
         val fShader = compileShader(
             GLES30.GL_FRAGMENT_SHADER,
             fragmentSource,
-            "combined${colorEngine.name}Fragment"
+            "engineTone${colorEngine.name}Fragment"
         )
         if (vShader == 0 || fShader == 0) {
             if (vShader != 0) GLES30.glDeleteShader(vShader)
@@ -2386,15 +2396,39 @@ class RawDemosaicProcessor {
         GLES30.glLinkProgram(program)
         val linked = logProgramLinkResult(
             program,
-            "combined${colorEngine.name}Program",
+            "engineTone${colorEngine.name}Program",
             linkStart
         )
         GLES30.glDeleteShader(vShader)
         GLES30.glDeleteShader(fShader)
         if (!linked) return 0
 
-        combinedPrograms[colorEngine.ordinal] = program
+        engineTonePrograms[colorEngine.ordinal] = program
         return program
+    }
+
+    private fun getOrCreateAdjustmentProgram(): Int {
+        if (adjustmentProgram != 0) return adjustmentProgram
+        val vShader = compileShader(GLES30.GL_VERTEX_SHADER, RawShaders.VERTEX_SHADER, "adjustmentVertex")
+        adjustmentProgram = linkFragmentProgram(
+            vShader,
+            RawAdjustmentPassShaders.FRAGMENT_SHADER,
+            "rawAdjustment"
+        )
+        if (vShader != 0) GLES30.glDeleteShader(vShader)
+        return adjustmentProgram
+    }
+
+    private fun getOrCreateSrgbProgram(): Int {
+        if (srgbProgram != 0) return srgbProgram
+        val vShader = compileShader(GLES30.GL_VERTEX_SHADER, RawShaders.VERTEX_SHADER, "srgbVertex")
+        srgbProgram = linkFragmentProgram(
+            vShader,
+            RawSrgbPassShaders.FRAGMENT_SHADER,
+            "rawSrgb"
+        )
+        if (vShader != 0) GLES30.glDeleteShader(vShader)
+        return srgbProgram
     }
 
     private val FRAGMENT_SHADER_LINEAR_RCD = """
@@ -4820,6 +4854,93 @@ class RawDemosaicProcessor {
         checkGlError("setupCombinedFramebuffer")
     }
 
+    private fun setupEngineToneFramebuffer(width: Int, height: Int) {
+        if (engineToneWidth == width && engineToneHeight == height && engineToneFramebufferId != 0) {
+            return
+        }
+
+        if (engineToneTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(engineToneTextureId), 0)
+        }
+        if (engineToneFramebufferId != 0) {
+            GLES30.glDeleteFramebuffers(1, intArrayOf(engineToneFramebufferId), 0)
+        }
+
+        engineToneWidth = width
+        engineToneHeight = height
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        engineToneTextureId = textures[0]
+        configureLinearIntermediateTexture(engineToneTextureId, width, height)
+
+        val framebuffers = IntArray(1)
+        GLES30.glGenFramebuffers(1, framebuffers, 0)
+        engineToneFramebufferId = framebuffers[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, engineToneFramebufferId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            engineToneTextureId,
+            0
+        )
+        checkGlError("setupEngineToneFramebuffer")
+    }
+
+    private fun setupAdjustmentFramebuffer(width: Int, height: Int) {
+        if (adjustmentWidth == width && adjustmentHeight == height && adjustmentFramebufferId != 0) {
+            return
+        }
+
+        if (adjustmentTextureId != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(adjustmentTextureId), 0)
+        }
+        if (adjustmentFramebufferId != 0) {
+            GLES30.glDeleteFramebuffers(1, intArrayOf(adjustmentFramebufferId), 0)
+        }
+
+        adjustmentWidth = width
+        adjustmentHeight = height
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        adjustmentTextureId = textures[0]
+        configureLinearIntermediateTexture(adjustmentTextureId, width, height)
+
+        val framebuffers = IntArray(1)
+        GLES30.glGenFramebuffers(1, framebuffers, 0)
+        adjustmentFramebufferId = framebuffers[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, adjustmentFramebufferId)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            adjustmentTextureId,
+            0
+        )
+        checkGlError("setupAdjustmentFramebuffer")
+    }
+
+    private fun configureLinearIntermediateTexture(textureId: Int, width: Int, height: Int) {
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGBA16F,
+            width,
+            height,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_HALF_FLOAT,
+            null
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+    }
+
     private fun setupLinearMeteringFramebuffer(width: Int, height: Int) {
         if (linearMeteringWidth == width && linearMeteringHeight == height && linearMeteringFramebufferId != 0) {
             return
@@ -5450,7 +5571,12 @@ class RawDemosaicProcessor {
     }
 
     /**
-     * Combined Processing Pass: ToneMap + LUT + Sharpening
+     * RAW tone processing coordinator.
+     *
+     * Pass order:
+     * 1. engine tone pass: linear RAW working RGB -> linear output RGB
+     * 2. optional adjustment pass: shadows/highlights + black/white levels in linear output RGB
+     * 3. sRGB pass: linear output RGB -> sRGB encoded RGBA8 for sharpen/output
      */
     private fun renderCombinedPass(
         metadata: RawMetadata,
@@ -5469,38 +5595,87 @@ class RawDemosaicProcessor {
         viewportHeight: Int = metadata.height
     ): Boolean {
         val outputTransform = computeWorkingToOutputTransform(outputWorkingColorSpace, ColorSpace.SRGB)
-        val program = getOrCreateCombinedProgram(colorEngine)
+        setupEngineToneFramebuffer(viewportWidth, viewportHeight)
+        if (!renderEngineTonePass(
+                inputTextureId = inputTextureId,
+                dcpRenderPlan = dcpRenderPlan,
+                spectralFilmLut = spectralFilmLut,
+                colorEngine = colorEngine,
+                profileToEngineTransform = profileToEngineTransform,
+                profileExposureUniforms = profileExposureUniforms,
+                rawToneMappingParameters = rawToneMappingParameters,
+                outputTransform = outputTransform,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight
+            )
+        ) {
+            return false
+        }
+
+        val srgbInputTextureId = if (needsAdjustmentPass(
+                shadowsHighlightsParams = shadowsHighlightsParams,
+                rawBlacksAdjustment = rawBlacksAdjustment,
+                rawWhitesAdjustment = rawWhitesAdjustment
+            )
+        ) {
+            setupAdjustmentFramebuffer(viewportWidth, viewportHeight)
+            if (!renderAdjustmentPass(
+                    inputTextureId = engineToneTextureId,
+                    shadowsHighlightsParams = shadowsHighlightsParams,
+                    rawBlacksAdjustment = rawBlacksAdjustment,
+                    rawWhitesAdjustment = rawWhitesAdjustment,
+                    viewportWidth = viewportWidth,
+                    viewportHeight = viewportHeight
+                )
+            ) {
+                return false
+            }
+            adjustmentTextureId
+        } else {
+            engineToneTextureId
+        }
+
+        setupCombinedFramebuffer(viewportWidth, viewportHeight)
+        return renderSrgbPass(
+            inputTextureId = srgbInputTextureId,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight
+        )
+    }
+
+    private fun renderEngineTonePass(
+        inputTextureId: Int,
+        dcpRenderPlan: DcpRenderPlan?,
+        spectralFilmLut: SpectralFilmLut?,
+        colorEngine: RawRenderingEngine,
+        profileToEngineTransform: FloatArray,
+        profileExposureUniforms: ProfileExposureUniforms,
+        rawToneMappingParameters: RawToneMappingParameters,
+        outputTransform: FloatArray,
+        viewportWidth: Int,
+        viewportHeight: Int
+    ): Boolean {
+        val program = getOrCreateEngineToneProgram(colorEngine)
         if (program == 0) {
-            PLog.e(TAG, "Unable to create combined program for colorEngine=$colorEngine")
+            PLog.e(TAG, "Unable to create engine tone program for colorEngine=$colorEngine")
             return false
         }
 
         GLES30.glUseProgram(program)
-        checkGlError("renderCombinedPass glUseProgram")
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, combinedFramebufferId)
-        checkGlError("renderCombinedPass glBindFramebuffer")
+        checkGlError("renderEngineTonePass glUseProgram")
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, engineToneFramebufferId)
+        checkGlError("renderEngineTonePass glBindFramebuffer")
 
         GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        checkGlError("renderCombinedPass clear")
+        checkGlError("renderEngineTonePass clear")
 
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uInputTexture"), 0)
 
-        GLES30.glUniform2f(
-            GLES30.glGetUniformLocation(program, "uTexelSize"),
-            1.0f / maxOf(1, viewportWidth).toFloat(),
-            1.0f / maxOf(1, viewportHeight).toFloat()
-        )
-        bindShadowsHighlightsUniforms(program, shadowsHighlightsParams)
-        bindBlacksWhitesUniforms(
-            program = program,
-            blacks = rawBlacksAdjustment,
-            whites = rawWhitesAdjustment
-        )
         bindRawToneMappingUniforms(program, rawToneMappingParameters)
-        checkGlError("renderCombinedPass base uniforms")
+        checkGlError("renderEngineTonePass base uniforms")
 
         when (colorEngine) {
             RawRenderingEngine.AdobeCurve -> {
@@ -5536,16 +5711,104 @@ class RawDemosaicProcessor {
             1, false, transposeMatrix3x3(profileToEngineTransform), 0
         )
 
+        bindIdentityTexMatrix(program)
+        checkGlError("renderEngineTonePass matrices")
+        drawQuad(program)
+        checkGlError("renderEngineTonePass")
+        return true
+    }
+
+    private fun needsAdjustmentPass(
+        shadowsHighlightsParams: ShadowsHighlightsParams,
+        rawBlacksAdjustment: Float,
+        rawWhitesAdjustment: Float
+    ): Boolean {
+        return abs(shadowsHighlightsParams.highlights) >= 0.001f ||
+            abs(shadowsHighlightsParams.shadows) >= 0.001f ||
+            abs(rawBlacksAdjustment) >= 0.001f ||
+            abs(rawWhitesAdjustment) >= 0.001f
+    }
+
+    private fun renderAdjustmentPass(
+        inputTextureId: Int,
+        shadowsHighlightsParams: ShadowsHighlightsParams,
+        rawBlacksAdjustment: Float,
+        rawWhitesAdjustment: Float,
+        viewportWidth: Int,
+        viewportHeight: Int
+    ): Boolean {
+        val program = getOrCreateAdjustmentProgram()
+        if (program == 0) {
+            PLog.e(TAG, "Unable to create RAW adjustment program")
+            return false
+        }
+
+        GLES30.glUseProgram(program)
+        checkGlError("renderAdjustmentPass glUseProgram")
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, adjustmentFramebufferId)
+        checkGlError("renderAdjustmentPass glBindFramebuffer")
+        GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uInputTexture"), 0)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(program, "uTexelSize"),
+            1.0f / maxOf(1, viewportWidth).toFloat(),
+            1.0f / maxOf(1, viewportHeight).toFloat()
+        )
+        bindShadowsHighlightsUniforms(program, shadowsHighlightsParams)
+        bindBlacksWhitesUniforms(
+            program = program,
+            blacks = rawBlacksAdjustment,
+            whites = rawWhitesAdjustment
+        )
+        bindIdentityTexMatrix(program)
+
+        drawQuad(program)
+        checkGlError("renderAdjustmentPass")
+        return true
+    }
+
+    private fun renderSrgbPass(
+        inputTextureId: Int,
+        viewportWidth: Int,
+        viewportHeight: Int
+    ): Boolean {
+        val program = getOrCreateSrgbProgram()
+        if (program == 0) {
+            PLog.e(TAG, "Unable to create RAW sRGB program")
+            return false
+        }
+
+        GLES30.glUseProgram(program)
+        checkGlError("renderSrgbPass glUseProgram")
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, combinedFramebufferId)
+        checkGlError("renderSrgbPass glBindFramebuffer")
+        GLES30.glViewport(0, 0, viewportWidth, viewportHeight)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, inputTextureId)
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uInputTexture"), 0)
+        bindIdentityTexMatrix(program)
+
+        drawQuad(program)
+        checkGlError("renderSrgbPass")
+        return true
+    }
+
+    private fun bindIdentityTexMatrix(program: Int) {
         val identityMatrix = FloatArray(16)
         GlMatrix.setIdentityM(identityMatrix, 0)
         GLES30.glUniformMatrix4fv(
             GLES30.glGetUniformLocation(program, "uTexMatrix"),
-            1, false, identityMatrix, 0
+            1,
+            false,
+            identityMatrix,
+            0
         )
-        checkGlError("renderCombinedPass matrices")
-        drawQuad(program)
-        checkGlError("renderCombinedPass")
-        return true
     }
 
     private fun bindCurveCombinedResource(program: Int, baseCurve: FloatArray) {
@@ -7631,12 +7894,14 @@ class RawDemosaicProcessor {
 
         EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
 
-        for (i in combinedPrograms.indices) {
-            if (combinedPrograms[i] != 0) {
-                GLES30.glDeleteProgram(combinedPrograms[i])
-                combinedPrograms[i] = 0
+        for (i in engineTonePrograms.indices) {
+            if (engineTonePrograms[i] != 0) {
+                GLES30.glDeleteProgram(engineTonePrograms[i])
+                engineTonePrograms[i] = 0
             }
         }
+        if (adjustmentProgram != 0) GLES30.glDeleteProgram(adjustmentProgram)
+        if (srgbProgram != 0) GLES30.glDeleteProgram(srgbProgram)
         if (sharpenProgram != 0) GLES30.glDeleteProgram(sharpenProgram)
         if (passthroughProgram != 0) GLES30.glDeleteProgram(passthroughProgram)
         if (hdrReferenceProgram != 0) GLES30.glDeleteProgram(hdrReferenceProgram)
@@ -7707,6 +7972,18 @@ class RawDemosaicProcessor {
         if (combinedFramebufferId != 0) GLES30.glDeleteFramebuffers(
             1,
             intArrayOf(combinedFramebufferId),
+            0
+        )
+        if (engineToneTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(engineToneTextureId), 0)
+        if (engineToneFramebufferId != 0) GLES30.glDeleteFramebuffers(
+            1,
+            intArrayOf(engineToneFramebufferId),
+            0
+        )
+        if (adjustmentTextureId != 0) GLES30.glDeleteTextures(1, intArrayOf(adjustmentTextureId), 0)
+        if (adjustmentFramebufferId != 0) GLES30.glDeleteFramebuffers(
+            1,
+            intArrayOf(adjustmentFramebufferId),
             0
         )
         if (linearMeteringTextureId != 0) GLES30.glDeleteTextures(
