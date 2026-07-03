@@ -2577,9 +2577,19 @@ class RawDemosaicProcessor {
         uniform int uUseAlignmentRobustness;
 
         const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+        const float REFERENCE_CLIP_START = 0.965;
+        const float REFERENCE_CLIP_END = 0.995;
+        const float SHADOW_LONG_PRIORITY_START = 0.055;
+        const float SHADOW_LONG_PRIORITY_END = 0.160;
+        const float PRIOR_WEIGHT_READY_START = 0.08;
+        const float PRIOR_WEIGHT_READY_END = 0.35;
 
         float lumaOf(vec3 rgb) {
             return dot(rgb, LUMA);
+        }
+
+        float clipAmount(float maxChannel) {
+            return smoothstep(REFERENCE_CLIP_START, REFERENCE_CLIP_END, maxChannel);
         }
 
         vec4 alignmentMapAt(vec2 uv) {
@@ -2606,6 +2616,12 @@ class RawDemosaicProcessor {
             return max(texture(uNormalTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
         }
 
+        float normalClipAt(vec2 uv) {
+            vec3 normalRaw = readNormalRaw(uv);
+            float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
+            return clipAmount(normalMax);
+        }
+
         vec3 readLongRaw(vec2 uv) {
             return max(texture(uLongTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
         }
@@ -2614,7 +2630,7 @@ class RawDemosaicProcessor {
             return readLongRaw(uv) * uLongScaleToShort;
         }
 
-        float alignmentDeghostWeight(vec2 uv) {
+        float alignmentDeghostWeight(vec2 uv, vec3 currentRaw) {
             if (uUseAlignmentRobustness == 0) {
                 return 1.0;
             }
@@ -2622,6 +2638,12 @@ class RawDemosaicProcessor {
             float robust = clamp(mapValue.z, 0.0, 1.0);
             float local = clamp(mapValue.w, 0.0, 1.0);
             float keep = local * max(robust, 0.01 * local);
+            if (uFrameRole == 0) {
+                float referenceClip = normalClipAt(uv);
+                float currentHasSignal = smoothstep(0.010, 0.060, lumaOf(currentRaw));
+                float highlightRecovery = referenceClip * currentHasSignal;
+                keep = max(keep, highlightRecovery);
+            }
             return clamp(keep, 0.0, 1.0);
         }
 
@@ -2668,7 +2690,7 @@ class RawDemosaicProcessor {
             return clamp(low * high, 0.02, 1.0);
         }
 
-        float roleWeight(vec2 uv, vec3 currentRaw) {
+        float roleWeight(vec2 uv, vec3 currentRaw, float previousWeight) {
             vec3 longRaw = uFrameRole == 2 ? currentRaw : readLongRaw(uv);
             float longMax = max(longRaw.r, max(longRaw.g, longRaw.b));
             vec3 normalRaw = uFrameRole == 1 ? currentRaw : readNormalRaw(uv);
@@ -2676,32 +2698,41 @@ class RawDemosaicProcessor {
             float normalMax = max(normalRaw.r, max(normalRaw.g, normalRaw.b));
             float longLuma = lumaOf(longRaw);
             float longUsable = 1.0 - smoothstep(0.62, 0.92, longMax);
+            float normalClip = clipAmount(normalMax);
             float normalUsable = smoothstep(0.015, 0.08, normalLuma) *
-                (1.0 - smoothstep(0.74, 0.96, normalMax));
+                (1.0 - normalClip);
             float longScore = snrScore(longLuma, 1.0) * longUsable;
             float normalScore = snrScore(normalLuma, uNormalFrameCount) * normalUsable;
             float scoreSum = longScore * longScore + normalScore * normalScore + 1.0e-6;
             float normalShare = (normalScore * normalScore) / scoreSum;
             float longShare = (longScore * longScore) / scoreSum;
-            float shortNeeded = smoothstep(0.82, 0.98, normalMax);
+            float shortNeeded = normalClip;
+            float shadowLongPriority = (1.0 - smoothstep(
+                SHADOW_LONG_PRIORITY_START,
+                SHADOW_LONG_PRIORITY_END,
+                normalLuma
+            )) * longUsable * (1.0 - normalClip);
+            float priorReady = smoothstep(PRIOR_WEIGHT_READY_START, PRIOR_WEIGHT_READY_END, previousWeight);
 
             if (uFrameRole == 2) {
-                return 0.04 + 8.0 * longShare * longUsable;
+                return 0.04 * longUsable + 8.0 * max(longShare * longUsable, shadowLongPriority);
             }
             if (uFrameRole == 0) {
                 return 8.0 * shortNeeded;
             }
-            return 0.06 + 8.0 * normalShare * normalUsable;
+            float normalRole = (0.06 + 8.0 * normalShare) * normalUsable;
+            return normalRole * (1.0 - shadowLongPriority * priorReady);
         }
 
         void main() {
             vec3 currentRaw = readCurrentRaw(vTexCoord);
             vec3 rgb = currentRaw * uScaleToShort;
             float reliability = exposureReliability(vTexCoord);
-            float deghost = alignmentDeghostWeight(vTexCoord);
-            float role = roleWeight(vTexCoord, currentRaw);
+            float deghost = alignmentDeghostWeight(vTexCoord, currentRaw);
+            vec4 previousAccumulator = texture(uPreviousAccumulatorTexture, vTexCoord);
+            float role = roleWeight(vTexCoord, currentRaw, previousAccumulator.a);
             float weight = max(contentWeight(vTexCoord, rgb) * reliability * deghost * role, 0.0);
-            fragColor = texture(uPreviousAccumulatorTexture, vTexCoord) + vec4(rgb * weight, weight);
+            fragColor = previousAccumulator + vec4(rgb * weight, weight);
         }
     """.trimIndent()
 
