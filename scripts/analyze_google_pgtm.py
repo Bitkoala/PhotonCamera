@@ -726,8 +726,7 @@ def main(path):
     cfa_repeat = t.values(ifd, 33421)
     app_cfa = app_cfa_pattern_from_dng(cfa, cfa_repeat)
     black_rggb = black_level_by_channel(black, black_repeat, app_cfa)
-    if pgtm is None:
-        raise ValueError("no PGTM")
+    has_pgtm = pgtm is not None
     print(f"FILE {path}")
     print(f"RAW ifd={offset} size={width}x{height} rowsPerStrip={rows_per_strip} strips={len(strip_offsets)}")
     print(
@@ -745,10 +744,13 @@ def main(path):
             f"whiteXY={white_xy[0]:.6f},{white_xy[1]:.6f} "
             "matrix=" + ",".join(f"{v:.7f}" for v in color_matrix)
         )
-    print(
-        f"PGTM {pgtm_ifd} tag={pgtm['tag']} grid={pgtm['map_h']}x{pgtm['map_v']}x{pgtm['points_n']} "
-        f"weights={','.join(f'{w:.7f}' for w in pgtm['weights'])} sum={sum(pgtm['weights']):.7f} gamma={pgtm['gamma']}"
-    )
+    if has_pgtm:
+        print(
+            f"PGTM {pgtm_ifd} tag={pgtm['tag']} grid={pgtm['map_h']}x{pgtm['map_v']}x{pgtm['points_n']} "
+            f"weights={','.join(f'{w:.7f}' for w in pgtm['weights'])} sum={sum(pgtm['weights']):.7f} gamma={pgtm['gamma']}"
+        )
+    else:
+        print("PGTM none")
     # Read a downsampled RAW set on 2x2 Bayer cells, matching app pgtmInputAt.
     raw_bytes = bytearray()
     for so, sc in zip(strip_offsets, strip_counts):
@@ -757,10 +759,10 @@ def main(path):
     if len(raw_bytes) < row_stride * height:
         raise ValueError(f"raw bytes too small {len(raw_bytes)} expected {row_stride * height}")
     baseline_gain = 2.0 ** baseline
-    pgtm_weights = pgtm["weights"]
-    pgtm_grid_h = pgtm["map_h"]
-    pgtm_grid_v = pgtm["map_v"]
     app_grid_h, app_grid_v = app_grid_size(width, height)
+    pgtm_weights = pgtm["weights"] if has_pgtm else BASE_INPUT_WEIGHTS
+    pgtm_grid_h = pgtm["map_h"] if has_pgtm else app_grid_h
+    pgtm_grid_v = pgtm["map_v"] if has_pgtm else app_grid_v
 
     def normalized_raw_at(px, py):
         pos = py * row_stride + px * 2
@@ -803,7 +805,8 @@ def main(path):
             baseline_gain,
             pgtm_weights,
         )
-        table_input = min(max(embedded_table_weighted, 0.0), 1.0) ** pgtm["gamma"]
+        pgtm_gamma = pgtm["gamma"] if has_pgtm else 1.0
+        table_input = min(max(embedded_table_weighted, 0.0), 1.0) ** pgtm_gamma
         return legacy_post, profile_scene, table_input
 
     def sample_grid(grid_h, grid_v):
@@ -908,6 +911,9 @@ def main(path):
         f"rimmTailP99={rimm_global['tailP99']:.6f} "
         f"rimmMaxInput={rimm_global['maxInput']:.6f}"
     )
+    if not has_pgtm:
+        return
+
     pgtm_gain_p50_samples = []
     pgtm_gain_mean_samples = []
     pgtm_output_p50_samples = []

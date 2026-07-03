@@ -171,6 +171,35 @@ class DngHdrProfileGainTableGeneratorTest {
         )
     }
 
+    @Test
+    fun localExposureOffsetDoesNotCreateExtraLift() {
+        val width = 4096
+        val height = 3072
+        val grid = DngHdrProfileGainTableGenerator.gridSizeFor(width, height)
+        val map = DngHdrProfileGainTableGenerator.forCellStats(
+            width = width,
+            height = height,
+            baselineExposureEv = 1.20f,
+            packedCellStats = packedStatsWithExposureOffsetRegion(width, height)
+        ) ?: error("Expected PGTM for exposure-offset stats")
+
+        val darkRegionCell = 0
+        val centerCell = (grid[1] / 2) * grid[0] + grid[0] / 2
+        val darkLowGain = sampleGain(map, 0.08f, darkRegionCell)
+        val centerLowGain = sampleGain(map, 0.08f, centerCell)
+        val darkMidGain = sampleGain(map, 0.18f, darkRegionCell)
+        val centerMidGain = sampleGain(map, 0.18f, centerCell)
+
+        assertTrue(
+            "darkLowGain=$darkLowGain centerLowGain=$centerLowGain",
+            darkLowGain <= centerLowGain * 1.06f
+        )
+        assertTrue(
+            "darkMidGain=$darkMidGain centerMidGain=$centerMidGain",
+            darkMidGain <= centerMidGain * 1.05f
+        )
+    }
+
     private fun packedStatsForTailProfile(
         width: Int,
         height: Int,
@@ -204,6 +233,28 @@ class DngHdrProfileGainTableGeneratorTest {
                 stats[offset + 5] = 64f
                 stats[offset + 6] = tail
                 stats[offset + 7] = tail
+            }
+        }
+    }
+
+    private fun packedStatsWithExposureOffsetRegion(width: Int, height: Int): FloatArray {
+        val grid = DngHdrProfileGainTableGenerator.gridSizeFor(width, height)
+        val cellCount = grid[0] * grid[1]
+        return FloatArray(cellCount * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE).also { stats ->
+            for (y in 0 until grid[1]) {
+                for (x in 0 until grid[0]) {
+                    val cell = y * grid[0] + x
+                    val exposureScale = if (x < grid[0] / 3 && y < grid[1] / 3) 0.62f else 1f
+                    val offset = cell * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE
+                    stats[offset] = 0.14f * exposureScale
+                    stats[offset + 1] = 0.22f * exposureScale
+                    stats[offset + 2] = 0.34f * exposureScale
+                    stats[offset + 3] = 0.42f * exposureScale
+                    stats[offset + 4] = 0.018f
+                    stats[offset + 5] = 64f
+                    stats[offset + 6] = 1.08f * exposureScale
+                    stats[offset + 7] = 1.36f * exposureScale
+                }
             }
         }
     }

@@ -1,7 +1,6 @@
 package com.hinnka.mycamera.raw
 
 import com.hinnka.mycamera.utils.PLog
-import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -31,6 +30,7 @@ internal object DngHdrProfileGainTableGenerator {
     private const val MAX_SCENE_MAX = 4.80f
     private const val SCENE_BASE_TAIL_FACTOR = 1.12f
     private const val SCENE_TAIL_EXPANSION_FACTOR = 2.75f
+    private const val SCENE_TAIL_MAX_INPUT_FACTOR = 1.2f
     private const val SCENE_TAIL_HDR_STRENGTH = 0.58f
     private const val SCENE_TAIL_EXPANSION_STRENGTH_GAIN = 2.10f
     private const val MAX_GAIN_VALUE = 5.40f
@@ -68,8 +68,6 @@ internal object DngHdrProfileGainTableGenerator {
     private const val MAX_TOE_SLOPE = 0.88f
     private const val MIN_SHOULDER_POWER = 0.82f
     private const val MAX_SHOULDER_POWER = 1.28f
-    private const val LOCAL_CURVE_MAX_BLEND = 0.90f
-    private const val LOCAL_CURVE_SMOOTH_PASSES = 1
     internal const val BASE_INPUT_WEIGHT_RED = 0.1495f
     internal const val BASE_INPUT_WEIGHT_GREEN = 0.2935f
     internal const val BASE_INPUT_WEIGHT_BLUE = 0.0570f
@@ -200,109 +198,18 @@ internal object DngHdrProfileGainTableGenerator {
         sceneHdrStrength: Float,
         sceneMax: Float,
     ): Array<HdrPgtmCurveParams> {
-        val cellCount = grid.mapPointsH * grid.mapPointsV
-        val localParams = Array(cellCount) { index ->
-            val cell = cells.getOrNull(index)
-            if (cell == null || cell.sampleWeight <= 0f) {
-                globalCurveParams
-            } else {
-                val cellCurveParams = buildHdrPgtmCurveParams(
-                    global = cell,
-                    sceneHdrStrength = sceneHdrStrength,
-                    sceneMax = sceneMax
-                )
-                blendCurveParams(
-                    globalCurveParams,
-                    cellCurveParams,
-                    localCurveBlend(cell, global)
-                )
-            }
+        return DngHdrPgtmLocalToneModel.buildSpatialCurveParams(
+            cells = cells,
+            grid = grid,
+            global = global,
+            globalCurveParams = globalCurveParams
+        ) { cell ->
+            buildHdrPgtmCurveParams(
+                global = cell,
+                sceneHdrStrength = sceneHdrStrength,
+                sceneMax = sceneMax
+            )
         }
-        return smoothSpatialCurveParams(localParams, grid)
-    }
-
-    private fun localCurveBlend(cell: HdrPgtmCellStats, global: HdrPgtmCellStats): Float {
-        val p50DeltaEv = abs(log2((cell.p50 + 0.006f) / (global.p50 + 0.006f)))
-        val p90DeltaEv = abs(log2((cell.p90 + 0.006f) / (global.p90 + 0.006f)))
-        val p98DeltaEv = abs(log2((cell.p98 + 0.006f) / (global.p98 + 0.006f)))
-        val tailDeltaEv = abs(log2((cell.p999Input + 0.04f) / (global.p999Input + 0.04f)))
-        val highlightDelta = abs(cell.highlightFraction - global.highlightFraction)
-        val toneDelta = 0.42f * p50DeltaEv +
-            0.32f * p90DeltaEv +
-            0.18f * p98DeltaEv +
-            0.12f * tailDeltaEv +
-            0.70f * highlightDelta
-        val variation = smoothStep(0.08f, 0.70f, toneDelta)
-        val confidence = smoothStep(24f, 96f, cell.sampleWeight)
-        val highlightStability = 1f - 0.35f * smoothStep(0.72f, 0.96f, cell.p98)
-        return (LOCAL_CURVE_MAX_BLEND * variation * confidence * highlightStability)
-            .coerceIn(0f, LOCAL_CURVE_MAX_BLEND)
-    }
-
-    private fun smoothSpatialCurveParams(
-        source: Array<HdrPgtmCurveParams>,
-        grid: HdrPgtmGrid,
-    ): Array<HdrPgtmCurveParams> {
-        var current = source
-        repeat(LOCAL_CURVE_SMOOTH_PASSES) {
-            current = Array(current.size) { index ->
-                val x = index % grid.mapPointsH
-                val y = index / grid.mapPointsH
-                var weightSum = 0f
-                var midOutput = 0f
-                var blackGain = 0f
-                var toeSlope = 0f
-                var shoulderPower = 0f
-                var highlightPressure = 0f
-                var lowDetailGainFactor = 0f
-                for (dy in -1..1) {
-                    val yy = y + dy
-                    if (yy !in 0 until grid.mapPointsV) continue
-                    for (dx in -1..1) {
-                        val xx = x + dx
-                        if (xx !in 0 until grid.mapPointsH) continue
-                        val weight = when {
-                            dx == 0 && dy == 0 -> 4f
-                            dx == 0 || dy == 0 -> 2f
-                            else -> 1f
-                        }
-                        val params = current[yy * grid.mapPointsH + xx]
-                        weightSum += weight
-                        midOutput += params.midOutput * weight
-                        blackGain += params.blackGain * weight
-                        toeSlope += params.toeSlope * weight
-                        shoulderPower += params.shoulderPower * weight
-                        highlightPressure += params.highlightPressure * weight
-                        lowDetailGainFactor += params.lowDetailGainFactor * weight
-                    }
-                }
-                HdrPgtmCurveParams(
-                    midOutput = midOutput / weightSum,
-                    blackGain = blackGain / weightSum,
-                    toeSlope = toeSlope / weightSum,
-                    shoulderPower = shoulderPower / weightSum,
-                    highlightPressure = highlightPressure / weightSum,
-                    lowDetailGainFactor = lowDetailGainFactor / weightSum
-                )
-            }
-        }
-        return current
-    }
-
-    private fun blendCurveParams(
-        first: HdrPgtmCurveParams,
-        second: HdrPgtmCurveParams,
-        amount: Float,
-    ): HdrPgtmCurveParams {
-        val t = amount.coerceIn(0f, 1f)
-        return HdrPgtmCurveParams(
-            midOutput = lerp(first.midOutput, second.midOutput, t),
-            blackGain = lerp(first.blackGain, second.blackGain, t),
-            toeSlope = lerp(first.toeSlope, second.toeSlope, t),
-            shoulderPower = lerp(first.shoulderPower, second.shoulderPower, t),
-            highlightPressure = lerp(first.highlightPressure, second.highlightPressure, t),
-            lowDetailGainFactor = lerp(first.lowDetailGainFactor, second.lowDetailGainFactor, t)
-        )
     }
 
     data class DiagnosticBand(
@@ -830,7 +737,7 @@ internal object DngHdrProfileGainTableGenerator {
         highlightPressure: Float,
         hdrStrength: Float,
     ): Float {
-        val lowRangePressure = 1f - smoothStep(0.020f, 0.115f, global.p90)
+        val lowRangePressure = 1f - smoothStep(0.020f, 0.38f, global.p90)
         val highRangePressure = smoothStep(0.18f, 0.88f, global.p90)
         return (
             0.24f * lowRangePressure -
@@ -956,7 +863,21 @@ internal object DngHdrProfileGainTableGenerator {
             denseHighlightSceneMaxTarget(global, tailP95, tailP99),
             denseHighlightStrength
         )
-        val expandedTailSceneMax = max(denseHighlightSceneMax, tailP99 * SCENE_TAIL_EXPANSION_FACTOR)
+        val expandedTailByPercentile = tailP99 * SCENE_TAIL_EXPANSION_FACTOR
+        val compactLowHighlightTail = (
+            (1f - smoothStep(0.30f, 0.42f, global.p90)) *
+                (1f - smoothStep(0.34f, 0.46f, global.p98)) *
+                (1f - smoothStep(0.018f, 0.055f, highlightDensity))
+            ).coerceIn(0f, 1f)
+        val expandedTailTarget = lerp(
+            expandedTailByPercentile,
+            min(expandedTailByPercentile, maxInput * SCENE_TAIL_MAX_INPUT_FACTOR),
+            compactLowHighlightTail
+        )
+        val expandedTailSceneMax = max(
+            denseHighlightSceneMax,
+            expandedTailTarget
+        )
         val statsSceneMax = lerp(
             denseHighlightSceneMax,
             expandedTailSceneMax,
@@ -1066,37 +987,6 @@ internal object DngHdrProfileGainTableGenerator {
     private fun safePositive(value: Float, fallback: Float): Float {
         return value.takeIf { it.isFinite() && it > 0f } ?: fallback
     }
-
-    private data class HdrPgtmGrid(
-        val mapPointsH: Int,
-        val mapPointsV: Int,
-        val mapSpacingH: Double,
-        val mapSpacingV: Double,
-    )
-
-    private data class HdrPgtmCellStats(
-        val p10: Float,
-        val p50: Float,
-        val p90: Float,
-        val p98: Float,
-        val highlightFraction: Float,
-        val p995Input: Float,
-        val p999Input: Float,
-        val inputTailP95: Float,
-        val inputTailP98: Float,
-        val inputTailP99: Float,
-        val maxInput: Float,
-        val sampleWeight: Float,
-    )
-
-    private data class HdrPgtmCurveParams(
-        val midOutput: Float,
-        val blackGain: Float,
-        val toeSlope: Float,
-        val shoulderPower: Float,
-        val highlightPressure: Float,
-        val lowDetailGainFactor: Float,
-    )
 
     private data class SceneToneCurve(
         val inputs: FloatArray,
