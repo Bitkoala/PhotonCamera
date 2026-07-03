@@ -14,7 +14,6 @@ import com.hinnka.mycamera.lut.ShadowsHighlightsShader
  */
 object RawShaders {
     const val DEFAULT_USM_RADIUS = 2.0f
-    const val DEFAULT_USM_AMOUNT = 0.5f
     const val DEFAULT_USM_THRESHOLD = 0.005f
 
     /**

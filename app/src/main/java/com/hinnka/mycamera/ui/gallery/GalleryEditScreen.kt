@@ -1063,7 +1063,13 @@ fun GalleryEditScreen(
                                         valueRange = 0f..1f,
                                         resetValue = 0f,
                                         onValueChange = { viewModel.setSharpening(it) },
-                                        onValueChangeFinished = { }
+                                        onValueChangeFinished = {
+                                            if (isRaw) {
+                                                viewModel.persistCurrentRawEditMetadata(currentPhoto) { success ->
+                                                    if (success) requestRawPreviewRefresh()
+                                                }
+                                            }
+                                        }
                                     )
                                     SliderSettingItem(
                                         title = stringResource(R.string.settings_noise_reduction),

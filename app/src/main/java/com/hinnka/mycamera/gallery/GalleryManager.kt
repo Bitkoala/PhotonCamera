@@ -38,6 +38,7 @@ import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrLinearFusionProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawProfileGainTableMapBuilder
+import com.hinnka.mycamera.raw.RawSharpeningDefaults
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
@@ -963,6 +964,19 @@ object GalleryManager {
                 } else {
                     PLog.d(TAG, "prepareUltraHdrSource reused in-memory source for export: $id")
                 }
+                val isRawPhoto = getDngFile(context, id).exists()
+                val bitmapPostMetadata = if (isRawPhoto) {
+                    metadata.copy(
+                        sharpening = 0f,
+                        noiseReduction = 0f,
+                        chromaNoiseReduction = 0f
+                    )
+                } else {
+                    metadata
+                }
+                val bitmapSharpeningValue = if (isRawPhoto) 0f else sharpeningValue
+                val bitmapNoiseReductionValue = if (isRawPhoto) 0f else noiseReductionValue
+                val bitmapChromaNoiseReductionValue = if (isRawPhoto) 0f else chromaNoiseReductionValue
                 var gainmapResult: GainmapResult? = preparedGainmapResult
                 if (preparedGainmapResult == null) {
                     val gainmapElapsed = measureTimeMillis {
@@ -986,8 +1000,8 @@ object GalleryManager {
                     )
                 } else bitmap?.let {
                     photoProcessor.processBitmap(
-                        context, id, bitmap, metadata,
-                        sharpeningValue, noiseReductionValue, chromaNoiseReductionValue,
+                        context, id, bitmap, bitmapPostMetadata,
+                        bitmapSharpeningValue, bitmapNoiseReductionValue, bitmapChromaNoiseReductionValue,
                         true
                     )
                 } ?: photoProcessor.process(
@@ -1795,6 +1809,7 @@ object GalleryManager {
             }
 
             var updatedMetadata: MediaMetadata = metadata
+            val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
             val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
             val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
@@ -1815,7 +1830,7 @@ object GalleryManager {
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                 rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
-                sharpeningValue = 0.4f,
+                sharpeningValue = rawSharpening,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
                 rawDcpId = updatedMetadata.rawDcpId,
@@ -1842,7 +1857,11 @@ object GalleryManager {
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
-            updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
+            updatedMetadata = updatedMetadata.copy(
+                width = bitmap.width,
+                height = bitmap.height,
+                sharpening = rawSharpening
+            )
 
             FileOutputStream(tempFile).use { outputStream ->
                 writeFinalJpeg(bitmap, outputStream, photoQuality)
@@ -2668,6 +2687,7 @@ object GalleryManager {
             System.gc()
 
             var updatedMetadata: MediaMetadata = stackedMetadata
+            val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
             val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
             val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
             val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
@@ -2688,7 +2708,7 @@ object GalleryManager {
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                 rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
-                sharpeningValue = 0.4f,
+                sharpeningValue = rawSharpening,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
                 rawDcpId = updatedMetadata.rawDcpId,
@@ -2715,7 +2735,11 @@ object GalleryManager {
             if (updatedMetadata.isMirrored) {
                 bitmap = BitmapUtils.flipHorizontal(bitmap)
             }
-            updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
+            updatedMetadata = updatedMetadata.copy(
+                width = bitmap.width,
+                height = bitmap.height,
+                sharpening = rawSharpening
+            )
 
             // Save Original (Stacked Result)
             FileOutputStream(tempFile).use { outputStream ->
@@ -3090,6 +3114,7 @@ object GalleryManager {
         val photoFile = File(photoDir, PHOTO_FILE)
         val tempFile = File(photoDir, "temp.jpg")
         var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngPixelToneMapDefault(dngFile)
+        val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
         val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
         val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
@@ -3110,7 +3135,7 @@ object GalleryManager {
             rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
             rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
             rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
-            sharpeningValue = 0.4f,
+            sharpeningValue = rawSharpening,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
             rawDcpId = updatedMetadata.rawDcpId,
@@ -3137,7 +3162,11 @@ object GalleryManager {
         if (updatedMetadata.isMirrored) {
             bitmap = BitmapUtils.flipHorizontal(bitmap)
         }
-        updatedMetadata = updatedMetadata.copy(width = bitmap.width, height = bitmap.height)
+        updatedMetadata = updatedMetadata.copy(
+            width = bitmap.width,
+            height = bitmap.height,
+            sharpening = rawSharpening
+        )
 
         FileOutputStream(tempFile).use { outputStream ->
             writeFinalJpeg(bitmap, outputStream, photoQuality)
@@ -4238,7 +4267,7 @@ object GalleryManager {
                         rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                         rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                         rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
-                        sharpeningValue = 0.4f,
+                        sharpeningValue = RawSharpeningDefaults.CAPTURE_DEFAULT,
                         denoiseValue = rawNoiseReduction,
                         chromaDenoiseValue = rawChromaNoiseReduction,
                         rawDcpId = updatedMetadata.rawDcpId,
@@ -4395,7 +4424,7 @@ object GalleryManager {
                     rawBlackLevelMode = updatedMetadata?.rawBlackLevelMode,
                     rawCustomBlackLevel = updatedMetadata?.rawCustomBlackLevel,
                     rawWhiteLevelMode = updatedMetadata?.rawWhiteLevelMode,
-                    sharpeningValue = updatedMetadata?.sharpening ?: 0.4f,
+                    sharpeningValue = updatedMetadata?.sharpening ?: RawSharpeningDefaults.CAPTURE_DEFAULT,
                     denoiseValue = rawNoiseReduction,
                     chromaDenoiseValue = rawChromaNoiseReduction,
                     rawDcpId = updatedMetadata?.rawDcpId,

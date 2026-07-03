@@ -212,7 +212,6 @@ class PhotoProcessor(
         applyMirror: Boolean = false,
     ): GainmapSourceSet? = withContext(Dispatchers.IO) {
         val displayHdrSdrRatio = readDisplayHdrSdrRatio()
-        val finalSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
 
         val colorCorrection = resolveColorCorrection(
             metadata = metadata,
@@ -254,7 +253,7 @@ class PhotoProcessor(
             isHlgInput = false,
             colorCorrection.baselineLayer,
             colorCorrection.creativeLayer,
-            finalSharpening,
+            0f,
             noiseReductionValue = 0f,
             chromaNoiseReductionValue = 0f
         )
@@ -337,6 +336,7 @@ class PhotoProcessor(
         noiseReduction: Float = 0f,
         chromaNoiseReduction: Float = 0f
     ): GainmapSourceSet? = withContext(Dispatchers.IO) {
+        val rawSharpening = metadata.sharpening ?: (if (metadata.isImported) 0f else sharpening)
         val rawNoiseReduction = resolveNoiseReduction(metadata, noiseReduction)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(metadata, chromaNoiseReduction)
         val rawResult = RawDemosaicProcessor.getInstance().processForHdrSources(
@@ -357,7 +357,7 @@ class PhotoProcessor(
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
-            sharpeningValue = 0.4f,
+            sharpeningValue = rawSharpening,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
             rawDcpId = metadata.rawDcpId,
@@ -377,7 +377,7 @@ class PhotoProcessor(
             photoId = photoId,
             rawResult = rawResult,
             metadata = metadata,
-            sharpening = sharpening,
+            sharpening = rawSharpening,
             noiseReduction = noiseReduction,
             chromaNoiseReduction = chromaNoiseReduction,
             applyMirror = true
@@ -434,6 +434,7 @@ class PhotoProcessor(
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
+            sharpeningValue = finalSharpening,
             denoiseValue = finalNoiseReduction,
             chromaDenoiseValue = finalChromaNoiseReduction,
             rawDcpId = metadata.rawDcpId,
@@ -465,7 +466,7 @@ class PhotoProcessor(
                 isHlgInput = false,
                 colorCorrection.baselineLayer,
                 colorCorrection.creativeLayer,
-                finalSharpening,
+                0f,
                 noiseReductionValue = 0f,
                 chromaNoiseReductionValue = 0f
             )

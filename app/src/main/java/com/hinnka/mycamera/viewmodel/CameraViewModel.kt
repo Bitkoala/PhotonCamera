@@ -53,6 +53,7 @@ import com.hinnka.mycamera.raw.RawProcessingPreferences
 import com.hinnka.mycamera.raw.RawProfile
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawRenderingEngine
+import com.hinnka.mycamera.raw.RawSharpeningDefaults
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.raw.SpectralFilmSelection
@@ -4375,7 +4376,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val aspectRatio = state.value.aspectRatio
             val frameIdToSave = currentFrameId
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
-            val sharpeningValue = sharpening.firstOrNull() ?: 0f
+            val requestedSharpeningValue = sharpening.firstOrNull() ?: 0f
+            val sharpeningValue = if (isRawCaptureFormat(image.format)) {
+                RawSharpeningDefaults.forCapture(requestedSharpeningValue)
+            } else {
+                requestedSharpeningValue
+            }
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
@@ -4854,7 +4860,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val aspectRatio = state.value.aspectRatio
             val frameIdToSave = currentFrameId
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
-            val sharpeningValue = maxOf(sharpening.firstOrNull() ?: 0f, 0.4f)
+            val isRawStack = images.firstOrNull()?.format?.let(::isRawCaptureFormat) == true
+            val requestedSharpeningValue = sharpening.firstOrNull() ?: 0f
+            val sharpeningValue = if (isRawStack) {
+                RawSharpeningDefaults.forCapture(requestedSharpeningValue)
+            } else {
+                requestedSharpeningValue
+            }
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
@@ -4891,7 +4903,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 hasEmbeddedGainmap = false,
                 userPrefs = userPrefs
             )
-            val baselineTarget = if (images.firstOrNull()?.format?.let(::isRawCaptureFormat) == true) {
+            val baselineTarget = if (isRawStack) {
                 BaselineColorCorrectionTarget.RAW
             } else {
                 BaselineColorCorrectionTarget.JPG
@@ -5314,7 +5326,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: captureResult
                 ?: return
             val shouldAutoSave = autoSaveAfterCapture.firstOrNull() ?: false
-            val sharpeningValue = sharpening.firstOrNull() ?: 0f
+            val sharpeningValue = RawSharpeningDefaults.forCapture(sharpening.firstOrNull() ?: 0f)
             val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
             val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
             val photoQualityValue = photoQuality.firstOrNull() ?: 95
@@ -5387,7 +5399,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val lutIdToSave = currentLutId.value
         val aspectRatio = state.value.aspectRatio
         val frameIdToSave = currentFrameId
-        val sharpeningValue = sharpening.firstOrNull() ?: 0f
+        val requestedSharpeningValue = sharpening.firstOrNull() ?: 0f
+        val sharpeningValue = if (isRawCaptureFormat(image.format)) {
+            RawSharpeningDefaults.forCapture(requestedSharpeningValue)
+        } else {
+            requestedSharpeningValue
+        }
         val noiseReductionValue = noiseReduction.firstOrNull() ?: 0f
         val chromaNoiseReductionValue = chromaNoiseReduction.firstOrNull() ?: 0f
         val currentCameraId = cameraController.getCurrentCameraId()

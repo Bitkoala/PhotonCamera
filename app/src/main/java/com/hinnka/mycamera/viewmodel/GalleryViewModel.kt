@@ -2485,22 +2485,25 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     currentBitmap
                 } else {
                     val skipPreviewDenoise = maxEdge < FULL_QUALITY_PREVIEW_MAX_EDGE
+                    val applyBitmapSharpening = !isRawPhoto
                     val applyBitmapDenoise = !isRawPhoto && !skipPreviewDenoise
-                    val previewMetadata = if (!applyBitmapDenoise) {
+                    val previewMetadata = if (!applyBitmapSharpening || !applyBitmapDenoise) {
                         finalMetadata.copy(
+                            sharpening = if (applyBitmapSharpening) finalMetadata.sharpening else 0f,
                             noiseReduction = 0f,
                             chromaNoiseReduction = 0f
                         )
                     } else {
                         finalMetadata
                     }
+                    val previewSharpening = if (applyBitmapSharpening) finalS else 0f
                     val previewNoiseReduction = if (applyBitmapDenoise) finalNR else 0f
                     val previewChromaNoiseReduction = if (applyBitmapDenoise) finalCNR else 0f
 
                     // 预览生成
                     val result = contentRepository.photoProcessor.processBitmap(
                         context, photo.id, currentBitmap, previewMetadata,
-                        finalS, previewNoiseReduction, previewChromaNoiseReduction,
+                        previewSharpening, previewNoiseReduction, previewChromaNoiseReduction,
                         false
                     )
                     // 只在全分辨率路径下更新亮度估计（结果更准确）

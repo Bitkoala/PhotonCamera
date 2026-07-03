@@ -384,7 +384,6 @@ class RawDemosaicProcessor {
     private var dummyShadingTextureId = 0
 
     private val defaultUsmRadius = RawShaders.DEFAULT_USM_RADIUS
-    private val defaultUsmAmount = RawShaders.DEFAULT_USM_AMOUNT
     private val defaultUsmThreshold = RawShaders.DEFAULT_USM_THRESHOLD
 
     data class SceneStats(
@@ -6574,7 +6573,7 @@ class RawDemosaicProcessor {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(sharpenProgram, "uSharpening"),
-            defaultUsmAmount + (1f - defaultUsmAmount) * sharpeningValue
+            sharpeningValue.coerceIn(0f, 1f)
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(sharpenProgram, "uRadius"),
