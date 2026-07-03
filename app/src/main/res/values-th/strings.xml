@@ -661,8 +661,8 @@
     <string name="settings_raw_min_shutter_speed_description">ใช้ได้เฉพาะกับการถ่ายภาพ RAW เท่านั้น พยายามทำให้ชัตเตอร์สอดคล้องกับขีดจำกัดนี้เมื่อถ่ายภาพ และปรับ ISO ให้ตรงกันโดยอัตโนมัติ</string>
     <string name="settings_raw_dro">การเพิ่มประสิทธิภาพช่วงไดนามิก</string>
     <string name="settings_raw_dro_description">ในฉากที่มีอัตราส่วนแสงสูง ปรับปรุงรายละเอียดของเงาอย่างชาญฉลาดและปกป้องไฮไลท์</string>
-    <string name="settings_raw_black_point_correction">การแก้ไขจุดดำ</string>
-    <string name="settings_raw_white_point_correction">การแก้ไขจุดขาว</string>
+    <string name="settings_raw_blacks_adjustment">สีดำ</string>
+    <string name="settings_raw_whites_adjustment">สีขาว</string>
     <string name="settings_export_dng_with_raw_export">ส่งออก DNG เมื่อส่งออก RAW</string>
     <string name="settings_export_dng_with_raw_export_description">เมื่อส่งออกภาพถ่าย RAW ไฟล์ DNG ต้นฉบับที่เกี่ยวข้องจะถูกส่งออกไปยังอัลบั้มระบบด้วย</string>
     <string name="settings_raw_black_level_correction">การแก้ไขระดับสีดำ</string>

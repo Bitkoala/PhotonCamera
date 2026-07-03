@@ -741,8 +741,8 @@
     <string name="settings_raw_min_shutter_speed_description">仅对 RAW 拍摄生效，拍摄时尽量让快门符合该限制，并自动匹配 ISO。</string>
     <string name="settings_raw_dro">动态范围优化</string>
     <string name="settings_raw_dro_description">在高光比场景中，智能提升阴影细节并保护高光。</string>
-    <string name="settings_raw_black_point_correction">黑点校正</string>
-    <string name="settings_raw_white_point_correction">白点校正</string>
+    <string name="settings_raw_blacks_adjustment">黑色</string>
+    <string name="settings_raw_whites_adjustment">白色</string>
     <string name="settings_raw_lens_shading_correction">镜头阴影校正</string>
     <string name="settings_raw_lens_shading_correction_description">RAW 显影时应用镜头阴影增益图，包括 RAW 多帧和 RAW HDR 处理。</string>
     <string name="settings_export_dng_with_raw_export">导出 RAW 时同时导出 DNG</string>

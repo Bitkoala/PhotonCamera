@@ -725,8 +725,8 @@
     <string name="settings_raw_min_shutter_speed_description">For RAW capture only, keeps the capture shutter near this limit and automatically balances ISO for the selected speed.</string>
     <string name="settings_raw_dro">Dynamic Range Optimization</string>
     <string name="settings_raw_dro_description">Intelligently lifts shadows while protecting highlights in high-contrast scenes.</string>
-    <string name="settings_raw_black_point_correction">Black Point Correction</string>
-    <string name="settings_raw_white_point_correction">White Point Correction</string>
+    <string name="settings_raw_blacks_adjustment">Blacks</string>
+    <string name="settings_raw_whites_adjustment">Whites</string>
     <string name="settings_raw_lens_shading_correction">Lens Shading Correction</string>
     <string name="settings_raw_lens_shading_correction_description">Apply lens shading gain maps during RAW development, including RAW multi-frame and RAW HDR processing.</string>
     <string name="settings_export_dng_with_raw_export">Export DNG with RAW photos</string>

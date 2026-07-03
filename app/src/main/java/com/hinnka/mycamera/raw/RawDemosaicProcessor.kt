@@ -796,8 +796,6 @@ class RawDemosaicProcessor {
                 viewportWidth = width,
                 viewportHeight = height,
                 rawExposureCompensation = 0f,
-                rawBlackPointCorrection = 0f,
-                rawWhitePointCorrection = 0f,
                 colorCorrectionMatrix = floatArrayOf(
                     1f, 0f, 0f,
                     0f, 1f, 0f,
@@ -1449,12 +1447,8 @@ class RawDemosaicProcessor {
                         "highlightReconstruction=$rawDomainHighlightReconstructionEnabled " +
                         "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                         "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING " +
-                        "linearBlackPoint=${rawBlackPointCorrection.coerceIn(0f, 0.99f)} " +
-                        "linearWhitePoint=${
-                            (1f + rawWhitePointCorrection).coerceAtLeast(
-                                rawBlackPointCorrection.coerceIn(0f, 0.99f) + 0.01f
-                            )
-                        }"
+                        "blacks=${rawBlackPointCorrection.coerceIn(-1f, 1f)} " +
+                        "whites=${rawWhitePointCorrection.coerceIn(-1f, 1f)}"
             )
             GLES31.glUniform4fv(
                 GLES31.glGetUniformLocation(
@@ -1735,8 +1729,6 @@ class RawDemosaicProcessor {
                 viewportWidth = actualWidth,
                 viewportHeight = actualHeight,
                 rawExposureCompensation = 0f,
-                rawBlackPointCorrection = rawBlackPointCorrection,
-                rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 cameraWhite = linearCameraWhite,
                 applyDngBaselineExposure = hasProfileGainTableMap,
@@ -1873,6 +1865,8 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = engineWorkingColorSpace,
                 profileToEngineTransform = combinedProfileToEngineTransform,
                 shadowsHighlightsParams = shadowsHighlightsParams,
+                rawBlacksAdjustment = rawBlackPointCorrection,
+                rawWhitesAdjustment = rawWhitePointCorrection,
                 rawToneMappingParameters = rawToneMappingParameters
             )
             if (colorEngine == RawRenderingEngine.DarktableFilmic) {
@@ -2415,8 +2409,6 @@ class RawDemosaicProcessor {
         uniform mat3 uColorCorrectionMatrix;
         uniform vec3 uCameraWhite;
         uniform float uExposureGain;
-        uniform float uBlackPoint;
-        uniform float uWhitePoint;
         uniform int uClampProfileRgb;
         uniform int uProfileGainEnabled;
         uniform ivec3 uProfileGainTableSize;
@@ -2490,9 +2482,6 @@ class RawDemosaicProcessor {
         
         void main() {
             vec3 rgb = texture(uDemosaickedTexture, vTexCoord).rgb;
-            float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
-            float whitePoint = max(uWhitePoint, blackPoint + 0.01);
-            rgb = max((rgb - vec3(blackPoint)) / max(whitePoint - blackPoint, 1e-5), vec3(0.0));
             if (uClampProfileRgb != 0) {
                 rgb = min(rgb, max(uCameraWhite, vec3(0.001)));
             }
@@ -3705,8 +3694,6 @@ class RawDemosaicProcessor {
             viewportWidth = frame.width,
             viewportHeight = frame.height,
             rawExposureCompensation = 0f,
-            rawBlackPointCorrection = 0f,
-            rawWhitePointCorrection = 0f,
             colorCorrectionMatrix = floatArrayOf(
                 1f, 0f, 0f,
                 0f, 1f, 0f,
@@ -5475,6 +5462,8 @@ class RawDemosaicProcessor {
         profileToEngineTransform: FloatArray = identityMatrix3x3(),
         profileExposureUniforms: ProfileExposureUniforms = ProfileExposureUniforms.NEUTRAL,
         shadowsHighlightsParams: ShadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
+        rawBlacksAdjustment: Float = 0f,
+        rawWhitesAdjustment: Float = 0f,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         viewportWidth: Int = metadata.width,
         viewportHeight: Int = metadata.height
@@ -5505,6 +5494,11 @@ class RawDemosaicProcessor {
             1.0f / maxOf(1, viewportHeight).toFloat()
         )
         bindShadowsHighlightsUniforms(program, shadowsHighlightsParams)
+        bindBlacksWhitesUniforms(
+            program = program,
+            blacks = rawBlacksAdjustment,
+            whites = rawWhitesAdjustment
+        )
         bindRawToneMappingUniforms(program, rawToneMappingParameters)
         checkGlError("renderCombinedPass base uniforms")
 
@@ -6098,6 +6092,17 @@ class RawDemosaicProcessor {
         }
     }
 
+    private fun bindBlacksWhitesUniforms(program: Int, blacks: Float, whites: Float) {
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uBlacks"),
+            blacks.coerceIn(-1f, 1f)
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uWhites"),
+            whites.coerceIn(-1f, 1f)
+        )
+    }
+
     private fun logProgramLinkResult(
         program: Int,
         name: String,
@@ -6536,8 +6541,6 @@ class RawDemosaicProcessor {
         viewportWidth: Int,
         viewportHeight: Int,
         rawExposureCompensation: Float,
-        rawBlackPointCorrection: Float,
-        rawWhitePointCorrection: Float,
         colorCorrectionMatrix: FloatArray,
         cameraWhite: FloatArray = metadata.cameraWhite,
         applyDngBaselineExposure: Boolean,
@@ -6586,13 +6589,6 @@ class RawDemosaicProcessor {
             hasActiveProfileGainTableMap
         )
         GLES30.glUniform1f(GLES30.glGetUniformLocation(linearRcdProgram, "uExposureGain"), exposureGain)
-
-        val blackPoint = rawBlackPointCorrection.coerceIn(0f, 0.99f)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(linearRcdProgram, "uBlackPoint"), blackPoint)
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(linearRcdProgram, "uWhitePoint"),
-            (1f + rawWhitePointCorrection).coerceAtLeast(blackPoint + 0.01f)
-        )
         GLES30.glUniform1i(
             GLES30.glGetUniformLocation(linearRcdProgram, "uClampProfileRgb"),
             if (clampProfileRgb) 1 else 0
@@ -6788,8 +6784,6 @@ class RawDemosaicProcessor {
                 viewportWidth = meteringWidth,
                 viewportHeight = meteringHeight,
                 rawExposureCompensation = 0f,
-                rawBlackPointCorrection = rawBlackPointCorrection,
-                rawWhitePointCorrection = rawWhitePointCorrection,
                 colorCorrectionMatrix = colorCorrectionMatrix,
                 cameraWhite = cameraWhite,
                 applyDngBaselineExposure = applyLinearDngBaselineExposure,
@@ -6829,6 +6823,8 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = outputWorkingColorSpace,
                 profileToEngineTransform = profileToEngineTransform,
                 rawToneMappingParameters = rawToneMappingParameters,
+                rawBlacksAdjustment = rawBlackPointCorrection,
+                rawWhitesAdjustment = rawWhitePointCorrection,
                 useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                 applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure,
@@ -6931,6 +6927,8 @@ class RawDemosaicProcessor {
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
+        rawBlacksAdjustment: Float,
+        rawWhitesAdjustment: Float,
         useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
         applyProfileDngBaselineExposure: Boolean,
@@ -6957,6 +6955,8 @@ class RawDemosaicProcessor {
                 outputWorkingColorSpace = outputWorkingColorSpace,
                 profileToEngineTransform = profileToEngineTransform,
                 rawToneMappingParameters = rawToneMappingParameters,
+                rawBlacksAdjustment = rawBlacksAdjustment,
+                rawWhitesAdjustment = rawWhitesAdjustment,
                 useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                 applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
@@ -6980,6 +6980,8 @@ class RawDemosaicProcessor {
                     outputWorkingColorSpace = outputWorkingColorSpace,
                     profileToEngineTransform = profileToEngineTransform,
                     rawToneMappingParameters = rawToneMappingParameters,
+                    rawBlacksAdjustment = rawBlacksAdjustment,
+                    rawWhitesAdjustment = rawWhitesAdjustment,
                     useProfileExposureRamp = useProfileExposureRamp,
                     applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
                     applyProfileDngBaselineExposure = applyProfileDngBaselineExposure,
@@ -7183,6 +7185,8 @@ class RawDemosaicProcessor {
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
+        rawBlacksAdjustment: Float,
+        rawWhitesAdjustment: Float,
         useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
         applyProfileDngBaselineExposure: Boolean,
@@ -7214,6 +7218,8 @@ class RawDemosaicProcessor {
             profileToEngineTransform = profileToEngineTransform,
             profileExposureUniforms = profileExposureUniforms,
             shadowsHighlightsParams = ShadowsHighlightsParams.NEUTRAL,
+            rawBlacksAdjustment = rawBlacksAdjustment,
+            rawWhitesAdjustment = rawWhitesAdjustment,
             rawToneMappingParameters = rawToneMappingParameters,
             viewportWidth = width,
             viewportHeight = height

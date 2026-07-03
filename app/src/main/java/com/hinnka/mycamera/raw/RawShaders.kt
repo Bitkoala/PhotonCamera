@@ -206,6 +206,8 @@ object RawShaders {
         out vec4 fragColor;
         
         uniform sampler2D uInputTexture;
+        uniform float uBlacks;
+        uniform float uWhites;
         $shadowsHighlightsUniforms
         uniform mat3 uProfileToEngineTransform;
         
@@ -231,11 +233,48 @@ object RawShaders {
 
         $shadowsHighlightsFunctions
 
+        const vec3 BW_LUMA = vec3(0.2126, 0.7152, 0.0722);
+        const float BW_EPSILON = 0.000001;
+
+        float blackInputLevel(float blacks) {
+            float value = clamp(blacks, -1.0, 1.0);
+            return value < 0.0 ? -value * 0.18 : -value * 0.12;
+        }
+
+        float whiteInputLevel(float whites) {
+            float value = clamp(whites, -1.0, 1.0);
+            return value > 0.0 ? mix(1.0, 0.72, value) : mix(1.0, 1.55, -value);
+        }
+
+        float applyInputLevelsToLuma(float luma, float blacks, float whites) {
+            float blackLevel = blackInputLevel(blacks);
+            float whiteLevel = max(whiteInputLevel(whites), blackLevel + 0.05);
+            return max((luma - blackLevel) / max(whiteLevel - blackLevel, BW_EPSILON), 0.0);
+        }
+
+        vec3 applyBlackWhiteLevels(vec3 color) {
+            float blacks = clamp(uBlacks, -1.0, 1.0);
+            float whites = clamp(uWhites, -1.0, 1.0);
+            if (abs(blacks) < 0.001 && abs(whites) < 0.001) {
+                return color;
+            }
+
+            vec3 positiveColor = max(color, vec3(0.0));
+            float luma = dot(positiveColor, BW_LUMA);
+            float adjustedLuma = applyInputLevelsToLuma(luma, blacks, whites);
+
+            if (luma <= BW_EPSILON) {
+                return vec3(adjustedLuma);
+            }
+            return color * (adjustedLuma / luma);
+        }
+
         void main() {
             vec3 color = texture(uInputTexture, vTexCoord).rgb;
             color = prepareEngineInput(color);
             color = applyEngineTone(color);
             $shadowsHighlightsApply
+            color = applyBlackWhiteLevels(color);
             color = linearToSrgb(color);
             fragColor = vec4(color, 1.0);
         }

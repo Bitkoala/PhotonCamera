@@ -193,9 +193,9 @@ fun RawEditPanel(
                 onValueChangeFinished = onAdjustmentEnd
             )
             SliderSettingItem(
-                title = stringResource(R.string.settings_raw_black_point_correction),
+                title = stringResource(R.string.settings_raw_blacks_adjustment),
                 value = rawBlackPointCorrection,
-                valueRange = -0.25f..0.25f,
+                valueRange = -1f..1f,
                 resetValue = 0f,
                 onValueChange = {
                     onAdjustmentStart()
@@ -204,9 +204,9 @@ fun RawEditPanel(
                 onValueChangeFinished = onAdjustmentEnd
             )
             SliderSettingItem(
-                title = stringResource(R.string.settings_raw_white_point_correction),
+                title = stringResource(R.string.settings_raw_whites_adjustment),
                 value = rawWhitePointCorrection,
-                valueRange = -0.5f..0.5f,
+                valueRange = -1f..1f,
                 resetValue = 0f,
                 onValueChange = {
                     onAdjustmentStart()

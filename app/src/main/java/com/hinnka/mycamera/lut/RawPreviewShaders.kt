@@ -11,8 +11,6 @@ internal object RawPreviewShaders {
 
         uniform samplerExternalOES uCameraTexture;
         uniform float uExposureEv;
-        uniform float uBlackPoint;
-        uniform float uWhitePoint;
 
         vec3 srgbToLinear(vec3 color) {
             vec3 clampedColor = max(color, vec3(0.0));
@@ -29,9 +27,6 @@ internal object RawPreviewShaders {
         void main() {
             vec3 color = texture(uCameraTexture, vTexCoord).rgb;
             color = srgbToLinear(color);
-            float blackPoint = clamp(uBlackPoint, 0.0, 0.99);
-            float whitePoint = max(uWhitePoint, blackPoint + 0.01);
-            color = max((color - vec3(blackPoint)) / (whitePoint - blackPoint), vec3(0.0));
             color *= exp2(uExposureEv);
             fragColor = vec4(color, 1.0);
         }

@@ -838,12 +838,6 @@ class LutRenderer : GLSurfaceView.Renderer {
             GLES30.glGetUniformLocation(program, "uExposureEv"),
             0f
         )
-        val blackPoint = rawPreviewBlackPointCorrection.coerceIn(0f, 0.99f)
-        GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "uBlackPoint"), blackPoint)
-        GLES30.glUniform1f(
-            GLES30.glGetUniformLocation(program, "uWhitePoint"),
-            (1f + rawPreviewWhitePointCorrection).coerceAtLeast(blackPoint + 0.01f)
-        )
         drawRawPreviewQuad(program)
         GlUtils.checkGlError("renderRawPreviewInputStage")
         return true
@@ -867,6 +861,7 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uInputTexture"), 0)
         RawToneMappingGl.bindRawToneMappingUniforms(program, rawPreviewToneMappingParameters)
         bindRawPreviewProfileExposureUniforms(program, engine)
+        bindRawPreviewBlacksWhitesUniforms(program)
         bindRawPreviewDisabledDcpUniforms(program)
         bindRawPreviewColorTransforms(program, engine)
         if (engine == RawRenderingEngine.AdobeCurve) {
@@ -924,6 +919,17 @@ class LutRenderer : GLSurfaceView.Renderer {
         GLES30.glDeleteShader(fragmentShader)
         rawPreviewCombinedPrograms[engine.ordinal] = program
         return program
+    }
+
+    private fun bindRawPreviewBlacksWhitesUniforms(program: Int) {
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uBlacks"),
+            rawPreviewBlackPointCorrection.coerceIn(-1f, 1f)
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(program, "uWhites"),
+            rawPreviewWhitePointCorrection.coerceIn(-1f, 1f)
+        )
     }
 
     private fun bindRawPreviewColorTransforms(program: Int, engine: RawRenderingEngine) {
