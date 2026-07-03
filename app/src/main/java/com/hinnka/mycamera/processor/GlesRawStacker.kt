@@ -2089,6 +2089,16 @@ class GlesRawStacker(
                 return clamp(max(pixelClip, 0.62 * tileClip), 0.0, 1.0);
             }
 
+            float nonReferenceOverexposureAlpha(ivec2 samplePos, float sampledValue) {
+                float pixel = rawSensorNormAt(samplePos);
+                float tile = tileSensorMax(samplePos);
+                float tileMean = tileSensorMean(samplePos);
+                float pixelClip = smoothstep(0.965, 0.997, pixel);
+                float sampledClip = smoothstep(0.985, 0.999, sampledValue);
+                float tileClip = smoothstep(0.975, 0.999, tile) * smoothstep(0.78, 0.94, tileMean);
+                return clamp(max(max(pixelClip, 0.55 * sampledClip), 0.75 * tileClip), 0.0, 1.0);
+            }
+
             ivec2 cfaPhaseOffset(int cfaPattern, ivec2 p) {
                 int period = cfaPeriod(cfaPattern);
                 return ivec2(p.x % period, p.y % period);
@@ -2206,11 +2216,13 @@ class GlesRawStacker(
                     }
                     value = sumValue / max(sumWeight, 1e-5);
                     ivec2 sourceSample = nearestSamePhase(sourceRaw, phaseOffset, period);
-                    clipAlpha = uHdrMode != 0 ? highlightClipAlpha(sourceSample) : 0.0;
-                    float highlightSuppression = 1.0 - 0.62 * smoothstep(0.78, 0.98, value);
                     if (uHdrMode != 0) {
-                        highlightSuppression *= 1.0 - clipAlpha;
+                        clipAlpha = highlightClipAlpha(sourceSample);
+                    } else {
+                        clipAlpha = nonReferenceOverexposureAlpha(sourceSample, value);
                     }
+                    float highlightSuppression = 1.0 - 0.62 * smoothstep(0.78, 0.98, value);
+                    highlightSuppression *= 1.0 - clipAlpha;
                     robust = base * highlightSuppression;
                 }
 
