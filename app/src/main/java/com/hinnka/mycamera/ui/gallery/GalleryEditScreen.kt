@@ -695,6 +695,15 @@ fun GalleryEditScreen(
                         recipeParams = if (showOrigin) null else (previewRecipeParamsOverride ?: editPhotoRecipeParams ?: editLutRecipeParams),
                         modifier = Modifier.fillMaxSize()
                     )
+                } else if (editTab == 3 && previewBitmap != null) {
+                    CropOverlay(
+                        bitmap = previewBitmap,
+                        cropRect = editCropRect ?: android.graphics.RectF(0f, 0f, 1f, 1f),
+                        onCropRectChanged = { rect -> viewModel.setCropRect(rect) },
+                        aspectOption = editCropAspectOption,
+                        contentPadding = 28.dp,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 } else {
                     ZoomableEditImage(
                         previewBitmap = previewBitmap,
@@ -703,17 +712,6 @@ fun GalleryEditScreen(
                         onZoomChange = {
                             isZoomed = it
                         },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                // 只有在裁剪标签页才显示叠加层并且只能操作裁剪层
-                if (editTab == 3 && previewBitmap != null) {
-                    CropOverlay(
-                        bitmap = previewBitmap,
-                        cropRect = editCropRect ?: android.graphics.RectF(0f, 0f, 1f, 1f),
-                        onCropRectChanged = { rect -> viewModel.setCropRect(rect) },
-                        aspectOption = editCropAspectOption,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

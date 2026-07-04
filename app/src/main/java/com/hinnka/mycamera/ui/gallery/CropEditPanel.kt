@@ -21,8 +21,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -269,12 +271,15 @@ fun CropOverlay(
     cropRect: RectF,
     onCropRectChanged: (RectF) -> Unit,
     aspectOption: CropAspectOption,
+    contentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     if (bitmap == null) return
 
     val imageWidth = bitmap.width.toFloat()
     val imageHeight = bitmap.height.toFloat()
+    val density = LocalDensity.current
+    val contentPaddingPx = with(density) { contentPadding.toPx() }
 
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var dragHandle by remember { mutableStateOf<DragHandle?>(null) }
@@ -285,7 +290,7 @@ fun CropOverlay(
     val currentCropRect by rememberUpdatedState(safeCropRect)
 
     // 计算图片在容器中的实际显示区域
-    val imageDisplayRect = remember(containerSize, imageWidth, imageHeight) {
+    val imageDisplayRect = remember(containerSize, imageWidth, imageHeight, contentPaddingPx) {
         if (containerSize.width == 0 || containerSize.height == 0) {
             Rect.Zero
         } else {
@@ -293,7 +298,8 @@ fun CropOverlay(
                 containerSize.width.toFloat(),
                 containerSize.height.toFloat(),
                 imageWidth,
-                imageHeight
+                imageHeight,
+                contentPaddingPx
             )
         }
     }
@@ -308,7 +314,9 @@ fun CropOverlay(
             bitmap = bitmap.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
         )
 
         // 裁剪叠加层
@@ -372,24 +380,29 @@ private fun calculateImageDisplayRect(
     containerWidth: Float,
     containerHeight: Float,
     imageWidth: Float,
-    imageHeight: Float
+    imageHeight: Float,
+    contentPadding: Float = 0f
 ): Rect {
+    val horizontalPadding = min(contentPadding, containerWidth / 2f)
+    val verticalPadding = min(contentPadding, containerHeight / 2f)
+    val availableWidth = (containerWidth - horizontalPadding * 2f).coerceAtLeast(1f)
+    val availableHeight = (containerHeight - verticalPadding * 2f).coerceAtLeast(1f)
     val imageAspect = imageWidth / imageHeight
-    val containerAspect = containerWidth / containerHeight
+    val containerAspect = availableWidth / availableHeight
 
     val displayWidth: Float
     val displayHeight: Float
 
     if (imageAspect > containerAspect) {
-        displayWidth = containerWidth
-        displayHeight = containerWidth / imageAspect
+        displayWidth = availableWidth
+        displayHeight = availableWidth / imageAspect
     } else {
-        displayHeight = containerHeight
-        displayWidth = containerHeight * imageAspect
+        displayHeight = availableHeight
+        displayWidth = availableHeight * imageAspect
     }
 
-    val offsetX = (containerWidth - displayWidth) / 2f
-    val offsetY = (containerHeight - displayHeight) / 2f
+    val offsetX = horizontalPadding + (availableWidth - displayWidth) / 2f
+    val offsetY = verticalPadding + (availableHeight - displayHeight) / 2f
 
     return Rect(offsetX, offsetY, offsetX + displayWidth, offsetY + displayHeight)
 }
