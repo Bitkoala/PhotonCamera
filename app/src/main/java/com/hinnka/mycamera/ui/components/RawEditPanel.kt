@@ -23,7 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import android.graphics.Bitmap
+import android.hardware.camera2.CameraCharacteristics
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.hinnka.mycamera.R
+import com.hinnka.mycamera.camera.CameraInfo
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.MeteringSystem
@@ -42,9 +45,36 @@ enum class RawEditPanelContentMode {
     QUICK,
 }
 
+data class RawDcpLensOption(
+    val id: String,
+    val label: String
+)
+
+@Composable
+fun rawDcpLensOptions(cameras: List<CameraInfo>): List<RawDcpLensOption> {
+    return cameras.map { camera ->
+        val prefix = when (camera.lensFacing) {
+            CameraCharacteristics.LENS_FACING_BACK -> stringResource(R.string.rear_camera)
+            CameraCharacteristics.LENS_FACING_FRONT -> stringResource(R.string.front_camera)
+            else -> stringResource(R.string.camera)
+        }
+        val focalLength = if (camera.focalLength35mmEquivalent > 0) {
+            stringResource(R.string.settings_isz_lens_focal_length, camera.focalLength35mmEquivalent.roundToInt())
+        } else {
+            stringResource(R.string.settings_isz_lens_unknown_focal_length)
+        }
+        RawDcpLensOption(
+            id = camera.cameraId,
+            label = stringResource(R.string.settings_isz_lens_label, prefix, camera.cameraId, focalLength)
+        )
+    }
+}
+
 @Composable
 fun RawEditPanel(
     selectedDcpId: String?,
+    rawDcpIdsByLens: Map<String, String?> = emptyMap(),
+    dcpLensOptions: List<RawDcpLensOption> = emptyList(),
     availableDcps: List<DcpInfo>,
     selectedBaselineLutId: String?,
     onSelectBaselineLut: (String?) -> Unit,
@@ -66,6 +96,7 @@ fun RawEditPanel(
     spectralFilmSelection: SpectralFilmSelection?,
     spectralFilmPrint: String?,
     onSelectDcp: (String?) -> Unit,
+    onRawDcpIdsByLensChange: ((Map<String, String?>) -> Unit)? = null,
     onImportDcp: () -> Unit,
     onDeleteDcp: (DcpInfo) -> Unit,
     onRawExposureCompensationChange: (Float) -> Unit,
@@ -106,8 +137,11 @@ fun RawEditPanel(
         if (rawRenderingEngine == RawRenderingEngine.AdobeCurve) {
             RawDcpSelector(
                 selectedDcpId = selectedDcpId,
+                rawDcpIdsByLens = rawDcpIdsByLens,
+                lensOptions = dcpLensOptions,
                 availableDcps = availableDcps,
                 onSelectDcp = onSelectDcp,
+                onRawDcpIdsByLensChange = onRawDcpIdsByLensChange,
                 onImportDcp = onImportDcp,
                 onDeleteDcp = onDeleteDcp
             )
@@ -868,15 +902,49 @@ private fun RawColorEngineItem(
 @Composable
 fun RawDcpSelector(
     selectedDcpId: String?,
+    rawDcpIdsByLens: Map<String, String?> = emptyMap(),
+    lensOptions: List<RawDcpLensOption> = emptyList(),
     availableDcps: List<DcpInfo>,
     onSelectDcp: (String?) -> Unit,
-    onImportDcp: () -> Unit,
-    onDeleteDcp: (DcpInfo) -> Unit
+    onRawDcpIdsByLensChange: ((Map<String, String?>) -> Unit)? = null,
+    onImportDcp: (() -> Unit)? = null,
+    onDeleteDcp: ((DcpInfo) -> Unit)? = null
 ) {
     var showSheet by remember { mutableStateOf(false) }
     var pendingDeleteDcp by remember { mutableStateOf<DcpInfo?>(null) }
-    val selectedName = availableDcps.firstOrNull { it.id == selectedDcpId }?.getName()
-        ?: stringResource(R.string.none)
+    var selectingUnifiedDcp by remember { mutableStateOf(false) }
+    var selectingLensId by remember { mutableStateOf<String?>(null) }
+    val supportsLensConfiguration = lensOptions.isNotEmpty() && onRawDcpIdsByLensChange != null
+    val unifiedDcpName = dcpDisplayName(selectedDcpId, availableDcps)
+    val selectedName = unifiedDcpName
+    val scopeName = when {
+        supportsLensConfiguration && rawDcpIdsByLens.isNotEmpty() -> {
+            stringResource(R.string.raw_dcp_summary_with_overrides, rawDcpIdsByLens.size)
+        }
+        supportsLensConfiguration -> stringResource(R.string.raw_dcp_scope_all_lenses)
+        else -> null
+    }
+
+    fun selectDcp(dcpId: String?) {
+        onSelectDcp(dcpId)
+    }
+
+    fun setLensDcp(lensId: String, dcpId: String?) {
+        val updated = rawDcpIdsByLens.toMutableMap()
+        updated[lensId] = dcpId
+        onRawDcpIdsByLensChange?.invoke(updated.toMap())
+    }
+
+    fun clearLensDcp(lensId: String) {
+        val updated = rawDcpIdsByLens.toMutableMap()
+        updated.remove(lensId)
+        onRawDcpIdsByLensChange?.invoke(updated.toMap())
+    }
+
+    fun closeDcpPicker() {
+        selectingUnifiedDcp = false
+        selectingLensId = null
+    }
 
     Row(
         modifier = Modifier
@@ -895,13 +963,24 @@ fun RawDcpSelector(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = selectedName,
+                    text = selectedName,
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (scopeName != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = scopeName,
+                    color = Color.White.copy(alpha = 0.45f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(16.dp))
@@ -914,6 +993,8 @@ fun RawDcpSelector(
     }
 
     if (showSheet) {
+        val selectedLens = lensOptions.firstOrNull { it.id == selectingLensId }
+        val isSelectingTarget = selectingUnifiedDcp || selectedLens != null
         ModalBottomSheet(
             onDismissRequest = { showSheet = false },
             containerColor = Color(0xFF1E1E1E),
@@ -925,21 +1006,45 @@ fun RawDcpSelector(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = stringResource(R.string.raw_dcp_title),
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    TextButton(onClick = {
-                        showSheet = false
-                        onImportDcp()
-                    }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        if (isSelectingTarget) {
+                            IconButton(
+                                onClick = { closeDcpPicker() },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.back),
+                                    tint = Color.White.copy(alpha = 0.8f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
                         Text(
-                            text = stringResource(R.string.raw_dcp_import),
-                            color = Color(0xFFFF6B35),
-                            fontSize = 14.sp
+                            text = when {
+                                selectingUnifiedDcp -> stringResource(R.string.raw_dcp_unified_title)
+                                selectedLens != null -> selectedLens.label
+                                else -> stringResource(R.string.raw_dcp_title)
+                            },
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                    }
+                    if (!isSelectingTarget && onImportDcp != null) {
+                        TextButton(onClick = {
+                            showSheet = false
+                            onImportDcp()
+                        }) {
+                            Text(
+                                text = stringResource(R.string.raw_dcp_import),
+                                color = Color(0xFFFF6B35),
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -948,28 +1053,93 @@ fun RawDcpSelector(
                     contentPadding = PaddingValues(bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    item {
-                        DcpItem(
-                            name = stringResource(R.string.none),
-                            isSelected = selectedDcpId == null,
-                            onClick = {
-                                onSelectDcp(null)
-                                showSheet = false
+                    if (supportsLensConfiguration && !isSelectingTarget) {
+                        item {
+                            DcpTargetItem(
+                                name = stringResource(R.string.raw_dcp_unified_title),
+                                description = unifiedDcpName,
+                                onClick = { selectingUnifiedDcp = true }
+                            )
+                        }
+                        items(lensOptions.size, key = { lensOptions[it].id }) { index ->
+                            val lens = lensOptions[index]
+                            val hasOverride = rawDcpIdsByLens.containsKey(lens.id)
+                            val dcpId = rawDcpIdsByLens[lens.id]
+                            DcpTargetItem(
+                                name = lens.label,
+                                description = if (hasOverride) {
+                                    stringResource(
+                                        R.string.raw_dcp_lens_override_value,
+                                        dcpDisplayName(dcpId, availableDcps)
+                                    )
+                                } else {
+                                    stringResource(R.string.raw_dcp_lens_uses_unified, unifiedDcpName)
+                                },
+                                isSelected = hasOverride,
+                                onClick = { selectingLensId = lens.id }
+                            )
+                        }
+                    } else {
+                        val targetLens = selectedLens
+                        if (targetLens != null) {
+                            item {
+                                DcpItem(
+                                    name = stringResource(R.string.raw_dcp_use_unified, unifiedDcpName),
+                                    isSelected = !rawDcpIdsByLens.containsKey(targetLens.id),
+                                    onClick = {
+                                        clearLensDcp(targetLens.id)
+                                        closeDcpPicker()
+                                    }
+                                )
                             }
-                        )
-                    }
-                    items(availableDcps.size, key = { availableDcps[it].id }) { index ->
-                        val dcp = availableDcps[index]
-                        DcpItem(
-                            name = dcp.getName(),
-                            isSelected = selectedDcpId == dcp.id,
-                            onClick = {
-                                onSelectDcp(dcp.id)
-                                showSheet = false
-                            },
-                            isCustom = !dcp.isBuiltIn,
-                            onDelete = { pendingDeleteDcp = dcp }
-                        )
+                        }
+                        val currentDcpId = targetLens?.let { rawDcpIdsByLens[it.id] } ?: selectedDcpId
+                        val hasLensOverride = targetLens?.let { rawDcpIdsByLens.containsKey(it.id) } == true
+                        item {
+                            DcpItem(
+                                name = stringResource(R.string.none),
+                                isSelected = if (targetLens != null) {
+                                    hasLensOverride && currentDcpId == null
+                                } else {
+                                    currentDcpId == null
+                                },
+                                onClick = {
+                                    if (targetLens != null) {
+                                        setLensDcp(targetLens.id, null)
+                                        closeDcpPicker()
+                                    } else {
+                                        selectDcp(null)
+                                        if (supportsLensConfiguration) closeDcpPicker() else showSheet = false
+                                    }
+                                }
+                            )
+                        }
+                        items(availableDcps.size, key = { availableDcps[it].id }) { index ->
+                            val dcp = availableDcps[index]
+                            DcpItem(
+                                name = dcp.getName(),
+                                isSelected = if (targetLens != null) {
+                                    hasLensOverride && currentDcpId == dcp.id
+                                } else {
+                                    currentDcpId == dcp.id
+                                },
+                                onClick = {
+                                    if (targetLens != null) {
+                                        setLensDcp(targetLens.id, dcp.id)
+                                        closeDcpPicker()
+                                    } else {
+                                        selectDcp(dcp.id)
+                                        if (supportsLensConfiguration) closeDcpPicker() else showSheet = false
+                                    }
+                                },
+                                isCustom = !dcp.isBuiltIn && onDeleteDcp != null,
+                                onDelete = if (onDeleteDcp != null) {
+                                    { pendingDeleteDcp = dcp }
+                                } else {
+                                    null
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -984,7 +1154,7 @@ fun RawDcpSelector(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        onDeleteDcp(dcp)
+                        onDeleteDcp?.invoke(dcp)
                         pendingDeleteDcp = null
                     }
                 ) {
@@ -996,6 +1166,57 @@ fun RawDcpSelector(
                     Text(stringResource(R.string.cancel))
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun dcpDisplayName(dcpId: String?, availableDcps: List<DcpInfo>): String {
+    return availableDcps.firstOrNull { it.id == dcpId }?.getName()
+        ?: stringResource(R.string.none)
+}
+
+@Composable
+private fun DcpTargetItem(
+    name: String,
+    description: String,
+    onClick: () -> Unit,
+    isSelected: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) Color(0xFFFF6B35).copy(alpha = 0.12f) else Color.Transparent)
+            .clickable { onClick() }
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = name,
+                color = Color.White,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = description,
+                color = if (isSelected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.58f),
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.45f),
+            modifier = Modifier.size(20.dp)
         )
     }
 }

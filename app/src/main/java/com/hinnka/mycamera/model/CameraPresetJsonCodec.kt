@@ -50,6 +50,7 @@ internal object CameraPresetJsonCodec {
             useMFSR = obj.boolean("useMFSR", false),
             frameId = obj.stringOrNull("frameId"),
             rawDcpId = obj.stringOrNull("rawDcpId"),
+            rawDcpIdsByLens = parseRawDcpIdsByLens(obj.get("rawDcpIdsByLens")),
             rawRenderingEngine = parseRawRenderingEngine(
                 obj.stringOrNull("rawRenderingEngine") ?: obj.stringOrNull("rawColorEngine")
             ),
@@ -74,6 +75,20 @@ internal object CameraPresetJsonCodec {
 
     private fun parseDroMode(value: String?): String {
         return RawProcessingPreferences.DROMode.fromPersistedName(value).name
+    }
+
+    private fun parseRawDcpIdsByLens(element: JsonElement?): Map<String, String?> {
+        if (element == null || element.isJsonNull || !element.isJsonObject) return emptyMap()
+        val parsed = buildMap {
+            element.asJsonObject.entrySet().forEach { (lensId, value) ->
+                if (lensId.isBlank()) return@forEach
+                put(
+                    lensId,
+                    if (value.isJsonNull) null else runCatching { value.asString }.getOrNull()
+                )
+            }
+        }
+        return CameraPreset.normalizeRawDcpIdsByLens(parsed)
     }
 
     private fun parseColorRecipe(element: JsonElement?): ColorRecipeParams {

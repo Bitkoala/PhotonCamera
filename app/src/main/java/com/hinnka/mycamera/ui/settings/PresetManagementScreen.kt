@@ -299,7 +299,7 @@ private fun PresetManagementItem(
                     if (preset.useMFSR) PresetFeatureText("MFSR")
                     if (rawRenderingEngine == RawRenderingEngine.Spektrafilm) PresetFeatureText("FILM")
                     if (preset.lutId != null) PresetFeatureText("LUT")
-                    if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.rawDcpId != null) {
+                    if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.hasRawDcpSelection()) {
                         PresetFeatureText("DCP")
                     }
                 }

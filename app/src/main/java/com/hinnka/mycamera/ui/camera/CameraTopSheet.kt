@@ -34,6 +34,7 @@ import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.ui.components.RawEditPanel
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
+import com.hinnka.mycamera.ui.components.RawDcpLensOption
 import com.hinnka.mycamera.video.*
 import com.hinnka.mycamera.video.VideoCodec
 
@@ -75,6 +76,8 @@ fun CameraTopSheet(
     onNaturalLightToggle: (Boolean) -> Unit,
     onNaturalLightWarningShown: () -> Unit,
     rawDcpId: String?,
+    rawDcpIdsByLens: Map<String, String?> = emptyMap(),
+    rawDcpLensOptions: List<RawDcpLensOption> = emptyList(),
     availableDcps: List<DcpInfo>,
     rawBaselineLutId: String?,
     availableLuts: List<LutInfo>,
@@ -91,6 +94,7 @@ fun CameraTopSheet(
     rawSpectralFilmSelection: SpectralFilmSelection?,
     rawSpectralFilmPrint: String?,
     onRawDcpChange: (String?) -> Unit,
+    onRawDcpIdsByLensChange: ((Map<String, String?>) -> Unit)? = null,
     onImportRawDcp: () -> Unit,
     onDeleteRawDcp: (DcpInfo) -> Unit,
     onRawBaselineLutChange: (String?) -> Unit,
@@ -616,6 +620,8 @@ fun CameraTopSheet(
                 )
                 RawEditPanel(
                     selectedDcpId = rawDcpId,
+                    rawDcpIdsByLens = rawDcpIdsByLens,
+                    dcpLensOptions = rawDcpLensOptions,
                     availableDcps = availableDcps,
                     selectedBaselineLutId = rawBaselineLutId,
                     onSelectBaselineLut = onRawBaselineLutChange,
@@ -633,6 +639,7 @@ fun CameraTopSheet(
                     spectralFilmSelection = rawSpectralFilmSelection,
                     spectralFilmPrint = rawSpectralFilmPrint,
                     onSelectDcp = onRawDcpChange,
+                    onRawDcpIdsByLensChange = onRawDcpIdsByLensChange,
                     onImportDcp = onImportRawDcp,
                     onDeleteDcp = onDeleteRawDcp,
                     onRawExposureCompensationChange = {},

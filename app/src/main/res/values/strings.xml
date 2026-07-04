@@ -220,6 +220,16 @@
     <string name="raw_dcp_import_failed">Failed to import DCP</string>
     <string name="raw_dcp_delete_success">Deleted DCP</string>
     <string name="raw_dcp_delete_failed">Failed to delete DCP</string>
+    <string name="raw_dcp_scope_all_lenses">All lenses</string>
+    <string name="raw_dcp_scope_current_lens">Current lens</string>
+    <string name="raw_dcp_scope_current_lens_named">Current lens: %1$s</string>
+    <string name="raw_dcp_unified_title">Unified DCP</string>
+    <string name="raw_dcp_summary_with_overrides">Unified + %1$d lens overrides</string>
+    <string name="raw_dcp_lens_uses_unified">Uses unified: %1$s</string>
+    <string name="raw_dcp_lens_override_value">Override: %1$s</string>
+    <string name="raw_dcp_use_unified">Use unified DCP (%1$s)</string>
+    <string name="raw_dcp_lens_override_title">Separate DCP for current lens</string>
+    <string name="raw_dcp_lens_override_description">When off, every lens uses the unified DCP. Turn on to override only %1$s.</string>
     <string name="raw_dcp_non_adobe_curve_warning">Outside Adobe Curve, DCP color rendering and baseline exposure offset still apply; the built-in DCP tone curve is ignored.</string>
     <string name="settings_baseline_phantom_title">Phantom Baseline Color Correction</string>
     <string name="settings_baseline_phantom_description">Choose the baseline LUT and recipe used before Phantom mode creative LUT processing.</string>

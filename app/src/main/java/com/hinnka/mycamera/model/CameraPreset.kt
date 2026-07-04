@@ -23,6 +23,7 @@ data class CameraPreset(
     val frameId: String? = null,
     // Quick RAW 功能
     val rawDcpId: String? = null,
+    val rawDcpIdsByLens: Map<String, String?> = emptyMap(),
     val rawRenderingEngine: String = RawRenderingEngine.AdobeCurve.name,
     val rawGooglePixelToneMap: Boolean = false,
     val rawSpectralFilmStock: String? = null,
@@ -53,12 +54,34 @@ data class CameraPreset(
         }
     }
 
+    fun rawDcpIdForLens(lensId: String?): String? {
+        val normalizedLensId = lensId?.takeIf { it.isNotBlank() } ?: return rawDcpId
+        return if (rawDcpIdsByLens.containsKey(normalizedLensId)) {
+            rawDcpIdsByLens[normalizedLensId]
+        } else {
+            rawDcpId
+        }
+    }
+
+    fun hasRawDcpSelection(): Boolean {
+        return rawDcpId != null || rawDcpIdsByLens.values.any { it != null }
+    }
+
     fun normalizedForPersistence(): CameraPreset {
-        return withSupportedCaptureCombination().withoutLegacyHdf()
+        return withSupportedCaptureCombination()
+            .withoutLegacyHdf()
+            .copy(rawDcpIdsByLens = normalizeRawDcpIdsByLens(rawDcpIdsByLens))
     }
 
     companion object {
         private val gson = Gson()
+
+        internal fun normalizeRawDcpIdsByLens(rawDcpIdsByLens: Map<String, String?>): Map<String, String?> {
+            return rawDcpIdsByLens
+                .filterKeys { it.isNotBlank() }
+                .mapValues { (_, dcpId) -> dcpId?.takeIf { it.isNotBlank() } }
+                .toSortedMap()
+        }
 
         // 场景默认预设
         val BUILT_IN_PRESETS = listOf(

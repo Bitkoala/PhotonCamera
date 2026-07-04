@@ -201,6 +201,7 @@ fun CameraScreen(
     val videoAudioInputOptions by viewModel.videoAudioInputOptions.collectAsState()
     val phantomPipPreview by viewModel.phantomPipPreview.collectAsState()
     val rawDcpId by viewModel.rawDcpId.collectAsState()
+    val rawDcpIdsByLens by viewModel.rawDcpIdsByLens.collectAsState()
     val jpgBaselineLutId by viewModel.jpgBaselineLutId.collectAsState()
     val rawBaselineLutId by viewModel.rawBaselineLutId.collectAsState()
     val phantomBaselineLutId by viewModel.phantomBaselineLutId.collectAsState()
@@ -1400,6 +1401,8 @@ fun CameraScreen(
             },
             onNaturalLightWarningShown = { viewModel.setNaturalLightWarningShown(true) },
             rawDcpId = rawDcpId,
+            rawDcpIdsByLens = rawDcpIdsByLens,
+            rawDcpLensOptions = rawDcpLensOptions(state.availableCameras),
             availableDcps = viewModel.availableDcps,
             rawBaselineLutId = rawBaselineLutId,
             availableLuts = viewModel.availableLutList,
@@ -1416,6 +1419,7 @@ fun CameraScreen(
             rawSpectralFilmSelection = rawSpectralFilmSelection ?: SpectralFilmSelection(rawSpectralFilmStock ?: "kodak_portra_400"),
             rawSpectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
             onRawDcpChange = { viewModel.setRawDcpId(it) },
+            onRawDcpIdsByLensChange = { viewModel.setRawDcpIdsByLens(it) },
             onImportRawDcp = { dcpImportLauncher.launch("*/*") },
             onDeleteRawDcp = { dcp ->
                 viewModel.deleteRawDcp(dcp.id) { success ->

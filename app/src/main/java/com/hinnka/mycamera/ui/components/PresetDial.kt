@@ -169,7 +169,7 @@ fun PresetsPanel(
                             if (rawRenderingEngine == RawRenderingEngine.Spektrafilm) {
                                 FeatureBadge(text = "FILM")
                             }
-                            if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.rawDcpId != null) {
+                            if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.hasRawDcpSelection()) {
                                 FeatureBadge(text = "DCP")
                             } else if (preset.lutId != null) {
                                 FeatureBadge(text = "LUT")

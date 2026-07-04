@@ -218,6 +218,16 @@
     <string name="raw_dcp_import_failed">导入 DCP 失败</string>
     <string name="raw_dcp_delete_success">已删除 DCP</string>
     <string name="raw_dcp_delete_failed">删除 DCP 失败</string>
+    <string name="raw_dcp_scope_all_lenses">所有镜头</string>
+    <string name="raw_dcp_scope_current_lens">当前镜头</string>
+    <string name="raw_dcp_scope_current_lens_named">当前镜头：%1$s</string>
+    <string name="raw_dcp_unified_title">统一 DCP</string>
+    <string name="raw_dcp_summary_with_overrides">统一 + %1$d 个镜头覆盖</string>
+    <string name="raw_dcp_lens_uses_unified">使用统一配置：%1$s</string>
+    <string name="raw_dcp_lens_override_value">单独配置：%1$s</string>
+    <string name="raw_dcp_use_unified">使用统一 DCP（%1$s）</string>
+    <string name="raw_dcp_lens_override_title">当前镜头单独使用 DCP</string>
+    <string name="raw_dcp_lens_override_description">关闭时所有镜头共用统一 DCP。打开后仅覆盖 %1$s。</string>
     <string name="raw_dcp_non_adobe_curve_warning">非 Adobe 色彩引擎仍会应用 DCP 色彩渲染和曝光偏移，但不会使用 DCP 内置曲线。</string>
     <string name="settings_baseline_phantom_title">幻影模式基准色彩校正</string>
     <string name="settings_baseline_phantom_description">选择幻影模式创意 LUT 之前先应用的基准 LUT 与基准配方。</string>

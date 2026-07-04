@@ -36,6 +36,8 @@ import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.ui.components.EffectsBottomSheet
 import com.hinnka.mycamera.ui.components.FrameSelector
 import com.hinnka.mycamera.ui.components.RawBaselineColorCorrectionSelector
+import com.hinnka.mycamera.ui.components.RawDcpSelector
+import com.hinnka.mycamera.ui.components.rawDcpLensOptions
 import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import com.hinnka.mycamera.ui.camera.LutEditorTarget
 import com.hinnka.mycamera.viewmodel.CameraViewModel
@@ -50,6 +52,7 @@ fun PresetEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
+    val cameraState by viewModel.state.collectAsState()
     val allPresets by viewModel.allPresets.collectAsState()
     val availableLuts = viewModel.availableLutList
     val availableDcps = viewModel.availableDcps
@@ -96,6 +99,7 @@ fun PresetEditorScreen(
 
     // Quick RAW 参数
     var rawDcpId by remember { mutableStateOf(sourcePreset?.rawDcpId) }
+    var rawDcpIdsByLens by remember { mutableStateOf(sourcePreset?.rawDcpIdsByLens ?: emptyMap()) }
     var rawRenderingEngine by remember {
         mutableStateOf(RawRenderingEngine.fromPersistedName(sourcePreset?.rawRenderingEngine))
     }
@@ -135,6 +139,7 @@ fun PresetEditorScreen(
             useMFSR = useMFSR,
             frameId = frameId,
             rawDcpId = rawDcpId,
+            rawDcpIdsByLens = rawDcpIdsByLens,
             rawRenderingEngine = rawRenderingEngine.name,
             rawGooglePixelToneMap = rawGooglePixelToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock,
@@ -424,22 +429,13 @@ fun PresetEditorScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
-                        val defaultDcpName = stringResource(R.string.none)
-                        val currentDcp = availableDcps.find { it.id == rawDcpId }
-                        val currentDcpName = currentDcp?.getName() ?: defaultDcpName
-                        DropdownSettingItem(
-                            title = stringResource(R.string.raw_dcp_title),
-                            value = currentDcpName,
-                            options = listOf(defaultDcpName) + availableDcps.map { it.getName() },
-                            isLoading = false,
-                            onExpanded = {},
-                            onOptionSelected = { selectedName ->
-                                rawDcpId = if (selectedName == defaultDcpName) {
-                                    null
-                                } else {
-                                    availableDcps.find { it.getName() == selectedName }?.id
-                                }
-                            }
+                        RawDcpSelector(
+                            selectedDcpId = rawDcpId,
+                            rawDcpIdsByLens = rawDcpIdsByLens,
+                            lensOptions = rawDcpLensOptions(cameraState.availableCameras),
+                            availableDcps = availableDcps,
+                            onSelectDcp = { rawDcpId = it },
+                            onRawDcpIdsByLensChange = { rawDcpIdsByLens = it }
                         )
                     }
                 }

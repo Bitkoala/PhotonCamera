@@ -133,6 +133,7 @@ import com.hinnka.mycamera.ui.components.SliderSettingItem
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.ui.components.RawEditPanel
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
+import com.hinnka.mycamera.ui.components.rawDcpLensOptions
 import com.hinnka.mycamera.ui.components.rememberBackgroundPainter
 import com.hinnka.mycamera.update.AppUpdateManager
 import com.hinnka.mycamera.utils.DeviceUtil
@@ -312,6 +313,7 @@ fun SettingsScreen(
     val rawBaselineLutId by viewModel.rawBaselineLutId.collectAsState()
     val phantomBaselineLutId by viewModel.phantomBaselineLutId.collectAsState()
     val rawDcpId by viewModel.rawDcpId.collectAsState()
+    val rawDcpIdsByLens by viewModel.rawDcpIdsByLens.collectAsState()
     val rawExposureCompensation by viewModel.rawExposureCompensation.collectAsState()
     val rawAutoExposure by viewModel.rawAutoExposure.collectAsState()
     val rawHighlightsAdjustment by viewModel.rawHighlightsAdjustment.collectAsState()
@@ -1634,6 +1636,8 @@ fun SettingsScreen(
                 SettingsTab.RAW -> {
                     RawEditPanel(
                         selectedDcpId = rawDcpId,
+                        rawDcpIdsByLens = rawDcpIdsByLens,
+                        dcpLensOptions = rawDcpLensOptions(state.availableCameras),
                         availableDcps = availableDcps,
                         selectedBaselineLutId = rawBaselineLutId,
                         onSelectBaselineLut = { viewModel.setBaselineLut(BaselineColorCorrectionTarget.RAW, it) },
@@ -1651,6 +1655,7 @@ fun SettingsScreen(
                         spectralFilmSelection = rawSpectralFilmSelection ?: SpectralFilmSelection(rawSpectralFilmStock ?: "kodak_portra_400"),
                         spectralFilmPrint = rawSpectralFilmPrint ?: "kodak_portra_endura",
                         onSelectDcp = { viewModel.setRawDcpId(it) },
+                        onRawDcpIdsByLensChange = { viewModel.setRawDcpIdsByLens(it) },
                         onImportDcp = { importDcpLauncher.launch("*/*") },
                         onDeleteDcp = { dcp ->
                             viewModel.deleteRawDcp(dcp.id) { success ->

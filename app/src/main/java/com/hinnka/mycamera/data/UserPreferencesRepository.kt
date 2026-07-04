@@ -42,6 +42,7 @@ import com.hinnka.mycamera.video.VideoResolutionPreset
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.model.CameraPreset
 import com.hinnka.mycamera.model.LutSelectorMode
+import org.json.JSONObject
 
 /**
  * DataStore 扩展属性
@@ -95,6 +96,7 @@ data class UserPreferences(
     val rawBaselineLutConfigured: Boolean = false,
     val phantomBaselineLutId: String? = null,
     val rawDcpId: String? = null,
+    val rawDcpIdsByLens: Map<String, String?> = emptyMap(),
     val rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
     val rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
     val rawNlmNoiseFactor: Float = 0f,
@@ -223,6 +225,20 @@ data class UserPreferences(
 
     val customPresets: List<CameraPreset>
         get() = CameraPreset.listFromJson(customPresetsJson)
+
+    fun rawDcpIdForLens(lensId: String?): String? {
+        val normalizedLensId = lensId?.takeIf { it.isNotBlank() } ?: return rawDcpId
+        return if (rawDcpIdsByLens.containsKey(normalizedLensId)) {
+            rawDcpIdsByLens[normalizedLensId]
+        } else {
+            rawDcpId
+        }
+    }
+
+    fun hasRawDcpLensOverride(lensId: String?): Boolean {
+        val normalizedLensId = lensId?.takeIf { it.isNotBlank() } ?: return false
+        return rawDcpIdsByLens.containsKey(normalizedLensId)
+    }
 }
 
 data class PreferenceUpdateValue<T>(val value: T)
@@ -238,6 +254,7 @@ data class CameraFeaturePreferencesUpdate(
     val useMultipleExposure: PreferenceUpdateValue<Boolean>? = null,
     val frameId: PreferenceUpdateValue<String?>? = null,
     val rawDcpId: PreferenceUpdateValue<String?>? = null,
+    val rawDcpIdsByLens: PreferenceUpdateValue<Map<String, String?>>? = null,
     val rawRenderingEngine: PreferenceUpdateValue<RawRenderingEngine>? = null,
     val rawToneMappingParameters: PreferenceUpdateValue<RawToneMappingParameters>? = null,
     val rawSpectralFilmStock: PreferenceUpdateValue<String?>? = null,
@@ -267,6 +284,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BASELINE_LUT_ID_KEY = stringPreferencesKey("raw_baseline_lut_id")
         private val RAW_BASELINE_LUT_CONFIGURED_KEY = booleanPreferencesKey("raw_baseline_lut_configured")
         private val RAW_DCP_ID_KEY = stringPreferencesKey("raw_dcp_id")
+        private val RAW_DCP_IDS_BY_LENS_KEY = stringPreferencesKey("raw_dcp_ids_by_lens")
         private val RAW_COLOR_ENGINE_KEY = stringPreferencesKey("raw_color_engine")
         private val RAW_AGX_BLACK_RELATIVE_EXPOSURE_KEY = floatPreferencesKey("raw_agx_black_relative_exposure")
         private val RAW_AGX_WHITE_RELATIVE_EXPOSURE_KEY = floatPreferencesKey("raw_agx_white_relative_exposure")
@@ -435,6 +453,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawBaselineLutId = preferences[RAW_BASELINE_LUT_ID_KEY],
                 rawBaselineLutConfigured = rawBaselineLutConfigured,
                 rawDcpId = preferences[RAW_DCP_ID_KEY],
+                rawDcpIdsByLens = parseNullableStringMap(preferences[RAW_DCP_IDS_BY_LENS_KEY]),
                 rawRenderingEngine = RawRenderingEngine.fromPersistedName(preferences[RAW_COLOR_ENGINE_KEY]),
                 rawToneMappingParameters = RawToneMappingParameters(
                     agxBlackRelativeExposure = preferences[RAW_AGX_BLACK_RELATIVE_EXPOSURE_KEY]
@@ -661,6 +680,30 @@ class UserPreferencesRepository(private val context: Context) {
         return map.entries.joinToString(",") { "${it.key}:${it.value}" }
     }
 
+    private fun parseNullableStringMap(value: String?): Map<String, String?> {
+        if (value.isNullOrEmpty()) return emptyMap()
+        return runCatching {
+            val root = JSONObject(value)
+            buildMap {
+                val keys = root.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key.isBlank()) continue
+                    val rawValue = if (root.isNull(key)) null else root.optString(key)
+                    put(key, rawValue?.takeIf { it.isNotBlank() })
+                }
+            }
+        }.map { CameraPreset.normalizeRawDcpIdsByLens(it) }.getOrDefault(emptyMap())
+    }
+
+    private fun serializeNullableStringMap(map: Map<String, String?>): String {
+        val root = JSONObject()
+        CameraPreset.normalizeRawDcpIdsByLens(map).forEach { (key, value) ->
+            root.put(key, value ?: JSONObject.NULL)
+        }
+        return root.toString()
+    }
+
     private fun parseMapFloat(value: String?): Map<String, Float> {
         if (value.isNullOrEmpty()) return emptyMap()
         return value.split(",")
@@ -877,6 +920,32 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences[RAW_DCP_ID_KEY] = dcpId
             } else {
                 preferences.remove(RAW_DCP_ID_KEY)
+            }
+        }
+    }
+
+    suspend fun saveRawDcpIdsByLens(rawDcpIdsByLens: Map<String, String?>) {
+        context.dataStore.edit { preferences ->
+            val normalized = CameraPreset.normalizeRawDcpIdsByLens(rawDcpIdsByLens)
+            if (normalized.isEmpty()) {
+                preferences.remove(RAW_DCP_IDS_BY_LENS_KEY)
+            } else {
+                preferences[RAW_DCP_IDS_BY_LENS_KEY] = serializeNullableStringMap(normalized)
+            }
+        }
+    }
+
+    suspend fun removeRawDcpReferences(dcpId: String) {
+        context.dataStore.edit { preferences ->
+            if (preferences[RAW_DCP_ID_KEY] == dcpId) {
+                preferences.remove(RAW_DCP_ID_KEY)
+            }
+            val rawDcpIdsByLens = parseNullableStringMap(preferences[RAW_DCP_IDS_BY_LENS_KEY])
+                .filterValues { it != dcpId }
+            if (rawDcpIdsByLens.isEmpty()) {
+                preferences.remove(RAW_DCP_IDS_BY_LENS_KEY)
+            } else {
+                preferences[RAW_DCP_IDS_BY_LENS_KEY] = serializeNullableStringMap(rawDcpIdsByLens)
             }
         }
     }
@@ -1908,6 +1977,14 @@ class UserPreferencesRepository(private val context: Context) {
                     preferences[RAW_DCP_ID_KEY] = it.value
                 } else {
                     preferences.remove(RAW_DCP_ID_KEY)
+                }
+            }
+            update.rawDcpIdsByLens?.let {
+                val normalized = CameraPreset.normalizeRawDcpIdsByLens(it.value)
+                if (normalized.isEmpty()) {
+                    preferences.remove(RAW_DCP_IDS_BY_LENS_KEY)
+                } else {
+                    preferences[RAW_DCP_IDS_BY_LENS_KEY] = serializeNullableStringMap(normalized)
                 }
             }
             update.rawRenderingEngine?.let {

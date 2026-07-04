@@ -151,6 +151,7 @@ private data class PresetMatchSnapshot(
     val useMFSR: Boolean,
     val frameId: String?,
     val rawDcpId: String?,
+    val rawDcpIdsByLens: Map<String, String?>,
     val rawRenderingEngine: RawRenderingEngine,
     val rawGooglePixelToneMap: Boolean,
     val rawSpectralFilmStock: String?,
@@ -173,6 +174,7 @@ private data class PresetMatchSnapshot(
             useMFSR == preset.useMFSR &&
             frameId == preset.frameId &&
             rawDcpId == preset.rawDcpId &&
+            rawDcpIdsByLens == preset.rawDcpIdsByLens &&
             rawRenderingEngine == RawRenderingEngine.fromPersistedName(preset.rawRenderingEngine) &&
             rawGooglePixelToneMap == preset.rawGooglePixelToneMap &&
             rawSpectralFilmStock == preset.rawSpectralFilmStock &&
@@ -198,6 +200,9 @@ private data class PresetMatchSnapshot(
             if (useMFSR != preset.useMFSR) add("useMFSR current=$useMFSR preset=${preset.useMFSR}")
             if (frameId != preset.frameId) add("frameId current=$frameId preset=${preset.frameId}")
             if (rawDcpId != preset.rawDcpId) add("rawDcpId current=$rawDcpId preset=${preset.rawDcpId}")
+            if (rawDcpIdsByLens != preset.rawDcpIdsByLens) {
+                add("rawDcpIdsByLens current=$rawDcpIdsByLens preset=${preset.rawDcpIdsByLens}")
+            }
             if (rawRenderingEngine != presetRawRenderingEngine) {
                 add("rawRenderingEngine current=$rawRenderingEngine preset=$presetRawRenderingEngine")
             }
@@ -250,6 +255,7 @@ private data class CameraFeatureUpdate(
     val useMFSR: SettingValue<Boolean>? = null,
     val frameId: SettingValue<String?>? = null,
     val rawDcpId: SettingValue<String?>? = null,
+    val rawDcpIdsByLens: SettingValue<Map<String, String?>>? = null,
     val rawRenderingEngine: SettingValue<RawRenderingEngine>? = null,
     val rawGooglePixelToneMap: SettingValue<Boolean>? = null,
     val rawSpectralFilmStock: SettingValue<String?>? = null,
@@ -372,6 +378,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             useMFSR = saved.useMFSR,
                             frameId = saved.frameId,
                             rawDcpId = saved.rawDcpId,
+                            rawDcpIdsByLens = saved.rawDcpIdsByLens,
                             rawRenderingEngine = saved.rawRenderingEngine,
                             rawGooglePixelToneMap = saved.rawGooglePixelToneMap,
                             rawSpectralFilmStock = saved.rawSpectralFilmStock,
@@ -433,6 +440,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = useMFSR.value,
             frameId = currentFrameId,
             rawDcpId = rawDcpId.value,
+            rawDcpIdsByLens = userPreferences.value.rawDcpIdsByLens,
             rawRenderingEngine = rawRenderingEngine.value.name,
             rawGooglePixelToneMap = rawToneMappingParameters.value.useGooglePixelToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
@@ -505,6 +513,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = SettingValue(this?.useMFSR ?: false),
             frameId = SettingValue(this?.frameId),
             rawDcpId = SettingValue(this?.rawDcpId),
+            rawDcpIdsByLens = SettingValue(this?.rawDcpIdsByLens ?: emptyMap()),
             rawRenderingEngine = SettingValue(RawRenderingEngine.fromPersistedName(this?.rawRenderingEngine)),
             rawGooglePixelToneMap = SettingValue(this?.rawGooglePixelToneMap ?: false),
             rawSpectralFilmStock = SettingValue(this?.rawSpectralFilmStock),
@@ -621,8 +630,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             currentFrameId = it.value
         }
 
-        update.rawDcpId?.let {
-            prewarmRawDcp(it.value)
+        if (update.rawDcpId != null || update.rawDcpIdsByLens != null) {
+            val targetPrefs = prefs.copy(
+                rawDcpId = update.rawDcpId?.value ?: prefs.rawDcpId,
+                rawDcpIdsByLens = update.rawDcpIdsByLens?.value ?: prefs.rawDcpIdsByLens
+            )
+            prewarmRawDcp(targetPrefs.rawDcpIdForLens(currentState.currentCameraId))
         }
 
         userPreferencesRepository.saveCameraFeaturePreferences(
@@ -657,6 +670,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 },
                 frameId = update.frameId?.let { PreferenceUpdateValue(it.value) },
                 rawDcpId = update.rawDcpId?.let { PreferenceUpdateValue(it.value) },
+                rawDcpIdsByLens = update.rawDcpIdsByLens?.let { PreferenceUpdateValue(it.value) },
                 rawRenderingEngine = if (update.rawRenderingEngine != null ||
                     desiredRawRenderingEngine != prefs.rawRenderingEngine
                 ) {
@@ -879,6 +893,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = useMFSR.value,
             frameId = currentFrameId,
             rawDcpId = rawDcpId.value,
+            rawDcpIdsByLens = rawDcpIdsByLens.value,
             rawRenderingEngine = rawRenderingEngine.value,
             rawGooglePixelToneMap = rawToneMappingParameters.value.useGooglePixelToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
@@ -902,6 +917,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             useMFSR = prefs.useMFSR,
             frameId = prefs.frameId,
             rawDcpId = prefs.rawDcpId,
+            rawDcpIdsByLens = prefs.rawDcpIdsByLens,
             rawRenderingEngine = prefs.rawRenderingEngine,
             rawGooglePixelToneMap = prefs.rawToneMappingParameters.useGooglePixelToneMap,
             rawSpectralFilmStock = prefs.rawSpectralFilmStock,
@@ -1063,6 +1079,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val rawDcpId: StateFlow<String?> = userPreferencesRepository.userPreferences
         .map { it.rawDcpId }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val rawDcpIdsByLens: StateFlow<Map<String, String?>> = userPreferencesRepository.userPreferences
+        .map { it.rawDcpIdsByLens }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     val rawExposureCompensation: StateFlow<Float> = userPreferencesRepository.userPreferences
         .map { it.rawExposureCompensation }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
@@ -1747,6 +1766,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
     }
+
+    fun setRawDcpIdsByLens(rawDcpIdsByLens: Map<String, String?>) {
+        viewModelScope.launch {
+            applyCameraFeatureUpdate(
+                CameraFeatureUpdate(rawDcpIdsByLens = SettingValue(rawDcpIdsByLens))
+            )
+        }
+    }
+
     fun setRawBaselineLutId(lutId: String?) {
         viewModelScope.launch {
             applyCameraFeatureUpdate(
@@ -1888,9 +1916,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 contentRepository.getCustomImportManager().deleteCustomDcp(dcpId)
             }
             if (success) {
-                if (rawDcpId.firstOrNull() == dcpId) {
-                    userPreferencesRepository.saveRawDcpId(null)
-                }
+                userPreferencesRepository.removeRawDcpReferences(dcpId)
                 contentRepository.refreshCustomContent()
             }
             onComplete(success)
@@ -1947,7 +1973,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         if (startupPrewarmJob?.isActive == true) return
 
         startupPrewarmJob = viewModelScope.launch {
-            prewarmRawDcp(rawDcpId.firstOrNull())
+            val prefs = userPreferencesRepository.userPreferences.firstOrNull()
+            prewarmRawDcp(prefs?.rawDcpIdForLens(state.value.currentCameraId))
         }
     }
 
@@ -2079,7 +2106,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
             captureNoiseReductionLevel = state.value.nrLevel,
-            rawDcpId = userPrefs?.rawDcpId,
+            rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -4441,7 +4468,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
                 captureNoiseReductionLevel = state.value.nrLevel,
-                rawDcpId = userPrefs?.rawDcpId,
+                rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -4609,7 +4636,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
                 captureNoiseReductionLevel = currentState.nrLevel,
-                rawDcpId = userPrefs?.rawDcpId,
+                rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -4752,7 +4779,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     noiseReduction = noiseReductionValue,
                     chromaNoiseReduction = chromaNoiseReductionValue,
                     captureNoiseReductionLevel = currentState.nrLevel,
-                    rawDcpId = userPrefs?.rawDcpId,
+                    rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
                     rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                     rawAutoExposure = effectiveRawAutoExposure,
                     rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -4927,7 +4954,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 noiseReduction = noiseReductionValue,
                 chromaNoiseReduction = chromaNoiseReductionValue,
                 captureNoiseReductionLevel = state.value.nrLevel,
-                rawDcpId = userPrefs?.rawDcpId,
+                rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -5464,7 +5491,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             noiseReduction = noiseReductionValue,
             chromaNoiseReduction = chromaNoiseReductionValue,
             captureNoiseReductionLevel = state.value.nrLevel,
-            rawDcpId = userPrefs?.rawDcpId,
+            rawDcpId = userPrefs?.rawDcpIdForLens(currentCameraId),
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
