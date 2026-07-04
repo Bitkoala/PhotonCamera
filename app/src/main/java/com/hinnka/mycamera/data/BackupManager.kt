@@ -111,12 +111,23 @@ object BackupManager {
             return
         }
 
-        FileInputStream(fileToZip).use { fis ->
-            val zipEntry = ZipEntry(fileName)
-            zos.putNextEntry(zipEntry)
-            copyStream(fis, zos)
-            zos.closeEntry()
+        val zipEntry = ZipEntry(fileName)
+        zos.putNextEntry(zipEntry)
+        if (BackupPreferenceSanitizer.isUserPreferencesEntry(fileName)) {
+            val removedPreferenceCount =
+                BackupPreferenceSanitizer.writeUserPreferencesWithoutUnsafeStorageKeys(fileToZip, zos)
+            if (removedPreferenceCount > 0) {
+                PLog.d(
+                    TAG,
+                    "Removed $removedPreferenceCount storage authorization preferences from backup"
+                )
+            }
+        } else {
+            FileInputStream(fileToZip).use { fis ->
+                copyStream(fis, zos)
+            }
         }
+        zos.closeEntry()
     }
 
     /**
@@ -145,6 +156,13 @@ object BackupManager {
             }
 
             unzipBackupToDirectory(tempZip, restoreDir)
+            val sanitizedRestorePreferenceCount = BackupPreferenceSanitizer.sanitizeRestoreDirectory(restoreDir)
+            if (sanitizedRestorePreferenceCount > 0) {
+                PLog.d(
+                    TAG,
+                    "Removed $sanitizedRestorePreferenceCount storage authorization preferences during restore"
+                )
+            }
             applyRestoreDirectory(restoreDir, context.filesDir)
 
             PLog.d(TAG, "Restore successfully completed from $inputUri")
