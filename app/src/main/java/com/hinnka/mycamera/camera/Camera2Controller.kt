@@ -2191,6 +2191,65 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    private fun calculateRawMinShutterAdjustedExposure(
+        state: CameraState,
+        baseIso: Int,
+        baseShutter: Long
+    ): Pair<Int, Long> {
+        if (!shouldApplyRawMinShutterLimit(state)) {
+            return Pair(baseIso, baseShutter)
+        }
+        if (baseIso <= 0 || baseShutter <= 0L) return Pair(baseIso, baseShutter)
+
+        val isoRange = state.getIsoRange()
+        val shutterRange = state.getShutterSpeedRange()
+        val targetShutterLimit = state.rawMinShutterSpeedNs.coerceIn(shutterRange.lower, shutterRange.upper)
+        if (baseShutter == targetShutterLimit) return Pair(baseIso, baseShutter)
+
+        val exposureProduct = baseIso.toDouble() * baseShutter.toDouble()
+        val adjusted = if (baseShutter < targetShutterLimit) {
+            if (baseIso <= isoRange.lower) {
+                Pair(baseIso, baseShutter)
+            } else {
+                val isoAtLimit = (exposureProduct / targetShutterLimit).roundToInt()
+                if (isoAtLimit >= isoRange.lower) {
+                    Pair(isoAtLimit.coerceIn(isoRange.lower, isoRange.upper), targetShutterLimit)
+                } else {
+                    val shutterAtMinIso = (exposureProduct / isoRange.lower).roundToLong()
+                        .coerceIn(baseShutter, targetShutterLimit)
+                        .coerceIn(shutterRange.lower, shutterRange.upper)
+                    Pair(isoRange.lower, shutterAtMinIso)
+                }
+            }
+        } else {
+            val isoAtLimit = (exposureProduct / targetShutterLimit).roundToInt()
+            if (isoAtLimit <= isoRange.upper) {
+                Pair(isoAtLimit.coerceIn(isoRange.lower, isoRange.upper), targetShutterLimit)
+            } else {
+                val shutterAtMaxIso = (exposureProduct / isoRange.upper).roundToLong()
+                    .coerceIn(targetShutterLimit, baseShutter)
+                    .coerceIn(shutterRange.lower, shutterRange.upper)
+                Pair(isoRange.upper, shutterAtMaxIso)
+            }
+        }
+
+        if (adjusted.first != baseIso || adjusted.second != baseShutter) {
+            PLog.d(
+                TAG,
+                "RAW min shutter override: ISO=$baseIso->${adjusted.first}, shutter=$baseShutter->${adjusted.second}, min=$targetShutterLimit"
+            )
+        }
+        return adjusted
+    }
+
+    private fun shouldApplyRawMinShutterLimit(state: CameraState): Boolean {
+        return state.useRaw &&
+                state.captureMode == CaptureMode.PHOTO &&
+                state.rawMinShutterSpeedNs > 0L &&
+                state.isIsoAuto &&
+                state.isShutterSpeedAuto
+    }
+
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
         val characteristics = getActiveOpenCameraCharacteristics() ?: return
         val availableRanges =
@@ -4700,6 +4759,25 @@ class Camera2Controller(private val context: Context) {
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
                 // isCapture = true 确保使用完整的曝光时间（不限制长曝光）
                 applyBaseCameraSettings(this, isCapture = true, isRawCapture = isRawCapture)
+
+                if (isRawCapture && shouldApplyRawMinShutterLimit(currentState)) {
+                    if (isManualSensorSupported) {
+                        val (adjustedIso, adjustedShutter) = calculateRawMinShutterAdjustedExposure(
+                            currentState,
+                            currentState.iso,
+                            currentState.shutterSpeed
+                        )
+                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                        set(CaptureRequest.SENSOR_SENSITIVITY, adjustedIso)
+                        set(CaptureRequest.SENSOR_EXPOSURE_TIME, adjustedShutter)
+                        PLog.d(
+                            TAG,
+                            "Capture RAW min shutter override: minShutter=${currentState.rawMinShutterSpeedNs}, ISO=$adjustedIso, shutter=$adjustedShutter"
+                        )
+                    } else {
+                        PLog.w(TAG, "RAW min shutter requires MANUAL_SENSOR support")
+                    }
+                }
 
                 // 强制将此请求的触发器设为 IDLE，防止携带预览中的触发状态
                 set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE)

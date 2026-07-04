@@ -165,7 +165,9 @@ private const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&
 private val RAW_MIN_SHUTTER_SPEED_OPTIONS = listOf(
     0L,
     1_000_000_000L / 30,
+    1_000_000_000L / 50,
     1_000_000_000L / 60,
+    1_000_000_000L / 100,
     1_000_000_000L / 125,
     1_000_000_000L / 250,
     1_000_000_000L / 500,
