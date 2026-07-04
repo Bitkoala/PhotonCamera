@@ -155,8 +155,8 @@ dependencies {
     // ViewModel Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     
-    // Material Icons Extended
-    implementation(libs.androidx.material.icons.extended)
+    // Material Icons Core
+    implementation(libs.androidx.material.icons.core)
     
     // Coil for image loading
     implementation(libs.coil.compose)

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
@@ -39,6 +38,7 @@ import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import kotlin.math.roundToInt
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 enum class RawEditPanelContentMode {
     FULL,
@@ -638,7 +638,7 @@ private fun RawSpectralFilmTuningHeader(
             )
         }
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.75f),
             modifier = Modifier
@@ -794,7 +794,7 @@ private fun RawRenderingEngineSelector(
         }
         Spacer(modifier = Modifier.width(16.dp))
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.6f)
         )
@@ -986,7 +986,7 @@ fun RawDcpSelector(
         Spacer(modifier = Modifier.width(16.dp))
 
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.6f)
         )
@@ -1213,7 +1213,7 @@ private fun DcpTargetItem(
         }
         Spacer(modifier = Modifier.width(12.dp))
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.45f),
             modifier = Modifier.size(20.dp)
@@ -1328,7 +1328,7 @@ fun RawBaselineColorCorrectionSelector(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                imageVector = Icons.Default.ChevronRight,
+                imageVector = AppIcons.ChevronRight,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.6f),
                 modifier = Modifier.clickable { openSheet() }
@@ -1477,7 +1477,7 @@ fun RawSpectralFilmSelector(
         Spacer(modifier = Modifier.width(16.dp))
 
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.6f)
         )
@@ -1587,7 +1587,7 @@ fun RawSpectralPrintSelector(
         Spacer(modifier = Modifier.width(16.dp))
 
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.6f)
         )

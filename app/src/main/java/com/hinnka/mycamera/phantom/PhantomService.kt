@@ -40,9 +40,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -128,6 +126,7 @@ import kotlin.io.inputStream
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.use
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryOwner {
 
@@ -979,7 +978,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                         modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
+                                            imageVector = AppIcons.AutoAwesome,
                                             contentDescription = "LUT",
                                             tint = Color.White
                                         )
@@ -999,7 +998,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                         modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Stop,
+                                            imageVector = AppIcons.Stop,
                                             contentDescription = "Stop",
                                             tint = Color.Red
                                         )

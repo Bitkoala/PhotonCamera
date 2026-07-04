@@ -17,7 +17,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -31,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -92,6 +90,7 @@ import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
 import me.saket.telephoto.zoomable.DoubleClickToZoomListener
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 private data class PreviewRenderSignature(
     val photoId: String,
@@ -479,7 +478,7 @@ fun GalleryEditScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.PushPin,
+                                    imageVector = AppIcons.PushPin,
                                     contentDescription = "Show Reference",
                                     tint = Color(0xFFFFD700),
                                     modifier = Modifier.size(20.dp)
@@ -525,7 +524,7 @@ fun GalleryEditScreen(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.PushPin,
+                                                imageVector = AppIcons.PushPin,
                                                 contentDescription = "Minimize",
                                                 tint = Color.White,
                                                 modifier = Modifier.size(12.dp)
@@ -936,7 +935,7 @@ fun GalleryEditScreen(
                                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                                     ) {
                                                         Icon(
-                                                            imageVector = Icons.Default.Tune,
+                                                            imageVector = AppIcons.Tune,
                                                             contentDescription = null,
                                                             tint = Color(0xFFFFD700),
                                                             modifier = Modifier.size(14.dp)
@@ -1439,7 +1438,7 @@ private fun FrameOption(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Tune,
+                            imageVector = AppIcons.Tune,
                             contentDescription = stringResource(R.string.edit),
                             tint = Color.White,
                             modifier = Modifier.size(14.dp)

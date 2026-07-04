@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 private data class CategoryManagementItem(
     val name: String,
@@ -443,7 +444,7 @@ fun FilterManagementScreen(
                         }
                     }) {
                         Icon(
-                            imageVector = if (selectedIds.size == filteredLutList.size) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                            imageVector = if (selectedIds.size == filteredLutList.size) AppIcons.CheckBox else AppIcons.CheckBoxOutlineBlank,
                             contentDescription = "Select All",
                             tint = Color.White
                         )
@@ -455,7 +456,7 @@ fun FilterManagementScreen(
                         showCategoryDialog = true
                     }) {
                         Icon(
-                            imageVector = Icons.Default.Label,
+                            imageVector = AppIcons.Label,
                             contentDescription = "Batch Categorize",
                             tint = Color.White
                         )
@@ -1628,7 +1629,7 @@ private fun CategoryManagementSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.DragHandle,
+                            imageVector = AppIcons.DragHandle,
                             contentDescription = null,
                             tint = Color.White.copy(alpha = 0.5f),
                             modifier = Modifier.draggableHandle().padding(4.dp)
@@ -1850,7 +1851,7 @@ private fun FilterManagementItem(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.DragHandle,
+                    imageVector = AppIcons.DragHandle,
                     contentDescription = "Drag to reorder",
                     tint = Color.White.copy(alpha = 0.5f),
                     modifier = dragModifier.size(24.dp)
@@ -1937,7 +1938,7 @@ private fun FilterManagementItem(
                 modifier = Modifier.size(36.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Tune,
+                    imageVector = AppIcons.Tune,
                     contentDescription = stringResource(R.string.color_recipe),
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(20.dp)
@@ -1964,7 +1965,7 @@ private fun FilterManagementItem(
                     // 分类修改 (所有滤镜可用)
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.category), color = Color.White) },
-                        leadingIcon = { Icon(Icons.Default.Label, null, tint = Color.White.copy(alpha = 0.7f)) },
+                        leadingIcon = { Icon(AppIcons.Label, null, tint = Color.White.copy(alpha = 0.7f)) },
                         onClick = {
                             showMenu = false
                             onEditCategory?.invoke()
@@ -1983,7 +1984,7 @@ private fun FilterManagementItem(
                             },
                             leadingIcon = {
                                 Icon(
-                                    if (lutInfo.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                    if (lutInfo.isFavorite) Icons.Default.Star else AppIcons.StarBorder,
                                     null,
                                     tint = Color(0xFFFFD700)
                                 )
@@ -2010,7 +2011,7 @@ private fun FilterManagementItem(
                     // 复制 (所有滤镜可用)
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.copy), color = Color.White) },
-                        leadingIcon = { Icon(Icons.Default.ContentCopy, null, tint = Color.White.copy(alpha = 0.7f)) },
+                        leadingIcon = { Icon(AppIcons.ContentCopy, null, tint = Color.White.copy(alpha = 0.7f)) },
                         onClick = {
                             showMenu = false
                             onCopy?.invoke()
@@ -2020,7 +2021,7 @@ private fun FilterManagementItem(
                     // 导出 (所有滤镜可用)
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.export_lut_cube), color = Color.White) },
-                        leadingIcon = { Icon(Icons.Default.Download, null, tint = Color.White.copy(alpha = 0.7f)) },
+                        leadingIcon = { Icon(AppIcons.Download, null, tint = Color.White.copy(alpha = 0.7f)) },
                         onClick = {
                             showMenu = false
                             onExport?.invoke()

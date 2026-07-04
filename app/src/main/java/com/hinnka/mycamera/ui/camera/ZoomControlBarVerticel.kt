@@ -9,9 +9,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.FilterVintage
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -42,6 +39,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 
 @Composable
@@ -224,7 +222,7 @@ fun ZoomControlBarVerticel(
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.SwapHoriz,
+                    imageVector = AppIcons.SwapHoriz,
                     contentDescription = stringResource(R.string.toggle_display_mode),
                     modifier = Modifier.size(32.dp)
                         .background(Color.Black.copy(alpha = 0.3f), CircleShape)
@@ -246,7 +244,7 @@ fun ZoomControlBarVerticel(
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.AutoAwesome,
+                    imageVector = AppIcons.AutoAwesome,
                     contentDescription = stringResource(R.string.filters_panel),
                     modifier = Modifier.size(32.dp)
                         .background(Color.Black.copy(alpha = 0.3f), CircleShape)
@@ -402,7 +400,7 @@ fun ZoomRulerVertical(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.FilterVintage,
+                        imageVector = AppIcons.FilterVintage,
                         contentDescription = "Macro",
                         tint = if (isSelected) activeColor else inactiveColor,
                         modifier = Modifier.size(if (isSelected) 16.dp else 14.dp)

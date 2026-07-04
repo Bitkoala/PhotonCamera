@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -24,6 +23,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.viewmodel.GalleryViewModel
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 相册入口缩略图组件
@@ -80,7 +80,7 @@ fun GalleryThumbnail(
         } else {
             // 没有照片时显示图标
             Icon(
-                imageVector = Icons.Default.PhotoLibrary,
+                imageVector = AppIcons.PhotoLibrary,
                 contentDescription = "Gallery",
                 tint = Color.White.copy(alpha = 0.7f),
                 modifier = Modifier.size(24.dp)

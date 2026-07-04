@@ -54,6 +54,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.min
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -192,7 +193,7 @@ fun BurstDetailScreen(
                             )
                         } else {
                             Icon(
-                                imageVector = if (isMainPhoto) Icons.Default.Star else Icons.Default.StarBorder,
+                                imageVector = if (isMainPhoto) Icons.Default.Star else AppIcons.StarBorder,
                                 contentDescription = "设为主图",
                                 tint = if (isMainPhoto) AccentOrange else Color.White
                             )
@@ -207,7 +208,7 @@ fun BurstDetailScreen(
                             .background(Color.White.copy(alpha = 0.1f), CircleShape)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Output,
+                            imageVector = AppIcons.Output,
                             contentDescription = stringResource(R.string.export),
                             tint = AccentOrange
                         )

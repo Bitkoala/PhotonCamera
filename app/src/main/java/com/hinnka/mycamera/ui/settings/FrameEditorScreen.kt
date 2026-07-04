@@ -34,13 +34,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -109,6 +104,7 @@ import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.math.roundToInt
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -498,7 +494,7 @@ private fun PreviewCard(
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ScreenRotation,
+                        imageVector = AppIcons.ScreenRotation,
                         contentDescription = if (portrait) {
                             stringResource(R.string.frame_editor_preview_landscape)
                         } else {
@@ -662,7 +658,7 @@ private fun FrameBasicTab(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
-                            imageVector = Icons.Default.PhotoLibrary,
+                            imageVector = AppIcons.PhotoLibrary,
                             contentDescription = null
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1025,7 +1021,7 @@ private fun ElementListItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = Icons.Default.DragHandle,
+            imageVector = AppIcons.DragHandle,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.5f),
             modifier = dragModifier.size(20.dp)
@@ -1063,7 +1059,7 @@ private fun ElementListItem(
             modifier = Modifier.size(32.dp)
         ) {
             Icon(
-                Icons.Default.ContentCopy,
+                AppIcons.ContentCopy,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.7f),
                 modifier = Modifier.size(16.dp)
@@ -1213,7 +1209,7 @@ private fun ElementEditor(
                 onClick = { onImportLogo(element.draftId) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(imageVector = Icons.Default.Image, contentDescription = null)
+                Icon(imageVector = AppIcons.Image, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.custom_import))
             }

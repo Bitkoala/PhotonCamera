@@ -36,10 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.Output
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -82,6 +79,7 @@ import android.os.Parcelable
 import org.json.JSONObject
 import kotlin.math.abs
 import androidx.core.net.toUri
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 private const val GALLERY_SCREEN_TAG = "GalleryScreen"
 
@@ -319,7 +317,7 @@ fun GalleryScreen(
                     if (isSelectionMode) {
                         IconButton(onClick = { viewModel.toggleSelectAll() }) {
                             Icon(
-                                imageVector = Icons.Default.SelectAll,
+                                imageVector = AppIcons.SelectAll,
                                 contentDescription = stringResource(R.string.select_all),
                                 tint = Color.White
                             )
@@ -329,7 +327,7 @@ fun GalleryScreen(
                             launcher.launch(buildSystemGalleryMediaPickIntent(context))
                         }) {
                             Icon(
-                                imageVector = Icons.Default.AddPhotoAlternate,
+                                imageVector = AppIcons.AddPhotoAlternate,
                                 contentDescription = stringResource(R.string.import_photo),
                                 tint = Color.White
                             )
@@ -436,7 +434,7 @@ fun GalleryScreen(
                                     }
                                 } else {
                                     Icon(
-                                        imageVector = Icons.Default.Output,
+                                        imageVector = AppIcons.Output,
                                         contentDescription = stringResource(R.string.export),
                                         tint = AccentOrange,
                                         modifier = Modifier.size(28.dp)

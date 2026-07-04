@@ -40,16 +40,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -142,6 +135,7 @@ import com.hinnka.mycamera.viewmodel.CameraViewModel
 import com.hinnka.mycamera.video.VideoRecordingPath
 import java.io.File
 import kotlin.math.roundToInt
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 enum class SettingsTab {
     CAMERA, IMAGING, RAW, PHANTOM, SYSTEM
@@ -2158,7 +2152,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(16.dp))
 
                             Icon(
-                                imageVector = Icons.Default.Article,
+                                imageVector = AppIcons.Article,
                                 contentDescription = stringResource(R.string.logs),
                                 tint = Color.White.copy(alpha = 0.6f)
                             )
@@ -2496,13 +2490,13 @@ fun SettingsSection(
                     }
                     if (isExpanded) {
                         Icon(
-                            imageVector = Icons.Default.ExpandLess,
+                            imageVector = AppIcons.ExpandLess,
                             contentDescription = null,
                             tint = Color.White.copy(alpha = 0.6f)
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.ExpandMore,
+                            imageVector = AppIcons.ExpandMore,
                             contentDescription = null,
                             tint = Color.White.copy(alpha = 0.6f)
                         )
@@ -2933,7 +2927,7 @@ fun TextInputSettingItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.4f)
         )
@@ -3036,7 +3030,7 @@ fun DropdownSettingItem(
 
         Box {
             Icon(
-                imageVector = Icons.Default.ExpandMore,
+                imageVector = AppIcons.ExpandMore,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.4f)
             )
@@ -3130,7 +3124,7 @@ fun BaselineColorCorrectionSettingItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Icon(
-            imageVector = Icons.Default.ChevronRight,
+            imageVector = AppIcons.ChevronRight,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.6f)
         )
@@ -3184,7 +3178,7 @@ fun NavigationSettingItem(
             )
         } else {
             Icon(
-                imageVector = Icons.Default.ChevronRight,
+                imageVector = AppIcons.ChevronRight,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = if (enabled) 0.6f else 0.3f)
             )
@@ -3320,7 +3314,7 @@ private fun FrameItem(
         ) {
             if (isNone) {
                 Icon(
-                    imageVector = Icons.Default.FilterNone,
+                    imageVector = AppIcons.FilterNone,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.size(24.dp)
@@ -4330,7 +4324,7 @@ private fun CustomBackgroundItem(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
-                imageVector = Icons.Default.FilterNone,
+                imageVector = AppIcons.FilterNone,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.6f),
                 modifier = Modifier.size(24.dp)
@@ -4410,7 +4404,7 @@ private fun FocalLengthChip(
             )
             if (!isCustom) {
                 Icon(
-                    imageVector = if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    imageVector = if (isHidden) AppIcons.VisibilityOff else AppIcons.Visibility,
                     contentDescription = null,
                     tint = if (isSelected) Color.White else if (isHidden) Color.White.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.5f),
                     modifier = Modifier

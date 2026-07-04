@@ -82,6 +82,7 @@ import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import java.io.File
 import kotlin.math.min
 import kotlin.math.roundToInt
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 照片详情界面
@@ -280,7 +281,7 @@ fun GalleryDetailScreen(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.GridView,
+                                    imageVector = AppIcons.GridView,
                                     contentDescription = "Gallery",
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -369,7 +370,7 @@ fun GalleryDetailScreen(
                     if (currentPhoto != null && currentPhoto.isImage && currentPhoto.isBurstPhoto) {
                         IconButton(onClick = { onViewBurst?.invoke(currentPhoto.id) }, modifier = Modifier.autoRotate()) {
                             Icon(
-                                imageVector = Icons.Default.BurstMode,
+                                imageVector = AppIcons.BurstMode,
                                 contentDescription = "查看连拍照片", // 连拍照片
                                 tint = Color.White
                             )
@@ -422,7 +423,7 @@ fun GalleryDetailScreen(
                     // AI 评分
                     if (currentPhoto?.isImage == true) {
                         GalleryActionItem(
-                            icon = Icons.Default.AutoAwesome,
+                            icon = AppIcons.AutoAwesome,
                             text = stringResource(R.string.gallery_ai_analysis),
                             contentColor = AccentOrange,
                             containerColor = AccentOrange.copy(alpha = 0.15f),
@@ -454,7 +455,7 @@ fun GalleryDetailScreen(
 
                     // 更多
                     GalleryActionItem(
-                        icon = Icons.Default.MoreHoriz,
+                        icon = AppIcons.MoreHoriz,
                         text = stringResource(R.string.more_options),
                         onClick = { showMoreSheet = true },
                     )
@@ -875,7 +876,7 @@ fun GalleryDetailScreen(
                     // 导出
                     if (currentPhoto.isImage && (viewModel.selectedTab == GalleryTab.PHOTON || currentPhoto.relatedPhoto != null)) {
                         GalleryActionItem(
-                            icon = Icons.Default.Output,
+                            icon = AppIcons.Output,
                             text = stringResource(R.string.export),
                             isLoading = isSaving,
                             onClick = {
@@ -887,7 +888,7 @@ fun GalleryDetailScreen(
                     // 视频导出按钮（仅视频）
                     if (currentPhoto.isVideo) {
                         GalleryActionItem(
-                            icon = Icons.Default.Output,
+                            icon = AppIcons.Output,
                             text = if (isVideoExporting && videoExportProgress > 0) "$videoExportProgress%" else stringResource(R.string.export),
                             isLoading = isVideoExporting,
                             onClick = {

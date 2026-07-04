@@ -8,16 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Business
-import androidx.compose.material.icons.filled.Contrast
-import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Grain
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Iso
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Photo
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -38,8 +29,8 @@ import com.hinnka.mycamera.R
 import com.hinnka.mycamera.model.Film
 import android.widget.Toast
 import android.content.Context
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.ui.platform.LocalContext
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,16 +107,16 @@ fun FilmDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            InfoItem(Icons.Default.Layers, film.type ?: stringResource(R.string.unknown))
-                            InfoItem(Icons.Default.Business, film.manufacturer ?: "N/A")
+                            InfoItem(AppIcons.Layers, film.type ?: stringResource(R.string.unknown))
+                            InfoItem(AppIcons.Business, film.manufacturer ?: "N/A")
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            InfoItem(Icons.Default.Photo, film.formats?.joinToString(", ") ?: "N/A")
-                            InfoItem(Icons.Default.Public, film.origin ?: "N/A")
+                            InfoItem(AppIcons.Photo, film.formats?.joinToString(", ") ?: "N/A")
+                            InfoItem(AppIcons.Public, film.origin ?: "N/A")
                         }
                     }
                 }
@@ -147,10 +138,10 @@ fun FilmDetailScreen(
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            SpecRow(Icons.Default.Layers, film.type ?: stringResource(R.string.unknown))
-                            SpecRow(Icons.Default.Iso, film.iso ?: stringResource(R.string.unknown))
-                            SpecRow(Icons.Default.Grain, film.grain ?: "N/A")
-                            SpecRow(Icons.Default.Contrast, film.contrast ?: "N/A")
+                            SpecRow(AppIcons.Layers, film.type ?: stringResource(R.string.unknown))
+                            SpecRow(AppIcons.Iso, film.iso ?: stringResource(R.string.unknown))
+                            SpecRow(AppIcons.Grain, film.grain ?: "N/A")
+                            SpecRow(AppIcons.Contrast, film.contrast ?: "N/A")
                             
                             if (!film.bestFor.isNullOrEmpty()) {
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -282,7 +273,7 @@ private fun ExamplePhotoCard(example: String) {
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Bookmark,
+                        imageVector = AppIcons.Bookmark,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
                         tint = Color(0xFFFFD700)

@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 边框管理页面
@@ -496,7 +497,7 @@ private fun FrameManagementItem(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.DragHandle,
+                    imageVector = AppIcons.DragHandle,
                     contentDescription = "Drag to reorder",
                     tint = Color.White.copy(alpha = 0.5f),
                     modifier = dragModifier.size(24.dp)

@@ -8,14 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.FlashOff
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.FlashlightOff
-import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,6 +32,7 @@ import com.hinnka.mycamera.video.VideoCapabilities
 import com.hinnka.mycamera.video.VideoConfig
 import com.hinnka.mycamera.video.VideoLogProfile
 import com.hinnka.mycamera.video.VideoResolutionPreset
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @Composable
 fun CameraTopBar(
@@ -108,10 +102,10 @@ fun CameraTopBar(
         IconButton(onClick = onFlashToggle) {
             Icon(
                 imageVector = when (flashMode) {
-                    0 -> Icons.Default.FlashOff
-                    1 -> Icons.Default.FlashOn
-                    2 -> Icons.Default.FlashlightOn
-                    else -> Icons.Default.FlashOff
+                    0 -> AppIcons.FlashOff
+                    1 -> AppIcons.FlashOn
+                    2 -> AppIcons.FlashlightOn
+                    else -> AppIcons.FlashOff
                 },
                 modifier = Modifier.size(20.dp).autoRotate(),
                 contentDescription = stringResource(R.string.flash),
@@ -130,7 +124,7 @@ fun CameraTopBar(
                 )
             } else {
                 Icon(
-                    imageVector = Icons.Default.Timer,
+                    imageVector = AppIcons.Timer,
                     contentDescription = stringResource(R.string.timer),
                     modifier = Modifier.size(20.dp).autoRotate(),
                     tint = Color.White
@@ -149,7 +143,7 @@ fun CameraTopBar(
 
         IconButton(onClick = onHistogramToggle) {
             Icon(
-                imageVector = Icons.Default.BarChart,
+                imageVector = AppIcons.BarChart,
                 contentDescription = stringResource(R.string.histogram),
                 modifier = Modifier.size(20.dp).autoRotate(),
                 tint = if (showHistogram) Color.Yellow else Color.White
@@ -191,10 +185,10 @@ private fun QuickShotTopBar(
         IconButton(onClick = onFlashToggle) {
             Icon(
                 imageVector = when (flashMode) {
-                    0 -> Icons.Default.FlashOff
-                    1 -> Icons.Default.FlashOn
-                    2 -> Icons.Default.FlashlightOn
-                    else -> Icons.Default.FlashOff
+                    0 -> AppIcons.FlashOff
+                    1 -> AppIcons.FlashOn
+                    2 -> AppIcons.FlashlightOn
+                    else -> AppIcons.FlashOff
                 },
                 modifier = Modifier.size(20.dp).autoRotate(),
                 contentDescription = stringResource(R.string.flash),
@@ -219,7 +213,7 @@ private fun QuickShotTopBar(
 
         IconButton(onClick = onHistogramToggle) {
             Icon(
-                imageVector = Icons.Default.BarChart,
+                imageVector = AppIcons.BarChart,
                 contentDescription = stringResource(R.string.histogram),
                 modifier = Modifier.size(20.dp).autoRotate(),
                 tint = if (showHistogram) Color.Yellow else Color.White
@@ -281,7 +275,7 @@ private fun VideoTopBar(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     VideoActionIcon(
-                        icon = if (videoConfig.torchEnabled) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
+                        icon = if (videoConfig.torchEnabled) AppIcons.FlashlightOn else AppIcons.FlashlightOff,
                         active = videoConfig.torchEnabled,
                         enabled = videoCapabilities.supportsTorch,
                         onClick = onVideoTorchToggle,

@@ -50,13 +50,13 @@ import com.hinnka.mycamera.ui.components.ColorRecipePanel
 import com.hinnka.mycamera.ui.components.CurveChannel
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.ui.components.PaymentDialog
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.SolidColor
 import com.hinnka.mycamera.ui.components.CustomSlider
 import me.saket.telephoto.zoomable.ZoomSpec
 import me.saket.telephoto.zoomable.coil.ZoomableAsyncImage
 import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @SuppressLint("LocalContextGetResourceValueCall")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -478,7 +478,7 @@ fun LutSynthesisScreen(
                     modifier = Modifier.weight(1.5f)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Tune,
+                        imageVector = AppIcons.Tune,
                         contentDescription = "Tune Parameters",
                         modifier = Modifier.size(16.dp)
                     )

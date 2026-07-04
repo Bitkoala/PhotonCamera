@@ -22,8 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowLeft
-import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,6 +59,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 拼图卡片布局结果数据类
@@ -521,7 +520,7 @@ fun PuzzleScreen(
                                                     ) {
                                                         // 左移按钮
                                                         Icon(
-                                                            imageVector = Icons.AutoMirrored.Filled.ArrowLeft,
+                                                            imageVector = AppIcons.AutoMirroredArrowLeft,
                                                             contentDescription = "Move Left",
                                                             tint = if (index > 0) Color.White else Color.White.copy(alpha = 0.2f),
                                                             modifier = Modifier
@@ -540,7 +539,7 @@ fun PuzzleScreen(
                                                         )
                                                         // 右移按钮
                                                         Icon(
-                                                            imageVector = Icons.AutoMirrored.Filled.ArrowRight,
+                                                            imageVector = AppIcons.AutoMirroredArrowRight,
                                                             contentDescription = "Move Right",
                                                             tint = if (index < selectedPhotoUris.size - 1) Color.White else Color.White.copy(alpha = 0.2f),
                                                             modifier = Modifier

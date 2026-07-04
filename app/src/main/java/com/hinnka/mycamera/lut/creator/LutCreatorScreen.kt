@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +26,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.ui.components.PaymentDialog
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 private data class LocalImagePairDraft(
     val sourceUri: Uri,
@@ -373,7 +373,7 @@ fun LutCreatorScreen(
                     ) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Icon(
-                            imageVector = Icons.Default.AutoAwesome,
+                            imageVector = AppIcons.AutoAwesome,
                             contentDescription = null,
                             modifier = Modifier.size(48.dp),
                             tint = Color(0xFFE5A324)

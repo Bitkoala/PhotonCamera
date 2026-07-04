@@ -34,11 +34,10 @@ import com.hinnka.mycamera.ui.theme.AccentOrange
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Article
-import androidx.compose.material.icons.filled.FilterNone
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 裁剪比例选项
@@ -210,7 +209,7 @@ private fun CropAspectOptionItem(
             when (option) {
                 is CropAspectOption.Free -> {
                     Icon(
-                        imageVector = Icons.Default.FilterNone,
+                        imageVector = AppIcons.FilterNone,
                         contentDescription = null,
                         tint = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.5f),
                         modifier = Modifier.size(20.dp)
@@ -218,7 +217,7 @@ private fun CropAspectOptionItem(
                 }
                 is CropAspectOption.Original -> {
                     Icon(
-                        imageVector = Icons.Default.Article,
+                        imageVector = AppIcons.Article,
                         contentDescription = null,
                         tint = if (isSelected) AccentOrange else Color.White.copy(alpha = 0.5f),
                         modifier = Modifier.size(20.dp)

@@ -10,9 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FilterNone
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -43,6 +41,7 @@ import com.hinnka.mycamera.ui.camera.LutEditBottomSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @Composable
 fun LutSelectorWithRecipeAction(
@@ -102,7 +101,7 @@ fun LutSelectorWithRecipeAction(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Tune,
+                            imageVector = AppIcons.Tune,
                             contentDescription = null,
                             tint = if (recipeIsCustomized) Color(0xFFFF9800) else Color(0xFFFFD700),
                             modifier = Modifier.size(14.dp)
@@ -586,7 +585,7 @@ private fun LutItem(
             }
             if (isNone) {
                 Icon(
-                    imageVector = Icons.Default.FilterNone,
+                    imageVector = AppIcons.FilterNone,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.size(24.dp)
@@ -608,7 +607,7 @@ private fun LutItem(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Tune,
+                            imageVector = AppIcons.Tune,
                             contentDescription = stringResource(R.string.edit),
                             tint = Color.White,
                             modifier = Modifier.size(14.dp)

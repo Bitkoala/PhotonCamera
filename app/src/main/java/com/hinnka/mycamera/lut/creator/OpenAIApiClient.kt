@@ -3,6 +3,7 @@ package com.hinnka.mycamera.lut.creator
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
+import androidx.annotation.Keep
 import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.Dispatchers
@@ -496,12 +497,14 @@ Return JSON only, without markdown formatting, code blocks, or any conversationa
     }
 }
 
+@Keep
 data class AiPhotoEvaluation(
     val overallScore: Int,
     val scores: AiPhotoElementScores,
     val summary: String
 )
 
+@Keep
 data class AiPhotoElementScores(
     val impact: Int,
     val technicalExcellence: Int,

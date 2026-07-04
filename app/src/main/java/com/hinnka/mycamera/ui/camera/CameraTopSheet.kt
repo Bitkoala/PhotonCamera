@@ -37,6 +37,7 @@ import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
 import com.hinnka.mycamera.ui.components.RawDcpLensOption
 import com.hinnka.mycamera.video.*
 import com.hinnka.mycamera.video.VideoCodec
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 private enum class VideoSettingPanel {
     ASPECT_RATIO,
@@ -293,14 +294,14 @@ fun CameraTopSheet(
 
                     QuickSettingButton(
                         title = stringResource(R.string.settings_filter_management),
-                        icon = Icons.Default.AutoAwesome,
+                        icon = AppIcons.AutoAwesome,
                         onClick = onFilterManageClick,
                         modifier = Modifier.weight(1f)
                     )
 
                     QuickSettingButton(
                         title = stringResource(R.string.settings_frame_management),
-                        icon = Icons.Default.BorderBottom,
+                        icon = AppIcons.BorderBottom,
                         onClick = onFrameManageClick,
                         modifier = Modifier.weight(1f)
                     )
@@ -531,14 +532,14 @@ fun CameraTopSheet(
                 ) {
                     QuickSettingButton(
                         title = stringResource(R.string.settings_filter_management),
-                        icon = Icons.Default.AutoAwesome,
+                        icon = AppIcons.AutoAwesome,
                         onClick = onFilterManageClick,
                         modifier = Modifier.weight(1f)
                     )
 
                     QuickSettingButton(
                         title = stringResource(R.string.settings_frame_management),
-                        icon = Icons.Default.BorderBottom,
+                        icon = AppIcons.BorderBottom,
                         onClick = onFrameManageClick,
                         modifier = Modifier.weight(1f)
                     )
@@ -583,7 +584,7 @@ fun CameraTopSheet(
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
-                        imageVector = Icons.Default.ChevronRight,
+                        imageVector = AppIcons.ChevronRight,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.3f),
                         modifier = Modifier.size(20.dp)
@@ -738,7 +739,7 @@ private fun RowScope.VideoSettingTile(
                 modifier = Modifier.weight(1f)
             )
             Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.OpenInFull,
+                imageVector = if (expanded) AppIcons.ExpandLess else AppIcons.OpenInFull,
                 contentDescription = null,
                 tint = if (expanded) Color.Black else Color.White.copy(alpha = 0.8f),
                 modifier = Modifier.size(12.dp)
@@ -912,7 +913,7 @@ private fun ToolboxQuickSetting(
 ) {
     QuickSettingButton(
         title = stringResource(R.string.toolbox_title),
-        icon = Icons.Default.Palette,
+        icon = AppIcons.Palette,
         onClick = onToolboxClick,
         modifier = modifier
     )
@@ -1024,7 +1025,7 @@ fun QuickSettingButton2(
                 fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal,
             )
             Icon(
-                imageVector = Icons.Default.ChevronRight,
+                imageVector = AppIcons.ChevronRight,
                 contentDescription = null,
                 tint = if (checked) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.9f),
                 modifier = Modifier.size(18.dp)

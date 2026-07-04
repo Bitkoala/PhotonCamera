@@ -17,7 +17,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -55,6 +54,7 @@ import com.hinnka.mycamera.ui.theme.PhotonCameraTheme
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 class ScreenCapturePipActivity : ComponentActivity() {
 
@@ -377,7 +377,7 @@ private fun ScreenCapturePipContent(
                     .padding(top = 48.dp, end = 16.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.PictureInPictureAlt,
+                    imageVector = AppIcons.PictureInPictureAlt,
                     contentDescription = stringResource(R.string.screen_capture_return_to_pip)
                 )
             }

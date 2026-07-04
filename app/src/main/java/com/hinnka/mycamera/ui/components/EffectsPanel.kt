@@ -8,7 +8,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.model.RecipeParam
 import kotlin.math.abs
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 enum class EffectType(
     val recipeParam: RecipeParam,
@@ -91,7 +91,7 @@ fun EffectsActionChip(
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Icon(
-            imageVector = Icons.Default.Layers,
+            imageVector = AppIcons.Layers,
             contentDescription = stringResource(com.hinnka.mycamera.R.string.effects_title),
             tint = Color(0xFF00FFCC),
             modifier = Modifier.size(14.dp)

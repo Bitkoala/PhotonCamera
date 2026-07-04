@@ -24,9 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -60,6 +58,7 @@ import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.viewmodel.CameraViewModel
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,7 +148,7 @@ fun PresetManagementScreen(
                 }
                 IconButton(onClick = { showRestoreDefaultsDialog = true }) {
                     Icon(
-                        imageVector = Icons.Default.RestartAlt,
+                        imageVector = AppIcons.RestartAlt,
                         contentDescription = stringResource(R.string.preset_restore_defaults),
                         tint = Color.White.copy(alpha = 0.8f)
                     )
@@ -262,7 +261,7 @@ private fun PresetManagementItem(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.DragHandle,
+                imageVector = AppIcons.DragHandle,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.45f),
                 modifier = dragModifier.size(28.dp)

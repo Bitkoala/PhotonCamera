@@ -19,16 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Undo
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Cameraswitch
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -91,6 +83,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.*
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 /**
  * 主相机界面
@@ -1578,7 +1571,7 @@ fun CameraScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Tune,
+                                    imageVector = AppIcons.Tune,
                                     contentDescription = stringResource(R.string.color_recipe),
                                     tint = Color(0xFFFFD700), // Gold color to match VIP/Premium feel
                                     modifier = Modifier.size(14.dp)
@@ -1723,7 +1716,7 @@ fun MultipleExposureOverlay(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Layers,
+                    imageVector = AppIcons.Layers,
                     contentDescription = null,
                     tint = Color(0xFFE5A324),
                     modifier = Modifier.size(16.dp)
@@ -1742,7 +1735,7 @@ fun MultipleExposureOverlay(
                         modifier = Modifier.size(24.dp)
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Outlined.Undo,
+                            AppIcons.AutoMirroredOutlinedUndo,
                             contentDescription = stringResource(R.string.multiple_exposure_undo),
                             modifier = Modifier.size(16.dp),
                             tint = Color.White
@@ -1854,7 +1847,7 @@ fun Controls(
                             .autoRotate()
                     ) {
                         Icon(
-                            imageVector = Icons.Default.CameraAlt,
+                            imageVector = AppIcons.CameraAlt,
                             contentDescription = stringResource(R.string.take_photo),
                             tint = Color.White,
                             modifier = Modifier.size(32.dp)
@@ -1876,7 +1869,7 @@ fun Controls(
                             .autoRotate()
                     ) {
                         Icon(
-                            imageVector = if (state.videoRecordingState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            imageVector = if (state.videoRecordingState.isPaused) Icons.Default.PlayArrow else AppIcons.Pause,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(32.dp)
@@ -1892,7 +1885,7 @@ fun Controls(
                             .autoRotate()
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Cameraswitch,
+                            imageVector = AppIcons.Cameraswitch,
                             contentDescription = stringResource(R.string.switch_camera),
                             tint = Color.White,
                             modifier = Modifier.size(32.dp)
@@ -2106,7 +2099,7 @@ private fun CaptureModeSwitcher(
             verticalAlignment = Alignment.CenterVertically
         ) {
             ModeSwitcherItem(
-                icon = Icons.Default.Bolt,
+                icon = AppIcons.Bolt,
                 selected = captureMode == CaptureMode.QUICK_SHOT,
                 enabled = enabled,
                 contentDescription = stringResource(R.string.capture_mode_quick_shot),
@@ -2114,7 +2107,7 @@ private fun CaptureModeSwitcher(
                 modifier = Modifier.weight(1f)
             )
             ModeSwitcherItem(
-                icon = Icons.Default.CameraAlt,
+                icon = AppIcons.CameraAlt,
                 selected = captureMode == CaptureMode.PHOTO,
                 enabled = enabled,
                 contentDescription = stringResource(R.string.capture_mode_photo),
@@ -2122,7 +2115,7 @@ private fun CaptureModeSwitcher(
                 modifier = Modifier.weight(1f)
             )
             ModeSwitcherItem(
-                icon = Icons.Default.Videocam,
+                icon = AppIcons.Videocam,
                 selected = captureMode == CaptureMode.VIDEO,
                 enabled = enabled,
                 contentDescription = stringResource(R.string.capture_mode_video),

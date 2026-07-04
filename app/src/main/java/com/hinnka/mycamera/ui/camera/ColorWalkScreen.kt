@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +37,7 @@ import kotlin.math.*
 import kotlin.random.Random
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
+import com.hinnka.mycamera.ui.icons.AppIcons
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,7 +171,7 @@ fun ColorWalkScreen(
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(AppIcons.Shuffle, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.color_walk_random), fontSize = 14.sp)
                 }
@@ -217,7 +217,7 @@ fun ColorWalkScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            Icons.Default.Shuffle,
+                            AppIcons.Shuffle,
                             contentDescription = null,
                             tint = if (selectedColor.isDark()) Color.White.copy(alpha = 0.3f) else Color.Black.copy(alpha = 0.3f),
                             modifier = Modifier.size(32.dp)
