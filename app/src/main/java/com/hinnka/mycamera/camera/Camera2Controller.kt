@@ -4487,12 +4487,12 @@ class Camera2Controller(private val context: Context) {
         }
         val zeroCount = zeroEvFrameCount.coerceAtLeast(1)
         if (isRawCapture) {
+            val normalFrameCount = zeroEvFrameCount.coerceAtLeast(HdrBracketConfig.RAW_REFERENCE_FRAME_COUNT - 1)
             return buildList {
-                add(sideEv)
-                repeat(zeroCount) {
+                add(-sideEv)
+                repeat(normalFrameCount) {
                     add(0f)
                 }
-                add(-sideEv)
             }
         }
         return buildList {

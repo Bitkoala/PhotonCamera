@@ -5052,7 +5052,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val frameCount = state.value.hdrBracketFrameCount
                 .coerceAtLeast(HDR_BRACKET_FRAME_COUNT)
             hdrBracketExpectedFrameCount = frameCount
-            hdrBracketZeroEvFrameCount = (frameCount - 2).coerceAtLeast(1)
+            hdrBracketZeroEvFrameCount = if (isRawCaptureFormat(image.format)) {
+                (frameCount - 1).coerceAtLeast(1)
+            } else {
+                (frameCount - 2).coerceAtLeast(1)
+            }
         }
         hdrBracketImages.add(image)
         hdrBracketCaptureResults.add(captureResult)
