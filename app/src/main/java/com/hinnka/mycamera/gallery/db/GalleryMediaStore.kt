@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.OpenableColumns
 import androidx.core.net.toUri
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.RawBlackBorderCrop
 import com.hinnka.mycamera.gallery.MediaData
 import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.MediaType
@@ -294,6 +295,10 @@ object GalleryMediaStore {
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
             rawCfaCorrectionMode = metadata.rawCfaCorrectionMode,
+            rawBlackBorderCropLeftPx = metadata.rawBlackBorderCrop.leftPx,
+            rawBlackBorderCropTopPx = metadata.rawBlackBorderCrop.topPx,
+            rawBlackBorderCropRightPx = metadata.rawBlackBorderCrop.rightPx,
+            rawBlackBorderCropBottomPx = metadata.rawBlackBorderCrop.bottomPx,
             rawDROEnabled = false,
             cameraId = metadata.cameraId,
             applyEffectsToVideo = metadata.applyEffectsToVideo,
@@ -465,6 +470,12 @@ object GalleryMediaStore {
             rawCustomBlackLevel = rawCustomBlackLevel,
             rawWhiteLevelMode = rawWhiteLevelMode,
             rawCfaCorrectionMode = rawCfaCorrectionMode,
+            rawBlackBorderCrop = RawBlackBorderCrop(
+                leftPx = rawBlackBorderCropLeftPx,
+                topPx = rawBlackBorderCropTopPx,
+                rightPx = rawBlackBorderCropRightPx,
+                bottomPx = rawBlackBorderCropBottomPx
+            ),
             cameraId = cameraId,
             applyEffectsToVideo = applyEffectsToVideo,
             spectralFilmStock = spectralFilmStock,

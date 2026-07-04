@@ -2121,6 +2121,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
+            rawBlackBorderCrop = currentRawBlackBorderCrop(),
             rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
             rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs, captureMode),
             spectralFilmStock = spectralFilmSettings.stock,
@@ -2194,6 +2195,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             ImageFormat.RAW12 -> true
             else -> false
         }
+    }
+
+    private fun currentRawBlackBorderCrop(): RawBlackBorderCrop {
+        val cameraInfo = state.value.getCurrentCameraInfo() ?: return RawBlackBorderCrop()
+        return cameraInfo.rawBlackBorderCrop.takeIf { cameraInfo.isVirtualIszLens }
+            ?: RawBlackBorderCrop()
     }
 
     private fun defaultHdrEffectEnabled(
@@ -4282,13 +4289,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         baseCameraId: String,
         iszZoomRatio: Float,
         isMacro: Boolean,
+        rawBlackBorderCrop: RawBlackBorderCrop,
         settings: VendorCaptureSettings
     ) {
         viewModelScope.launch {
             val normalizedBaseCameraId = baseCameraId.trim()
             if (normalizedBaseCameraId.isEmpty() || iszZoomRatio < 1f) return@launch
 
-            val config = IszLensConfig(normalizedBaseCameraId, iszZoomRatio, isMacro)
+            val config = IszLensConfig(
+                normalizedBaseCameraId,
+                iszZoomRatio,
+                isMacro,
+                IszLensConfig.sanitizeRawBlackBorderCrop(rawBlackBorderCrop)
+            )
             val prefs = userPreferencesRepository.userPreferences.first()
             val updatedConfigs = (prefs.iszLensConfigs
                 .filterNot { it.virtualCameraId == config.virtualCameraId } + config)
@@ -4483,6 +4496,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
+                rawBlackBorderCrop = currentRawBlackBorderCrop(),
                 rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
                 rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = spectralFilmSettings.stock,
@@ -4651,6 +4665,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
+                rawBlackBorderCrop = currentRawBlackBorderCrop(),
                 rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
                 rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = if (storeRenderedLookMetadata) spectralFilmSettings.stock else null,
@@ -4794,6 +4809,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                     rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                     cameraId = currentCameraId,
+                    rawBlackBorderCrop = currentRawBlackBorderCrop(),
                     rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
                     rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                     spectralFilmStock = null,
@@ -4969,6 +4985,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
+                rawBlackBorderCrop = currentRawBlackBorderCrop(),
                 rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
                 rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
                 spectralFilmStock = spectralFilmSettings.stock,
@@ -5506,6 +5523,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
+            rawBlackBorderCrop = currentRawBlackBorderCrop(),
             rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
             rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
             spectralFilmStock = spectralFilmSettings.stock,

@@ -527,14 +527,15 @@ class CameraDiscovery(private val context: Context) {
                 isVirtualIszLens = true,
                 isVirtualIszMacroLens = config.isMacro,
                 baseCameraId = baseCamera.info.cameraId,
-                iszZoomRatio = config.iszZoomRatio
+                iszZoomRatio = config.iszZoomRatio,
+                rawBlackBorderCrop = config.rawBlackBorderCrop
             )
 
             PLog.d(
                 TAG,
                 "Add ISZ virtual lens ${virtualInfo.cameraId}: base=${config.baseCameraId}, " +
                         "apiIntrinsic=${virtualInfo.intrinsicZoomRatio}, displayZoom=$displayZoomRatio, " +
-                        "isMacro=${config.isMacro}"
+                        "isMacro=${config.isMacro}, rawBlackBorderCrop=${config.rawBlackBorderCrop}"
             )
             CameraInfoWithZoom(
                 info = virtualInfo,

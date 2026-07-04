@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.processor
 
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
@@ -30,6 +31,7 @@ class GlesRawStacker(
     private val lensShadingWidth: Int,
     private val lensShadingHeight: Int,
     colorCorrectionMatrix: FloatArray? = null,
+    pgtmStatsBounds: Rect? = null,
 ) {
     private data class TextureLevel(val texture: Int, val width: Int, val height: Int)
     private data class ReadOutputTiming(
@@ -65,6 +67,7 @@ class GlesRawStacker(
             ?.takeIf { it.isFinite() }
             ?: if (index % 4 == 0) 1f else 0f
     }
+    private val pgtmStatsBounds = sanitizePgtmStatsBounds(pgtmStatsBounds)
 
     private val planeWidth = max(1, width / 2)
     private val planeHeight = max(1, height / 2)
@@ -531,6 +534,9 @@ class GlesRawStacker(
         val pgtmGridWidth = grid.getOrElse(0) { 0 }
         val pgtmGridHeight = grid.getOrElse(1) { 0 }
         if (pgtmGridWidth <= 0 || pgtmGridHeight <= 0) return null
+        if (!pgtmStatsBounds.isFullImage()) {
+            PLog.d(TAG, "GPU HDR PGTM stats bounds: source=${width}x$height bounds=$pgtmStatsBounds")
+        }
 
         val cellCount = pgtmGridWidth * pgtmGridHeight
         val floatCount = cellCount * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE
@@ -546,6 +552,13 @@ class GlesRawStacker(
             GLES31.glUseProgram(pgtmStatsProgram)
             bindTexture(pgtmStatsProgram, "uPackedRaw", 0, outputTexture)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(pgtmStatsProgram, "uImageSize"), width, height)
+            GLES31.glUniform4i(
+                GLES31.glGetUniformLocation(pgtmStatsProgram, "uStatsBounds"),
+                pgtmStatsBounds.left,
+                pgtmStatsBounds.top,
+                pgtmStatsBounds.right,
+                pgtmStatsBounds.bottom,
+            )
             GLES31.glUniform2i(
                 GLES31.glGetUniformLocation(pgtmStatsProgram, "uGridSize"),
                 pgtmGridWidth,
@@ -600,6 +613,18 @@ class GlesRawStacker(
             GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
             GLES31.glDeleteBuffers(1, intArrayOf(statsBufferId), 0)
         }
+    }
+
+    private fun sanitizePgtmStatsBounds(bounds: Rect?): Rect {
+        val imageBounds = Rect(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
+        if (bounds == null || bounds.isEmpty) return imageBounds
+        return Rect(bounds).takeIf {
+            it.intersect(imageBounds) && it.width() >= 2 && it.height() >= 2
+        } ?: imageBounds
+    }
+
+    private fun Rect.isFullImage(): Boolean {
+        return left == 0 && top == 0 && right == width && bottom == height
     }
 
     private fun buildProxy(
@@ -2384,6 +2409,7 @@ class GlesRawStacker(
             layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uPackedRaw;
             uniform ivec2 uImageSize;
+            uniform ivec4 uStatsBounds;
             uniform ivec2 uGridSize;
             uniform int uCfaPattern;
             uniform float uBaselineExposureGain;
@@ -2470,14 +2496,28 @@ class GlesRawStacker(
                 }
                 barrier();
 
-                int startX = (cell.x * uImageSize.x) / uGridSize.x;
-                int endX = ((cell.x + 1) * uImageSize.x + uGridSize.x - 1) / uGridSize.x;
-                int startY = (cell.y * uImageSize.y) / uGridSize.y;
-                int endY = ((cell.y + 1) * uImageSize.y + uGridSize.y - 1) / uGridSize.y;
-                startX -= startX & 1;
-                startY -= startY & 1;
-                endX = min(uImageSize.x, endX + (endX & 1));
-                endY = min(uImageSize.y, endY + (endY & 1));
+                ivec2 statsMin = clamp(uStatsBounds.xy, ivec2(0), uImageSize - ivec2(1));
+                ivec2 statsMax = clamp(uStatsBounds.zw, statsMin + ivec2(1), uImageSize);
+                ivec2 statsSize = max(statsMax - statsMin, ivec2(2));
+                int startX = statsMin.x + (cell.x * statsSize.x) / uGridSize.x;
+                int endX = statsMin.x + ((cell.x + 1) * statsSize.x + uGridSize.x - 1) / uGridSize.x;
+                int startY = statsMin.y + (cell.y * statsSize.y) / uGridSize.y;
+                int endY = statsMin.y + ((cell.y + 1) * statsSize.y + uGridSize.y - 1) / uGridSize.y;
+                startX += startX & 1;
+                startY += startY & 1;
+                endX = min(statsMax.x, endX - (endX & 1));
+                endY = min(statsMax.y, endY - (endY & 1));
+
+                if (endX - startX < 2 || endY - startY < 2) {
+                    if (localIndex == 0) {
+                        int cellIndex = cell.y * uGridSize.x + cell.x;
+                        int offset = cellIndex * STATS_STRIDE;
+                        for (int i = 0; i < STATS_STRIDE; ++i) {
+                            stats[offset + i] = 0.0;
+                        }
+                    }
+                    return;
+                }
 
                 int cellWidth = max(endX - startX, 2);
                 int cellHeight = max(endY - startY, 2);

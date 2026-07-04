@@ -8,7 +8,7 @@ import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 @Database(
     entities = [GalleryMediaEntity::class],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 @androidx.room.TypeConverters(GalleryConverters::class)
@@ -145,6 +145,15 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawBlackBorderCropLeftPx INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawBlackBorderCropTopPx INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawBlackBorderCropRightPx INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawBlackBorderCropBottomPx INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): GalleryDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -168,9 +177,11 @@ abstract class GalleryDatabase : RoomDatabase() {
                         MIGRATION_13_14,
                         MIGRATION_14_15,
                         MIGRATION_15_16,
-                        MIGRATION_16_17
+                        MIGRATION_16_17,
+                        MIGRATION_17_18
                     )
                     .fallbackToDestructiveMigrationOnDowngrade(false)
+                    .fallbackToDestructiveMigration(false)
                     .build()
                     .also { INSTANCE = it }
             }

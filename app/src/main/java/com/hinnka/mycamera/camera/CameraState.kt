@@ -183,6 +183,7 @@ data class CameraInfo(
     val isVirtualIszMacroLens: Boolean = false, // ISZ 虚拟镜头是否强制识别为微距
     val baseCameraId: String? = null, // 虚拟镜头对应的真实物理镜头 ID
     val iszZoomRatio: Float = 1f, // ISZ 虚拟倍率
+    val rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(), // RAW 原始分辨率黑边裁切像素
     val minimumFocusDistance: Float = 0f // 最小对焦距离 (diopters, 0 = infinity only)
 ) {
     fun getOpenCameraId(): String = logicalCameraId ?: cameraId

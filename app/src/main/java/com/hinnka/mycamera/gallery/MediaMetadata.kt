@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.RawBlackBorderCrop
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
@@ -117,6 +118,7 @@ data class MediaMetadata(
     val rawCustomBlackLevel: Float? = null,
     val rawWhiteLevelMode: String? = null,
     val rawCfaCorrectionMode: String? = null,
+    val rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
     val applyEffectsToVideo: Boolean = false,
     val spectralFilmStock: String? = null,
     val spectralFilmPrint: String? = null,

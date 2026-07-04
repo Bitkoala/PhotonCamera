@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.raw
 
+import android.graphics.Rect
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -19,6 +20,7 @@ internal object RawProfileGainTableMapBuilder {
         rowStride: Int,
         metadata: RawMetadata,
         samplesPerPixel: Int = 1,
+        statsBounds: Rect? = null,
     ): DngProfileGainTableMap? {
         val stats = buildPackedCellStats(
             rawData = rawData,
@@ -26,7 +28,8 @@ internal object RawProfileGainTableMapBuilder {
             height = height,
             rowStride = rowStride,
             metadata = metadata,
-            samplesPerPixel = samplesPerPixel
+            samplesPerPixel = samplesPerPixel,
+            statsBounds = statsBounds
         ) ?: return null
         val diagnosticBand = DngPgtmDiagnostic.activeBandForSource(TAG)
         return DngHdrProfileGainTableGenerator.forCellStats(
@@ -45,6 +48,7 @@ internal object RawProfileGainTableMapBuilder {
         rowStride: Int,
         metadata: RawMetadata,
         samplesPerPixel: Int,
+        statsBounds: Rect?,
     ): FloatArray? {
         if (width <= 0 || height <= 0 || metadata.whiteLevel <= 0f) return null
         val sampleCountPerPixel = samplesPerPixel.coerceAtLeast(1)
@@ -65,24 +69,37 @@ internal object RawProfileGainTableMapBuilder {
         val gridWidth = grid.getOrElse(0) { 0 }
         val gridHeight = grid.getOrElse(1) { 0 }
         if (gridWidth <= 0 || gridHeight <= 0) return null
+        val safeStatsBounds = sanitizeStatsBounds(statsBounds, width, height) ?: return null
+        if (!safeStatsBounds.isFullImage(width, height)) {
+            PLog.d(TAG, "PGTM stats bounds: source=${width}x$height bounds=$safeStatsBounds")
+        }
 
         val baselineGain = DngBaselineExposure.exactGain(metadata.baselineExposure)
         val stats = FloatArray(gridWidth * gridHeight * DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE)
         val hist = IntArray(HIST_BINS)
         val inputSamples = FloatArray(SAMPLE_GRID * SAMPLE_GRID)
+        val statsWidth = safeStatsBounds.width()
+        val statsHeight = safeStatsBounds.height()
         for (cellY in 0 until gridHeight) {
             for (cellX in 0 until gridWidth) {
                 java.util.Arrays.fill(hist, 0)
                 var sampleCount = 0
                 var highlightCount = 0
-                var startX = (cellX * width) / gridWidth
-                var endX = ((cellX + 1) * width + gridWidth - 1) / gridWidth
-                var startY = (cellY * height) / gridHeight
-                var endY = ((cellY + 1) * height + gridHeight - 1) / gridHeight
-                startX -= startX and 1
-                startY -= startY and 1
-                endX = min(width, endX + (endX and 1))
-                endY = min(height, endY + (endY and 1))
+                var startX = safeStatsBounds.left + (cellX * statsWidth) / gridWidth
+                var endX = safeStatsBounds.left + ((cellX + 1) * statsWidth + gridWidth - 1) / gridWidth
+                var startY = safeStatsBounds.top + (cellY * statsHeight) / gridHeight
+                var endY = safeStatsBounds.top + ((cellY + 1) * statsHeight + gridHeight - 1) / gridHeight
+                startX = alignUpToEven(startX)
+                startY = alignUpToEven(startY)
+                endX = alignDownToEven(endX).coerceAtMost(safeStatsBounds.right)
+                endY = alignDownToEven(endY).coerceAtMost(safeStatsBounds.bottom)
+
+                val offset = (cellY * gridWidth + cellX) *
+                    DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE
+                if (endX - startX < 2 || endY - startY < 2) {
+                    stats[offset + 5] = 0f
+                    continue
+                }
 
                 val cellWidth = max(endX - startX, 2)
                 val cellHeight = max(endY - startY, 2)
@@ -116,8 +133,6 @@ internal object RawProfileGainTableMapBuilder {
                     }
                 }
 
-                val offset = (cellY * gridWidth + cellX) *
-                    DngHdrProfileGainTableGenerator.CELL_STATS_FLOAT_STRIDE
                 stats[offset] = percentileFromHist(hist, sampleCount, 0.10f)
                 stats[offset + 1] = percentileFromHist(hist, sampleCount, 0.50f)
                 stats[offset + 2] = percentileFromHist(hist, sampleCount, 0.90f)
@@ -133,6 +148,27 @@ internal object RawProfileGainTableMapBuilder {
             }
         }
         return stats
+    }
+
+    private fun sanitizeStatsBounds(statsBounds: Rect?, width: Int, height: Int): Rect? {
+        val imageBounds = Rect(0, 0, width, height)
+        if (statsBounds == null) return imageBounds
+        if (statsBounds.isEmpty) return null
+        return Rect(statsBounds).takeIf {
+            it.intersect(imageBounds) && it.width() >= 2 && it.height() >= 2
+        }
+    }
+
+    private fun alignUpToEven(value: Int): Int {
+        return if ((value and 1) == 0) value else value + 1
+    }
+
+    private fun alignDownToEven(value: Int): Int {
+        return if ((value and 1) == 0) value else value - 1
+    }
+
+    private fun Rect.isFullImage(width: Int, height: Int): Boolean {
+        return left == 0 && top == 0 && right == width && bottom == height
     }
 
     private fun pgtmInputAt(

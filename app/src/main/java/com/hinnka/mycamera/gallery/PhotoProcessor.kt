@@ -364,6 +364,7 @@ class PhotoProcessor(
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters,
             rawCfaCorrectionMode = metadata.rawCfaCorrectionMode,
+            rawBlackBorderCrop = metadata.rawBlackBorderCrop,
             spectralFilmStock = metadata.spectralFilmStock,
             spectralFilmPrint = metadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
@@ -441,6 +442,7 @@ class PhotoProcessor(
             rawRenderingEngine = metadata.rawRenderingEngine,
             rawToneMappingParameters = metadata.rawToneMappingParameters,
             rawCfaCorrectionMode = metadata.rawCfaCorrectionMode,
+            rawBlackBorderCrop = metadata.rawBlackBorderCrop,
             spectralFilmStock = metadata.spectralFilmStock,
             spectralFilmPrint = metadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(

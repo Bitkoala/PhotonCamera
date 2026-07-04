@@ -2,6 +2,7 @@ package com.hinnka.mycamera.processor
 
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
+import android.graphics.Rect
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
 import androidx.core.graphics.createBitmap
@@ -232,6 +233,7 @@ object MultiFrameStacker {
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
         colorCorrectionMatrix: FloatArray? = null,
+        pgtmStatsBounds: Rect? = null,
     ): RawStackResult? {
         if (normalFrames.isEmpty()) {
             shortFrame.image.close()
@@ -259,6 +261,7 @@ object MultiFrameStacker {
             lensShadingWidth = lensShadingWidth,
             lensShadingHeight = lensShadingHeight,
             colorCorrectionMatrix = colorCorrectionMatrix,
+            pgtmStatsBounds = pgtmStatsBounds,
         ).processHdr(
             shortFrame = GlesRawStacker.HdrInputFrame(shortFrame.image, shortFrame.exposureProduct),
             normalFrames = normalFrames.map { GlesRawStacker.HdrInputFrame(it.image, it.exposureProduct) },

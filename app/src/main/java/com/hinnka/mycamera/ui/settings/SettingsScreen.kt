@@ -109,6 +109,7 @@ import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.IszLensConfig
 import com.hinnka.mycamera.camera.LensType
 import com.hinnka.mycamera.camera.MultiFrameConfig
+import com.hinnka.mycamera.camera.RawBlackBorderCrop
 import com.hinnka.mycamera.camera.VendorCaptureKey
 import com.hinnka.mycamera.camera.VendorCaptureSettings
 import com.hinnka.mycamera.camera.VendorCaptureSettingsByLens
@@ -2330,8 +2331,14 @@ fun SettingsScreen(
             availableCameras = state.availableCameras,
             iszLensConfigs = iszLensConfigs,
             vendorCaptureSettingsByLens = vendorCaptureSettingsByLens,
-            onAddLens = { baseCameraId, iszZoomRatio, isMacro, settings ->
-                viewModel.addIszLensConfig(baseCameraId, iszZoomRatio, isMacro, settings)
+            onAddLens = { baseCameraId, iszZoomRatio, isMacro, rawBlackBorderCrop, settings ->
+                viewModel.addIszLensConfig(
+                    baseCameraId,
+                    iszZoomRatio,
+                    isMacro,
+                    rawBlackBorderCrop,
+                    settings
+                )
                 showAddIszLensDialog = false
             },
             onRemoveLens = { viewModel.removeIszLensConfig(it) },
@@ -3432,7 +3439,7 @@ private fun AddIszLensDialog(
     availableCameras: List<CameraInfo>,
     iszLensConfigs: List<IszLensConfig>,
     vendorCaptureSettingsByLens: VendorCaptureSettingsByLens,
-    onAddLens: (String, Float, Boolean, VendorCaptureSettings) -> Unit,
+    onAddLens: (String, Float, Boolean, RawBlackBorderCrop, VendorCaptureSettings) -> Unit,
     onRemoveLens: (IszLensConfig) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -3446,6 +3453,10 @@ private fun AddIszLensDialog(
     }
     var selectedIszZoomRatio by remember { mutableStateOf(1f) }
     var isMacroLens by remember { mutableStateOf(false) }
+    var rawBlackBorderCropLeftText by remember { mutableStateOf("0") }
+    var rawBlackBorderCropTopText by remember { mutableStateOf("0") }
+    var rawBlackBorderCropRightText by remember { mutableStateOf("0") }
+    var rawBlackBorderCropBottomText by remember { mutableStateOf("0") }
     var settings by remember {
         mutableStateOf(
             VendorCaptureSettings(emptyMap())
@@ -3470,6 +3481,14 @@ private fun AddIszLensDialog(
             IszLensConfig.displayRatioLabel(it.displayIntrinsicZoomRatio * selectedIszZoomRatio)
         )
     } ?: virtualLensId
+    val rawBlackBorderCrop = IszLensConfig.sanitizeRawBlackBorderCrop(
+        RawBlackBorderCrop(
+            leftPx = rawBlackBorderCropLeftText.toIntOrNull() ?: 0,
+            topPx = rawBlackBorderCropTopText.toIntOrNull() ?: 0,
+            rightPx = rawBlackBorderCropRightText.toIntOrNull() ?: 0,
+            bottomPx = rawBlackBorderCropBottomText.toIntOrNull() ?: 0
+        )
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3532,6 +3551,60 @@ private fun AddIszLensDialog(
                         modifier = Modifier.padding(vertical = 12.dp)
                     )
 
+                    Text(
+                        text = stringResource(R.string.settings_isz_raw_black_border_crop),
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_isz_raw_black_border_crop_description),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RawBlackBorderCropField(
+                                value = rawBlackBorderCropLeftText,
+                                onValueChange = { rawBlackBorderCropLeftText = it },
+                                label = stringResource(R.string.settings_isz_raw_black_border_crop_left),
+                                modifier = Modifier.weight(1f)
+                            )
+                            RawBlackBorderCropField(
+                                value = rawBlackBorderCropTopText,
+                                onValueChange = { rawBlackBorderCropTopText = it },
+                                label = stringResource(R.string.settings_isz_raw_black_border_crop_top),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RawBlackBorderCropField(
+                                value = rawBlackBorderCropRightText,
+                                onValueChange = { rawBlackBorderCropRightText = it },
+                                label = stringResource(R.string.settings_isz_raw_black_border_crop_right),
+                                modifier = Modifier.weight(1f)
+                            )
+                            RawBlackBorderCropField(
+                                value = rawBlackBorderCropBottomText,
+                                onValueChange = { rawBlackBorderCropBottomText = it },
+                                label = stringResource(R.string.settings_isz_raw_black_border_crop_bottom),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
                     VendorCaptureSettingsPanel(
                         currentLensId = virtualLensId,
                         currentLensName = virtualLensName,
@@ -3578,7 +3651,14 @@ private fun AddIszLensDialog(
                                 config.virtualCameraId,
                                 displayRatio,
                                 lensKind,
-                                vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId).values.size
+                                vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId).values.size,
+                                stringResource(
+                                    R.string.settings_isz_raw_black_border_crop_summary,
+                                    config.rawBlackBorderCrop.leftPx,
+                                    config.rawBlackBorderCrop.topPx,
+                                    config.rawBlackBorderCrop.rightPx,
+                                    config.rawBlackBorderCrop.bottomPx
+                                )
                             ),
                             onRemove = { onRemoveLens(config) }
                         )
@@ -3588,7 +3668,15 @@ private fun AddIszLensDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onAddLens(selectedBaseCameraId, selectedIszZoomRatio, isMacroLens, settings) },
+                onClick = {
+                    onAddLens(
+                        selectedBaseCameraId,
+                        selectedIszZoomRatio,
+                        isMacroLens,
+                        rawBlackBorderCrop,
+                        settings
+                    )
+                },
                 enabled = selectedBaseCameraId.isNotBlank()
             ) {
                 Text(stringResource(R.string.settings_isz_add_lens_confirm))
@@ -3599,6 +3687,34 @@ private fun AddIszLensDialog(
                 Text(stringResource(R.string.cancel))
             }
         }
+    )
+}
+
+@Composable
+private fun RawBlackBorderCropField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.material3.OutlinedTextField(
+        value = value,
+        onValueChange = { newValue ->
+            onValueChange(newValue.filter { it.isDigit() }.take(4))
+        },
+        modifier = modifier,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            focusedBorderColor = Color(0xFFE5A324),
+            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+            focusedLabelColor = Color(0xFFE5A324),
+            unfocusedLabelColor = Color.White.copy(alpha = 0.6f),
+            cursorColor = Color(0xFFE5A324)
+        )
     )
 }
 

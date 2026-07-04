@@ -13,6 +13,7 @@ import android.opengl.GLES30
 import android.opengl.GLES31
 import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.RawBlackBorderCrop
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.lut.ChromaDenoiseDefaults
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
@@ -563,39 +564,303 @@ class RawDemosaicProcessor {
         )
     }
 
-    private fun analyzeSrgbThumbnailForMetering(bitmap: Bitmap?): MeteringSystem.SrgbThumbnailMeteringStats? {
+    private fun analyzeSrgbThumbnailForMetering(
+        bitmap: Bitmap?,
+        sourceBounds: Rect? = null
+    ): RawAeMeteringImage? {
         if (bitmap == null || bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
             return null
         }
         return try {
+            val safeSourceBounds = sanitizeBitmapBounds(sourceBounds, bitmap.width, bitmap.height)
+                ?: Rect(0, 0, bitmap.width, bitmap.height)
             val meteringSize = resolveLongEdgeMeteringSize(
-                sourceWidth = bitmap.width,
-                sourceHeight = bitmap.height,
+                sourceWidth = safeSourceBounds.width(),
+                sourceHeight = safeSourceBounds.height(),
                 maxLongEdge = RAW_TONE_MAPPED_AE_LONG_EDGE
             )
             val width = meteringSize.width
             val height = meteringSize.height
             val pixels = IntArray(width * height)
             val rowPixels = IntArray(bitmap.width)
-            val sourceWidth = bitmap.width
-            val sourceHeight = bitmap.height
             for (y in 0 until height) {
-                val sourceY = ((y + 0.5f) * sourceHeight.toFloat() / height.toFloat())
+                val sourceY = safeSourceBounds.top +
+                    ((y + 0.5f) * safeSourceBounds.height().toFloat() / height.toFloat())
                     .toInt()
-                    .coerceIn(0, sourceHeight - 1)
-                bitmap.getPixels(rowPixels, 0, sourceWidth, 0, sourceY, sourceWidth, 1)
+                    .coerceIn(0, bitmap.height - 1)
+                bitmap.getPixels(rowPixels, 0, bitmap.width, 0, sourceY, bitmap.width, 1)
                 for (x in 0 until width) {
-                    val sourceX = ((x + 0.5f) * sourceWidth.toFloat() / width.toFloat())
+                    val sourceX = safeSourceBounds.left +
+                        ((x + 0.5f) * safeSourceBounds.width().toFloat() / width.toFloat())
                         .toInt()
-                        .coerceIn(0, sourceWidth - 1)
+                        .coerceIn(0, bitmap.width - 1)
                     pixels[y * width + x] = rowPixels[sourceX]
                 }
             }
-            MeteringSystem.analyzeSrgbThumbnail(width, height, pixels)
+            val stats = MeteringSystem.analyzeSrgbThumbnail(width, height, pixels)
+                ?: return null
+            RawAeMeteringImage(
+                width = width,
+                height = height,
+                argbPixels = pixels,
+                stats = stats
+            )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to analyze capture preview thumbnail for RAW AE", e)
             null
         }
+    }
+
+    private data class RawAeContentBounds(
+        val rawRenderBounds: Rect,
+        val thumbnailBounds: Rect
+    )
+
+    private data class RawAeMeteringImage(
+        val width: Int,
+        val height: Int,
+        val argbPixels: IntArray,
+        val stats: MeteringSystem.SrgbThumbnailMeteringStats
+    )
+
+    private data class RawAeCenterAverageReference(
+        val width: Int,
+        val height: Int,
+        val bounds: Rect,
+        val targetDisplayLuma: Float,
+        val pixelCount: Int
+    )
+
+    private data class RawAeCenterAverageMatch(
+        val errorEv: Float,
+        val targetDisplayLuma: Float,
+        val renderedDisplayLuma: Float,
+        val pixelCount: Int
+    )
+
+    private fun buildRawAeCenterAverageReference(
+        image: RawAeMeteringImage
+    ): RawAeCenterAverageReference? {
+        val bounds = rawAeCenterHalfBounds(image.width, image.height)
+            ?: return null
+        val targetDisplayLuma = averageSrgbDisplayLuma(image, bounds)
+            ?: return null
+        val reference = RawAeCenterAverageReference(
+            width = image.width,
+            height = image.height,
+            bounds = bounds,
+            targetDisplayLuma = targetDisplayLuma,
+            pixelCount = bounds.width() * bounds.height()
+        )
+        return reference
+    }
+
+    private fun matchRawAeCenterAverage(
+        reference: RawAeCenterAverageReference,
+        rendered: RawAeMeteringImage
+    ): RawAeCenterAverageMatch? {
+        if (reference.width != rendered.width || reference.height != rendered.height) {
+            return null
+        }
+        val renderedDisplayLuma = averageSrgbDisplayLuma(rendered, reference.bounds)
+            ?: return null
+        return RawAeCenterAverageMatch(
+            errorEv = displayLumaErrorEv(
+                renderedLuma = renderedDisplayLuma,
+                targetLuma = reference.targetDisplayLuma
+            ),
+            targetDisplayLuma = reference.targetDisplayLuma,
+            renderedDisplayLuma = renderedDisplayLuma,
+            pixelCount = reference.pixelCount
+        )
+    }
+
+    private fun rawAeCenterHalfBounds(width: Int, height: Int): Rect? {
+        if (width <= 0 || height <= 0) return null
+        val left = width / 4
+        val top = height / 4
+        val right = (width * 3 / 4).coerceAtLeast(left + 1)
+        val bottom = (height * 3 / 4).coerceAtLeast(top + 1)
+        return Rect(
+            left.coerceIn(0, width - 1),
+            top.coerceIn(0, height - 1),
+            right.coerceIn(left + 1, width),
+            bottom.coerceIn(top + 1, height)
+        )
+    }
+
+    private fun averageSrgbDisplayLuma(image: RawAeMeteringImage, bounds: Rect): Float? {
+        if (
+            image.width <= 0 ||
+            image.height <= 0 ||
+            image.argbPixels.size < image.width * image.height ||
+            bounds.isEmpty
+        ) {
+            return null
+        }
+        val safeBounds = Rect(bounds)
+        if (!safeBounds.intersect(Rect(0, 0, image.width, image.height)) || safeBounds.isEmpty) {
+            return null
+        }
+        var lumaSum = 0.0
+        var pixelCount = 0
+        for (y in safeBounds.top until safeBounds.bottom) {
+            val rowOffset = y * image.width
+            for (x in safeBounds.left until safeBounds.right) {
+                lumaSum += srgbDisplayLuma(image.argbPixels[rowOffset + x]).toDouble()
+                pixelCount++
+            }
+        }
+        if (pixelCount <= 0) return null
+        return (lumaSum / pixelCount.toDouble()).toFloat()
+            .coerceAtLeast(RAW_TONE_MAPPED_AE_LUMA_FLOOR)
+    }
+
+    private fun srgbDisplayLuma(pixel: Int): Float {
+        val alpha = ((pixel ushr 24) and 0xff) / 255f
+        if (alpha <= 0f) return 0f
+        val r = ((pixel ushr 16) and 0xff) / 255f
+        val g = ((pixel ushr 8) and 0xff) / 255f
+        val b = (pixel and 0xff) / 255f
+        val luma = (0.2126f * r + 0.7152f * g + 0.0722f * b) * alpha
+        return if (luma.isFinite()) luma.coerceIn(0f, 1f) else 0f
+    }
+
+    private fun resolveRawAeContentBounds(
+        rawSourceBounds: Rect,
+        outputRotation: Int,
+        thumbnail: Bitmap?
+    ): RawAeContentBounds? {
+        val rawVisualBounds = sourceBoundsToVisualOutputBounds(
+            baseSourceBounds = rawSourceBounds,
+            sourceBounds = rawSourceBounds,
+            rotation = outputRotation
+        )
+        if (
+            rawVisualBounds.isEmpty ||
+            thumbnail == null ||
+            thumbnail.isRecycled ||
+            thumbnail.width <= 0 ||
+            thumbnail.height <= 0
+        ) {
+            return null
+        }
+        val thumbnailAspect = thumbnail.width.toFloat() / thumbnail.height.toFloat()
+        if (!thumbnailAspect.isFinite() || thumbnailAspect <= 0f) return null
+        val rawDisplayVisualBounds = centerCropToAspect(rawVisualBounds, thumbnailAspect)
+        val rawDisplaySourceBounds = visualOutputBoundsToSourceBounds(
+            baseSourceBounds = rawSourceBounds,
+            visualBounds = rawDisplayVisualBounds,
+            rotation = outputRotation
+        ) ?: return null
+        val rawRenderBounds = rawDisplaySourceBounds.toOutputBounds(outputRotation)
+        val thumbnailBounds = Rect(0, 0, thumbnail.width, thumbnail.height)
+        return RawAeContentBounds(
+            rawRenderBounds = rawRenderBounds,
+            thumbnailBounds = thumbnailBounds
+        )
+    }
+
+    private fun sourceBoundsToVisualOutputBounds(
+        baseSourceBounds: Rect,
+        sourceBounds: Rect,
+        rotation: Int
+    ): Rect {
+        val baseOutputBounds = baseSourceBounds.toOutputBounds(rotation)
+        val normalizedRotation = ((rotation % 360) + 360) % 360
+        return when (normalizedRotation) {
+            90 -> Rect(
+                baseOutputBounds.left + (baseSourceBounds.bottom - sourceBounds.bottom),
+                baseOutputBounds.top + (sourceBounds.left - baseSourceBounds.left),
+                baseOutputBounds.left + (baseSourceBounds.bottom - sourceBounds.top),
+                baseOutputBounds.top + (sourceBounds.right - baseSourceBounds.left)
+            )
+
+            180 -> Rect(
+                baseOutputBounds.left + (baseSourceBounds.right - sourceBounds.right),
+                baseOutputBounds.top + (baseSourceBounds.bottom - sourceBounds.bottom),
+                baseOutputBounds.left + (baseSourceBounds.right - sourceBounds.left),
+                baseOutputBounds.top + (baseSourceBounds.bottom - sourceBounds.top)
+            )
+
+            270 -> Rect(
+                baseOutputBounds.left + (sourceBounds.top - baseSourceBounds.top),
+                baseOutputBounds.top + (baseSourceBounds.right - sourceBounds.right),
+                baseOutputBounds.left + (sourceBounds.bottom - baseSourceBounds.top),
+                baseOutputBounds.top + (baseSourceBounds.right - sourceBounds.left)
+            )
+
+            else -> Rect(
+                baseOutputBounds.left + (sourceBounds.left - baseSourceBounds.left),
+                baseOutputBounds.top + (sourceBounds.top - baseSourceBounds.top),
+                baseOutputBounds.left + (sourceBounds.right - baseSourceBounds.left),
+                baseOutputBounds.top + (sourceBounds.bottom - baseSourceBounds.top)
+            )
+        }
+    }
+
+    private fun visualOutputBoundsToSourceBounds(
+        baseSourceBounds: Rect,
+        visualBounds: Rect,
+        rotation: Int
+    ): Rect? {
+        val baseOutputBounds = baseSourceBounds.toOutputBounds(rotation)
+        val normalizedRotation = ((rotation % 360) + 360) % 360
+        val sourceBounds = when (normalizedRotation) {
+            90 -> Rect(
+                baseSourceBounds.left + (visualBounds.top - baseOutputBounds.top),
+                baseSourceBounds.bottom - (visualBounds.right - baseOutputBounds.left),
+                baseSourceBounds.left + (visualBounds.bottom - baseOutputBounds.top),
+                baseSourceBounds.bottom - (visualBounds.left - baseOutputBounds.left)
+            )
+
+            180 -> Rect(
+                baseSourceBounds.right - (visualBounds.right - baseOutputBounds.left),
+                baseSourceBounds.bottom - (visualBounds.bottom - baseOutputBounds.top),
+                baseSourceBounds.right - (visualBounds.left - baseOutputBounds.left),
+                baseSourceBounds.bottom - (visualBounds.top - baseOutputBounds.top)
+            )
+
+            270 -> Rect(
+                baseSourceBounds.right - (visualBounds.bottom - baseOutputBounds.top),
+                baseSourceBounds.top + (visualBounds.left - baseOutputBounds.left),
+                baseSourceBounds.right - (visualBounds.top - baseOutputBounds.top),
+                baseSourceBounds.top + (visualBounds.right - baseOutputBounds.left)
+            )
+
+            else -> Rect(
+                baseSourceBounds.left + (visualBounds.left - baseOutputBounds.left),
+                baseSourceBounds.top + (visualBounds.top - baseOutputBounds.top),
+                baseSourceBounds.left + (visualBounds.right - baseOutputBounds.left),
+                baseSourceBounds.top + (visualBounds.bottom - baseOutputBounds.top)
+            )
+        }
+        return Rect(sourceBounds).takeIf {
+            it.intersect(baseSourceBounds) && !it.isEmpty
+        }
+    }
+
+    private fun centerCropToAspect(bounds: Rect, targetAspect: Float): Rect {
+        if (bounds.isEmpty || !targetAspect.isFinite() || targetAspect <= 0f) return Rect(bounds)
+        val sourceAspect = bounds.width().toFloat() / bounds.height().toFloat()
+        val cropWidth: Int
+        val cropHeight: Int
+        if (sourceAspect > targetAspect) {
+            cropHeight = bounds.height()
+            cropWidth = (cropHeight * targetAspect).toInt().coerceIn(1, bounds.width())
+        } else {
+            cropWidth = bounds.width()
+            cropHeight = (cropWidth / targetAspect).toInt().coerceIn(1, bounds.height())
+        }
+        val left = bounds.left + (bounds.width() - cropWidth) / 2
+        val top = bounds.top + (bounds.height() - cropHeight) / 2
+        return Rect(left, top, left + cropWidth, top + cropHeight)
+    }
+
+    private fun sanitizeBitmapBounds(bounds: Rect?, width: Int, height: Int): Rect? {
+        if (bounds == null || bounds.isEmpty || width <= 0 || height <= 0) return null
+        val imageBounds = Rect(0, 0, width, height)
+        return Rect(bounds).takeIf { it.intersect(imageBounds) && !it.isEmpty }
     }
 
     /**
@@ -637,6 +902,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(glDispatcher) {
@@ -676,6 +942,7 @@ class RawDemosaicProcessor {
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
                 capturePreviewThumbnail = capturePreviewThumbnail,
+                rawBlackBorderCrop = rawBlackBorderCrop,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata
@@ -717,6 +984,7 @@ class RawDemosaicProcessor {
         spectralFilmTuning: SpectralFilmTuning = SpectralFilmTuning.DEFAULT,
         rawRenderingEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
+        rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
     ): Bitmap? = withContext(glDispatcher) {
         try {
             if (!isInitialized) {
@@ -753,7 +1021,8 @@ class RawDemosaicProcessor {
                 spectralFilmPrint = spectralFilmPrint,
                 spectralFilmTuning = spectralFilmTuning,
                 rawRenderingEngine = rawRenderingEngine,
-                rawToneMappingParameters = rawToneMappingParameters
+                rawToneMappingParameters = rawToneMappingParameters,
+                rawBlackBorderCrop = rawBlackBorderCrop
             )?.sdrBitmap
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to process RAW buffer", e)
@@ -883,6 +1152,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
@@ -922,6 +1192,7 @@ class RawDemosaicProcessor {
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
                 capturePreviewThumbnail = capturePreviewThumbnail,
+                rawBlackBorderCrop = rawBlackBorderCrop,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
                 onMetadata = onMetadata,
@@ -970,6 +1241,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         dngFile: File? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
@@ -1099,6 +1371,35 @@ class RawDemosaicProcessor {
         } else {
             null
         }
+        val rawBlackBorderDefaultCrop = RawDefaultCropOverride.resolveRawBlackBorderDefaultCrop(
+            width = actualWidth,
+            height = actualHeight,
+            rotation = actualRotation,
+            rawBlackBorderCrop = rawBlackBorderCrop,
+            metadataDefaultCrop = actualMetadata.defaultCrop
+        )
+        val effectiveDefaultCrop = rawBlackBorderDefaultCrop ?: actualMetadata.defaultCrop
+        if (rawBlackBorderDefaultCrop != null) {
+            PLog.d(
+                TAG,
+                "ISZ RAW black border overrides DNG default crop: " +
+                    "outputCrop=$rawBlackBorderCrop rotation=$actualRotation " +
+                    "source=$rawBlackBorderDefaultCrop metadata=${actualMetadata.defaultCrop}"
+            )
+        }
+        val outputSourceBounds = calculateOutputSourceBounds(
+            width = actualWidth,
+            height = actualHeight,
+            aspectRatio = aspectRatio,
+            cropRegion = cropRegion,
+            metadataDefaultCrop = effectiveDefaultCrop
+        )
+        val rawOutputBounds = outputSourceBounds.toOutputBounds(actualRotation)
+        val rawAeContentBounds = resolveRawAeContentBounds(
+            rawSourceBounds = outputSourceBounds,
+            outputRotation = actualRotation,
+            thumbnail = capturePreviewThumbnail
+        )
         val embeddedGoogleToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
             ?.takeIf { DngProfileToneCurve.isGoogleHdrToneCurveLut(it) }
         val embeddedProfileGainTableMap = actualMetadata.profileGainTableMap?.takeIf { it.isValid }
@@ -1169,7 +1470,8 @@ class RawDemosaicProcessor {
                 height = actualHeight,
                 rowStride = actualRowStride,
                 metadata = actualMetadata,
-                samplesPerPixel = actualSamplesPerPixel
+                samplesPerPixel = actualSamplesPerPixel,
+                statsBounds = outputSourceBounds
             )
             if (generatedProfileGainTableMap?.isValid == true) {
                 actualMetadata = actualMetadata.copy(profileGainTableMap = generatedProfileGainTableMap)
@@ -1262,7 +1564,7 @@ class RawDemosaicProcessor {
             useProfileExposureRamp = useProfileExposureRamp,
             applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
         )
-        val viewfinderThumbnailStats = when {
+        val viewfinderThumbnailMeteringImage = when {
             !rawAutoExposure -> null
             skipRawAutoExposureForEmbeddedHdrRaw -> {
                 PLog.d(
@@ -1272,23 +1574,19 @@ class RawDemosaicProcessor {
                 null
             }
             else -> {
-                analyzeSrgbThumbnailForMetering(capturePreviewThumbnail).also { stats ->
-                    if (stats == null) {
+                analyzeSrgbThumbnailForMetering(
+                    capturePreviewThumbnail,
+                    rawAeContentBounds?.thumbnailBounds
+                ).also { image ->
+                    if (image == null) {
                         PLog.d(TAG, "RAW auto exposure disabled: capture preview thumbnail unavailable")
-                    } else {
-                        PLog.d(
-                            TAG,
-                            "RAW auto exposure thumbnail stats: size=${stats.width}x${stats.height} " +
-                                "luma=${stats.midToneLinearLuma} " +
-                                "clipLow=${stats.clipLow} clipHigh=${stats.clipHigh} " +
-                                "highlightAmount=${stats.highlightCompression.amount} " +
-                                "highlightStrength=${stats.highlightCompression.strength} " +
-                                "samples=${stats.sampleCount} sanitized=${stats.sanitizedSampleCount}"
-                        )
                     }
                 }
             }
         }
+        val viewfinderThumbnailStats = viewfinderThumbnailMeteringImage?.stats
+        val viewfinderCenterAverageReference = viewfinderThumbnailMeteringImage
+            ?.let { buildRawAeCenterAverageReference(it) }
 
         PLog.d(
             TAG,
@@ -1314,14 +1612,7 @@ class RawDemosaicProcessor {
                 return@withContext null
             }
 
-            val bounds = calculateOutputBounds(
-                width = actualWidth,
-                height = actualHeight,
-                aspectRatio = aspectRatio,
-                cropRegion = cropRegion,
-                metadataDefaultCrop = actualMetadata.defaultCrop,
-                rotation = actualRotation
-            )
+            val bounds = rawOutputBounds
             val finalWidth = bounds.width()
             val finalHeight = bounds.height()
 
@@ -1634,7 +1925,8 @@ class RawDemosaicProcessor {
                     applyLinearDngBaselineExposure = hasProfileGainTableMap,
                     clampProfileRgb = useAdobeProfilePipeline,
                     viewfinderThumbnailStats = viewfinderThumbnailStats,
-                    outputBounds = bounds,
+                    viewfinderCenterAverageReference = viewfinderCenterAverageReference,
+                    outputBounds = rawAeContentBounds?.rawRenderBounds ?: bounds,
                     outputRotation = actualRotation,
                     spectralFilmLut = spektrafilmLut,
                     colorEngine = colorEngine,
@@ -1642,8 +1934,7 @@ class RawDemosaicProcessor {
                     profileToEngineTransform = profileToEngineTransform,
                     rawToneMappingParameters = rawToneMappingParameters,
                     useProfileExposureRamp = useProfileExposureRamp,
-                    applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
-                    renderingEngineMeteringCompensationEv = colorEngine.meteringCompensationEv
+                    applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
                 )
             }
 
@@ -1954,30 +2245,22 @@ class RawDemosaicProcessor {
         }
     }
 
-    private fun calculateOutputBounds(
+    private fun calculateOutputSourceBounds(
         width: Int,
         height: Int,
         aspectRatio: AspectRatio?,
         cropRegion: Rect?,
-        metadataDefaultCrop: Rect?,
-        rotation: Int
+        metadataDefaultCrop: Rect?
     ): Rect {
-        val safeMetadataCrop = sanitizeCropWithinImage(metadataDefaultCrop, width, height)
+        val safeMetadataCrop = RawDefaultCropOverride.sanitizeCropWithinImage(metadataDefaultCrop, width, height)
         if (safeMetadataCrop != null) {
-            val sourceBounds = calculateDngDefaultCropSourceBounds(
+            return calculateDngDefaultCropSourceBounds(
                 width = width,
                 height = height,
                 metadataCrop = safeMetadataCrop,
                 userCrop = cropRegion,
                 aspectRatio = aspectRatio
             )
-            val outputBounds = sourceBounds.toOutputBounds(rotation)
-            PLog.d(
-                TAG,
-                "DNG default crop applied: metadata=$metadataDefaultCrop " +
-                    "user=$cropRegion source=$sourceBounds output=$outputBounds"
-            )
-            return outputBounds
         }
 
         return BitmapUtils.calculateProcessedRect(
@@ -1985,7 +2268,7 @@ class RawDemosaicProcessor {
             height,
             aspectRatio,
             cropRegion,
-            rotation
+            0
         )
     }
 
@@ -1996,21 +2279,20 @@ class RawDemosaicProcessor {
         userCrop: Rect?,
         aspectRatio: AspectRatio?
     ): Rect {
-        val fullImageBounds = Rect(0, 0, width, height)
         val safeUserCrop = sanitizeUserCrop(userCrop, width, height)
         val userCropInsideMetadata = safeUserCrop
             ?.takeUnless { it.isFullImage(width, height) }
             ?.let { user ->
                 Rect(metadataCrop).takeIf { it.intersect(user) && !it.isEmpty }
-            }
+        }
         val baseCrop = userCropInsideMetadata ?: metadataCrop
-        val preMetadataCropBounds = safeUserCrop ?: fullImageBounds
         val sourceIsLandscape = width >= height
+        val targetAspectRatio = aspectRatio
         return if (
-            aspectRatio != null &&
-            !preMetadataCropBounds.hasEquivalentAspect(aspectRatio, sourceIsLandscape)
+            targetAspectRatio != null &&
+            !baseCrop.hasEquivalentAspect(targetAspectRatio, sourceIsLandscape)
         ) {
-            cropSourceBoundsToAspect(baseCrop, aspectRatio, sourceIsLandscape)
+            cropSourceBoundsToAspect(baseCrop, targetAspectRatio, sourceIsLandscape)
         } else {
             Rect(baseCrop)
         }
@@ -2080,23 +2362,9 @@ class RawDemosaicProcessor {
         }
     }
 
-    private fun sanitizeCropWithinImage(crop: Rect?, width: Int, height: Int): Rect? {
-        if (crop == null || crop.isEmpty) return null
-        return if (
-            crop.left >= 0 &&
-            crop.top >= 0 &&
-            crop.right <= width &&
-            crop.bottom <= height
-        ) {
-            Rect(crop)
-        } else {
-            null
-        }
-    }
-
     private fun sanitizeDngDefaultCrop(crop: IntArray?, width: Int, height: Int): Rect? {
         if (crop == null || crop.size != 4) return null
-        return sanitizeCropWithinImage(
+        return RawDefaultCropOverride.sanitizeCropWithinImage(
             crop = Rect(crop[0], crop[1], crop[2], crop[3]),
             width = width,
             height = height
@@ -7047,6 +7315,7 @@ class RawDemosaicProcessor {
         applyLinearDngBaselineExposure: Boolean,
         clampProfileRgb: Boolean,
         viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats?,
+        viewfinderCenterAverageReference: RawAeCenterAverageReference?,
         outputBounds: Rect,
         outputRotation: Int,
         spectralFilmLut: SpectralFilmLut?,
@@ -7055,8 +7324,7 @@ class RawDemosaicProcessor {
         profileToEngineTransform: FloatArray,
         rawToneMappingParameters: RawToneMappingParameters,
         useProfileExposureRamp: Boolean,
-        applyProfileDcpBaselineExposureOffset: Boolean,
-        renderingEngineMeteringCompensationEv: Float
+        applyProfileDcpBaselineExposureOffset: Boolean
     ): MeteringSystem.MeteringResult {
         if (viewfinderThumbnailStats == null) {
             return MeteringSystem.MeteringResult.EMPTY
@@ -7110,6 +7378,7 @@ class RawDemosaicProcessor {
                 readbackHeight = viewfinderThumbnailStats.height.coerceAtLeast(1),
                 outputRotation = outputRotation,
                 viewfinderThumbnailStats = viewfinderThumbnailStats,
+                viewfinderCenterAverageReference = viewfinderCenterAverageReference,
                 dcpRenderPlan = dcpRenderPlan,
                 spectralFilmLut = spectralFilmLut,
                 colorEngine = colorEngine,
@@ -7120,8 +7389,7 @@ class RawDemosaicProcessor {
                 rawWhitesAdjustment = rawWhitePointCorrection,
                 useProfileExposureRamp = useProfileExposureRamp,
                 applyProfileDcpBaselineExposureOffset = applyProfileDcpBaselineExposureOffset,
-                applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure,
-                renderingEngineMeteringCompensationEv = renderingEngineMeteringCompensationEv
+                applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure
             ) ?: MeteringSystem.MeteringResult.EMPTY
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to resolve RAW auto exposure", e)
@@ -7134,7 +7402,9 @@ class RawDemosaicProcessor {
         val profileExposureEv: Float,
         val renderedLuma: Float,
         val errorEv: Float,
-        val stats: MeteringSystem.SrgbThumbnailMeteringStats
+        val centerAverageMatch: RawAeCenterAverageMatch,
+        val stats: MeteringSystem.SrgbThumbnailMeteringStats,
+        val argbPixels: IntArray
     )
 
     private data class ToneMappedRawAeSolveResult(
@@ -7214,6 +7484,7 @@ class RawDemosaicProcessor {
         readbackHeight: Int,
         outputRotation: Int,
         viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats,
+        viewfinderCenterAverageReference: RawAeCenterAverageReference?,
         dcpRenderPlan: DcpRenderPlan?,
         spectralFilmLut: SpectralFilmLut?,
         colorEngine: RawRenderingEngine,
@@ -7224,10 +7495,12 @@ class RawDemosaicProcessor {
         rawWhitesAdjustment: Float,
         useProfileExposureRamp: Boolean,
         applyProfileDcpBaselineExposureOffset: Boolean,
-        applyProfileDngBaselineExposure: Boolean,
-        renderingEngineMeteringCompensationEv: Float
+        applyProfileDngBaselineExposure: Boolean
     ): MeteringSystem.MeteringResult? {
-        val targetLuma = viewfinderThumbnailStats.midToneLinearLuma
+        val centerAverageReference = viewfinderCenterAverageReference ?: run {
+            PLog.d(TAG, "RAW auto exposure disabled: center average reference unavailable")
+            return null
+        }
         val pixelCount = readbackWidth * readbackHeight
         val readbackBuffer = LargeDirectBuffer.allocate(
             pixelCount.toLong() * 4L,
@@ -7241,7 +7514,7 @@ class RawDemosaicProcessor {
                 width = width,
                 height = height,
                 autoEv = 0f,
-                targetLuma = targetLuma,
+                centerAverageReference = centerAverageReference,
                 dcpRenderPlan = dcpRenderPlan,
                 spectralFilmLut = spectralFilmLut,
                 colorEngine = colorEngine,
@@ -7266,7 +7539,7 @@ class RawDemosaicProcessor {
                     width = width,
                     height = height,
                     autoEv = autoEv,
-                    targetLuma = targetLuma,
+                    centerAverageReference = centerAverageReference,
                     dcpRenderPlan = dcpRenderPlan,
                     spectralFilmLut = spectralFilmLut,
                     colorEngine = colorEngine,
@@ -7288,37 +7561,6 @@ class RawDemosaicProcessor {
             val finalSample = solved.finalSample
             val meteredEv = solved.meteredEv
             val highlightCompression = viewfinderThumbnailStats.highlightCompression
-            PLog.d(
-                TAG,
-                "Tone-mapped RAW AE: mode=ViewfinderThumbnail target=$targetLuma " +
-                    "autoEv=$meteredEv renderedLuma=${finalSample.renderedLuma} " +
-                    "errorEv=${finalSample.errorEv} profileExposureEv=${finalSample.profileExposureEv} " +
-                    "zeroRenderedLuma=${zero.renderedLuma} zeroErrorEv=${zero.errorEv} " +
-                    "zeroProfileExposureEv=${zero.profileExposureEv} " +
-                    "solveSteps=${solved.renderedStepCount} " +
-                    "clipLow=${finalSample.stats.clipLow} clipHigh=${finalSample.stats.clipHigh} " +
-                    "highlightCompressionAmount=${highlightCompression.amount} " +
-                    "highlightCompressionStrength=${highlightCompression.strength} " +
-                    "highlightReductionThreshold=${highlightCompression.reductionThreshold} " +
-                    "autoHighlights=${highlightCompression.autoHighlightsAdjustment} " +
-                    "baselineExposure=${metadata.baselineExposure} " +
-                    "dcpBaselineExposureOffset=" +
-                    "${dcpBaselineExposureOffsetOrZero(dcpRenderPlan)} " +
-                    "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
-                    "engineMeteringEv=$renderingEngineMeteringCompensationEv " +
-                    "colorEngine=$colorEngine " +
-                    "profileExposureRamp=$useProfileExposureRamp " +
-                    "profileDngBaseline=$applyProfileDngBaselineExposure " +
-                    "profileDcpBaseline=$applyProfileDcpBaselineExposureOffset " +
-                    "meteringTexture=${width}x$height meteringBounds=$meteringBounds " +
-                    "outputRotation=$outputRotation " +
-                    "targetSize=${viewfinderThumbnailStats.width}x${viewfinderThumbnailStats.height} " +
-                    "renderedSize=${finalSample.stats.width}x${finalSample.stats.height} " +
-                    "viewfinderSamples=${viewfinderThumbnailStats.sampleCount} " +
-                    "viewfinderSanitizedSamples=${viewfinderThumbnailStats.sanitizedSampleCount} " +
-                    "renderedSamples=${finalSample.stats.sampleCount} " +
-                    "renderedSanitizedSamples=${finalSample.stats.sanitizedSampleCount}"
-            )
 
             MeteringSystem.MeteringResult(
                 meteredEv = meteredEv,
@@ -7471,7 +7713,7 @@ class RawDemosaicProcessor {
         width: Int,
         height: Int,
         autoEv: Float,
-        targetLuma: Float,
+        centerAverageReference: RawAeCenterAverageReference,
         dcpRenderPlan: DcpRenderPlan?,
         spectralFilmLut: SpectralFilmLut?,
         colorEngine: RawRenderingEngine,
@@ -7533,20 +7775,24 @@ class RawDemosaicProcessor {
         ) {
             return null
         }
-        val stats = readSrgbMeteringCropStats(
+        val image = readSrgbMeteringCropImage(
             width = readbackWidth,
             height = readbackHeight,
             pixelBuffer = readbackBuffer
         ) ?: return null
+        val stats = image.stats
+        val centerAverageMatch = matchRawAeCenterAverage(centerAverageReference, image)
+            ?: return null
+        val renderedLuma = centerAverageMatch.renderedDisplayLuma
+        val errorEv = centerAverageMatch.errorEv
         return ToneMappedRawAeSample(
             autoEv = clampedAutoEv,
             profileExposureEv = profileExposureUniforms.exposureEv,
-            renderedLuma = stats.midToneLinearLuma,
-            errorEv = displayLumaErrorEv(
-                renderedLuma = stats.midToneLinearLuma,
-                targetLuma = targetLuma
-            ),
-            stats = stats
+            renderedLuma = renderedLuma,
+            errorEv = errorEv,
+            centerAverageMatch = centerAverageMatch,
+            stats = stats,
+            argbPixels = image.argbPixels
         )
     }
 
@@ -7610,11 +7856,11 @@ class RawDemosaicProcessor {
         return true
     }
 
-    private fun readSrgbMeteringCropStats(
+    private fun readSrgbMeteringCropImage(
         width: Int,
         height: Int,
         pixelBuffer: ByteBuffer
-    ): MeteringSystem.SrgbThumbnailMeteringStats? {
+    ): RawAeMeteringImage? {
         if (width <= 0 || height <= 0) {
             return null
         }
@@ -7643,7 +7889,14 @@ class RawDemosaicProcessor {
             val a = pixelBuffer.get().toInt() and 0xff
             argbPixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
         }
-        return MeteringSystem.analyzeSrgbThumbnail(width, height, argbPixels)
+        val stats = MeteringSystem.analyzeSrgbThumbnail(width, height, argbPixels)
+            ?: return null
+        return RawAeMeteringImage(
+            width = width,
+            height = height,
+            argbPixels = argbPixels,
+            stats = stats
+        )
     }
 
     private fun displayLumaErrorEv(renderedLuma: Float, targetLuma: Float): Float {

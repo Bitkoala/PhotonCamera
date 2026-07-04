@@ -36,6 +36,7 @@ import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
+import com.hinnka.mycamera.raw.RawDefaultCropOverride
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
@@ -1601,6 +1602,32 @@ object GalleryManager {
         )
     }
 
+    private fun resolveRawStatsBounds(
+        width: Int,
+        height: Int,
+        defaultCrop: Rect?,
+        cropRegion: Rect?
+    ): Rect? {
+        val imageBounds = Rect(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
+        var resolved: Rect? = null
+        listOf(defaultCrop, cropRegion).forEach { candidate ->
+            val safeCandidate = sanitizeIntersectingCrop(candidate, imageBounds) ?: return@forEach
+            resolved = resolved?.let { current ->
+                Rect(current).takeIf { it.intersect(safeCandidate) && !it.isEmpty }
+            } ?: safeCandidate
+        }
+        return resolved?.takeUnless { it.hasSameBounds(imageBounds) }
+    }
+
+    private fun sanitizeIntersectingCrop(crop: Rect?, imageBounds: Rect): Rect? {
+        if (crop == null || crop.isEmpty || imageBounds.isEmpty) return null
+        return Rect(crop).takeIf { it.intersect(imageBounds) && !it.isEmpty }
+    }
+
+    private fun Rect.hasSameBounds(other: Rect): Boolean {
+        return left == other.left && top == other.top && right == other.right && bottom == other.bottom
+    }
+
     suspend fun saveVideo(
         context: Context,
         photoId: String,
@@ -1838,6 +1865,7 @@ object GalleryManager {
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
                 rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
                 capturePreviewThumbnail = thumbnail,
+                rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2714,6 +2742,7 @@ object GalleryManager {
                 rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
                 rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
                 capturePreviewThumbnail = capturePreviewThumbnail,
+                rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
                 spectralFilmStock = updatedMetadata.spectralFilmStock,
                 spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                 spectralFilmTuning = SpectralFilmTuning(
@@ -2929,6 +2958,18 @@ object GalleryManager {
                 if (!useGpuAcceleration) {
                     PLog.w(TAG, "RAW HDR denoise requires GLES stacker; ignoring disabled GPU acceleration setting")
                 }
+                val rawHdrPgtmStatsBounds = resolveRawStatsBounds(
+                    width = rawMetadataImage.width,
+                    height = rawMetadataImage.height,
+                    defaultCrop = RawDefaultCropOverride.resolveRawBlackBorderDefaultCrop(
+                        width = rawMetadataImage.width,
+                        height = rawMetadataImage.height,
+                        rotation = rotation,
+                        rawBlackBorderCrop = metadata.rawBlackBorderCrop,
+                        metadataDefaultCrop = rawMetadata.defaultCrop
+                    ),
+                    cropRegion = metadata.cropRegion
+                )
                 rawHdrStackResult = MultiFrameStacker.processHdrBurstRaw(
                     shortFrame = RawHdrStackFrame(
                         image = shortCandidate.image,
@@ -2949,6 +2990,7 @@ object GalleryManager {
                     lensShadingWidth = 0,
                     lensShadingHeight = 0,
                     colorCorrectionMatrix = rawMetadata.colorCorrectionMatrix,
+                    pgtmStatsBounds = rawHdrPgtmStatsBounds,
                 )
                 closeImagesNow(images)
 
@@ -3140,6 +3182,7 @@ object GalleryManager {
             rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
             rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
             capturePreviewThumbnail = capturePreviewThumbnail,
+            rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
             spectralFilmStock = updatedMetadata.spectralFilmStock,
             spectralFilmPrint = updatedMetadata.spectralFilmPrint,
             spectralFilmTuning = SpectralFilmTuning(
@@ -4271,6 +4314,7 @@ object GalleryManager {
                         rawRenderingEngine = updatedMetadata.rawRenderingEngine,
                         rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
                         rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
+                        rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
                         spectralFilmStock = updatedMetadata.spectralFilmStock,
                         spectralFilmPrint = updatedMetadata.spectralFilmPrint,
                         spectralFilmTuning = SpectralFilmTuning(
@@ -4428,6 +4472,7 @@ object GalleryManager {
                     rawRenderingEngine = updatedMetadata?.rawRenderingEngine ?: MediaMetadata().rawRenderingEngine,
                     rawToneMappingParameters = updatedMetadata?.rawToneMappingParameters ?: MediaMetadata().rawToneMappingParameters,
                     rawCfaCorrectionMode = updatedMetadata?.rawCfaCorrectionMode,
+                    rawBlackBorderCrop = rawMetadata.rawBlackBorderCrop,
                     spectralFilmStock = updatedMetadata?.spectralFilmStock,
                     spectralFilmPrint = updatedMetadata?.spectralFilmPrint,
                     spectralFilmTuning = SpectralFilmTuning(

@@ -24,9 +24,10 @@ object MeteringSystem {
     private const val CENTER_WEIGHT_SIGMA = 0.32f
     private const val MIN_METERING_SAMPLE_COUNT = 32
     private const val LOG_LUMA_HISTOGRAM_BIN_COUNT = 512
+    private const val DISPLAY_LUMA_HISTOGRAM_BIN_COUNT = 256
     private const val MIDTONE_TRIM_LOW_QUANTILE = 0.25f
     private const val MIDTONE_TRIM_HIGH_QUANTILE = 0.75f
-    private const val MIDTONE_MEDIAN_LOG_WEIGHT = 0.55f
+    private const val MIDTONE_MEDIAN_WEIGHT = 0.55f
     private const val CLIP_LOW_LUMA = 0.002f
     private const val CLIP_HIGH_LUMA = 0.995f
     private const val HIGHLIGHT_COMPRESSION_START_LUMA = 0.62f
@@ -97,6 +98,9 @@ object MeteringSystem {
         val weightSum: Double,
         val sampleCount: Int,
         val sanitizedSampleCount: Int,
+        val displayLuma: Float,
+        val midToneDisplayLuma: Float,
+        val meanLinearLuma: Float,
         val midToneLinearLuma: Float,
         val clipLow: Float,
         val clipHigh: Float,
@@ -123,6 +127,8 @@ object MeteringSystem {
         }
 
         var weightedLogLumaSum = 0.0
+        var weightedDisplayLumaSum = 0.0
+        var weightedLinearLumaSum = 0.0
         var weightSum = 0.0
         var sampleCount = 0
         var sanitizedSampleCount = 0
@@ -130,6 +136,8 @@ object MeteringSystem {
         var clipHighWeightSum = 0.0
         var highlightCompressionWeightSum = 0.0
         var highlightCompressionStrengthSum = 0.0
+        val displayLumaHistogramWeightSums = DoubleArray(DISPLAY_LUMA_HISTOGRAM_BIN_COUNT)
+        val displayLumaHistogramWeightedSums = DoubleArray(DISPLAY_LUMA_HISTOGRAM_BIN_COUNT)
         val logLumaHistogramWeightSums = DoubleArray(LOG_LUMA_HISTOGRAM_BIN_COUNT)
         val logLumaHistogramWeightedSums = DoubleArray(LOG_LUMA_HISTOGRAM_BIN_COUNT)
 
@@ -141,9 +149,12 @@ object MeteringSystem {
                 if (alpha == 0) continue
 
                 val alphaScale = alpha / 255f
-                val r = srgbToLinear(((pixel ushr 16) and 0xff) / 255f)
-                val g = srgbToLinear(((pixel ushr 8) and 0xff) / 255f)
-                val b = srgbToLinear((pixel and 0xff) / 255f)
+                val displayR = ((pixel ushr 16) and 0xff) / 255f
+                val displayG = ((pixel ushr 8) and 0xff) / 255f
+                val displayB = (pixel and 0xff) / 255f
+                val r = srgbToLinear(displayR)
+                val g = srgbToLinear(displayG)
+                val b = srgbToLinear(displayB)
                 val rawLuma = (0.2126f * r + 0.7152f * g + 0.0722f * b) * alphaScale
                 val luma = sanitizeLinearLuma(rawLuma)
                 if (luma != rawLuma) {
@@ -152,6 +163,15 @@ object MeteringSystem {
 
                 val xFraction = (x + 0.5f) / width.toFloat()
                 val weight = centerWeight(xFraction, yFraction)
+                val displayLuma = sanitizeDisplayLuma(
+                    (0.2126f * displayR + 0.7152f * displayG + 0.0722f * displayB) * alphaScale
+                )
+                weightedDisplayLumaSum += displayLuma.toDouble() * weight.toDouble()
+                weightedLinearLumaSum += luma.toDouble() * weight.toDouble()
+                val displayHistogramIndex = displayLumaHistogramIndex(displayLuma)
+                displayLumaHistogramWeightSums[displayHistogramIndex] += weight.toDouble()
+                displayLumaHistogramWeightedSums[displayHistogramIndex] +=
+                    displayLuma.toDouble() * weight.toDouble()
                 val logLuma = log2(luma.coerceAtLeast(LUMA_FLOOR))
                 weightedLogLumaSum += logLuma.toDouble() * weight.toDouble()
                 weightSum += weight.toDouble()
@@ -187,6 +207,19 @@ object MeteringSystem {
             return null
         }
 
+        val displayLuma = sanitizeDisplayLuma((weightedDisplayLumaSum / weightSum).toFloat())
+        val midToneDisplayLuma = sanitizeDisplayLuma(
+            robustMidToneDisplayLuma(
+                displayLumaHistogramWeightSums = displayLumaHistogramWeightSums,
+                displayLumaHistogramWeightedSums = displayLumaHistogramWeightedSums,
+                weightSum = weightSum,
+                fallbackDisplayLuma = displayLuma
+            )
+        )
+        val meanLinearLuma = sanitizeAverageLuma(
+            (weightedLinearLumaSum / weightSum).toFloat(),
+            DISPLAY_TARGET_LUMA
+        )
         val midToneLinearLuma = sanitizeAverageLuma(
             robustMidToneLinearLuma(
                 logLumaHistogramWeightSums = logLumaHistogramWeightSums,
@@ -212,6 +245,9 @@ object MeteringSystem {
             weightSum = weightSum,
             sampleCount = sampleCount,
             sanitizedSampleCount = sanitizedSampleCount,
+            displayLuma = displayLuma,
+            midToneDisplayLuma = midToneDisplayLuma,
+            meanLinearLuma = meanLinearLuma,
             midToneLinearLuma = midToneLinearLuma,
             clipLow = clipLow,
             clipHigh = clipHigh,
@@ -229,82 +265,113 @@ object MeteringSystem {
             .coerceIn(0, LOG_LUMA_HISTOGRAM_BIN_COUNT - 1)
     }
 
+    private fun displayLumaHistogramIndex(displayLuma: Float): Int {
+        return (displayLuma.coerceIn(0f, 1f) * (DISPLAY_LUMA_HISTOGRAM_BIN_COUNT - 1))
+            .toInt()
+            .coerceIn(0, DISPLAY_LUMA_HISTOGRAM_BIN_COUNT - 1)
+    }
+
+    private fun robustMidToneDisplayLuma(
+        displayLumaHistogramWeightSums: DoubleArray,
+        displayLumaHistogramWeightedSums: DoubleArray,
+        weightSum: Double,
+        fallbackDisplayLuma: Float
+    ): Float {
+        val medianDisplayLuma = weightedHistogramQuantileValue(
+            histogramWeightSums = displayLumaHistogramWeightSums,
+            histogramWeightedSums = displayLumaHistogramWeightedSums,
+            weightSum = weightSum,
+            quantile = 0.5f,
+            fallbackValue = fallbackDisplayLuma
+        )
+        val trimmedDisplayLumaMean = weightedTrimmedHistogramMean(
+            histogramWeightSums = displayLumaHistogramWeightSums,
+            histogramWeightedSums = displayLumaHistogramWeightedSums,
+            weightSum = weightSum,
+            lowQuantile = MIDTONE_TRIM_LOW_QUANTILE,
+            highQuantile = MIDTONE_TRIM_HIGH_QUANTILE,
+            fallbackValue = fallbackDisplayLuma
+        )
+        val medianWeight = MIDTONE_MEDIAN_WEIGHT.coerceIn(0f, 1f)
+        return medianDisplayLuma * medianWeight + trimmedDisplayLumaMean * (1f - medianWeight)
+    }
+
     private fun robustMidToneLinearLuma(
         logLumaHistogramWeightSums: DoubleArray,
         logLumaHistogramWeightedSums: DoubleArray,
         weightSum: Double,
         fallbackLogLuma: Float
     ): Float {
-        val medianLogLuma = weightedLogLumaQuantile(
-            logLumaHistogramWeightSums = logLumaHistogramWeightSums,
-            logLumaHistogramWeightedSums = logLumaHistogramWeightedSums,
+        val medianLogLuma = weightedHistogramQuantileValue(
+            histogramWeightSums = logLumaHistogramWeightSums,
+            histogramWeightedSums = logLumaHistogramWeightedSums,
             weightSum = weightSum,
             quantile = 0.5f,
-            fallbackLogLuma = fallbackLogLuma
+            fallbackValue = fallbackLogLuma
         )
-        val trimmedLogMean = weightedTrimmedLogLumaMean(
-            logLumaHistogramWeightSums = logLumaHistogramWeightSums,
-            logLumaHistogramWeightedSums = logLumaHistogramWeightedSums,
+        val trimmedLogMean = weightedTrimmedHistogramMean(
+            histogramWeightSums = logLumaHistogramWeightSums,
+            histogramWeightedSums = logLumaHistogramWeightedSums,
             weightSum = weightSum,
             lowQuantile = MIDTONE_TRIM_LOW_QUANTILE,
             highQuantile = MIDTONE_TRIM_HIGH_QUANTILE,
-            fallbackLogLuma = fallbackLogLuma
+            fallbackValue = fallbackLogLuma
         )
-        val medianWeight = MIDTONE_MEDIAN_LOG_WEIGHT.coerceIn(0f, 1f)
+        val medianWeight = MIDTONE_MEDIAN_WEIGHT.coerceIn(0f, 1f)
         val robustLogLuma = medianLogLuma * medianWeight + trimmedLogMean * (1f - medianWeight)
         return exp2(robustLogLuma)
     }
 
-    private fun weightedLogLumaQuantile(
-        logLumaHistogramWeightSums: DoubleArray,
-        logLumaHistogramWeightedSums: DoubleArray,
+    private fun weightedHistogramQuantileValue(
+        histogramWeightSums: DoubleArray,
+        histogramWeightedSums: DoubleArray,
         weightSum: Double,
         quantile: Float,
-        fallbackLogLuma: Float
+        fallbackValue: Float
     ): Float {
         if (weightSum <= 0.0) {
-            return fallbackLogLuma
+            return fallbackValue
         }
         val targetWeight = weightSum * quantile.coerceIn(0f, 1f).toDouble()
         var cumulativeWeight = 0.0
-        for (i in logLumaHistogramWeightSums.indices) {
-            val binWeight = logLumaHistogramWeightSums[i]
+        for (i in histogramWeightSums.indices) {
+            val binWeight = histogramWeightSums[i]
             if (binWeight <= 0.0) continue
             cumulativeWeight += binWeight
             if (cumulativeWeight >= targetWeight) {
-                return averageLogLumaForBin(
-                    logLumaHistogramWeightedSums = logLumaHistogramWeightedSums,
+                return averageHistogramValueForBin(
+                    histogramWeightedSums = histogramWeightedSums,
                     binIndex = i,
                     binWeight = binWeight,
-                    fallbackLogLuma = fallbackLogLuma
+                    fallbackValue = fallbackValue
                 )
             }
         }
-        return fallbackLogLuma
+        return fallbackValue
     }
 
-    private fun weightedTrimmedLogLumaMean(
-        logLumaHistogramWeightSums: DoubleArray,
-        logLumaHistogramWeightedSums: DoubleArray,
+    private fun weightedTrimmedHistogramMean(
+        histogramWeightSums: DoubleArray,
+        histogramWeightedSums: DoubleArray,
         weightSum: Double,
         lowQuantile: Float,
         highQuantile: Float,
-        fallbackLogLuma: Float
+        fallbackValue: Float
     ): Float {
         if (weightSum <= 0.0) {
-            return fallbackLogLuma
+            return fallbackValue
         }
         val lowWeight = weightSum * lowQuantile.coerceIn(0f, 1f).toDouble()
         val highWeight = weightSum * highQuantile.coerceIn(0f, 1f).toDouble()
         if (highWeight <= lowWeight) {
-            return fallbackLogLuma
+            return fallbackValue
         }
 
         var cumulativeWeight = 0.0
-        var trimmedWeightedLogSum = 0.0
+        var trimmedWeightedValueSum = 0.0
         var trimmedWeightSum = 0.0
-        for (i in logLumaHistogramWeightSums.indices) {
-            val binWeight = logLumaHistogramWeightSums[i]
+        for (i in histogramWeightSums.indices) {
+            val binWeight = histogramWeightSums[i]
             if (binWeight <= 0.0) continue
 
             val binStartWeight = cumulativeWeight
@@ -312,36 +379,36 @@ object MeteringSystem {
             val overlapWeight = (minOf(binEndWeight, highWeight) - maxOf(binStartWeight, lowWeight))
                 .coerceAtLeast(0.0)
             if (overlapWeight > 0.0) {
-                val binAverageLogLuma = averageLogLumaForBin(
-                    logLumaHistogramWeightedSums = logLumaHistogramWeightedSums,
+                val binAverageValue = averageHistogramValueForBin(
+                    histogramWeightedSums = histogramWeightedSums,
                     binIndex = i,
                     binWeight = binWeight,
-                    fallbackLogLuma = fallbackLogLuma
+                    fallbackValue = fallbackValue
                 )
-                trimmedWeightedLogSum += binAverageLogLuma.toDouble() * overlapWeight
+                trimmedWeightedValueSum += binAverageValue.toDouble() * overlapWeight
                 trimmedWeightSum += overlapWeight
             }
             cumulativeWeight = binEndWeight
         }
 
         return if (trimmedWeightSum > 0.0) {
-            (trimmedWeightedLogSum / trimmedWeightSum).toFloat()
+            (trimmedWeightedValueSum / trimmedWeightSum).toFloat()
         } else {
-            fallbackLogLuma
+            fallbackValue
         }
     }
 
-    private fun averageLogLumaForBin(
-        logLumaHistogramWeightedSums: DoubleArray,
+    private fun averageHistogramValueForBin(
+        histogramWeightedSums: DoubleArray,
         binIndex: Int,
         binWeight: Double,
-        fallbackLogLuma: Float
+        fallbackValue: Float
     ): Float {
-        val averageLogLuma = (logLumaHistogramWeightedSums[binIndex] / binWeight).toFloat()
-        return if (averageLogLuma.isFinite()) {
-            averageLogLuma
+        val averageValue = (histogramWeightedSums[binIndex] / binWeight).toFloat()
+        return if (averageValue.isFinite()) {
+            averageValue
         } else {
-            fallbackLogLuma
+            fallbackValue
         }
     }
 
@@ -358,6 +425,14 @@ object MeteringSystem {
             value.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
         } else {
             fallback.coerceIn(LUMA_FLOOR, MAX_LINEAR_LUMA)
+        }
+    }
+
+    private fun sanitizeDisplayLuma(value: Float): Float {
+        return if (value.isFinite() && value > 0f) {
+            value.coerceIn(LUMA_FLOOR, 1f)
+        } else {
+            LUMA_FLOOR
         }
     }
 
