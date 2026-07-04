@@ -61,6 +61,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -139,6 +140,48 @@ private fun Bitmap.recycleIfAlive() {
     if (!isRecycled) {
         recycle()
     }
+}
+
+@Composable
+private fun PanelDismissPreviewOverlay(
+    previewBounds: Rect?,
+    parentBounds: Rect?,
+    dimBackground: Boolean,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bounds = previewBounds ?: return
+    if (bounds.width <= 0f || bounds.height <= 0f) return
+
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val density = LocalDensity.current
+    val parentLeft = parentBounds?.left ?: 0f
+    val parentTop = parentBounds?.top ?: 0f
+    val width = with(density) { bounds.width.toDp() }
+    val height = with(density) { bounds.height.toDp() }
+
+    Box(
+        modifier = modifier
+            .offset {
+                IntOffset(
+                    x = (bounds.left - parentLeft).roundToInt(),
+                    y = (bounds.top - parentTop).roundToInt()
+                )
+            }
+            .size(width = width, height = height)
+            .then(
+                if (dimBackground) {
+                    Modifier.background(Color.Black.copy(alpha = 0.4f))
+                } else {
+                    Modifier
+                }
+            )
+            .pointerInput(Unit) {
+                detectTapGestures {
+                    currentOnDismiss()
+                }
+            }
+    )
 }
 
 private fun CameraParameter.defaultResetValue(): Float {
@@ -226,6 +269,7 @@ fun CameraScreen(
         mutableStateOf<ColorRecipeParams?>(null)
     }
     var pendingCaptureAnimationBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var cameraScreenBounds by remember { mutableStateOf<Rect?>(null) }
     var previewBounds by remember { mutableStateOf<Rect?>(null) }
     var zoomBarBounds by remember { mutableStateOf<Rect?>(null) }
     var galleryThumbnailBounds by remember { mutableStateOf<Rect?>(null) }
@@ -670,7 +714,13 @@ fun CameraScreen(
         )
     }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coordinates ->
+                cameraScreenBounds = coordinates.boundsInRoot()
+            }
+    ) {
 
         val backgroundPainter = rememberBackgroundPainter(viewModel)
 
@@ -1336,35 +1386,12 @@ fun CameraScreen(
             }
         }
 
-        // 全屏遮罩层，用于点击关闭 LutControlPanel
-        // 放在最外层 Box，确保覆盖整个屏幕
         if (activePanel != ActivePanel.NONE) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (activePanel == ActivePanel.SETTINGS) {
-                            Modifier.background(Color.Black.copy(alpha = 0.4f))
-                        } else Modifier
-                    )
-                    .pointerInput(Unit) {
-                        detectTapGestures {
-                            // 点击遮罩关闭 LUT 面板
-                            activePanel = ActivePanel.NONE
-                        }
-                    }
-            )
-        }
-
-        captureAnimationSnapshot?.let { snapshot ->
-            CaptureAnimationOverlay(
-                snapshot = snapshot,
-                modifier = Modifier.fillMaxSize(),
-                onFinished = {
-                    if (captureAnimationSnapshot?.id == snapshot.id) {
-                        captureAnimationSnapshot = null
-                    }
-                }
+            PanelDismissPreviewOverlay(
+                previewBounds = previewBounds,
+                parentBounds = cameraScreenBounds,
+                dimBackground = activePanel == ActivePanel.SETTINGS,
+                onDismiss = { activePanel = ActivePanel.NONE }
             )
         }
 
@@ -1644,6 +1671,18 @@ fun CameraScreen(
                 onDismiss = {
                     baselineEditLutId = null
                     baselineEditTarget = null
+                }
+            )
+        }
+
+        captureAnimationSnapshot?.let { snapshot ->
+            CaptureAnimationOverlay(
+                snapshot = snapshot,
+                modifier = Modifier.fillMaxSize(),
+                onFinished = {
+                    if (captureAnimationSnapshot?.id == snapshot.id) {
+                        captureAnimationSnapshot = null
+                    }
                 }
             )
         }
