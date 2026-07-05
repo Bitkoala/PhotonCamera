@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Gainmap
+import android.graphics.Matrix
+import android.graphics.Rect
 import android.os.Build
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.data.UserPreferencesRepository
@@ -30,6 +32,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private const val RAW_HDR_REFERENCE_ASPECT_TOLERANCE = 0.0015f
 
 /**
  * 照片处理器
@@ -219,7 +223,11 @@ class PhotoProcessor(
         )
 
         var sdrBitmap = rawResult.sdrBitmap
-        var hdrReferenceBitmap = rawResult.hdrReferenceBitmap
+        var hdrReferenceBitmap = normalizeRawHdrReferenceForGainmap(
+            rawResult = rawResult,
+            sdrBitmap = sdrBitmap,
+            hdrReferenceBitmap = rawResult.hdrReferenceBitmap
+        )
 
         if (applyMirror && metadata.isMirrored) {
             sdrBitmap = BitmapUtils.flipHorizontal(sdrBitmap)
@@ -258,8 +266,10 @@ class PhotoProcessor(
             chromaNoiseReductionValue = 0f
         )
 
+        hdrReferenceBitmap = hdrReferenceBitmap?.let { alignHdrReferenceSizeToSdr(sdrBitmap, it, "raw_pre_crop") }
         sdrBitmap = applyCrop(sdrBitmap, metadata, "raw_sdr")
         hdrReferenceBitmap = hdrReferenceBitmap?.let { applyCrop(it, metadata, "raw_hdr") }
+        hdrReferenceBitmap = hdrReferenceBitmap?.let { alignHdrReferenceSizeToSdr(sdrBitmap, it, "raw_post_crop") }
 
         GainmapSourceSet(
             sdrBase = sdrBitmap,
@@ -273,6 +283,141 @@ class PhotoProcessor(
             confidence = 0.8f,
             displayHdrSdrRatio = displayHdrSdrRatio
         )
+    }
+
+    private fun normalizeRawHdrReferenceForGainmap(
+        rawResult: RawHdrRenderResult,
+        sdrBitmap: Bitmap,
+        hdrReferenceBitmap: Bitmap?,
+    ): Bitmap? {
+        val hdr = hdrReferenceBitmap ?: return null
+        if (hdr.width == sdrBitmap.width && hdr.height == sdrBitmap.height) {
+            return hdr
+        }
+
+        val cropped = cropFullRawHdrReferenceToOutput(rawResult, hdr)
+        val aligned = cropped?.let { candidate ->
+            alignHdrReferenceSizeToSdr(sdrBitmap, candidate, "raw_output_bounds").also { aligned ->
+                if (aligned !== candidate && candidate !== hdr && !candidate.isRecycled) {
+                    candidate.recycle()
+                }
+            }
+        } ?: alignHdrReferenceSizeToSdr(sdrBitmap, hdr, "raw_size_fallback")
+
+        PLog.w(
+            "PhotoProcessor",
+            "RAW HDR reference size normalized for gainmap: " +
+                "sdr=${sdrBitmap.width}x${sdrBitmap.height}, " +
+                "hdr=${hdr.width}x${hdr.height}, " +
+                "raw=${rawResult.rawInputWidth}x${rawResult.rawInputHeight}, " +
+                "bounds=${rawResult.outputSourceBounds}, " +
+                "effectiveDefaultCrop=${rawResult.effectiveDefaultCrop}, " +
+                "result=${aligned.width}x${aligned.height}"
+        )
+        return aligned
+    }
+
+    private fun cropFullRawHdrReferenceToOutput(
+        rawResult: RawHdrRenderResult,
+        hdrReferenceBitmap: Bitmap,
+    ): Bitmap? {
+        val rawWidth = rawResult.rawInputWidth.takeIf { it > 0 } ?: return null
+        val rawHeight = rawResult.rawInputHeight.takeIf { it > 0 } ?: return null
+        if (hdrReferenceBitmap.width != rawWidth || hdrReferenceBitmap.height != rawHeight) {
+            return null
+        }
+        val sourceBounds = rawResult.outputSourceBounds ?: return null
+        val safeBounds = Rect(sourceBounds)
+        if (!safeBounds.intersect(Rect(0, 0, rawWidth, rawHeight)) || safeBounds.isEmpty) {
+            return null
+        }
+        val cropped = Bitmap.createBitmap(
+            hdrReferenceBitmap,
+            safeBounds.left,
+            safeBounds.top,
+            safeBounds.width(),
+            safeBounds.height()
+        )
+        val rotated = rotateBitmapForRawOutput(cropped, rawResult.outputRotation)
+        if (rotated !== cropped && !cropped.isRecycled) {
+            cropped.recycle()
+        }
+        return rotated
+    }
+
+    private fun rotateBitmapForRawOutput(input: Bitmap, rotation: Int): Bitmap {
+        val normalized = ((rotation % 360) + 360) % 360
+        if (normalized == 0) return input
+        val matrix = Matrix().apply { postRotate(normalized.toFloat()) }
+        return Bitmap.createBitmap(input, 0, 0, input.width, input.height, matrix, true)
+    }
+
+    private fun alignHdrReferenceSizeToSdr(
+        sdrBitmap: Bitmap,
+        hdrReferenceBitmap: Bitmap,
+        label: String,
+    ): Bitmap {
+        val aspectAligned = cropHdrReferenceToSdrAspect(sdrBitmap, hdrReferenceBitmap, label)
+        if (aspectAligned.width == sdrBitmap.width && aspectAligned.height == sdrBitmap.height) {
+            return aspectAligned
+        }
+        PLog.w(
+            "PhotoProcessor",
+            "Scaling RAW HDR reference for gainmap ($label): " +
+                "hdr=${aspectAligned.width}x${aspectAligned.height}, " +
+                "sdr=${sdrBitmap.width}x${sdrBitmap.height}"
+        )
+        val scaled = Bitmap.createScaledBitmap(aspectAligned, sdrBitmap.width, sdrBitmap.height, true)
+        if (aspectAligned !== hdrReferenceBitmap && !aspectAligned.isRecycled) {
+            aspectAligned.recycle()
+        }
+        return scaled
+    }
+
+    private fun cropHdrReferenceToSdrAspect(
+        sdrBitmap: Bitmap,
+        hdrReferenceBitmap: Bitmap,
+        label: String,
+    ): Bitmap {
+        if (sdrBitmap.width <= 0 || sdrBitmap.height <= 0 ||
+            hdrReferenceBitmap.width <= 0 || hdrReferenceBitmap.height <= 0
+        ) {
+            return hdrReferenceBitmap
+        }
+
+        val targetAspect = sdrBitmap.width.toFloat() / sdrBitmap.height.toFloat()
+        val sourceAspect = hdrReferenceBitmap.width.toFloat() / hdrReferenceBitmap.height.toFloat()
+        val aspectError = abs(sourceAspect - targetAspect) / targetAspect
+        if (aspectError <= RAW_HDR_REFERENCE_ASPECT_TOLERANCE) {
+            return hdrReferenceBitmap
+        }
+
+        val cropWidth: Int
+        val cropHeight: Int
+        if (sourceAspect > targetAspect) {
+            cropHeight = hdrReferenceBitmap.height
+            cropWidth = (cropHeight * targetAspect).roundToInt()
+                .coerceIn(1, hdrReferenceBitmap.width)
+        } else {
+            cropWidth = hdrReferenceBitmap.width
+            cropHeight = (cropWidth / targetAspect).roundToInt()
+                .coerceIn(1, hdrReferenceBitmap.height)
+        }
+
+        if (cropWidth == hdrReferenceBitmap.width && cropHeight == hdrReferenceBitmap.height) {
+            return hdrReferenceBitmap
+        }
+
+        val left = (hdrReferenceBitmap.width - cropWidth).coerceAtLeast(0) / 2
+        val top = (hdrReferenceBitmap.height - cropHeight).coerceAtLeast(0) / 2
+        PLog.w(
+            "PhotoProcessor",
+            "Cropping RAW HDR reference to SDR aspect ($label): " +
+                "hdr=${hdrReferenceBitmap.width}x${hdrReferenceBitmap.height}, " +
+                "sdr=${sdrBitmap.width}x${sdrBitmap.height}, " +
+                "crop=${left},${top},${cropWidth}x${cropHeight}"
+        )
+        return Bitmap.createBitmap(hdrReferenceBitmap, left, top, cropWidth, cropHeight)
     }
 
     suspend fun process(
@@ -630,7 +775,6 @@ class PhotoProcessor(
 
     private fun resolveRawAspectRatio(metadata: MediaMetadata): AspectRatio? {
         val storedRatio = metadata.ratio ?: return null
-        metadata.postCropRegion ?: return null
         val metadataAspect = metadata.width.takeIf { it > 0 }?.let { width ->
             metadata.height.takeIf { it > 0 }?.let { height ->
                 width.toFloat() / height.toFloat()

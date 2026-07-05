@@ -217,7 +217,8 @@ object BitmapUtils {
         }
 
         // 2. 确定目标比例
-        val targetRatio = aspectRatio?.getValue(currentIsLandscape) ?: (width.toFloat() / height.toFloat())
+        val cropIsLandscape = safeRegion.width() >= safeRegion.height()
+        val targetRatio = aspectRatio?.getValue(cropIsLandscape) ?: (safeRegion.width().toFloat() / safeRegion.height().toFloat())
 
         // 3. 在安全区域 (safeRegion) 内按照目标比例进行最终裁切
         val baseWidth = safeRegion.width()

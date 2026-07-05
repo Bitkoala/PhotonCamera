@@ -2246,6 +2246,11 @@ class RawDemosaicProcessor {
                 RawHdrRenderResult(
                     sdrBitmap = it,
                     hdrReferenceBitmap = hdrReferenceBitmap,
+                    rawInputWidth = actualWidth,
+                    rawInputHeight = actualHeight,
+                    outputSourceBounds = Rect(outputSourceBounds),
+                    outputRotation = actualRotation,
+                    effectiveDefaultCrop = effectiveDefaultCrop?.let(::Rect),
                 )
             }
         } finally {
@@ -2294,7 +2299,7 @@ class RawDemosaicProcessor {
                 Rect(metadataCrop).takeIf { it.intersect(user) && !it.isEmpty }
         }
         val baseCrop = userCropInsideMetadata ?: metadataCrop
-        val sourceIsLandscape = width >= height
+        val sourceIsLandscape = baseCrop.width() >= baseCrop.height()
         val targetAspectRatio = aspectRatio
         return if (
             targetAspectRatio != null &&

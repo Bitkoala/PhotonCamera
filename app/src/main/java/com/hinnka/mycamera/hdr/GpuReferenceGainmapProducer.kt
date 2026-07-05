@@ -73,8 +73,8 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         config: Config,
         strength: Float,
     ): GainmapResult? {
-        val width = (sdrBase.width / config.downsample).coerceAtLeast(1)
-        val height = (sdrBase.height / config.downsample).coerceAtLeast(1)
+        val width = downsampleDimension(sdrBase.width, config.downsample)
+        val height = downsampleDimension(sdrBase.height, config.downsample)
         val maxGainRatio = resolveMaxGainRatio(source.sourceKind, hdrReference, config)
         val defaultFullHdrRatio = if (source.sourceKind == SourceKind.RAW) maxGainRatio else config.defaultFullHdrRatio
         val fullHdrRatio = (source.displayHdrSdrRatio.takeIf { it > 1f } ?: defaultFullHdrRatio)
@@ -82,6 +82,14 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             .coerceAtMost(maxGainRatio)
 
         val sdrUpload = prepareUploadBitmap(sdrBase)
+        if (hdrReference != null && (hdrReference.width != sdrBase.width || hdrReference.height != sdrBase.height)) {
+            PLog.w(
+                TAG,
+                "HDR reference size differs from SDR base: " +
+                    "source=${source.sourceKind}, sdr=${sdrBase.width}x${sdrBase.height}, " +
+                    "hdr=${hdrReference.width}x${hdrReference.height}; sampling will use normalized UV"
+            )
+        }
         val hdrUpload = hdrReference?.let { prepareUploadBitmap(it) }
         val sdrTexture = uploadBitmapTexture(sdrUpload.bitmap)
         val hdrTexture = hdrUpload?.let { uploadBitmapTexture(it.bitmap) } ?: sdrTexture
@@ -136,6 +144,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             sdrUpload.recycleIfTemporary()
             hdrUpload?.recycleIfTemporary()
         }
+    }
+
+    private fun downsampleDimension(value: Int, downsample: Int): Int {
+        val safeDownsample = downsample.coerceAtLeast(1)
+        return ((value + safeDownsample - 1) / safeDownsample).coerceAtLeast(1)
     }
 
     private fun renderComputePass(
