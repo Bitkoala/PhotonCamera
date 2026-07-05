@@ -5482,7 +5482,11 @@ class Camera2Controller(private val context: Context) {
             return
         }
         PLog.d(TAG, "Stop Burst Capture")
-        captureSession?.abortCaptures()
+        try {
+            captureSession?.abortCaptures()
+        } catch (e: CameraAccessException) {
+            PLog.w(TAG, "camera inaccessible during burst stop")
+        }
         resetPreviewAfterCapture()
         _state.value = _state.value.copy(burstCapturing = false, isCapturing = false)
     }
