@@ -250,22 +250,24 @@ object MotionPhotoWriter {
     private fun parseXmpVideoInfo(segmentString: String): XmpVideoInfo? {
         val containerItemLength = parseContainerMotionPhotoLength(segmentString)
         val microVideoOffset = findLongAttribute(segmentString, "MicroVideoOffset")
-        val videoLengthAttribute = findLongAttribute(segmentString, "VideoLength")
+        val legacyVideoLengthAttribute = findLongAttribute(segmentString, "VideoLength")
+            ?.takeUnless { containerItemLength != null && isOppoLivePhotoV2(segmentString) }
 
         val containerLength = listOfNotNull(
             containerItemLength,
             microVideoOffset,
-            videoLengthAttribute
+            legacyVideoLengthAttribute
         ).firstOrNull { it > 0L } ?: return null
-
-        val videoLength = videoLengthAttribute
-            ?.takeIf { it > 0L && it <= containerLength }
-            ?: containerLength
 
         return XmpVideoInfo(
             containerLength = containerLength,
-            videoLength = videoLength
+            videoLength = containerLength
         )
+    }
+
+    private fun isOppoLivePhotoV2(segmentString: String): Boolean {
+        return findLongAttribute(segmentString, "OLivePhotoVersion")?.let { it >= 2L } == true ||
+            segmentString.contains("http://ns.oplus.com/photos/1.0/camera/")
     }
 
     private fun parseContainerMotionPhotoLength(segmentString: String): Long? {

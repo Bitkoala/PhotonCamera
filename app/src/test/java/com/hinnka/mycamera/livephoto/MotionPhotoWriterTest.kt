@@ -4,17 +4,21 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 
 class MotionPhotoWriterTest {
     @Test
-    fun extractsOppoMotionPhotoWhenContainerHasGainMapBeforeVideo() {
+    fun extractsOppoMotionPhotoUsingContainerLengthWhenV2VideoLengthIsDuration() {
         val video = mp4LikeBytes("main-video")
         val privateTail = "oppo-private-tail".toByteArray(StandardCharsets.UTF_8)
         val motionPhotoBlock = video + privateTail
         val timestampUs = 1_409_059L
+        val durationUs = 2_637_302L
         val file = createMotionPhotoFile(
             """
             <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -28,7 +32,9 @@ class MotionPhotoWriterTest {
                   GCamera:MotionPhotoVersion="1"
                   GCamera:MotionPhotoPresentationTimestampUs="$timestampUs"
                   OpCamera:MotionPhotoPrimaryPresentationTimestampUs="$timestampUs"
-                  OpCamera:VideoLength="${video.size}">
+                  OpCamera:MotionPhotoOwner="oplus"
+                  OpCamera:OLivePhotoVersion="2"
+                  OpCamera:VideoLength="$durationUs">
                   <Container:Directory>
                     <rdf:Seq>
                       <rdf:li rdf:parseType="Resource">
@@ -51,10 +57,18 @@ class MotionPhotoWriterTest {
         val output = tempFile("oppo-motion-output", ".mp4")
 
         assertTrue(MotionPhotoWriter.isMotionPhoto(file.absolutePath))
-        assertEquals(video.size.toLong(), MotionPhotoWriter.getVideoLength(file.absolutePath))
+        assertEquals(motionPhotoBlock.size.toLong(), MotionPhotoWriter.getVideoLength(file.absolutePath))
         assertEquals(timestampUs, MotionPhotoWriter.getPresentationTimestampUs(file.absolutePath))
         assertTrue(MotionPhotoWriter.extractVideo(file.absolutePath, output.absolutePath))
-        assertArrayEquals(video, output.readBytes())
+        assertArrayEquals(motionPhotoBlock, output.readBytes())
+    }
+
+    @Test
+    fun readsMp4MovieHeaderDurationInMicroseconds() {
+        val file = tempFile("mp4-duration", ".mp4")
+        file.writeBytes(mp4WithMovieHeaderDuration(timescale = 10_000, duration = 11_802))
+
+        assertEquals(1_180_200L, Mp4DurationReader.readDurationUs(file))
     }
 
     @Test
@@ -183,7 +197,11 @@ class MotionPhotoWriterTest {
 
     private fun mp4LikeBytes(label: String): ByteArray {
         val payload = label.toByteArray(StandardCharsets.UTF_8)
-        val ftyp = byteArrayOf(
+        return mp4FtypBytes() + payload
+    }
+
+    private fun mp4FtypBytes(): ByteArray {
+        return byteArrayOf(
             0x00,
             0x00,
             0x00,
@@ -209,7 +227,25 @@ class MotionPhotoWriterTest {
             '4'.code.toByte(),
             '2'.code.toByte()
         )
-        return ftyp + payload
+    }
+
+    private fun mp4WithMovieHeaderDuration(timescale: Int, duration: Int): ByteArray {
+        val mvhdPayload = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN)
+            .putInt(0)
+            .putInt(0)
+            .putInt(0)
+            .putInt(timescale)
+            .putInt(duration)
+            .array()
+        return mp4FtypBytes() + mp4Box("moov", mp4Box("mvhd", mvhdPayload))
+    }
+
+    private fun mp4Box(type: String, payload: ByteArray): ByteArray {
+        val output = ByteArrayOutputStream()
+        output.write(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(8 + payload.size).array())
+        output.write(type.toByteArray(StandardCharsets.US_ASCII))
+        output.write(payload)
+        return output.toByteArray()
     }
 
     private fun tempFile(prefix: String, suffix: String): File {
