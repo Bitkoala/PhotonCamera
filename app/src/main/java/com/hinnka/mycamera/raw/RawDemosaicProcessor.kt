@@ -641,7 +641,7 @@ class RawDemosaicProcessor {
     private fun buildRawAeCenterAverageReference(
         image: RawAeMeteringImage
     ): RawAeCenterAverageReference? {
-        val bounds = rawAeCenterHalfBounds(image.width, image.height)
+        val bounds = rawAeCenterTwoThirdsBounds(image.width, image.height)
             ?: return null
         val targetDisplayLuma = averageSrgbDisplayLuma(image, bounds)
             ?: return null
@@ -675,12 +675,12 @@ class RawDemosaicProcessor {
         )
     }
 
-    private fun rawAeCenterHalfBounds(width: Int, height: Int): Rect? {
+    private fun rawAeCenterTwoThirdsBounds(width: Int, height: Int): Rect? {
         if (width <= 0 || height <= 0) return null
-        val left = width / 4
-        val top = height / 4
-        val right = (width * 3 / 4).coerceAtLeast(left + 1)
-        val bottom = (height * 3 / 4).coerceAtLeast(top + 1)
+        val left = width / 6
+        val top = height / 6
+        val right = (width * 5 / 6).coerceAtLeast(left + 1)
+        val bottom = (height * 5 / 6).coerceAtLeast(top + 1)
         return Rect(
             left.coerceIn(0, width - 1),
             top.coerceIn(0, height - 1),
@@ -1379,14 +1379,6 @@ class RawDemosaicProcessor {
             metadataDefaultCrop = actualMetadata.defaultCrop
         )
         val effectiveDefaultCrop = rawBlackBorderDefaultCrop ?: actualMetadata.defaultCrop
-        if (rawBlackBorderDefaultCrop != null) {
-            PLog.d(
-                TAG,
-                "ISZ RAW black border overrides DNG default crop: " +
-                    "outputCrop=$rawBlackBorderCrop rotation=$actualRotation " +
-                    "source=$rawBlackBorderDefaultCrop metadata=${actualMetadata.defaultCrop}"
-            )
-        }
         val outputSourceBounds = calculateOutputSourceBounds(
             width = actualWidth,
             height = actualHeight,

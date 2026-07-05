@@ -23,7 +23,9 @@ internal object RawDefaultCropOverride {
                 )
             }
             ?: CropMargins(left = 0, top = 0, right = 0, bottom = 0)
-        val sourceMargins = rawBlackBorderCrop.toSourceMargins(rotation)
+        val sourceMargins = rawBlackBorderCrop.toSourceMargins(
+            outputReferenceRotationForCrop(rotation)
+        )
         val maxHorizontalCrop = (width - 2).coerceAtLeast(0)
         val maxVerticalCrop = (height - 2).coerceAtLeast(0)
         val left = max(baseMargins.left, sourceMargins.left)
@@ -93,6 +95,15 @@ internal object RawDefaultCropOverride {
                 right = rightPx,
                 bottom = bottomPx
             )
+        }
+    }
+
+    private fun outputReferenceRotationForCrop(rotation: Int): Int {
+        // Lens crop values are configured in portrait output space; landscape output rotates that frame.
+        return when (((rotation % 360) + 360) % 360) {
+            0 -> 90
+            180 -> 270
+            else -> rotation
         }
     }
 
