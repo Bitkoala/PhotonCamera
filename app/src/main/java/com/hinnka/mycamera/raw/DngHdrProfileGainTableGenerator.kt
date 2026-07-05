@@ -26,13 +26,33 @@ internal object DngHdrProfileGainTableGenerator {
     private const val GRID_MIN_V = 6
     private const val GRID_MAX_H = 64
     private const val GRID_MAX_V = 48
-    private const val MIN_SCENE_MAX = 1.02f
+    private const val MIN_SCENE_MAX = 1.06f
     private const val MAX_SCENE_MAX = 4.80f
     private const val SCENE_BASE_TAIL_FACTOR = 1.12f
     private const val SCENE_TAIL_EXPANSION_FACTOR = 2.75f
     private const val SCENE_TAIL_MAX_INPUT_FACTOR = 1.2f
     private const val SCENE_TAIL_HDR_STRENGTH = 0.58f
     private const val SCENE_TAIL_EXPANSION_STRENGTH_GAIN = 2.10f
+    private const val SCENE_TAIL_MAX_GAP_START_EV = 0.18f
+    private const val SCENE_TAIL_MAX_GAP_FULL_EV = 0.62f
+    private const val SCENE_DENSE_HIGHLIGHT_EXPANSION_START = 0.18f
+    private const val SCENE_DENSE_HIGHLIGHT_EXPANSION_FULL = 0.24f
+    private const val SCENE_DENSE_HIGHLIGHT_START = 0.13f
+    private const val SCENE_DENSE_HIGHLIGHT_FULL = 0.17f
+    private const val LOW_DETAIL_SPARSE_HIGHLIGHT_START = 0.018f
+    private const val LOW_DETAIL_SPARSE_HIGHLIGHT_END = 0.055f
+    private const val LOW_DETAIL_MODERATE_HIGHLIGHT_START = 0.040f
+    private const val LOW_DETAIL_MODERATE_HIGHLIGHT_FULL = 0.055f
+    private const val LOW_DETAIL_MODERATE_HIGHLIGHT_END = 0.140f
+    private const val LOW_DETAIL_FLAT_UPPER_START = 0.40f
+    private const val LOW_DETAIL_FLAT_UPPER_END = 0.50f
+    private const val LOW_RANGE_DENSE_TAIL_START = 0.075f
+    private const val LOW_RANGE_DENSE_TAIL_END = 0.145f
+    private const val LOW_RANGE_HIGHLIGHT_TAIL_START = 0.030f
+    private const val LOW_RANGE_HIGHLIGHT_TAIL_END = 0.065f
+    private const val LOW_RANGE_COMPACT_TAIL_END_BOOST = 0.03f
+    private const val LOW_TABLE_PLATEAU_END = 0.020f
+    private const val LOW_TABLE_PLATEAU_FEATHER_END = 0.032f
     private const val MAX_GAIN_VALUE = 5.40f
     private const val MIN_CURVE_INPUT = 1e-6f
     private const val SCENE_ULTRA_BLACK_ANCHOR = 0.0025f
@@ -62,7 +82,7 @@ internal object DngHdrProfileGainTableGenerator {
     private const val MIN_MID_GAIN = 1.40f
     private const val MAX_MID_GAIN = 2.75f
     private const val LOW_DETAIL_MID_GAIN_FACTOR = 1.56f
-    private const val MIN_BLACK_GAIN = 1.65f
+    private const val MIN_BLACK_GAIN = 1.00f
     private const val MAX_BLACK_GAIN = 5.40f
     private const val MIN_TOE_SLOPE = 0.58f
     private const val MAX_TOE_SLOPE = 0.88f
@@ -206,6 +226,7 @@ internal object DngHdrProfileGainTableGenerator {
         ) { cell ->
             buildHdrPgtmCurveParams(
                 global = cell,
+                sceneStats = global,
                 sceneHdrStrength = sceneHdrStrength,
                 sceneMax = sceneMax
             )
@@ -479,10 +500,11 @@ internal object DngHdrProfileGainTableGenerator {
 
     private fun buildHdrPgtmCurveParams(
         global: HdrPgtmCellStats,
+        sceneStats: HdrPgtmCellStats = global,
         sceneHdrStrength: Float,
         sceneMax: Float,
     ): HdrPgtmCurveParams {
-        val globalDynamicRangeEv = log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
+        val globalDynamicRangeEv = log2((sceneStats.p98 + 0.006f) / (sceneStats.p10 + 0.006f))
             .coerceIn(0f, 8f)
         val sceneContrastStrength = smoothStep(1.8f, 5.5f, globalDynamicRangeEv)
         val rangeCompression = sceneDynamicRangeCompression(global, sceneMax)
@@ -500,7 +522,13 @@ internal object DngHdrProfileGainTableGenerator {
             hdrStrength = hdrStrength
         )
         val baseMidGain = hdrRangeMidGain(global, sceneHdrStrength)
-        val midGain = (baseMidGain * 2.0f.pow(rangeCenterEv))
+        val moderateToneGainTrim = moderateToneGainTrim(global, sceneMax)
+        val referenceMidGain = (baseMidGain * 2.0f.pow(rangeCenterEv))
+            .coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
+        val lowToneMidCompression = hdrRangeLowToneMidCompression(global, sceneMax)
+        val midGain = (referenceMidGain *
+            lerp(1f, 0.87f, lowToneMidCompression) *
+            lerp(1f, 0.985f, moderateToneGainTrim))
             .coerceIn(MIN_MID_GAIN, MAX_MID_GAIN)
         val effectiveUpperRangeEv = log2(sceneMax / SCENE_MID_ANCHOR)
             .coerceIn(0.01f, GCAM_HDR_UPPER_RANGE_EV - GCAM_HDR_LOWER_RANGE_EV)
@@ -511,21 +539,41 @@ internal object DngHdrProfileGainTableGenerator {
             hdrStrength = hdrStrength
         )
         val toeSlope = hdrRangeToeSlope(sceneHdrStrength, highlightPressure)
+        val localDenseLowToneTail = denseLowToneTailStrength(global, sceneMax)
+        val globalDenseLowToneTail = denseLowToneTailStrength(sceneStats, sceneMax)
+        val globalHighlightTailCompression = highlightTailCompressionStrength(sceneStats)
         val blackGain = hdrRangeBlackGain(
-            midGain = midGain,
+            midGain = max(
+                midGain,
+                referenceMidGain * lerp(1f, 0.94f, lowToneMidCompression)
+            ),
             sceneHdrStrength = sceneHdrStrength,
             rangeCenterEv = rangeCenterEv,
             highlightPressure = highlightPressure,
-            rangeCompression = rangeCompression
+            rangeCompression = rangeCompression,
+            lowToneMidCompression = lowToneMidCompression,
+            denseLowToneTail = localDenseLowToneTail,
+            highlightTailCompression = globalHighlightTailCompression
         )
-        val lowDetailGainFactor = hdrRangeLowDetailGainFactor(global, sceneMax)
+        val lowDetailGainFactor = hdrRangeLowDetailGainFactor(
+            global = global,
+            sceneMax = sceneMax,
+            denseLowToneTail = localDenseLowToneTail
+        )
+        val globalCompactFlatLowTone = compactFlatLowToneStrength(sceneStats, sceneMax)
+        val lowRangeStart = hdrRangeLowRangeStart(globalDenseLowToneTail, globalHighlightTailCompression)
+        val lowRangeEnd = hdrRangeLowRangeEnd(globalDenseLowToneTail, globalCompactFlatLowTone, globalHighlightTailCompression)
+        val lowRangeRetention = hdrRangeLowRangeRetention(globalDenseLowToneTail, globalCompactFlatLowTone, lowToneMidCompression)
         return HdrPgtmCurveParams(
             midOutput = SCENE_MID_ANCHOR * midGain,
             blackGain = blackGain.coerceIn(MIN_BLACK_GAIN, MAX_BLACK_GAIN),
             toeSlope = toeSlope,
             shoulderPower = shoulderPower,
             highlightPressure = highlightPressure,
-            lowDetailGainFactor = lowDetailGainFactor
+            lowDetailGainFactor = lowDetailGainFactor,
+            lowRangeStart = lowRangeStart,
+            lowRangeEnd = lowRangeEnd,
+            lowRangeRetention = lowRangeRetention
         )
     }
 
@@ -611,11 +659,11 @@ internal object DngHdrProfileGainTableGenerator {
             .coerceIn(SCENE_MID_ANCHOR * MIN_MID_GAIN, SCENE_MID_ANCHOR * MAX_MID_GAIN)
         val midOutputEv = log2(midOutput / SCENE_MID_ANCHOR)
         val lowGain = lowDetailGain(params)
-        val lowerTargetGain = max(midOutput / SCENE_MID_ANCHOR, lowGain * 0.76f)
+        val lowerTargetGain = max(midOutput / SCENE_MID_ANCHOR, lowGain * params.lowRangeRetention)
         val lowerGain = lerp(
             lowGain,
             lowerTargetGain,
-            smoothStep(SCENE_DEEP_SHADOW_ANCHOR, SCENE_LOWER_MID_ANCHOR, safeScene)
+            smoothStep(params.lowRangeStart, params.lowRangeEnd, safeScene)
         )
         val lowerOutput = safeScene * lowerGain
         val sourceUpperEv = log2(sceneMax / SCENE_MID_ANCHOR).coerceAtLeast(0.01f)
@@ -740,7 +788,7 @@ internal object DngHdrProfileGainTableGenerator {
         val lowRangePressure = 1f - smoothStep(0.020f, 0.38f, global.p90)
         val highRangePressure = smoothStep(0.18f, 0.88f, global.p90)
         return (
-            0.24f * lowRangePressure -
+            0.035f * lowRangePressure -
                 0.16f * highlightPressure -
                 0.10f * highRangePressure * hdrStrength
             ).coerceIn(-0.18f, 0.32f)
@@ -752,24 +800,238 @@ internal object DngHdrProfileGainTableGenerator {
         rangeCenterEv: Float,
         highlightPressure: Float,
         rangeCompression: Float,
+        lowToneMidCompression: Float,
+        denseLowToneTail: Float,
+        highlightTailCompression: Float,
     ): Float {
-        val rangeToeLift = lerp(0.18f, 0.78f, sceneHdrStrength) *
+        val baseToeLift = lerp(0.18f, 0.04f, lowToneMidCompression)
+        val rangeToeLift = lerp(baseToeLift, 0.78f, sceneHdrStrength) *
             lerp(1f, 0.54f, rangeCompression)
         return (midGain * (1f + rangeToeLift) *
-            2.0f.pow(0.48f * rangeCenterEv - 0.18f * highlightPressure))
+            2.0f.pow(0.48f * rangeCenterEv - 0.42f * highlightPressure) *
+            lerp(1f, 0.14f, highlightTailCompression) *
+            lerp(1f, 0.89f, denseLowToneTail))
             .coerceIn(MIN_BLACK_GAIN, MAX_BLACK_GAIN)
     }
 
     private fun hdrRangeLowDetailGainFactor(
         global: HdrPgtmCellStats,
         sceneMax: Float,
+        denseLowToneTail: Float,
     ): Float {
         val compactScene = 1f - smoothStep(1.34f, 1.62f, sceneMax)
-        val lowHighlightDensity = 1f - smoothStep(0.018f, 0.055f, global.highlightFraction)
-        val flatUpperTone = 1f - smoothStep(0.44f, 0.54f, global.p98)
-        val reduction = (compactScene * lowHighlightDensity * flatUpperTone).coerceIn(0f, 1f)
-        return (LOW_DETAIL_MID_GAIN_FACTOR * lerp(1f, 0.80f, reduction))
-            .coerceIn(1.22f, LOW_DETAIL_MID_GAIN_FACTOR)
+        val lowHighlightDensity = lowDetailHighlightDensityGate(global)
+        val flatUpperTone = 1f - smoothStep(
+            LOW_DETAIL_FLAT_UPPER_START,
+            LOW_DETAIL_FLAT_UPPER_END,
+            global.p98
+        )
+        val lowMedianTone = lerp(0.55f, 1f, 1f - smoothStep(0.14f, 0.24f, global.p50))
+        val reduction = (compactScene * lowHighlightDensity * flatUpperTone * lowMedianTone).coerceIn(0f, 1f)
+        val usableHighlightTail = highlightTailCompressionStrength(global)
+        val localTailContrast = localTailContrastStrength(global)
+        val saturatedHighlightCell = smoothStep(0.70f, 0.98f, global.highlightFraction) *
+            smoothStep(0.94f, 1.0f, global.p98)
+        return (LOW_DETAIL_MID_GAIN_FACTOR *
+            lerp(1f, 0.66f, reduction) *
+            lerp(1f, 0.32f, usableHighlightTail) *
+            lerp(1f, 0.30f, localTailContrast) *
+            lerp(1f, 1.08f, saturatedHighlightCell) *
+            lerp(1f, 0.92f, denseLowToneTail))
+            .coerceIn(0.42f, LOW_DETAIL_MID_GAIN_FACTOR)
+    }
+
+    private fun highlightTailCompressionStrength(global: HdrPgtmCellStats): Float {
+        val brightTailMedianGate = 1f - smoothStep(0.55f, 0.78f, global.p50)
+        val brightTailCell = smoothStep(0.62f, 0.90f, global.p98) * brightTailMedianGate
+        val brightRangeContrast = smoothStep(0.80f, 0.94f, global.p98) *
+            smoothStep(
+                2.00f,
+                2.90f,
+                log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
+            ) *
+            (1f - smoothStep(0.12f, 0.28f, global.highlightFraction))
+        val highlightTailCell = max(
+            max(brightTailCell, brightRangeContrast),
+            localTailContrastStrength(global)
+        )
+        val uniformSaturatedHighlight = (1f - smoothStep(
+            1.00f,
+            2.10f,
+            log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
+        ))
+        val saturatedHighlightCell = smoothStep(0.18f, 0.50f, global.highlightFraction) *
+            smoothStep(0.88f, 0.98f, global.p98) *
+            uniformSaturatedHighlight
+        return (highlightTailCell * (1f - saturatedHighlightCell)).coerceIn(0f, 1f)
+    }
+
+    private fun localTailContrastStrength(global: HdrPgtmCellStats): Float {
+        val medianGate = smoothStep(0.030f, 0.075f, global.p50) *
+            (1f - smoothStep(0.32f, 0.48f, global.p50))
+        val upperTail = smoothStep(0.42f, 0.64f, global.p98) *
+            smoothStep(
+                1.80f,
+                2.80f,
+                log2((global.p98 + 0.006f) / (global.p50 + 0.006f))
+            )
+        val fullTail = smoothStep(0.44f, 0.62f, global.p98) *
+            smoothStep(
+                2.20f,
+                3.00f,
+                log2((global.p98 + 0.006f) / (global.p10 + 0.006f))
+            )
+        return (max(upperTail, fullTail) * medianGate)
+            .coerceIn(0f, 1f)
+    }
+
+    private fun lowTablePlateauStrength(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+        denseLowToneTail: Float,
+        highlightTailCompression: Float,
+        highlightPressure: Float,
+    ): Float {
+        val darkFlatHdrCell = smoothStep(2.15f, 3.20f, sceneMax) *
+            (1f - smoothStep(0.12f, 0.22f, global.p98)) *
+            (1f - smoothStep(0.030f, 0.12f, global.highlightFraction))
+        val saturatedHighlightCell = smoothStep(0.72f, 0.92f, highlightPressure)
+        return max(
+            max(denseLowToneTail, highlightTailCompression),
+            max(darkFlatHdrCell, saturatedHighlightCell)
+        ).coerceIn(0f, 1f)
+    }
+
+    private fun moderateToneGainTrim(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        val compactScene = 1f - smoothStep(1.55f, 2.10f, sceneMax)
+        val moderateHighlightDensity = smoothStep(0.035f, 0.055f, global.highlightFraction) *
+            (1f - smoothStep(0.085f, 0.140f, global.highlightFraction))
+        val midToneGate = smoothStep(0.18f, 0.25f, global.p50) *
+            (1f - smoothStep(0.32f, 0.38f, global.p50))
+        val upperToneGate = smoothStep(0.30f, 0.36f, global.p98) *
+            (1f - smoothStep(0.42f, 0.48f, global.p98))
+        return (compactScene * moderateHighlightDensity * midToneGate * upperToneGate)
+            .coerceIn(0f, 1f)
+    }
+
+    private fun lowDetailHighlightDensityGate(global: HdrPgtmCellStats): Float {
+        val sparseHighlight = 1f - smoothStep(
+            LOW_DETAIL_SPARSE_HIGHLIGHT_START,
+            LOW_DETAIL_SPARSE_HIGHLIGHT_END,
+            global.highlightFraction
+        )
+        val moderateHighlight = smoothStep(
+            LOW_DETAIL_MODERATE_HIGHLIGHT_START,
+            LOW_DETAIL_MODERATE_HIGHLIGHT_FULL,
+            global.highlightFraction
+        ) * (1f - smoothStep(
+            LOW_DETAIL_MODERATE_HIGHLIGHT_FULL,
+            LOW_DETAIL_MODERATE_HIGHLIGHT_END,
+            global.highlightFraction
+        ))
+        return max(sparseHighlight, moderateHighlight)
+    }
+
+    private fun hdrRangeLowToneMidCompression(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        val compactScene = 1f - smoothStep(1.24f, 1.58f, sceneMax)
+        val sparseHighlight = 1f - smoothStep(0.010f, 0.045f, global.highlightFraction)
+        val lowUpperTone = 1f - smoothStep(0.24f, 0.42f, global.p90)
+        val lowHighlightTone = 1f - smoothStep(0.30f, 0.48f, global.p98)
+        return (compactScene * sparseHighlight * lowUpperTone * lowHighlightTone)
+            .coerceIn(0f, 1f)
+    }
+
+    private fun denseLowToneTailStrength(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        return (smoothStep(2.20f, 3.40f, sceneMax) *
+            smoothStep(0.10f, 0.16f, global.highlightFraction) *
+            (1f - smoothStep(0.24f, 0.36f, global.p98)))
+            .coerceIn(0f, 1f)
+    }
+
+    private fun compactFlatLowToneStrength(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+    ): Float {
+        return ((1f - smoothStep(1.34f, 1.62f, sceneMax)) *
+            smoothStep(0.040f, 0.070f, global.highlightFraction) *
+            (1f - smoothStep(0.36f, 0.44f, global.p98)))
+            .coerceIn(0f, 1f)
+    }
+
+    private fun hdrRangeLowRangeRetention(
+        denseLowToneTail: Float,
+        compactFlatLowTone: Float,
+        lowToneMidCompression: Float,
+    ): Float {
+        return (0.76f +
+            0.05f * denseLowToneTail +
+            0.10f * compactFlatLowTone +
+            0.08f * lowToneMidCompression)
+            .coerceIn(0.76f, 0.94f)
+    }
+
+    private fun hdrRangeLowRangeStart(
+        denseLowToneTail: Float,
+        highlightTailCompression: Float,
+    ): Float {
+        val denseStart = lerp(SCENE_DEEP_SHADOW_ANCHOR, LOW_RANGE_DENSE_TAIL_START, denseLowToneTail)
+        val highlightStart = lerp(SCENE_DEEP_SHADOW_ANCHOR, LOW_RANGE_HIGHLIGHT_TAIL_START, highlightTailCompression)
+        return max(denseStart, highlightStart)
+    }
+
+    private fun hdrRangeLowRangeEnd(
+        denseLowToneTail: Float,
+        compactFlatLowTone: Float,
+        highlightTailCompression: Float,
+    ): Float {
+        val denseEnd = (lerp(SCENE_LOWER_MID_ANCHOR, LOW_RANGE_DENSE_TAIL_END, denseLowToneTail) +
+            LOW_RANGE_COMPACT_TAIL_END_BOOST * compactFlatLowTone)
+            .coerceIn(SCENE_LOWER_MID_ANCHOR, LOW_RANGE_DENSE_TAIL_END)
+        val highlightEnd = lerp(SCENE_LOWER_MID_ANCHOR, LOW_RANGE_HIGHLIGHT_TAIL_END, highlightTailCompression)
+        return max(denseEnd, highlightEnd)
+    }
+
+    private fun hdrRangeShadowGainEffect(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+        denseLowToneTail: Float,
+        compactFlatLowTone: Float,
+    ): Float {
+        val hdrScene = smoothStep(1.10f, 2.60f, sceneMax)
+        val lowToneScene = 1f - smoothStep(0.34f, 0.52f, global.p98)
+        val usableHighlight = smoothStep(0.006f, 0.060f, global.highlightFraction)
+        return (0.055f +
+            0.105f * hdrScene * lowToneScene +
+            0.210f * denseLowToneTail +
+            0.060f * compactFlatLowTone +
+            0.060f * usableHighlight * lowToneScene)
+            .coerceIn(0f, 0.52f)
+    }
+
+    private fun hdrRangeHighlightGainEffect(
+        global: HdrPgtmCellStats,
+        sceneMax: Float,
+        denseLowToneTail: Float,
+    ): Float {
+        val hdrScene = smoothStep(1.08f, 3.20f, sceneMax)
+        val tailReach = smoothStep(1.18f, 3.80f, max(global.inputTailP99, global.maxInput))
+        val highlightDensity = smoothStep(0.012f, 0.18f, global.highlightFraction)
+        val lowToneHighlight = 1f - smoothStep(0.38f, 0.58f, global.p98)
+        return (0.130f +
+            0.240f * hdrScene +
+            0.150f * tailReach +
+            0.135f * highlightDensity * lowToneHighlight +
+            0.150f * denseLowToneTail)
+            .coerceIn(0f, 0.82f)
     }
 
     private fun hdrRangeToeSlope(sceneHdrStrength: Float, highlightPressure: Float): Float {
@@ -845,7 +1107,11 @@ internal object DngHdrProfileGainTableGenerator {
             (1f - smoothStep(0.10f, 0.18f, highlightDensity)) *
             tailUsability
         val broadHighlightStrength = smoothStep(0.08f, 0.17f, highlightDensity)
-        val denseHighlightStrength = smoothStep(0.17f, 0.22f, highlightDensity)
+        val denseHighlightStrength = smoothStep(
+            SCENE_DENSE_HIGHLIGHT_START,
+            SCENE_DENSE_HIGHLIGHT_FULL,
+            highlightDensity
+        )
         val baseSceneMax = min(tailP95 * SCENE_BASE_TAIL_FACTOR, tailP98)
         val outlierSceneMax = lerp(baseSceneMax, tailP99, sparseOutlierStrength)
         val isolatedHighlightSceneMax = lerp(
@@ -899,10 +1165,14 @@ internal object DngHdrProfileGainTableGenerator {
             (1f - smoothStep(0.46f, 0.60f, toneSeparationEv))
         val compactLowHighlight = (1f - smoothStep(0.015f, 0.050f, global.highlightFraction)) *
             (1f - smoothStep(0.44f, 0.50f, global.p98))
+        val compactModerateHighlight = smoothStep(0.035f, 0.060f, global.highlightFraction) *
+            (1f - smoothStep(0.075f, 0.110f, global.highlightFraction)) *
+            (1f - smoothStep(0.36f, 0.44f, global.p98))
         return sceneMax *
             lerp(1f, 1.10f, separatedHighlight) *
             lerp(1f, 0.74f, flatDenseHighlight) *
-            lerp(1f, 0.92f, compactLowHighlight)
+            lerp(1f, 0.92f, compactLowHighlight) *
+            lerp(1f, 0.96f, compactModerateHighlight)
     }
 
     private fun tailOutlierUsability(outlierGapEv: Float): Float {
@@ -915,7 +1185,9 @@ internal object DngHdrProfileGainTableGenerator {
         tailP99: Float,
     ): Float {
         val denseBrightness = smoothStep(0.55f, 0.62f, global.p98)
-        val tailFactor = lerp(0.96f, 1.12f, denseBrightness)
+        val lowToneDenseHighlight = 1f - smoothStep(0.30f, 0.42f, global.p98)
+        val baseTailFactor = lerp(0.96f, 0.92f, lowToneDenseHighlight)
+        val tailFactor = lerp(baseTailFactor, 1.12f, denseBrightness)
         val upperBound = max(MIN_SCENE_MAX, max(tailP95, tailP99 * 1.02f))
         return (tailP95 * tailFactor)
             .coerceIn(MIN_SCENE_MAX, upperBound)
@@ -942,10 +1214,25 @@ internal object DngHdrProfileGainTableGenerator {
         val upperToneGate = 1f - smoothStep(0.26f, 0.58f, global.p90)
         val highlightToneGate = 1f - smoothStep(0.24f, 0.52f, global.p98)
         val tailGapStrength = smoothStep(0.82f, 1.55f, localTailGapEv)
+        val maxTailGate = tailExpansionMaxInputGate(global, tailInput)
         return (medianToneGate * upperToneGate * highlightToneGate * tailGapStrength *
+            maxTailGate *
             tailOutlierUsability(outlierGapEv) *
             SCENE_TAIL_EXPANSION_STRENGTH_GAIN)
             .coerceIn(0f, 1f)
+    }
+
+    private fun tailExpansionMaxInputGate(global: HdrPgtmCellStats, tailInput: Float): Float {
+        val maxInput = max(global.maxInput, tailInput)
+        if (!maxInput.isFinite() || maxInput <= 0f) return 0f
+        val maxTailGapEv = log2((maxInput + 0.04f) / (tailInput + 0.04f))
+        val sparseTailGate = smoothStep(SCENE_TAIL_MAX_GAP_START_EV, SCENE_TAIL_MAX_GAP_FULL_EV, maxTailGapEv)
+        val denseHighlightGate = smoothStep(
+            SCENE_DENSE_HIGHLIGHT_EXPANSION_START,
+            SCENE_DENSE_HIGHLIGHT_EXPANSION_FULL,
+            global.highlightFraction
+        )
+        return max(sparseTailGate, denseHighlightGate)
     }
 
     private fun midToneTailGate(global: HdrPgtmCellStats): Float {

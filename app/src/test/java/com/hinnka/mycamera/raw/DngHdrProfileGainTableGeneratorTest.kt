@@ -68,7 +68,7 @@ class DngHdrProfileGainTableGeneratorTest {
             fixture.expectedGainP50?.let { expected ->
                 failures += medianGainSeriesFailures(
                     map = map,
-                    tableInputs = DENSE_TABLE_INPUTS,
+                    tableInputs = fixture.tableInputs ?: DENSE_TABLE_INPUTS,
                     expectedGains = expected,
                     tolerance = fixture.gainTolerance,
                     label = fixture.sourceName
@@ -473,7 +473,48 @@ class DngHdrProfileGainTableGeneratorTest {
             0.7500f, 0.8200f, 0.9000f, 0.9500f, 1.0000f
         )
 
+        private val BALANCED_TABLE_INPUTS = floatArrayOf(
+            0.0000f, 0.0025f, 0.0050f, 0.0075f, 0.0100f, 0.0150f, 0.0200f, 0.0275f,
+            0.0350f, 0.0450f, 0.0500f, 0.0575f, 0.0650f, 0.0725f, 0.0800f, 0.0900f,
+            0.1000f, 0.1100f, 0.1200f, 0.1300f, 0.1400f, 0.1550f, 0.1800f, 0.2000f,
+            0.2200f, 0.2500f, 0.2800f, 0.3200f, 0.3600f, 0.4200f, 0.5000f, 0.5800f,
+            0.6600f, 0.7000f, 0.7500f, 0.8200f, 0.8800f, 0.9000f, 0.9300f, 0.9500f,
+            0.9650f, 0.9800f, 0.9900f, 0.9950f, 0.9975f, 1.0000f
+        )
+
         private val DNG_DERIVED_FIXTURES = listOf(
+            DngDerivedPgtmFixture(
+                sourceName = "PXL_20260704_204337991.RAW-02.ORIGINAL.dng",
+                width = 4080,
+                height = 3064,
+                baselineExposureEv = 0.33f,
+                embeddedWeightSum = 0.9379541f,
+                embeddedInputHeadroom = 1.1790208f,
+                rimmP10 = 0.069055f,
+                rimmP50 = 0.091839f,
+                rimmP90 = 0.116540f,
+                rimmP98 = 0.124434f,
+                rimmHighlightFraction = 0.000000f,
+                rimmTailP95 = 0.355279f,
+                rimmTailP98 = 0.404056f,
+                rimmTailP99 = 0.436914f,
+                rimmMaxInput = 0.490112f,
+                shadowGainRange = 1.6f..2.6f,
+                tableInputs = BALANCED_TABLE_INPUTS,
+                expectedGainP50 = floatArrayOf(
+                    2.029536f, 2.029536f, 2.029536f, 2.029536f, 2.029536f, 2.029536f,
+                    2.029536f, 2.017259f, 1.995904f, 1.967620f, 1.953729f, 1.933178f,
+                    1.912756f, 1.893285f, 1.874177f, 1.850001f, 1.826695f, 1.803774f,
+                    1.781545f, 1.759975f, 1.739228f, 1.709089f, 1.661411f, 1.625170f,
+                    1.590684f, 1.542494f, 1.496576f, 1.440400f, 1.391709f, 1.328843f,
+                    1.252524f, 1.185841f, 1.126924f, 1.100058f, 1.068626f, 1.028111f,
+                    0.996195f, 0.986084f, 0.971375f, 0.961862f, 0.954873f, 0.948007f,
+                    0.943496f, 0.941260f, 0.940765f, 0.940765f
+                ),
+                gainTolerance = 0.17f,
+                weightTolerance = 0.055f,
+                headroomTolerance = 0.08f
+            ),
             DngDerivedPgtmFixture(
                 sourceName = "PXL_20260628_175619159.RAW-02.ORIGINAL.dng",
                 width = 2048,
@@ -603,8 +644,142 @@ class DngHdrProfileGainTableGeneratorTest {
                     0.673810f
                 ),
                 gainTolerance = 0.26f
+            ),
+            DngDerivedPgtmFixture(
+                sourceName = "PhotonCamera_20260704_223804.dng",
+                width = 4096,
+                height = 3072,
+                baselineExposureEv = 0.98f,
+                embeddedWeightSum = 0.8365770f,
+                embeddedInputHeadroom = 1.6501193f,
+                rimmP10 = 0.204276f,
+                rimmP50 = 0.257364f,
+                rimmP90 = 0.328286f,
+                rimmP98 = 0.365104f,
+                rimmHighlightFraction = 0.055410f,
+                rimmTailP95 = 1.035434f,
+                rimmTailP98 = 1.170545f,
+                rimmTailP99 = 1.230469f,
+                rimmMaxInput = 1.313306f,
+                shadowGainRange = 1.7f..3.4f,
+                tableInputs = BALANCED_TABLE_INPUTS,
+                expectedGainP50 = floatArrayOf(
+                    2.332110f, 2.332110f, 2.332110f, 2.332110f, 2.332110f, 2.332110f,
+                    2.332110f, 2.308193f, 2.267080f, 2.215131f, 2.190485f, 2.155483f,
+                    2.122859f, 2.091421f, 2.060914f, 2.025000f, 1.991229f, 1.957812f,
+                    1.925079f, 1.893913f, 1.864003f, 1.820614f, 1.752480f, 1.701844f,
+                    1.653044f, 1.585271f, 1.521480f, 1.445249f, 1.376621f, 1.287335f,
+                    1.188969f, 1.108817f, 1.041345f, 1.011167f, 0.976263f, 0.931951f,
+                    0.897597f, 0.886805f, 0.871180f, 0.861122f, 0.853757f, 0.846541f,
+                    0.841810f, 0.839468f, 0.838950f, 0.838950f
+                ),
+                gainTolerance = 0.070f,
+                weightTolerance = 0.030f,
+                headroomTolerance = 0.06f
+            ),
+            DngDerivedPgtmFixture(
+                sourceName = "PhotonCamera_20260705_071801.dng",
+                width = 4096,
+                height = 3072,
+                baselineExposureEv = 1.64f,
+                embeddedWeightSum = 0.2916877f,
+                embeddedInputHeadroom = 0.9090933f,
+                rimmP10 = 0.181586f,
+                rimmP50 = 0.198066f,
+                rimmP90 = 0.214809f,
+                rimmP98 = 0.219718f,
+                rimmHighlightFraction = 0.161018f,
+                rimmTailP95 = 3.684094f,
+                rimmTailP98 = 4.229066f,
+                rimmTailP99 = 4.396879f,
+                rimmMaxInput = 4.547501f,
+                shadowGainRange = 3.0f..3.9f,
+                expectedGainP50 = floatArrayOf(
+                    3.565941f, 3.565941f, 3.565941f, 3.565941f, 3.565941f, 3.565941f,
+                    3.565941f, 3.297646f, 2.915521f, 2.545277f, 2.397049f, 2.210206f,
+                    2.054406f, 1.922145f, 1.808229f, 1.678387f, 1.568655f, 1.474137f,
+                    1.391835f, 1.319495f, 1.255099f, 1.145871f, 1.056189f, 0.916869f,
+                    0.836401f, 0.770297f, 0.698485f, 0.640170f, 0.570436f, 0.499898f,
+                    0.434713f, 0.385786f, 0.365581f, 0.340904f, 0.316817f, 0.303566f,
+                    0.292378f
+                )
             )
         )
+    }
+
+    @Test
+    fun testFindGapsInNewDng() {
+        val statsFile = java.io.File("c:/Users/Hinnka/Projects/PhotonCamera/packed_stats_new.txt")
+        if (!statsFile.exists()) {
+            println("packed_stats_new.txt not found!")
+            return
+        }
+        val statsText = statsFile.readText()
+        val statsFloats = statsText.split(",").map { it.trim().toFloat() }.toFloatArray()
+        
+        val map = DngHdrProfileGainTableGenerator.forCellStats(
+            width = 4096,
+            height = 3072,
+            baselineExposureEv = 1.64f,
+            packedCellStats = statsFloats
+        )!!
+
+        val cellCount = 3072
+        val cells = Array(cellCount) { index ->
+            val offset = index * 8
+            HdrPgtmCellStats(
+                p10 = statsFloats[offset],
+                p50 = statsFloats[offset + 1],
+                p90 = statsFloats[offset + 2],
+                p98 = statsFloats[offset + 3],
+                highlightFraction = statsFloats[offset + 4],
+                p995Input = statsFloats[offset + 6],
+                p999Input = statsFloats[offset + 7],
+                inputTailP95 = statsFloats[offset + 6],
+                inputTailP98 = statsFloats[offset + 6],
+                inputTailP99 = statsFloats[offset + 7],
+                maxInput = statsFloats[offset + 7],
+                sampleWeight = statsFloats[offset + 5]
+            )
+        }
+
+        val googleGainsFile = java.io.File("c:/Users/Hinnka/Projects/PhotonCamera/google_gains_new.txt")
+        if (!googleGainsFile.exists()) {
+            println("google_gains_new.txt not found!")
+            return
+        }
+        val googleLines = googleGainsFile.readLines()
+        
+        val gaps = mutableListOf<String>()
+        val t_values = floatArrayOf(0.005f, 0.020f, 0.050f, 0.100f, 0.180f)
+        
+        for (cell in 0 until cellCount) {
+            val x = cell % 64
+            val y = cell / 64
+            val stats = cells[cell]
+            val googleVals = googleLines[cell].split(",").map { it.trim().toFloat() }
+            
+            for (idx in t_values.indices) {
+                val google = googleVals[idx]
+                val actual = sampleGain(map, t_values[idx], cell)
+                val delta = actual - google
+                
+                if (delta < -0.15f) {
+                    gaps.add(String.format("Cell %-4d (x=%-2d y=%-2d) t=%.3f: p10=%.4f p50=%.4f p98=%.4f | Google=%.3f App=%.3f | Delta=%.3f",
+                        cell, x, y, t_values[idx], stats.p10, stats.p50, stats.p98, google, actual, delta))
+                }
+            }
+        }
+        
+        println("CELLS WHERE APP IS DARKER THAN GOOGLE (Delta < -0.15)")
+        println("=========================================================================")
+        if (gaps.isEmpty()) {
+            println("No cells found!")
+        } else {
+            gaps.take(100).forEach { println(it) }
+            println("Total matching gaps: ${gaps.size}")
+        }
+        println("=========================================================================")
     }
 
     private data class DngDerivedPgtmFixture(
@@ -624,6 +799,7 @@ class DngHdrProfileGainTableGeneratorTest {
         val rimmTailP99: Float,
         val rimmMaxInput: Float,
         val shadowGainRange: ClosedFloatingPointRange<Float>,
+        val tableInputs: FloatArray? = null,
         val expectedGainP50: FloatArray? = null,
         val gainTolerance: Float = 0.28f,
         val weightTolerance: Float = 0.035f,

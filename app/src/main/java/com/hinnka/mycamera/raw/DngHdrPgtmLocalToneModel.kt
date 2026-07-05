@@ -37,6 +37,7 @@ internal object DngHdrPgtmLocalToneModel {
             } else {
                 val blend = predictResidualBlend(
                     cell = cell,
+                    global = global,
                     splatFeature = splatFeatures[index],
                     localFeature = localFeatures[index],
                     globalFeature = globalFeature
@@ -110,6 +111,7 @@ internal object DngHdrPgtmLocalToneModel {
 
     private fun predictResidualBlend(
         cell: HdrPgtmCellStats,
+        global: HdrPgtmCellStats,
         splatFeature: ToneFeature,
         localFeature: ToneFeature,
         globalFeature: ToneFeature,
@@ -121,8 +123,15 @@ internal object DngHdrPgtmLocalToneModel {
         val toneDelta = weightedToneDistance(fusedFeature, globalFeature)
         val variation = smoothStep(0.08f, 0.70f, toneDelta)
         val confidence = smoothStep(24f, 96f, cell.sampleWeight)
-        val highlightStability = 1f - 0.35f * smoothStep(0.72f, 0.96f, cell.p98)
-        return (LOCAL_CURVE_MAX_BLEND * variation * confidence * highlightStability)
+        val darkerThanGlobal = 1f - smoothStep(
+            0.70f,
+            1.06f,
+            (cell.p98 + FEATURE_EPS) / max(global.p98 + FEATURE_EPS, FEATURE_EPS)
+        )
+        val quietDarkCell = darkerThanGlobal * (1f - smoothStep(0.015f, 0.10f, cell.highlightFraction))
+        val localLiftDamping = lerp(1f, 1.45f, quietDarkCell)
+        val saturatedCellDamping = lerp(1f, 0.00f, smoothStep(0.96f, 1.0f, cell.p98))
+        return (LOCAL_CURVE_MAX_BLEND * variation * confidence * localLiftDamping * saturatedCellDamping)
             .coerceIn(0f, LOCAL_CURVE_MAX_BLEND)
     }
 
@@ -157,6 +166,9 @@ internal object DngHdrPgtmLocalToneModel {
                 var shoulderPower = 0f
                 var highlightPressure = 0f
                 var lowDetailGainFactor = 0f
+                var lowRangeStart = 0f
+                var lowRangeEnd = 0f
+                var lowRangeRetention = 0f
                 for (dy in -1..1) {
                     val yy = y + dy
                     if (yy !in 0 until grid.mapPointsV) continue
@@ -176,6 +188,9 @@ internal object DngHdrPgtmLocalToneModel {
                         shoulderPower += params.shoulderPower * weight
                         highlightPressure += params.highlightPressure * weight
                         lowDetailGainFactor += params.lowDetailGainFactor * weight
+                        lowRangeStart += params.lowRangeStart * weight
+                        lowRangeEnd += params.lowRangeEnd * weight
+                        lowRangeRetention += params.lowRangeRetention * weight
                     }
                 }
                 HdrPgtmCurveParams(
@@ -184,7 +199,10 @@ internal object DngHdrPgtmLocalToneModel {
                     toeSlope = toeSlope / weightSum,
                     shoulderPower = shoulderPower / weightSum,
                     highlightPressure = highlightPressure / weightSum,
-                    lowDetailGainFactor = lowDetailGainFactor / weightSum
+                    lowDetailGainFactor = lowDetailGainFactor / weightSum,
+                    lowRangeStart = lowRangeStart / weightSum,
+                    lowRangeEnd = lowRangeEnd / weightSum,
+                    lowRangeRetention = lowRangeRetention / weightSum
                 )
             }
         }
@@ -203,7 +221,10 @@ internal object DngHdrPgtmLocalToneModel {
             toeSlope = lerp(first.toeSlope, second.toeSlope, t),
             shoulderPower = lerp(first.shoulderPower, second.shoulderPower, t),
             highlightPressure = lerp(first.highlightPressure, second.highlightPressure, t),
-            lowDetailGainFactor = lerp(first.lowDetailGainFactor, second.lowDetailGainFactor, t)
+            lowDetailGainFactor = lerp(first.lowDetailGainFactor, second.lowDetailGainFactor, t),
+            lowRangeStart = lerp(first.lowRangeStart, second.lowRangeStart, t),
+            lowRangeEnd = lerp(first.lowRangeEnd, second.lowRangeEnd, t),
+            lowRangeRetention = lerp(first.lowRangeRetention, second.lowRangeRetention, t)
         )
     }
 
@@ -283,4 +304,7 @@ internal data class HdrPgtmCurveParams(
     val shoulderPower: Float,
     val highlightPressure: Float,
     val lowDetailGainFactor: Float,
+    val lowRangeStart: Float,
+    val lowRangeEnd: Float,
+    val lowRangeRetention: Float,
 )

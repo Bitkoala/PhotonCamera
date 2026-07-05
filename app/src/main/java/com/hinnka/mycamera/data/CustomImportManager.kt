@@ -51,7 +51,7 @@ class CustomImportManager(private val context: Context) {
         // 自定义 Logo 目录
         private const val CUSTOM_LOGO_DIR = "custom_logos"
 
-        private val EXTERNAL_LUT_IMPORT_EXTENSIONS = setOf("cube", "xmp", "plut")
+        private val EXTERNAL_LUT_IMPORT_EXTENSIONS = setOf("cube", "png", "xmp", "plut")
         private const val ZIP_IMPORT_EXTENSION = "zip"
 
         fun resolveDisplayFileName(context: Context, uri: Uri): String? {

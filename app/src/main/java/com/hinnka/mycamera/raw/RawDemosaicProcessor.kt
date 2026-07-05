@@ -1482,6 +1482,10 @@ class RawDemosaicProcessor {
                         "${generatedProfileGainTableMap.mapPointsV}x" +
                         "${generatedProfileGainTableMap.mapPointsN}"
                 )
+                DngPgtmDebugRewriter.rewriteGeneratedPgtmOnRawRefreshIfEnabled(
+                    dngFile = dngFile,
+                    profileGainTableMap = generatedProfileGainTableMap
+                )
             } else {
                 PLog.w(TAG, "Google Pixel tone map requested but PGTM stats generation failed")
             }
