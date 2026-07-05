@@ -490,6 +490,9 @@
     <string name="frame_editor_layout_background">สีพื้นหลัง</string>
     <string name="frame_editor_layout_border_color">สีเส้นขอบ</string>
     <string name="frame_editor_color_opacity">ความโปร่งใส</string>
+    <string name="frame_editor_color_hex_value">ค่าสี</string>
+    <string name="frame_editor_color_hex_hint">ใช้ #RRGGBB หรือ #AARRGGBB</string>
+    <string name="frame_editor_color_hex_error">ป้อนค่าสีที่ถูกต้อง</string>
     <string name="frame_editor_layout_line_spacing">ระยะห่างระหว่างบรรทัด (dp)</string>
     <string name="frame_editor_layout_border_width">ความกว้างของเส้นขอบ (dp)</string>
     <string name="frame_editor_photo_corner_radius">มุมโค้งมนของภาพถ่าย (dp)</string>

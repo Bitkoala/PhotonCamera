@@ -559,6 +559,9 @@
     <string name="frame_editor_layout_background">背景色</string>
     <string name="frame_editor_layout_border_color">边框颜色</string>
     <string name="frame_editor_color_opacity">透明度</string>
+    <string name="frame_editor_color_hex_value">颜色值</string>
+    <string name="frame_editor_color_hex_hint">支持 #RRGGBB 或 #AARRGGBB。</string>
+    <string name="frame_editor_color_hex_error">请输入有效的颜色值。</string>
     <string name="frame_editor_layout_line_spacing">行间距 (dp)</string>
     <string name="frame_editor_layout_border_width">边框宽度 (dp)</string>
     <string name="frame_editor_photo_corner_radius">照片圆角 (dp)</string>

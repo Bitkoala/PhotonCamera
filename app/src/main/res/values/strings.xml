@@ -569,6 +569,9 @@
     <string name="frame_editor_layout_background">Background Color</string>
     <string name="frame_editor_layout_border_color">Border Color</string>
     <string name="frame_editor_color_opacity">Opacity</string>
+    <string name="frame_editor_color_hex_value">Color Value</string>
+    <string name="frame_editor_color_hex_hint">Use #RRGGBB or #AARRGGBB.</string>
+    <string name="frame_editor_color_hex_error">Enter a valid color value.</string>
     <string name="frame_editor_layout_line_spacing">Line Spacing (dp)</string>
     <string name="frame_editor_layout_border_width">Border Width (dp)</string>
     <string name="frame_editor_photo_corner_radius">Photo Corner Radius (dp)</string>

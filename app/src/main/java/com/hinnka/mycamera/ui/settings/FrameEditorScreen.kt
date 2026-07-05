@@ -1462,7 +1462,32 @@ private fun ColorPickerDialog(
     var saturation by remember(initialColor) { mutableStateOf(hsv[1]) }
     var value by remember(initialColor) { mutableStateOf(hsv[2]) }
     var alpha by remember(initialColor) { mutableStateOf((initialColor ushr 24) / 255f) }
-    val selectedColor = hsvToColor(hue, saturation, value, alpha)
+    var selectedColor by remember(initialColor) { mutableIntStateOf(initialColor) }
+    var colorHexText by remember(initialColor) { mutableStateOf(colorToHex(initialColor)) }
+    val isColorHexError = parseColorHexInput(colorHexText) == null
+
+    fun updateColorFromHsv(
+        newHue: Float = hue,
+        newSaturation: Float = saturation,
+        newValue: Float = value,
+        newAlpha: Float = alpha
+    ) {
+        hue = newHue.coerceIn(0f, 360f)
+        saturation = newSaturation.coerceIn(0f, 1f)
+        value = newValue.coerceIn(0f, 1f)
+        alpha = newAlpha.coerceIn(0f, 1f)
+        selectedColor = hsvToColor(hue, saturation, value, alpha)
+        colorHexText = colorToHex(selectedColor)
+    }
+
+    fun updateColorFromHex(color: Int) {
+        val parsedHsv = FloatArray(3).also { AndroidColor.colorToHSV(color, it) }
+        hue = parsedHsv[0]
+        saturation = parsedHsv[1]
+        value = parsedHsv[2]
+        alpha = (color ushr 24) / 255f
+        selectedColor = color
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1489,19 +1514,43 @@ private fun ColorPickerDialog(
                     )
                 }
 
+                OutlinedTextField(
+                    value = colorHexText,
+                    onValueChange = { text ->
+                        colorHexText = text
+                        parseColorHexInput(text)?.let(::updateColorFromHex)
+                    },
+                    label = { Text(stringResource(R.string.frame_editor_color_hex_value)) },
+                    supportingText = {
+                        Text(
+                            text = if (isColorHexError) {
+                                stringResource(R.string.frame_editor_color_hex_error)
+                            } else {
+                                stringResource(R.string.frame_editor_color_hex_hint)
+                            }
+                        )
+                    },
+                    isError = isColorHexError,
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 SaturationValuePicker(
                     hue = hue,
                     saturation = saturation,
                     value = value,
                     onColorPositionChange = { newSaturation, newValue ->
-                        saturation = newSaturation
-                        value = newValue
+                        updateColorFromHsv(
+                            newSaturation = newSaturation,
+                            newValue = newValue
+                        )
                     }
                 )
 
                 HuePicker(
                     hue = hue,
-                    onHueChange = { hue = it }
+                    onHueChange = { updateColorFromHsv(newHue = it) }
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1522,13 +1571,16 @@ private fun ColorPickerDialog(
                     }
                     CustomSlider(
                         value = alpha,
-                        onValueChange = { alpha = it.coerceIn(0f, 1f) },
+                        onValueChange = { updateColorFromHsv(newAlpha = it) },
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(selectedColor) }) {
+            TextButton(
+                onClick = { onConfirm(selectedColor) },
+                enabled = !isColorHexError
+            ) {
                 Text(stringResource(R.string.confirm))
             }
         },
@@ -1871,6 +1923,33 @@ private fun colorToHex(color: Int): String {
         String.format("#%06X", color and 0xFFFFFF)
     } else {
         String.format("#%08X", color)
+    }
+}
+
+private fun parseColorHexInput(input: String): Int? {
+    val hex = input.trim()
+        .removePrefix("#")
+        .removePrefix("0x")
+        .removePrefix("0X")
+    val argb = when (hex.length) {
+        3 -> "FF${expandShortHex(hex)}"
+        4 -> expandShortHex(hex)
+        6 -> "FF$hex"
+        8 -> hex
+        else -> return null
+    }
+    if (!argb.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
+        return null
+    }
+    return argb.toLong(16).toInt()
+}
+
+private fun expandShortHex(hex: String): String {
+    return buildString(hex.length * 2) {
+        hex.forEach { digit ->
+            append(digit)
+            append(digit)
+        }
     }
 }
 
