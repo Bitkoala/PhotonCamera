@@ -92,6 +92,7 @@
     <string name="export_video_confirm">将效果烘焙到视频并保存到相册？根据视频时长可能需要一些时间，原始视频不会被修改。</string>
     <string name="export_video_success">视频导出成功</string>
     <string name="export_video_failed">视频导出失败</string>
+    <string name="export_video_requires_android12">视频导出需要 Android 12 或更高版本</string>
     <string name="edit">编辑</string>
     <string name="refresh_failed">刷新预览失败</string>
     <string name="select_all">全选</string>

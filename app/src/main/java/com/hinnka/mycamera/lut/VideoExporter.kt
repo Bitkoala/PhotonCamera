@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.media3.common.MediaItem
@@ -54,6 +55,10 @@ suspend fun exportVideoWithEffects(
     outputDisplayName: String? = null,
     onProgress: ((Int) -> Unit)? = null,
 ): Uri? = withContext(Dispatchers.Main) {
+    if (!canUseVideoTransformer("exportVideoWithEffects")) {
+        return@withContext null
+    }
+
     // 检测原始视频编码，决定输出 MIME
     val originalMime = detectVideoMime(context, inputUri)
     PLog.d(TAG, "Input video MIME: $originalMime")
@@ -141,6 +146,10 @@ suspend fun applyEffectsToVideoFile(
     lutConfig: LutConfig?,
     recipeParams: ColorRecipeParams?,
 ): Boolean = withContext(Dispatchers.Main) {
+    if (!canUseVideoTransformer("applyEffectsToVideoFile")) {
+        return@withContext false
+    }
+
     val originalMime = detectVideoMime(context, inputUri)
     PLog.d(TAG, "applyEffectsToVideoFile: Input video MIME: $originalMime")
 
@@ -280,6 +289,17 @@ private fun detectVideoMime(context: Context, uri: Uri): String? {
         PLog.w(TAG, "Failed to detect video MIME: ${e.message}")
         null
     }
+}
+
+private fun canUseVideoTransformer(operation: String): Boolean {
+    if (isVideoTransformerExportSupported()) {
+        return true
+    }
+    PLog.w(
+        TAG,
+        "$operation skipped: Media3 Transformer requires Android 12/API 31, current API ${Build.VERSION.SDK_INT}"
+    )
+    return false
 }
 
 /**

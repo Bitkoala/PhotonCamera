@@ -65,6 +65,7 @@ import coil.request.ImageRequest
 import coil.compose.AsyncImage
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.lut.creator.AiPhotoEvaluation
+import com.hinnka.mycamera.lut.isVideoTransformerExportSupported
 import com.hinnka.mycamera.lut.VideoLutEffect
 import com.hinnka.mycamera.ui.camera.autoRotate
 import com.hinnka.mycamera.ui.components.CustomSlider
@@ -892,7 +893,11 @@ fun GalleryDetailScreen(
                             text = if (isVideoExporting && videoExportProgress > 0) "$videoExportProgress%" else stringResource(R.string.export),
                             isLoading = isVideoExporting,
                             onClick = {
-                                showVideoExportConfirmDialog = true
+                                if (isVideoTransformerExportSupported()) {
+                                    showVideoExportConfirmDialog = true
+                                } else {
+                                    Toast.makeText(context, R.string.export_video_requires_android12, Toast.LENGTH_SHORT).show()
+                                }
                             }
                         )
                     }

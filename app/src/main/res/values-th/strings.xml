@@ -83,6 +83,7 @@
     <string name="export_video_confirm">สร้างเอฟเฟ็กต์ลงในวิดีโอและบันทึกลงในอัลบั้มรูปหรือไม่? อาจใช้เวลาสักครู่ขึ้นอยู่กับความยาวของวิดีโอ วิดีโอต้นฉบับจะไม่ได้รับการแก้ไข</string>
     <string name="export_video_success">ส่งออกวิดีโอเรียบร้อยแล้ว</string>
     <string name="export_video_failed">การส่งออกวิดีโอล้มเหลว</string>
+    <string name="export_video_requires_android12">การส่งออกวิดีโอต้องใช้ Android 12 ขึ้นไป</string>
     <string name="edit">แก้ไข</string>
     <string name="refresh_failed">รีเฟรชตัวอย่างล้มเหลว</string>
     <string name="select_all">เลือกทั้งหมด</string>

@@ -28,6 +28,7 @@ import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.lut.applyEffectsToVideoFile
+import com.hinnka.mycamera.lut.isVideoTransformerExportSupported
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
@@ -1094,7 +1095,7 @@ object GalleryManager {
                         val latestMetadata = loadMetadata(context, id) ?: metadata
 
                         var finalVideoPath = videoFile.absolutePath
-                        if (latestMetadata.applyEffectsToVideo) {
+                        if (latestMetadata.applyEffectsToVideo && isVideoTransformerExportSupported()) {
                             val lutId = latestMetadata.lutId
                             val colorRecipeParams = latestMetadata.colorRecipeParams
                             PLog.d(TAG, "exportPhoto: applyEffectsToVideo is true. lutId: $lutId, colorRecipe: ${colorRecipeParams != null}")
@@ -1121,6 +1122,11 @@ object GalleryManager {
                                 processedFile.delete()
                                 PLog.e(TAG, "exportPhoto: Failed to apply video effects, falling back to original video")
                             }
+                        } else if (latestMetadata.applyEffectsToVideo) {
+                            PLog.w(
+                                TAG,
+                                "exportPhoto: Skipping video effects because Media3 Transformer requires Android 12/API 31"
+                            )
                         }
 
                         val success = MotionPhotoWriter.write(

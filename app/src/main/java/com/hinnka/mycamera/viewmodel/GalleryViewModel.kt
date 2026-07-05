@@ -30,6 +30,7 @@ import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.LutInfo
 import com.hinnka.mycamera.lut.PhotoTransformation
 import com.hinnka.mycamera.lut.exportVideoWithEffects
+import com.hinnka.mycamera.lut.isVideoTransformerExportSupported
 import com.hinnka.mycamera.lut.creator.OpenAIApiClient
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.EffectParams
@@ -2872,6 +2873,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         onComplete: (success: Boolean, exportedUri: android.net.Uri?) -> Unit = { _, _ -> }
     ) {
         if (!photo.isVideo) {
+            onComplete(false, null)
+            return
+        }
+        if (!isVideoTransformerExportSupported()) {
+            PLog.w(TAG, "exportVideo skipped: Media3 Transformer video export requires Android 12/API 31")
             onComplete(false, null)
             return
         }
