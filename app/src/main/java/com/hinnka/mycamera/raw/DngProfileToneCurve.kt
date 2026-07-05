@@ -40,6 +40,41 @@ internal object DngProfileToneCurve {
         1f
     )
 
+    private val OPPO_EMBEDDED_TONE_CURVE_POINTS = floatArrayOf(
+        0f, 0f, 0.00787f, 0.00371f, 0.01575f, 0.00959f, 0.02362f, 0.01712f,
+        0.0315f, 0.02606f, 0.03937f, 0.03603f, 0.04724f, 0.04693f, 0.05512f, 0.05869f,
+        0.06299f, 0.07129f, 0.07087f, 0.0846f, 0.07874f, 0.09835f, 0.08661f, 0.11247f,
+        0.09449f, 0.12681f, 0.10236f, 0.14133f, 0.11024f, 0.15596f, 0.11811f, 0.17063f,
+        0.12598f, 0.18528f, 0.13386f, 0.1999f, 0.14173f, 0.21448f, 0.14961f, 0.2291f,
+        0.15748f, 0.24379f, 0.16535f, 0.25852f, 0.17323f, 0.27328f, 0.1811f, 0.28805f,
+        0.18898f, 0.30285f, 0.19685f, 0.31765f, 0.20472f, 0.33242f, 0.2126f, 0.34714f,
+        0.22047f, 0.36167f, 0.22835f, 0.37604f, 0.23622f, 0.39025f, 0.24409f, 0.40428f,
+        0.25197f, 0.41815f, 0.25984f, 0.43177f, 0.26772f, 0.44515f, 0.27559f, 0.45831f,
+        0.28346f, 0.47121f, 0.29134f, 0.48387f, 0.29921f, 0.49631f, 0.30709f, 0.50851f,
+        0.31496f, 0.52048f, 0.32283f, 0.53223f, 0.33071f, 0.54377f, 0.33858f, 0.55507f,
+        0.34646f, 0.56618f, 0.35433f, 0.57707f, 0.3622f, 0.58775f, 0.37008f, 0.59823f,
+        0.37795f, 0.60852f, 0.38583f, 0.6186f, 0.3937f, 0.6285f, 0.40157f, 0.6382f,
+        0.40945f, 0.64774f, 0.41732f, 0.65708f, 0.4252f, 0.66624f, 0.43307f, 0.67523f,
+        0.44094f, 0.68405f, 0.44882f, 0.69268f, 0.45669f, 0.70115f, 0.46457f, 0.70948f,
+        0.47244f, 0.71761f, 0.48031f, 0.72561f, 0.48819f, 0.73346f, 0.49606f, 0.74114f,
+        0.50394f, 0.74865f, 0.51181f, 0.75605f, 0.51969f, 0.76326f, 0.52756f, 0.77034f,
+        0.53543f, 0.77729f, 0.54331f, 0.7841f, 0.55118f, 0.79078f, 0.55906f, 0.79729f,
+        0.56693f, 0.80371f, 0.5748f, 0.80997f, 0.58268f, 0.81611f, 0.59055f, 0.82213f,
+        0.59843f, 0.828f, 0.6063f, 0.83377f, 0.61417f, 0.8394f, 0.62205f, 0.84491f,
+        0.62992f, 0.85031f, 0.6378f, 0.8556f, 0.64567f, 0.86075f, 0.65354f, 0.86582f,
+        0.66142f, 0.87076f, 0.66929f, 0.8756f, 0.67717f, 0.88035f, 0.68504f, 0.88497f,
+        0.69291f, 0.88947f, 0.70079f, 0.89389f, 0.70866f, 0.89821f, 0.71654f, 0.90242f,
+        0.72441f, 0.90656f, 0.73228f, 0.91055f, 0.74016f, 0.91449f, 0.74803f, 0.91832f,
+        0.75591f, 0.92207f, 0.76378f, 0.92571f, 0.77165f, 0.92927f, 0.77953f, 0.93276f,
+        0.7874f, 0.93616f, 0.79528f, 0.93947f, 0.80315f, 0.94268f, 0.81102f, 0.9458f,
+        0.8189f, 0.94886f, 0.82677f, 0.95186f, 0.83465f, 0.95476f, 0.84252f, 0.9576f,
+        0.85039f, 0.96034f, 0.85827f, 0.963f, 0.86614f, 0.96563f, 0.87402f, 0.96816f,
+        0.88189f, 0.97061f, 0.88976f, 0.97302f, 0.89764f, 0.97537f, 0.90551f, 0.97762f,
+        0.91339f, 0.97981f, 0.92126f, 0.98193f, 0.92913f, 0.98401f, 0.93701f, 0.98603f,
+        0.94488f, 0.98796f, 0.95276f, 0.98987f, 0.96063f, 0.99169f, 0.9685f, 0.99349f,
+        0.97638f, 0.99517f, 0.98425f, 0.99686f, 0.99213f, 0.99845f, 1f, 1f
+    )
+
     fun googleHdrToneCurvePoints(): FloatArray {
         return FloatArray(GOOGLE_HDR_TONE_CURVE_Y.size * 2) { index ->
             val pointIndex = index / 2
@@ -55,6 +90,14 @@ internal object DngProfileToneCurve {
         return DcpToneCurve(googleHdrToneCurvePoints()).toLut(sampleCount)
     }
 
+    fun oppoEmbeddedToneCurvePoints(): FloatArray {
+        return OPPO_EMBEDDED_TONE_CURVE_POINTS.copyOf()
+    }
+
+    fun oppoEmbeddedToneCurveLut(sampleCount: Int = 256): FloatArray {
+        return DcpToneCurve(oppoEmbeddedToneCurvePoints()).toLut(sampleCount)
+    }
+
     fun isGoogleHdrToneCurve(toneCurve: DcpToneCurve?): Boolean {
         if (toneCurve?.isValid != true) return false
         val googlePoints = googleHdrToneCurvePoints()
@@ -66,11 +109,30 @@ internal object DngProfileToneCurve {
         return isGoogleHdrToneCurveLut(toneCurve.toLut())
     }
 
+    fun isOppoEmbeddedToneCurve(toneCurve: DcpToneCurve?): Boolean {
+        if (toneCurve?.isValid != true) return false
+        val oppoPoints = OPPO_EMBEDDED_TONE_CURVE_POINTS
+        if (toneCurve.points.size == oppoPoints.size) {
+            return toneCurve.points.indices.all { index ->
+                kotlin.math.abs(toneCurve.points[index] - oppoPoints[index]) <= POINT_TOLERANCE
+            }
+        }
+        return isOppoEmbeddedToneCurveLut(toneCurve.toLut())
+    }
+
     fun isGoogleHdrToneCurveLut(lut: FloatArray?): Boolean {
         if (lut == null || lut.isEmpty()) return false
         val googleLut = googleHdrToneCurveLut(lut.size)
         return lut.indices.all { index ->
             kotlin.math.abs(lut[index] - googleLut[index]) <= LUT_TOLERANCE
+        }
+    }
+
+    fun isOppoEmbeddedToneCurveLut(lut: FloatArray?): Boolean {
+        if (lut == null || lut.isEmpty()) return false
+        val oppoLut = oppoEmbeddedToneCurveLut(lut.size)
+        return lut.indices.all { index ->
+            kotlin.math.abs(lut[index] - oppoLut[index]) <= LUT_TOLERANCE
         }
     }
 }

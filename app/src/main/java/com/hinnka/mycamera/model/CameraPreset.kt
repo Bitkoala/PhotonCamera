@@ -26,6 +26,7 @@ data class CameraPreset(
     val rawDcpIdsByLens: Map<String, String?> = emptyMap(),
     val rawRenderingEngine: String = RawRenderingEngine.AdobeCurve.name,
     val rawGooglePixelToneMap: Boolean = false,
+    val rawOppoMasterToneMap: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
     val rawDROMode: String = "OFF",
@@ -70,7 +71,10 @@ data class CameraPreset(
     fun normalizedForPersistence(): CameraPreset {
         return withSupportedCaptureCombination()
             .withoutLegacyHdf()
-            .copy(rawDcpIdsByLens = normalizeRawDcpIdsByLens(rawDcpIdsByLens))
+            .copy(
+                rawDcpIdsByLens = normalizeRawDcpIdsByLens(rawDcpIdsByLens),
+                rawGooglePixelToneMap = rawGooglePixelToneMap && !rawOppoMasterToneMap
+            )
     }
 
     companion object {

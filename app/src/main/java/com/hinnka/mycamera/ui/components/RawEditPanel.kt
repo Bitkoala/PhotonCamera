@@ -146,7 +146,7 @@ fun RawEditPanel(
                 onDeleteDcp = onDeleteDcp
             )
             Spacer(modifier = Modifier.height(16.dp))
-            RawPixelStyleToneMapSwitch(
+            RawProfileToneMapSwitches(
                 params = rawToneMappingParameters.normalized(),
                 onParamsChange = onRawToneMappingParametersChange,
                 onAdjustmentEnd = onAdjustmentEnd
@@ -423,7 +423,7 @@ private fun RawNumberInputSetting(
 }
 
 @Composable
-private fun RawPixelStyleToneMapSwitch(
+private fun RawProfileToneMapSwitches(
     params: RawToneMappingParameters,
     onParamsChange: (RawToneMappingParameters) -> Unit,
     onAdjustmentEnd: () -> Unit
@@ -434,6 +434,15 @@ private fun RawPixelStyleToneMapSwitch(
         checked = params.useGooglePixelToneMap,
         onCheckedChange = { enabled ->
             onParamsChange(params.withGooglePixelToneMap(enabled))
+            onAdjustmentEnd()
+        }
+    )
+    RawSwitchSettingItem(
+        title = stringResource(R.string.settings_raw_oppo_master_tone_map),
+        description = stringResource(R.string.settings_raw_oppo_master_tone_map_description),
+        checked = params.useOppoMasterToneMap,
+        onCheckedChange = { enabled ->
+            onParamsChange(params.withOppoMasterToneMap(enabled))
             onAdjustmentEnd()
         }
     )

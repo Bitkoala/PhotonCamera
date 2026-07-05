@@ -1398,9 +1398,13 @@ class RawDemosaicProcessor {
         val embeddedDngHdrToneMapAvailable = embeddedGoogleToneCurveLut != null &&
             embeddedProfileGainTableMap != null
         val normalizedToneMappingParameters = rawToneMappingParameters.normalized()
+        val oppoMasterToneMapRequested = useAdobeProfilePipeline &&
+            normalizedToneMappingParameters.useOppoMasterToneMap
         val embeddedDngHdrToneMapDisabledByUser = embeddedDngHdrToneMapAvailable &&
             normalizedToneMappingParameters.googlePixelToneMapExplicit &&
             !normalizedToneMappingParameters.useGooglePixelToneMap
+        val embeddedDngHdrToneMapDisabledByOppo = embeddedDngHdrToneMapAvailable &&
+            oppoMasterToneMapRequested
         if (embeddedDngHdrToneMapAvailable) {
             PLog.d(
                 TAG,
@@ -1422,10 +1426,12 @@ class RawDemosaicProcessor {
             useAdobeProfilePipeline &&
             !embeddedDngHdrToneMapOverriddenByDcp &&
             !embeddedDngHdrToneMapDisabledByUser &&
+            !embeddedDngHdrToneMapDisabledByOppo &&
             !regenerateEmbeddedDngHdrToneMap
         if (embeddedDngHdrToneMapAvailable && !embeddedDngHdrToneMapRenderable) {
             val reason = when {
                 embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map explicitly disabled for this photo"
+                embeddedDngHdrToneMapDisabledByOppo -> "OPPO master tone map explicitly requested"
                 !useAdobeProfilePipeline -> "color engine $colorEngine does not use Adobe/DNG profile tone map"
                 embeddedDngHdrToneMapOverriddenByDcp -> "selected DCP has tone curve: ${resolvedDcpRenderPlan.profileName}"
                 regenerateEmbeddedDngHdrToneMap -> "Pixel-style tone map explicitly requested generated PGTM"
@@ -1484,27 +1490,40 @@ class RawDemosaicProcessor {
         }
         val googlePixelToneMapActive = (embeddedDngHdrToneMapRenderable || generatePixelToneMap) &&
             actualMetadata.profileGainTableMap?.isValid == true
+        val oppoMasterToneMapActive = oppoMasterToneMapRequested
         val profileBaseDcpRenderPlan = if (
-            embeddedDngHdrToneMapDisabledByUser &&
+            (embeddedDngHdrToneMapDisabledByUser || embeddedDngHdrToneMapDisabledByOppo) &&
             !hasDcpSelection &&
             useAdobeProfilePipeline
         ) {
             withoutProfileToneCurve(
                 resolvedDcpRenderPlan,
-                reason = "Pixel-style tone map explicitly disabled for this photo"
+                reason = if (embeddedDngHdrToneMapDisabledByOppo) {
+                    "OPPO master tone map explicitly requested"
+                } else {
+                    "Pixel-style tone map explicitly disabled for this photo"
+                }
             )
         } else {
             resolvedDcpRenderPlan
         }
-        val activeDcpRenderPlan = if (googlePixelToneMapActive) {
-            googlePixelToneMapRenderPlan(
-                basePlan = profileBaseDcpRenderPlan,
-                metadata = actualMetadata,
-                workingColorSpace = profileWorkingColorSpace,
-                preferredToneCurveLut = embeddedGoogleToneCurveLut.takeIf { embeddedDngHdrToneMapRenderable }
-            )
-        } else {
-            profileBaseDcpRenderPlan
+        val activeDcpRenderPlan = when {
+            googlePixelToneMapActive -> {
+                googlePixelToneMapRenderPlan(
+                    basePlan = profileBaseDcpRenderPlan,
+                    metadata = actualMetadata,
+                    workingColorSpace = profileWorkingColorSpace,
+                    preferredToneCurveLut = embeddedGoogleToneCurveLut.takeIf { embeddedDngHdrToneMapRenderable }
+                )
+            }
+            oppoMasterToneMapActive -> {
+                oppoMasterToneMapRenderPlan(
+                    basePlan = profileBaseDcpRenderPlan,
+                    metadata = actualMetadata,
+                    workingColorSpace = profileWorkingColorSpace
+                )
+            }
+            else -> profileBaseDcpRenderPlan
         }
         val profilePlanSource = when {
             googlePixelToneMapActive -> when {
@@ -1512,6 +1531,12 @@ class RawDemosaicProcessor {
                 rawDcpId != null -> "$rawDcpId+google-pixel-tone-map"
                 !hasDcpSelection && embeddedDngRenderPlan != null -> "embedded-dng+google-pixel-tone-map"
                 else -> "google-pixel-tone-map"
+            }
+            oppoMasterToneMapActive -> when {
+                dcpRenderPlan != null -> "provided+oppo-master-tone-map"
+                rawDcpId != null -> "$rawDcpId+oppo-master-tone-map"
+                !hasDcpSelection && embeddedDngRenderPlan != null -> "embedded-dng+oppo-master-tone-map"
+                else -> "oppo-master-tone-map"
             }
             activeDcpRenderPlan == null -> null
             dcpRenderPlan != null -> "provided"
@@ -6913,6 +6938,25 @@ class RawDemosaicProcessor {
             hueSatMap = basePlan?.hueSatMap,
             lookTable = basePlan?.lookTable,
             toneCurveLut = googleToneCurve
+        )
+    }
+
+    private fun oppoMasterToneMapRenderPlan(
+        basePlan: DcpRenderPlan?,
+        metadata: RawMetadata,
+        workingColorSpace: ColorSpace
+    ): DcpRenderPlan {
+        return DcpRenderPlan(
+            profileName = basePlan?.profileName?.let { "$it + OPPO Master Tone Map" }
+                ?: "OPPO Master Tone Map",
+            workingColorSpace = basePlan?.workingColorSpace ?: workingColorSpace,
+            baselineExposureOffset = basePlan?.baselineExposureOffset ?: 0f,
+            defaultBlackRender = basePlan?.defaultBlackRender ?: DcpDefaultBlackRender.Auto,
+            colorCorrectionMatrix = basePlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix,
+            cameraWhite = basePlan?.cameraWhite ?: metadata.cameraWhite,
+            hueSatMap = basePlan?.hueSatMap,
+            lookTable = basePlan?.lookTable,
+            toneCurveLut = DngProfileToneCurve.oppoEmbeddedToneCurveLut()
         )
     }
 

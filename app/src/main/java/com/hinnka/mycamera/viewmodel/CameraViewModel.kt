@@ -154,6 +154,7 @@ private data class PresetMatchSnapshot(
     val rawDcpIdsByLens: Map<String, String?>,
     val rawRenderingEngine: RawRenderingEngine,
     val rawGooglePixelToneMap: Boolean,
+    val rawOppoMasterToneMap: Boolean,
     val rawSpectralFilmStock: String?,
     val rawSpectralFilmPrint: String?,
     val rawDROMode: String,
@@ -177,6 +178,7 @@ private data class PresetMatchSnapshot(
             rawDcpIdsByLens == preset.rawDcpIdsByLens &&
             rawRenderingEngine == RawRenderingEngine.fromPersistedName(preset.rawRenderingEngine) &&
             rawGooglePixelToneMap == preset.rawGooglePixelToneMap &&
+            rawOppoMasterToneMap == preset.rawOppoMasterToneMap &&
             rawSpectralFilmStock == preset.rawSpectralFilmStock &&
             rawSpectralFilmPrint == preset.rawSpectralFilmPrint &&
             rawDROMode == preset.rawDROMode &&
@@ -210,6 +212,12 @@ private data class PresetMatchSnapshot(
                 add(
                     "rawGooglePixelToneMap current=$rawGooglePixelToneMap " +
                         "preset=${preset.rawGooglePixelToneMap}"
+                )
+            }
+            if (rawOppoMasterToneMap != preset.rawOppoMasterToneMap) {
+                add(
+                    "rawOppoMasterToneMap current=$rawOppoMasterToneMap " +
+                        "preset=${preset.rawOppoMasterToneMap}"
                 )
             }
             if (rawSpectralFilmStock != preset.rawSpectralFilmStock) {
@@ -258,6 +266,7 @@ private data class CameraFeatureUpdate(
     val rawDcpIdsByLens: SettingValue<Map<String, String?>>? = null,
     val rawRenderingEngine: SettingValue<RawRenderingEngine>? = null,
     val rawGooglePixelToneMap: SettingValue<Boolean>? = null,
+    val rawOppoMasterToneMap: SettingValue<Boolean>? = null,
     val rawSpectralFilmStock: SettingValue<String?>? = null,
     val rawSpectralFilmPrint: SettingValue<String?>? = null,
     val droMode: SettingValue<String>? = null,
@@ -381,6 +390,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             rawDcpIdsByLens = saved.rawDcpIdsByLens,
                             rawRenderingEngine = saved.rawRenderingEngine,
                             rawGooglePixelToneMap = saved.rawGooglePixelToneMap,
+                            rawOppoMasterToneMap = saved.rawOppoMasterToneMap,
                             rawSpectralFilmStock = saved.rawSpectralFilmStock,
                             rawSpectralFilmPrint = saved.rawSpectralFilmPrint,
                             rawDROMode = saved.rawDROMode,
@@ -443,6 +453,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDcpIdsByLens = userPreferences.value.rawDcpIdsByLens,
             rawRenderingEngine = rawRenderingEngine.value.name,
             rawGooglePixelToneMap = rawToneMappingParameters.value.useGooglePixelToneMap,
+            rawOppoMasterToneMap = rawToneMappingParameters.value.useOppoMasterToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
             rawSpectralFilmPrint = rawSpectralFilmPrint.value,
             rawDROMode = droMode.value,
@@ -516,6 +527,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDcpIdsByLens = SettingValue(this?.rawDcpIdsByLens ?: emptyMap()),
             rawRenderingEngine = SettingValue(RawRenderingEngine.fromPersistedName(this?.rawRenderingEngine)),
             rawGooglePixelToneMap = SettingValue(this?.rawGooglePixelToneMap ?: false),
+            rawOppoMasterToneMap = SettingValue(this?.rawOppoMasterToneMap ?: false),
             rawSpectralFilmStock = SettingValue(this?.rawSpectralFilmStock),
             rawSpectralFilmPrint = SettingValue(this?.rawSpectralFilmPrint),
             droMode = SettingValue(this?.rawDROMode ?: RawProcessingPreferences.DROMode.OFF.name),
@@ -638,6 +650,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             prewarmRawDcp(targetPrefs.rawDcpIdForLens(currentState.currentCameraId))
         }
 
+        val rawToneMappingUpdate = if (
+            update.rawGooglePixelToneMap != null ||
+            update.rawOppoMasterToneMap != null
+        ) {
+            var toneMappingParameters = prefs.rawToneMappingParameters
+            update.rawGooglePixelToneMap?.let {
+                toneMappingParameters = toneMappingParameters.withGooglePixelToneMap(it.value)
+            }
+            update.rawOppoMasterToneMap?.let {
+                toneMappingParameters = toneMappingParameters.withOppoMasterToneMap(it.value)
+            }
+            PreferenceUpdateValue(toneMappingParameters)
+        } else {
+            null
+        }
+
         userPreferencesRepository.saveCameraFeaturePreferences(
             CameraFeaturePreferencesUpdate(
                 lutId = update.lutId?.let { PreferenceUpdateValue(it.value) },
@@ -678,9 +706,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     null
                 },
-                rawToneMappingParameters = update.rawGooglePixelToneMap?.let {
-                    PreferenceUpdateValue(prefs.rawToneMappingParameters.withGooglePixelToneMap(it.value))
-                },
+                rawToneMappingParameters = rawToneMappingUpdate,
                 rawSpectralFilmStock = update.rawSpectralFilmStock?.let { PreferenceUpdateValue(it.value) },
                 rawSpectralFilmPrint = update.rawSpectralFilmPrint?.let { PreferenceUpdateValue(it.value) },
                 droMode = update.droMode?.let {
@@ -896,6 +922,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDcpIdsByLens = rawDcpIdsByLens.value,
             rawRenderingEngine = rawRenderingEngine.value,
             rawGooglePixelToneMap = rawToneMappingParameters.value.useGooglePixelToneMap,
+            rawOppoMasterToneMap = rawToneMappingParameters.value.useOppoMasterToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
             rawSpectralFilmPrint = rawSpectralFilmPrint.value,
             rawDROMode = droMode.value,
@@ -920,6 +947,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawDcpIdsByLens = prefs.rawDcpIdsByLens,
             rawRenderingEngine = prefs.rawRenderingEngine,
             rawGooglePixelToneMap = prefs.rawToneMappingParameters.useGooglePixelToneMap,
+            rawOppoMasterToneMap = prefs.rawToneMappingParameters.useOppoMasterToneMap,
             rawSpectralFilmStock = prefs.rawSpectralFilmStock,
             rawSpectralFilmPrint = prefs.rawSpectralFilmPrint,
             rawDROMode = prefs.droMode,

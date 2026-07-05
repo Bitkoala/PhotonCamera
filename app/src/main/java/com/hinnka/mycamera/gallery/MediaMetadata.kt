@@ -339,6 +339,7 @@ data class MediaMetadata(
                             obj.optDouble("rawFilmicWhiteRelativeExposure").toFloat()
                         },
                         useGooglePixelToneMap = obj.optBoolean("rawGooglePixelToneMap", false),
+                        useOppoMasterToneMap = obj.optBoolean("rawOppoMasterToneMap", false),
                         googlePixelToneMapExplicit = obj.optBoolean(
                             "rawGooglePixelToneMapExplicit",
                             obj.has("rawGooglePixelToneMap")

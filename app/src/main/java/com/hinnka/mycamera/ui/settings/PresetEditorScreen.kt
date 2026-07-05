@@ -104,6 +104,7 @@ fun PresetEditorScreen(
         mutableStateOf(RawRenderingEngine.fromPersistedName(sourcePreset?.rawRenderingEngine))
     }
     var rawGooglePixelToneMap by remember { mutableStateOf(sourcePreset?.rawGooglePixelToneMap ?: false) }
+    var rawOppoMasterToneMap by remember { mutableStateOf(sourcePreset?.rawOppoMasterToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
@@ -142,6 +143,7 @@ fun PresetEditorScreen(
             rawDcpIdsByLens = rawDcpIdsByLens,
             rawRenderingEngine = rawRenderingEngine.name,
             rawGooglePixelToneMap = rawGooglePixelToneMap,
+            rawOppoMasterToneMap = rawOppoMasterToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
             rawDROMode = rawDROMode,
@@ -419,8 +421,19 @@ fun PresetEditorScreen(
                             title = stringResource(R.string.settings_raw_google_pixel_tone_map),
                             description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
                             checked = rawGooglePixelToneMap,
-                            onCheckedChange = {
-                                rawGooglePixelToneMap = it
+                            onCheckedChange = { enabled ->
+                                rawGooglePixelToneMap = enabled
+                                if (enabled) rawOppoMasterToneMap = false
+                            }
+                        )
+
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_raw_oppo_master_tone_map),
+                            description = stringResource(R.string.settings_raw_oppo_master_tone_map_description),
+                            checked = rawOppoMasterToneMap,
+                            onCheckedChange = { enabled ->
+                                rawOppoMasterToneMap = enabled
+                                if (enabled) rawGooglePixelToneMap = false
                             }
                         )
 

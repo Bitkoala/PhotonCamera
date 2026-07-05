@@ -8,6 +8,7 @@ data class RawToneMappingParameters(
     val filmicBlackRelativeExposure: Float = FILMIC_BLACK_RELATIVE_EXPOSURE_DEFAULT,
     val filmicWhiteRelativeExposure: Float = FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT,
     val useGooglePixelToneMap: Boolean = false,
+    val useOppoMasterToneMap: Boolean = false,
     val googlePixelToneMapExplicit: Boolean = false
 ) {
     fun normalized(): RawToneMappingParameters {
@@ -33,14 +34,23 @@ data class RawToneMappingParameters(
             agxToe = agxToe.coerceIn(AGX_TOE_MIN, AGX_TOE_MAX),
             agxShoulder = agxShoulder.coerceIn(AGX_SHOULDER_MIN, AGX_SHOULDER_MAX),
             filmicBlackRelativeExposure = minOf(blackFilmic, whiteFilmic - MIN_DYNAMIC_RANGE_EV),
-            filmicWhiteRelativeExposure = maxOf(whiteFilmic, blackFilmic + MIN_DYNAMIC_RANGE_EV)
+            filmicWhiteRelativeExposure = maxOf(whiteFilmic, blackFilmic + MIN_DYNAMIC_RANGE_EV),
+            useGooglePixelToneMap = useGooglePixelToneMap && !useOppoMasterToneMap
         )
     }
 
     fun withGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
         return copy(
             useGooglePixelToneMap = enabled,
+            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap,
             googlePixelToneMapExplicit = true
+        ).normalized()
+    }
+
+    fun withOppoMasterToneMap(enabled: Boolean): RawToneMappingParameters {
+        return copy(
+            useOppoMasterToneMap = enabled,
+            useGooglePixelToneMap = if (enabled) false else useGooglePixelToneMap
         ).normalized()
     }
 

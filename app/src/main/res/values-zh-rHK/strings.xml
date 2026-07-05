@@ -463,6 +463,10 @@
     <string name="settings_raw_shadows_adjustment">陰影</string>
     <string name="settings_raw_lens_shading_correction">鏡頭陰影校正</string>
     <string name="settings_raw_lens_shading_correction_description">RAW 顯影時套用鏡頭陰影增益圖，包括 RAW 多幀和 RAW HDR 處理。</string>
+    <string name="settings_raw_google_pixel_tone_map">Google Pixel 風格色調映射</string>
+    <string name="settings_raw_google_pixel_tone_map_description">使用 Google Pixel 風格的影調渲染。</string>
+    <string name="settings_raw_oppo_master_tone_map">OPPO 大師影調</string>
+    <string name="settings_raw_oppo_master_tone_map_description">使用 OPPO 內嵌的大師影調渲染。</string>
     <string name="settings_use_p010">P010 (10 位 YUV)</string>
     <string name="settings_use_p010_description">啟用 10 位 YUV 輸出以獲得更好的影像資料精度。僅在支援的裝置上且 RAW 關閉時生效。</string>
     <string name="settings_use_hlg10">HLG10 HDR</string>

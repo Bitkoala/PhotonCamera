@@ -721,6 +721,8 @@
     <string name="settings_raw_color_engine_spectral_film_description">Film stock and print medium simulation with density tuning.</string>
     <string name="settings_raw_google_pixel_tone_map">Google Pixel-style tone mapping</string>
     <string name="settings_raw_google_pixel_tone_map_description">Use Google Pixel-style tonal rendering.</string>
+    <string name="settings_raw_oppo_master_tone_map">OPPO Master tone mapping</string>
+    <string name="settings_raw_oppo_master_tone_map_description">Use OPPO embedded master tonal rendering.</string>
     <string name="settings_raw_agx_white_relative_exposure">AgX White Relative Exposure</string>
     <string name="settings_raw_agx_black_relative_exposure">AgX Black Relative Exposure</string>
     <string name="settings_raw_agx_shoulder">AgX Shoulder</string>
