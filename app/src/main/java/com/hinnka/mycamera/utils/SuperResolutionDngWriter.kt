@@ -50,6 +50,8 @@ object SuperResolutionDngWriter {
     private const val TYPE_FLOAT = 11
     private const val TYPE_DOUBLE = 12
     private const val MAX_TIFF_SHORT = 65_535
+    private const val DNG_MATRIX_ROUNDING = 10_000.0
+    private val DNG_PCS_TO_XYZ = doubleArrayOf(0.9642957, 1.0, 0.8251046)
 
     private const val TAG_NEW_SUBFILE_TYPE = 254
     private const val TAG_IMAGE_WIDTH = 256
@@ -91,8 +93,6 @@ object SuperResolutionDngWriter {
     private const val TAG_DEFAULT_CROP_SIZE = 50720
     private const val TAG_COLOR_MATRIX_1 = 50721
     private const val TAG_COLOR_MATRIX_2 = 50722
-    private const val TAG_FORWARD_MATRIX_1 = 50964
-    private const val TAG_FORWARD_MATRIX_2 = 50965
     private const val TAG_PROFILE_TONE_CURVE = 50940
     private const val TAG_AS_SHOT_NEUTRAL = 50728
     private const val TAG_BASELINE_EXPOSURE = 50730
@@ -281,8 +281,6 @@ object SuperResolutionDngWriter {
         val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
         val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
         val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
-        val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
-        val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
         val noiseProfile = buildNoiseProfile(captureResult)
         val dateTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
         val exposureTimeSeconds = captureResult.get(CaptureResult.SENSOR_EXPOSURE_TIME)
@@ -374,8 +372,6 @@ object SuperResolutionDngWriter {
             add(rationalArray(TAG_DEFAULT_CROP_SIZE, listOf(width.toDouble(), height.toDouble())))
             colorMatrix1?.let { add(sRationalArray(TAG_COLOR_MATRIX_1, colorTransformToDngMatrix(it))) }
             colorMatrix2?.let { add(sRationalArray(TAG_COLOR_MATRIX_2, colorTransformToDngMatrix(it))) }
-            forwardMatrix1?.let { add(sRationalArray(TAG_FORWARD_MATRIX_1, colorTransformToDngMatrix(it))) }
-            forwardMatrix2?.let { add(sRationalArray(TAG_FORWARD_MATRIX_2, colorTransformToDngMatrix(it))) }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
             if (!isCfa) {
                 add(long(TAG_DEFAULT_BLACK_RENDER, 1))
@@ -625,7 +621,27 @@ object SuperResolutionDngWriter {
                 values.add(transform.getElement(col, row).toDouble())
             }
         }
-        return values
+        return normalizeDngColorMatrix(values)
+    }
+
+    private fun normalizeDngColorMatrix(values: List<Double>): List<Double> {
+        if (values.size != 9) return values
+        val coords = DoubleArray(3) { row ->
+            values[row * 3] * DNG_PCS_TO_XYZ[0] +
+                values[row * 3 + 1] * DNG_PCS_TO_XYZ[1] +
+                values[row * 3 + 2] * DNG_PCS_TO_XYZ[2]
+        }
+        val maxCoord = coords.maxOrNull() ?: return values
+        val scale = if (maxCoord.isFinite() && maxCoord > 0.0 &&
+            (maxCoord < 0.99 || maxCoord > 1.01)
+        ) {
+            1.0 / maxCoord
+        } else {
+            1.0
+        }
+        return values.map { value ->
+            ((value * scale) * DNG_MATRIX_ROUNDING).roundToInt() / DNG_MATRIX_ROUNDING
+        }
     }
 
     private fun byteArray(tag: Int, values: ByteArray): TiffEntry =

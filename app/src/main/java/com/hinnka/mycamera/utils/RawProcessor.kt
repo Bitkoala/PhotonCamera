@@ -153,42 +153,18 @@ object RawProcessor {
             throw IllegalArgumentException("Image is not RAW format: ${image.format}")
         }
 
-        if (RawWhiteLevelCorrection.isOverrideMode(whiteLevelMode)) {
-            return saveRawImageToDngWithCustomWriter(
-                image = image,
-                characteristics = characteristics,
-                captureResult = captureResult,
-                outputStream = outputStream,
-                rotation = rotation,
-                thumbnail = thumbnail,
-                blackLevelMode = blackLevelMode,
-                customBlackLevel = customBlackLevel,
-                whiteLevelMode = whiteLevelMode,
-                cfaCorrectionMode = cfaCorrectionMode
-            )
-        }
-
-        val dngCreator = DngCreator(characteristics, captureResult)
-        return try {
-            val orientation = when (rotation) {
-                90 -> ExifInterface.ORIENTATION_ROTATE_90
-                180 -> ExifInterface.ORIENTATION_ROTATE_180
-                270 -> ExifInterface.ORIENTATION_ROTATE_270
-                else -> ExifInterface.ORIENTATION_NORMAL
-            }
-            dngCreator.setOrientation(orientation)
-//            buildDngThumbnail(thumbnail)?.let {
-//                dngCreator.setThumbnail(it)
-//                PLog.d(TAG, "Embedded DNG thumbnail written: ${it.width}x${it.height}")
-//            }
-            dngCreator.writeImage(outputStream, image.image)
-            true
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to save DNG", e)
-            false
-        } finally {
-            dngCreator.close()
-        }
+        return saveRawImageToDngWithCustomWriter(
+            image = image,
+            characteristics = characteristics,
+            captureResult = captureResult,
+            outputStream = outputStream,
+            rotation = rotation,
+            thumbnail = thumbnail,
+            blackLevelMode = blackLevelMode,
+            customBlackLevel = customBlackLevel,
+            whiteLevelMode = whiteLevelMode,
+            cfaCorrectionMode = cfaCorrectionMode
+        )
     }
 
     private fun saveRawImageToDngWithCustomWriter(
@@ -216,7 +192,7 @@ object RawProcessor {
             captureResult = captureResult
         )
 
-        PLog.i(TAG, "Writing RAW_SENSOR DNG with custom writer for white level mode=$whiteLevelMode")
+        PLog.i(TAG, "Writing RAW_SENSOR DNG with custom writer")
         return saveRawBufferToDng(
             rawBuffer = rawBuffer,
             width = image.width,
