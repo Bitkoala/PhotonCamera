@@ -899,7 +899,11 @@ class VideoRecorder(
                     val sampleBuffer = buffer.duplicate()
                     sampleBuffer.position(info.offset)
                     sampleBuffer.limit(info.offset + info.size)
-                    muxer?.writeSampleData(trackIndex, sampleBuffer.slice(), sanitizedInfo)
+                    try {
+                        muxer?.writeSampleData(trackIndex, sampleBuffer.slice(), sanitizedInfo)
+                    } catch (e: Exception) {
+                        PLog.w(TAG, "video recorder write sample error", e)
+                    }
                 }
             }
         }
