@@ -76,6 +76,7 @@ class Camera2Controller(private val context: Context) {
         const val ERROR_CAMERA_DISCONNECTED = 1000
         const val ERROR_CAMERA_OPEN_FAILED = 1001
         const val ERROR_CAMERA_CHARACTERISTICS_UNAVAILABLE = 1002
+        const val ERROR_CAMERA_SESSION_CONFIG_FAILED = 1003
 
         private const val SINGLE_CAPTURE_READER_MAX_IMAGES = 2
         private const val BURST_CAPTURE_BATCH_SIZE = 8
@@ -140,6 +141,7 @@ class Camera2Controller(private val context: Context) {
     private val previewUpdateScheduled = AtomicBoolean(false)
 
     private var previewSurface: Surface? = null
+    private var previewSurfaceTexture: SurfaceTexture? = null
     private var imageReader: ImageReader? = null
 
     val previewDepthProcessor = com.hinnka.mycamera.preview.PreviewDepthProcessor(context)
@@ -826,10 +828,21 @@ class Camera2Controller(private val context: Context) {
         safeCloseCaptureSession(captureSession, reason)
         captureSession = null
         previewRequestBuilder = null
-        previewSurface = null
+        safeReleasePreviewSurface(reason)
         if (closeImageReader) {
             safeCloseImageReader(imageReader)
             imageReader = null
+        }
+    }
+
+    private fun safeReleasePreviewSurface(reason: String) {
+        val surface = previewSurface
+        previewSurface = null
+        previewSurfaceTexture = null
+        try {
+            surface?.release()
+        } catch (e: Exception) {
+            PLog.w(TAG, "Ignoring error while releasing preview surface ($reason): ${e.message}")
         }
     }
 
@@ -893,6 +906,33 @@ class Camera2Controller(private val context: Context) {
         livePhotoRecorder.stopRecording()
         setCameraInactive(resetVideoState = true)
         onCameraError?.invoke(errorCode, message, true)
+    }
+
+    private fun handlePreviewSessionFailure(
+        reason: String,
+        openGeneration: Long,
+        error: Exception? = null
+    ) {
+        if (openGeneration != cameraOpenGeneration) {
+            PLog.w(TAG, "Ignoring stale preview session failure: $reason")
+            return
+        }
+        cameraOpenGeneration++
+        if (error != null) {
+            PLog.e(TAG, "Preview session failed: $reason", error)
+        } else {
+            PLog.e(TAG, "Preview session failed: $reason")
+        }
+        closeCameraDeviceSafely(cameraDevice, "preview session failure: $reason")
+        cameraDevice = null
+        clearCameraRuntimeState("preview session failure: $reason")
+        livePhotoRecorder.stopRecording()
+        setCameraInactive(resetVideoState = true)
+        onCameraError?.invoke(
+            ERROR_CAMERA_SESSION_CONFIG_FAILED,
+            "预览会话配置失败",
+            true
+        )
     }
 
     private fun resolveActiveFocusCharacteristics(
@@ -1218,6 +1258,7 @@ class Camera2Controller(private val context: Context) {
             }
 
             // 配置 SurfaceTexture
+            previewSurfaceTexture = surfaceTexture
             previewSurface = Surface(surfaceTexture)
 
             if (captureMode == CaptureMode.PHOTO) {
@@ -1611,7 +1652,9 @@ class Camera2Controller(private val context: Context) {
                                 PLog.w(TAG, "Retrying video preview session with STANDARD dynamic range fallback")
                                 _state.value = _state.value.copy(currentDynamicRangeProfile = "STANDARD")
                                 createPreviewSession(forceStandardSession = true, openGeneration = openGeneration)
+                                return
                             }
+                            handlePreviewSessionFailure("video configure failed", openGeneration)
                         }
                     }
                 )
@@ -1674,7 +1717,9 @@ class Camera2Controller(private val context: Context) {
                             PLog.w(TAG, "Retrying preview session with STANDARD dynamic range fallback")
                             _state.value = _state.value.copy(currentDynamicRangeProfile = "STANDARD")
                             createPreviewSession(forceStandardSession = true, openGeneration = openGeneration)
+                            return
                         }
+                        handlePreviewSessionFailure("photo configure failed", openGeneration)
                     }
                 }
             )
@@ -1686,10 +1731,14 @@ class Camera2Controller(private val context: Context) {
             device.createCaptureSession(sessionConfig)
         } catch (e: IllegalStateException) {
             PLog.w(TAG, "Failed to create preview session", e)
-            retryPreviewSessionWithoutPhysicalOutput("create session illegal state: ${e.message}", openGeneration)
+            if (!retryPreviewSessionWithoutPhysicalOutput("create session illegal state: ${e.message}", openGeneration)) {
+                handlePreviewSessionFailure("create session illegal state", openGeneration, e)
+            }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
-            retryPreviewSessionWithoutPhysicalOutput("create session exception: ${e.message}", openGeneration)
+            if (!retryPreviewSessionWithoutPhysicalOutput("create session exception: ${e.message}", openGeneration)) {
+                handlePreviewSessionFailure("create session exception", openGeneration, e)
+            }
         }
     }
 
@@ -1878,10 +1927,13 @@ class Camera2Controller(private val context: Context) {
 
         } catch (e: CameraAccessException) {
             PLog.e(TAG, "Failed to start preview")
+            handlePreviewSessionFailure("start preview camera access", openGeneration, e)
         } catch (e: IllegalStateException) {
             PLog.e(TAG, "Failed to start preview - illegal state")
+            handlePreviewSessionFailure("start preview illegal state", openGeneration, e)
         } catch (e: IllegalArgumentException) {
             PLog.e(TAG, "Failed to start preview - unconfigured surface")
+            handlePreviewSessionFailure("start preview unconfigured surface", openGeneration, e)
         }
     }
 
@@ -5097,12 +5149,24 @@ class Camera2Controller(private val context: Context) {
     /**
      * 关闭相机
      */
-    fun closeCamera(preserveVideoRecording: Boolean = false) {
+    fun closeCamera(
+        preserveVideoRecording: Boolean = false,
+        expectedSurfaceTexture: SurfaceTexture? = null
+    ) {
         val handler = cameraHandler
         if (handler != null && Looper.myLooper() != handler.looper) {
             handler.post {
-                closeCamera(preserveVideoRecording)
+                closeCamera(preserveVideoRecording, expectedSurfaceTexture)
             }
+            return
+        }
+        if (expectedSurfaceTexture != null && previewSurfaceTexture !== expectedSurfaceTexture) {
+            PLog.d(
+                TAG,
+                "closeCamera skipped for stale SurfaceTexture: expected=" +
+                        "${System.identityHashCode(expectedSurfaceTexture)}, current=" +
+                        "${previewSurfaceTexture?.let { System.identityHashCode(it) }}"
+            )
             return
         }
         try {

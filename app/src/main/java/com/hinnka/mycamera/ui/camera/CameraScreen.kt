@@ -1009,8 +1009,8 @@ fun CameraScreen(
                             viewModel.openCamera(surfaceTexture)
                             cameraOpened = true
                         },
-                        onSurfaceDestroyed = {
-                            viewModel.closeCamera()
+                        onSurfaceDestroyed = { surfaceTexture ->
+                            viewModel.closeCamera(surfaceTexture)
                             cameraOpened = false
                         },
                         onTap = { x, y, w, h ->

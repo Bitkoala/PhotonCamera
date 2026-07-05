@@ -1972,11 +1972,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 关闭相机
      */
-    fun closeCamera() {
+    fun closeCamera(surfaceTexture: SurfaceTexture? = null) {
+        if (surfaceTexture != null && currentSurfaceTexture !== surfaceTexture) {
+            PLog.d(
+                TAG,
+                "closeCamera skipped: stale SurfaceTexture destroyed=" +
+                        "${System.identityHashCode(surfaceTexture)}, current=" +
+                        "${currentSurfaceTexture?.let { System.identityHashCode(it) }}"
+            )
+            return
+        }
         cameraReopenJob?.cancel()
         cameraOpenInFlight = false
         currentSurfaceTexture = null
-        cameraController.closeCamera()
+        cameraController.closeCamera(expectedSurfaceTexture = surfaceTexture)
     }
 
     private fun scheduleCameraListRefreshAfterError(errorCode: Int) {
