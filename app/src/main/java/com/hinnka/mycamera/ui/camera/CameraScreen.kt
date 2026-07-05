@@ -137,13 +137,13 @@ private fun Bitmap.recycleIfAlive() {
 
 @Composable
 private fun PanelDismissPreviewOverlay(
-    previewBounds: Rect?,
+    bounds: Rect?,
     parentBounds: Rect?,
     dimBackground: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bounds = previewBounds ?: return
+    val bounds = bounds ?: return
     if (bounds.width <= 0f || bounds.height <= 0f) return
 
     val currentOnDismiss by rememberUpdatedState(onDismiss)
@@ -264,6 +264,7 @@ fun CameraScreen(
     var pendingCaptureAnimationBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var cameraScreenBounds by remember { mutableStateOf<Rect?>(null) }
     var previewBounds by remember { mutableStateOf<Rect?>(null) }
+    var viewfinderAreaBounds by remember { mutableStateOf<Rect?>(null) }
     var zoomBarBounds by remember { mutableStateOf<Rect?>(null) }
     var galleryThumbnailBounds by remember { mutableStateOf<Rect?>(null) }
     var captureAnimationSnapshot by remember { mutableStateOf<CaptureAnimationSnapshot?>(null) }
@@ -1301,7 +1302,10 @@ fun CameraScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(cardHeight)
-                        .align(Alignment.Center),
+                        .align(Alignment.Center)
+                        .onGloballyPositioned { coordinates ->
+                            viewfinderAreaBounds = coordinates.boundsInRoot()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     viewfinder()
@@ -1345,7 +1349,10 @@ fun CameraScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(cardHeight),
+                        .height(cardHeight)
+                        .onGloballyPositioned { coordinates ->
+                            viewfinderAreaBounds = coordinates.boundsInRoot()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     viewfinder()
@@ -1379,9 +1386,15 @@ fun CameraScreen(
             }
         }
 
+        val panelDismissBounds = if (isXpan) {
+            viewfinderAreaBounds ?: previewBounds
+        } else {
+            previewBounds
+        }
+
         if (activePanel != ActivePanel.NONE) {
             PanelDismissPreviewOverlay(
-                previewBounds = previewBounds,
+                bounds = panelDismissBounds,
                 parentBounds = cameraScreenBounds,
                 dimBackground = activePanel == ActivePanel.SETTINGS,
                 onDismiss = { activePanel = ActivePanel.NONE }

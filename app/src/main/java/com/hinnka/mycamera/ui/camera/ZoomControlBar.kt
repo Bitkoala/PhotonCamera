@@ -359,74 +359,102 @@ fun ZoomRuler(
 
     val stopsState by rememberUpdatedState(stops)
 
-    Row(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
     ) {
-        val isCurrentMacro = macroCameras.any { it.cameraId == currentCameraId }
-        val selectedStopIndex = if (isCurrentMacro) -1 else stops.indices.minByOrNull { abs(stops[it] - zoomRatio) }
+        val hasMacroSeparator = stopsState.isNotEmpty() && macroCameras.isNotEmpty()
+        val adaptiveMetrics = calculateZoomRulerAdaptiveMetrics(
+            availableSpace = maxWidth,
+            itemCount = stopsState.size + macroCameras.size,
+            separatorCount = if (hasMacroSeparator) 1 else 0
+        )
 
-        stops.forEachIndexed { index, stop ->
-            val isSelected = index == selectedStopIndex && abs(stop - zoomRatio) <= 0.01f
-            val isCustomLensStop = customLensStops.any { abs(it - stop) <= 0.01f }
-
-            // 显示文本
-            val text = when (displayMode) {
-                ZoomDisplayMode.ZOOM_RATIO -> {
-                    formatZoomRatioLabel(stop)
-                }
-
-                ZoomDisplayMode.FOCAL_LENGTH -> {
-                    zoomRatioToFocalLength(stop, mainCamera)
-                }
-            } + if (isCustomLensStop) "*" else ""
-
-            val style = TextStyle(
-                fontSize = if (isSelected) 13.sp else 10.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                color = if (isSelected) activeColor else inactiveColor,
-                textDecoration = if (lensStops.contains(stop)) TextDecoration.Underline else TextDecoration.None
-            )
-
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .autoRotate()
-                    .pointerInput(stop) {
-                        detectTapGestures { onZoomChange(stop) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(text, style = style)
+        Row(
+            modifier = Modifier
+                .width(adaptiveMetrics.rulerLength)
+                .fillMaxHeight()
+                .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
+            horizontalArrangement = Arrangement.spacedBy(adaptiveMetrics.spacing, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val isCurrentMacro = macroCameras.any { it.cameraId == currentCameraId }
+            val selectedStopIndex = if (isCurrentMacro) -1 else stopsState.indices.minByOrNull {
+                abs(stopsState[it] - zoomRatio)
             }
-        }
 
-        if (macroCameras.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(12.dp)
-                    .background(Color.White.copy(alpha = 0.2f))
-            )
-            macroCameras.forEach { macroCam ->
-                val isSelected = macroCam.cameraId == currentCameraId
+            stopsState.forEachIndexed { index, stop ->
+                val isSelected = index == selectedStopIndex && abs(stop - zoomRatio) <= 0.01f
+                val isCustomLensStop = customLensStops.any { abs(it - stop) <= 0.01f }
+
+                // 显示文本
+                val text = when (displayMode) {
+                    ZoomDisplayMode.ZOOM_RATIO -> {
+                        formatZoomRatioLabel(stop)
+                    }
+
+                    ZoomDisplayMode.FOCAL_LENGTH -> {
+                        zoomRatioToFocalLength(stop, mainCamera)
+                    }
+                } + if (isCustomLensStop) "*" else ""
+
+                val style = TextStyle(
+                    fontSize = if (isSelected) adaptiveMetrics.selectedFontSize else adaptiveMetrics.normalFontSize,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isSelected) activeColor else inactiveColor,
+                    textAlign = TextAlign.Center,
+                    textDecoration = if (lensStops.contains(stop)) TextDecoration.Underline else TextDecoration.None
+                )
+
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(adaptiveMetrics.itemSize)
                         .autoRotate()
-                        .pointerInput(macroCam.cameraId) {
-                            detectTapGestures { onLensSwitch(macroCam.cameraId) }
+                        .pointerInput(stop) {
+                            detectTapGestures { onZoomChange(stop) }
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = AppIcons.FilterVintage,
-                        contentDescription = "Macro",
-                        tint = if (isSelected) activeColor else inactiveColor,
-                        modifier = Modifier.size(if (isSelected) 16.dp else 14.dp)
+                    Text(
+                        text = text,
+                        style = style,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip
                     )
+                }
+            }
+
+            if (macroCameras.isNotEmpty()) {
+                if (hasMacroSeparator) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(adaptiveMetrics.separatorLength)
+                            .background(Color.White.copy(alpha = 0.2f))
+                    )
+                }
+
+                macroCameras.forEach { macroCam ->
+                    val isSelected = macroCam.cameraId == currentCameraId
+                    Box(
+                        modifier = Modifier
+                            .size(adaptiveMetrics.itemSize)
+                            .autoRotate()
+                            .pointerInput(macroCam.cameraId) {
+                                detectTapGestures { onLensSwitch(macroCam.cameraId) }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = AppIcons.FilterVintage,
+                            contentDescription = "Macro",
+                            tint = if (isSelected) activeColor else inactiveColor,
+                            modifier = Modifier.size(
+                                if (isSelected) adaptiveMetrics.selectedIconSize else adaptiveMetrics.normalIconSize
+                            )
+                        )
+                    }
                 }
             }
         }
