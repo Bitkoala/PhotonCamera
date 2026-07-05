@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -10,6 +10,9 @@
 
 #include "dng_assertions.h"
 #include "dng_flags.h"
+#include "dng_types.h"
+
+#include <cstdint>
 
 /*****************************************************************************/
 
@@ -28,17 +31,56 @@ dng_fingerprint::dng_fingerprint ()
 /*****************************************************************************/
 
 dng_fingerprint::dng_fingerprint (const char *hex)
-    {
-    
-    if (!hex || strlen (hex) != kDNGFingerprintSize * 2 || !FromUtf8HexString (hex))
-        {
-        
-        Clear ();
-        
-        }
-        
-    }
+	{
+	
+	if (!hex || strlen (hex) != kDNGFingerprintSize * 2 || !FromUtf8HexString (hex))
+		{
 		
+		Clear ();
+		
+		}
+		
+	}
+		
+/*****************************************************************************/
+
+dng_fingerprint::dng_fingerprint (const dng_fingerprint& print)
+
+	{
+
+	if (this != &print)
+		{
+
+		for (uint32 j = 0; j < kDNGFingerprintSize; j++)
+			{
+
+			data [j] = print.data [j];
+
+			}
+		}
+
+	}
+
+/*****************************************************************************/
+
+dng_fingerprint& dng_fingerprint::operator= (const dng_fingerprint& print)
+	{
+
+	if (this != &print)
+		{
+
+		for (uint32 j = 0; j < kDNGFingerprintSize; j++)
+			{
+
+			data [j] = print.data [j];
+
+			}
+		}
+
+	return *this;
+
+	}
+
 /*****************************************************************************/
 
 bool dng_fingerprint::IsNull () const
@@ -84,17 +126,17 @@ bool dng_fingerprint::operator== (const dng_fingerprint &print) const
 /******************************************************************************/
 
 bool dng_fingerprint::operator< (const dng_fingerprint &print) const
-    {
+	{
 	
 	for (uint32 j = 0; j < kDNGFingerprintSize; j++)
 		{
-        
-        if (data [j] != print.data [j])
-            {
 		
-            return data [j] < print.data [j];
-            
-            }
+		if (data [j] != print.data [j])
+			{
+		
+			return data [j] < print.data [j];
+			
+			}
 			
 		}
 		
@@ -156,7 +198,7 @@ void dng_fingerprint::ToUtf8HexString (char resultStr [2 * kDNGFingerprintSize +
 		
 		unsigned char c = data [i];
 
-		resultStr [i * 2    ] = NumToHexChar (c >> 4);
+		resultStr [i * 2	] = NumToHexChar (c >> 4);
 		resultStr [i * 2 + 1] = NumToHexChar (c & 15);
 		
 		}
@@ -167,7 +209,20 @@ void dng_fingerprint::ToUtf8HexString (char resultStr [2 * kDNGFingerprintSize +
 
 /******************************************************************************/
 
-static int HexCharToNum (char hexChar)
+dng_string dng_fingerprint::ToUtf8HexString () const
+	{
+	
+	char buf [2 * kDNGFingerprintSize + 1];
+
+	ToUtf8HexString (buf);
+
+	return dng_string (buf);
+	
+	}
+
+/******************************************************************************/
+
+int dng_fingerprint::HexCharToNum (char hexChar)
 	{
 	
 	if (hexChar >= '0' && hexChar <= '9')
@@ -216,6 +271,58 @@ bool dng_fingerprint::FromUtf8HexString (const char inputStr [2 * kDNGFingerprin
 		}
 	
 	return true;
+
+	}
+
+/******************************************************************************/
+
+dng_string dng_fingerprint::ToUtf8ClosestUUIDString () const
+	{
+
+	// Set version 3 (name-based MD5) and RFC 4122 variant bits.
+
+	uint8 d [kDNGFingerprintSize];
+
+	memcpy (d, data, kDNGFingerprintSize);
+
+	d [6] = (d [6] & 0x0F) | 0x30;   // version = 3
+	d [8] = (d [8] & 0x3F) | 0x80;   // variant = 10xx xxxx
+
+	char buf [37];
+
+	snprintf (buf, sizeof (buf),
+			  "%02x%02x%02x%02x-"
+			  "%02x%02x-"
+			  "%02x%02x-"
+			  "%02x%02x-"
+			  "%02x%02x%02x%02x%02x%02x",
+			  d [0],  d [1],  d [2],  d [3],
+			  d [4],  d [5],
+			  d [6],  d [7],
+			  d [8],  d [9],
+			  d [10], d [11], d [12], d [13], d [14], d [15]);
+
+	return dng_string (buf);
+
+	}
+
+/******************************************************************************/
+
+bool dng_fingerprint::FromUtf8HexString (const dng_string &inputStr)
+	{
+
+	// CR-4208475 N-L16: preserve the legacy dng_string overload contract:
+	// callers may pass a longer string and this parser consumes the first
+	// 32 hex characters. This prefix behavior is not memory-unsafe, and
+	// changing it to exact-length rejection is a compatibility risk for
+	// existing clients that may carry adjacent metadata in the same string.
+
+	if (inputStr.Length () < kDNGFingerprintSize * 2)
+		{
+		return false;
+		}
+
+	return FromUtf8HexString (inputStr.Get ());
 
 	}
 
@@ -282,8 +389,8 @@ void dng_md5_printer::Reset ()
 
 /******************************************************************************/
 
-void dng_md5_printer::Process (const void *data,
-					  		   uint32 inputLen)
+void dng_md5_printer::ProcessPtr (const void *data,
+								  uint32 inputLen)
 	{
 	
 	DNG_ASSERT (!final, "Fingerprint already finalized!");
@@ -336,6 +443,42 @@ void dng_md5_printer::Process (const void *data,
 			inputLen - i);
 	
 	}
+
+/*****************************************************************************/
+
+void dng_md5_printer::Process_bool (bool x)
+	{
+
+	// sizeof(bool) is implemention-defined, which makes it non-portable.
+
+	// std::uint8_t exists in standard C++ since C++11 and is guaranteed to be
+	// exactly 8 bits (1 byte) by the standard.
+	
+	std::uint8_t value = x ? 1 : 0;
+
+	static_assert (sizeof (value) == 1, "uint8_t not 1 byte?");
+
+	ProcessPtr (&value, 1);
+
+	}
+
+/*****************************************************************************/
+
+void dng_md5_printer::Process_size (size_t x)
+	{
+
+	// sizeof(size_t) is implemention-defined, which makes it non-portable.
+
+	// std::uint64_t exists in standard C++ since C++11 and is guaranteed to
+	// be exactly 64 bits (8 bytes) by the standard.
+
+	std::uint64_t value = (std::uint64_t) x;
+
+	static_assert (sizeof (value) == 8, "uint64_t not 8 bytes?");
+
+	ProcessPtr (&value, 8);
+	
+	}
 		
 /******************************************************************************/
 
@@ -364,11 +507,11 @@ const dng_fingerprint & dng_md5_printer::Result ()
 		
 		uint32 padLen = (index < 56) ? (56 - index) : (120 - index);
 		
-		Process (PADDING, padLen);
+		ProcessPtr (PADDING, padLen);
 
 		// Append length (before padding)
 
-		Process (bits, 8);
+		ProcessPtr (bits, 8);
 
 		// Store state in digest
 		
@@ -398,7 +541,7 @@ void dng_md5_printer::Encode (uint8 *output,
 	
 	for (i = 0, j = 0; j < len; i++, j += 4)
 		{
-		output [j  ] = (uint8) ((input [i]      ) & 0xff);
+		output [j  ] = (uint8) ((input [i]		) & 0xff);
 		output [j+1] = (uint8) ((input [i] >>  8) & 0xff);
 		output [j+2] = (uint8) ((input [i] >> 16) & 0xff);
 		output [j+3] = (uint8) ((input [i] >> 24) & 0xff);
@@ -426,17 +569,17 @@ void dng_md5_printer::Decode (uint32 *output,
 		for (i = 0, j = 0; j < len; i++, j += 4)
 			{
 			
-	 		output [i] = (((uint32) input [j  ])      ) |
-	 					 (((uint32) input [j+1]) <<  8) |
-	   					 (((uint32) input [j+2]) << 16) |
-	   					 (((uint32) input [j+3]) << 24);
+			output [i] = (((uint32) input [j  ])	  ) |
+						 (((uint32) input [j+1]) <<	 8) |
+						 (((uint32) input [j+2]) << 16) |
+						 (((uint32) input [j+3]) << 24);
 	   
-	   		}
-	   		
-	   	}
-	   	
+			}
+			
+		}
+		
 	// Else use optimized code for aligned case.
-	   	
+		
 	else
 		{
 		
@@ -478,7 +621,7 @@ void dng_md5_printer::Decode (uint32 *output,
 
 DNG_ATTRIB_NO_SANITIZE("unsigned-integer-overflow")
 void dng_md5_printer::MD5Transform (uint32 state [4],
-								    const uint8 block [64])
+									const uint8 block [64])
 	{
 	
 	enum
@@ -556,7 +699,7 @@ void dng_md5_printer::MD5Transform (uint32 state [4],
 	GG (c, d, a, b, x[11], S23, 0x265e5a51); /* 19 */
 	GG (b, c, d, a, x[ 0], S24, 0xe9b6c7aa); /* 20 */
 	GG (a, b, c, d, x[ 5], S21, 0xd62f105d); /* 21 */
-	GG (d, a, b, c, x[10], S22,  0x2441453); /* 22 */
+	GG (d, a, b, c, x[10], S22,	 0x2441453); /* 22 */
 	GG (c, d, a, b, x[15], S23, 0xd8a1e681); /* 23 */
 	GG (b, c, d, a, x[ 4], S24, 0xe7d3fbc8); /* 24 */
 	GG (a, b, c, d, x[ 9], S21, 0x21e1cde6); /* 25 */
@@ -580,7 +723,7 @@ void dng_md5_printer::MD5Transform (uint32 state [4],
 	HH (a, b, c, d, x[13], S31, 0x289b7ec6); /* 41 */
 	HH (d, a, b, c, x[ 0], S32, 0xeaa127fa); /* 42 */
 	HH (c, d, a, b, x[ 3], S33, 0xd4ef3085); /* 43 */
-	HH (b, c, d, a, x[ 6], S34,  0x4881d05); /* 44 */
+	HH (b, c, d, a, x[ 6], S34,	 0x4881d05); /* 44 */
 	HH (a, b, c, d, x[ 9], S31, 0xd9d4d039); /* 45 */
 	HH (d, a, b, c, x[12], S32, 0xe6db99e5); /* 46 */
 	HH (c, d, a, b, x[15], S33, 0x1fa27cf8); /* 47 */

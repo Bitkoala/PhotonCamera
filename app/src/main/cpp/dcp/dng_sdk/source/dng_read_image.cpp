@@ -1,8 +1,8 @@
 /*****************************************************************************/
-// Copyright 2006-2019 Adobe Systems Incorporated
+// Copyright 2006-2022 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -18,6 +18,7 @@
 #include "dng_image.h"
 #include "dng_ifd.h"
 #include "dng_jpeg_image.h"
+#include "dng_jxl.h"
 #include "dng_lossless_jpeg.h"
 #include "dng_mutex.h"
 #include "dng_memory.h"
@@ -31,10 +32,12 @@
 #include "zlib.h"
 
 #if qDNGUseLibJPEG
-#include "jpeglib.h"
-#include "jerror.h"
+#include "dng_jpeg_memory_source.h"
+#include "dng_jpeglib.h"
 #endif
-	
+
+#include <limits>
+
 /******************************************************************************/
 
 static void DecodeDelta8 (uint8 *dPtr,
@@ -43,7 +46,7 @@ static void DecodeDelta8 (uint8 *dPtr,
 						  uint32 channels)
 	{
 	
-	const uint32 dRowStep = cols * channels;
+	const uint32 dRowStep = SafeUint32Mult (cols, channels);
 	
 	for (uint32 row = 0; row < rows; row++)
 		{
@@ -74,7 +77,7 @@ static void DecodeDelta16 (uint16 *dPtr,
 						   uint32 channels)
 	{
 	
-	const uint32 dRowStep = cols * channels;
+	const uint32 dRowStep = SafeUint32Mult (cols, channels);
 	
 	for (uint32 row = 0; row < rows; row++)
 		{
@@ -105,7 +108,7 @@ static void DecodeDelta32 (uint32 *dPtr,
 						   uint32 channels)
 	{
 	
-	const uint32 dRowStep = cols * channels;
+	const uint32 dRowStep = SafeUint32Mult (cols, channels);
 	
 	for (uint32 row = 0; row < rows; row++)
 		{
@@ -228,7 +231,7 @@ inline void DecodeDeltaBytes (uint8 *bytePtr, int32 cols, int32 channels)
 		}
 
 	}
-						    
+							
 /*****************************************************************************/
 
 static void DecodeFPDelta (uint8 *input,
@@ -238,9 +241,11 @@ static void DecodeFPDelta (uint8 *input,
 						   int32 bytesPerSample)
 	{
 	
-	DecodeDeltaBytes (input, cols * bytesPerSample, channels);
+	DecodeDeltaBytes (input,
+					  SafeInt32Mult (cols, bytesPerSample),
+					  channels);
 	
-	int32 rowIncrement = cols * channels;
+	int32 rowIncrement = SafeInt32Mult (cols, channels);
 	
 	if (bytesPerSample == 2)
 		{
@@ -267,10 +272,12 @@ static void DecodeFPDelta (uint8 *input,
 		
 	else if (bytesPerSample == 3)
 		{
+
+		const int32 rowIncrement2 = SafeInt32Mult (rowIncrement, 2);
 		
 		const uint8 *input0 = input;
 		const uint8 *input1 = input + rowIncrement;
-		const uint8 *input2 = input + rowIncrement * 2;
+		const uint8 *input2 = input + rowIncrement2;
 		
 		for (int32 col = 0; col < rowIncrement; ++col)
 			{
@@ -285,19 +292,25 @@ static void DecodeFPDelta (uint8 *input,
 			
 		}
 		
-	else
+	// CR-4209035: keep four-byte FP samples explicit so malformed integer
+	// semantic masks cannot fall into the historical default branch.
+
+	else if (bytesPerSample == 4)
 		{
+
+		const int32 rowIncrement2 = SafeInt32Mult (rowIncrement, 2);
+		const int32 rowIncrement3 = SafeInt32Mult (rowIncrement, 3);
 		
 		#if qDNGBigEndian
 		const uint8 *input0 = input;
 		const uint8 *input1 = input + rowIncrement;
-		const uint8 *input2 = input + rowIncrement * 2;
-		const uint8 *input3 = input + rowIncrement * 3;
+		const uint8 *input2 = input + rowIncrement2;
+		const uint8 *input3 = input + rowIncrement3;
 		#else
 		const uint8 *input3 = input;
 		const uint8 *input2 = input + rowIncrement;
-		const uint8 *input1 = input + rowIncrement * 2;
-		const uint8 *input0 = input + rowIncrement * 3;
+		const uint8 *input1 = input + rowIncrement2;
+		const uint8 *input0 = input + rowIncrement3;
 		#endif
 		
 		for (int32 col = 0; col < rowIncrement; ++col)
@@ -313,9 +326,16 @@ static void DecodeFPDelta (uint8 *input,
 			}
 			
 		}
+
+	else
+		{
+
+		ThrowBadFormat ();
+
+		}
 		
 	}	
-					    
+						
 /*****************************************************************************/
 
 bool DecodePackBits (dng_stream &stream,
@@ -439,7 +459,7 @@ dng_lzw_expander::dng_lzw_expander ()
 	,	fSrcCount		 (0)
 	,	fByteOffset		 (0)
 	,	fBitBuffer		 (0)
-	,	fBitBufferCount  (0)
+	,	fBitBufferCount	 (0)
 	,	fNextCode		 (0)
 	,	fCodeSize		 (0)
 	
@@ -466,8 +486,8 @@ void dng_lzw_expander::InitTable ()
 		{
 		
 		node->prefix  = -1;
-		node->final   = (int16) code;
-		node->depth   = 1;
+		node->final	  = (int16) code;
+		node->depth	  = 1;
 		
 		node++;
 		
@@ -495,8 +515,8 @@ void dng_lzw_expander::AddTable (int32 w, int32 k)
 	LZWExpanderNode *node = &fTable [nextCode];
 	
 	node->prefix  = (int16) w;
-	node->final   = (int16) k;
-	node->depth   = 1 + parentNode->depth;
+	node->final	  = (int16) k;
+	node->depth	  = 1 + parentNode->depth;
 	
 	if (nextCode + 1 == (1 << fCodeSize) - 1)
 		{
@@ -523,7 +543,7 @@ bool dng_lzw_expander::GetCodeWord (int32 &code)
 		
 		// Typical case; get the code from the bit buffer.
 
-		fBitBuffer     <<= codeSize;
+		fBitBuffer	   <<= codeSize;
 		fBitBufferCount -= codeSize;
 		
 		}
@@ -538,32 +558,24 @@ bool dng_lzw_expander::GetCodeWord (int32 &code)
 		if (fByteOffset >= fSrcCount)
 			return false;
 
-		// Buffer a long word
-		
+		// Buffer up to 4 bytes, zero-filling past end.
+
 		const uint8 *ptr = fSrcPtr + fByteOffset;
 
-		#if qDNGBigEndian
+		uint32 avail = fSrcCount - fByteOffset;
 
-		fBitBuffer = *((const uint32 *) ptr);
+		uint32 b0 = (avail > 0) ? ptr [0] : 0;
+		uint32 b1 = (avail > 1) ? ptr [1] : 0;
+		uint32 b2 = (avail > 2) ? ptr [2] : 0;
+		uint32 b3 = (avail > 3) ? ptr [3] : 0;
 
-		#else
-		
-			{
-			
-			uint32 b0 = ptr [0];
-			uint32 b1 = ptr [1];
-			uint32 b2 = ptr [2];
-			uint32 b3 = ptr [3];
-			
-			fBitBuffer = (((((b0 << 8) | b1) << 8) | b2) << 8) | b3;
-			
-			}
-
-		#endif
+		fBitBuffer = (((((b0 << 8) | b1) << 8) | b2) << 8) | b3;
 
 		fBitBufferCount = 32;
-		
-		fByteOffset += 4;
+
+		uint32 consumed = Min_uint32 (avail, 4);
+
+		fByteOffset += consumed;
 
 		// Number of additional bits we need
 		
@@ -575,7 +587,7 @@ bool dng_lzw_expander::GetCodeWord (int32 &code)
 
 		code |= fBitBuffer >> bitsNotUsed;
 
-		fBitBuffer     <<= bitsUsed;
+		fBitBuffer	   <<= bitsUsed;
 		fBitBufferCount -= bitsUsed;
 
 		}
@@ -587,14 +599,19 @@ bool dng_lzw_expander::GetCodeWord (int32 &code)
 /******************************************************************************/
 
 bool dng_lzw_expander::Expand (const uint8 *sPtr,
-						       uint8 *dPtr,
-						       int32 sCount,
-						       int32 dCount)
+							   uint8 *dPtr,
+							   int32 sCount,
+							   int32 dCount)
 	{
 
 	if (sCount < 0 || dCount < 0)
 		{
 		return false;
+		}
+
+	if (dCount == 0)
+		{
+		return true;
 		}
 	
 	void *dStartPtr = dPtr;
@@ -626,8 +643,13 @@ bool dng_lzw_expander::Expand (const uint8 *sPtr,
 			}
 		while (code == kResetCode);
 		
-		if (code == kEndCode) 
-			return true;
+		// CR-4209034: EndCode is success only after the requested output has
+		// been produced; otherwise stale destination bytes can become pixels.
+
+		if (code == kEndCode)
+			{
+			return dCount == 0;
+			}
 		
 		if (code > kEndCode) 
 			return false;
@@ -651,8 +673,13 @@ bool dng_lzw_expander::Expand (const uint8 *sPtr,
 			if (code == kResetCode) 
 				break;
 			
-			if (code == kEndCode) 
-				return true;
+			// CR-4209034: the same full-output rule applies after the LZW
+			// table is active.
+
+			if (code == kEndCode)
+				{
+				return dCount == 0;
+				}
 			
 			const int32 inCode = code;
 
@@ -802,103 +829,6 @@ bool dng_lzw_expander::Expand (const uint8 *sPtr,
 
 /*****************************************************************************/
 
-dng_row_interleaved_image::dng_row_interleaved_image (dng_image &image,
-													  uint32 factor)
-													  
-	:	dng_image (image.Bounds    (),
-				   image.Planes    (),
-				   image.PixelType ())
-													  
-	,	fImage  (image )
-	,	fFactor (factor)
-	
-	{
-	
-	}
-	
-/*****************************************************************************/
-
-int32 dng_row_interleaved_image::MapRow (int32 row) const
-	{
-
-	uint32 rows = Height ();
-	
-	int32 top = Bounds ().t;
-	
-	uint32 fieldRow = row - top;
- 
-    uint32 field;
-	
-	for (field = 0; true; field++)
-		{
-		
-		uint32 fieldRows = (rows - field + fFactor - 1) / fFactor;
-		
-		if (fieldRow < fieldRows)
-			{
-			
-            break;
-			
-			}
-			
-		fieldRow -= fieldRows;
-		
-		}
-  
-    return fieldRow * fFactor + field + top;
-
-	}
-	
-/*****************************************************************************/
-
-void dng_row_interleaved_image::DoGet (dng_pixel_buffer &buffer) const
-	{
-	
-	dng_pixel_buffer tempBuffer (buffer);
-	
-	for (int32 row = buffer.fArea.t; row < buffer.fArea.b; row++)
-		{
-				
-		tempBuffer.fArea.t = MapRow (row);
-		
-		tempBuffer.fArea.b = tempBuffer.fArea.t + 1;
-		
-		tempBuffer.fData = (void *) buffer.DirtyPixel (row,
-										 			   buffer.fArea.l,
-										 			   buffer.fPlane);
-										 
-		fImage.Get (tempBuffer);
-		
-		}
-		
-	}
-	
-/*****************************************************************************/
-
-void dng_row_interleaved_image::DoPut (const dng_pixel_buffer &buffer)
-	{
-	
-	dng_pixel_buffer tempBuffer (buffer);
-	
-	for (int32 row = buffer.fArea.t; row < buffer.fArea.b; row++)
-		{
-				
-		tempBuffer.fArea.t = MapRow (row);
-		
-		tempBuffer.fArea.b = tempBuffer.fArea.t + 1;
-		
-		tempBuffer.fData = (void *) buffer.ConstPixel (row,
-										 			   buffer.fArea.l,
-										 			   buffer.fPlane);
-										 
-		fImage.Put (tempBuffer);
-		
-		}
-		
-	}
-	
-/*****************************************************************************/
-
 static void ReorderSubTileBlocks (dng_host &host,
 								  const dng_ifd &ifd,
 								  dng_pixel_buffer &buffer,
@@ -919,20 +849,36 @@ static void ReorderSubTileBlocks (dng_host &host,
 	
 	uint32 blockRows = ifd.fSubTileBlockRows;
 	uint32 blockCols = ifd.fSubTileBlockCols;
+
+	// CR-4209037: reordering copies the whole temp buffer back, so reject
+	// layouts that would leave clipped strip rows or block remainders unwritten.
+
+	if (blockRows == 0 ||
+		blockCols == 0 ||
+		(buffer.fArea.H () % blockRows) != 0 ||
+		(buffer.fArea.W () % blockCols) != 0)
+		{
+		ThrowBadFormat ();
+		}
 	
 	uint32 rowBlocks = buffer.fArea.H () / blockRows;
 	uint32 colBlocks = buffer.fArea.W () / blockCols;
 	
-	int32 rowStep = buffer.fRowStep * buffer.fPixelSize;
-	int32 colStep = buffer.fColStep * buffer.fPixelSize;
-	
-	int32 rowBlockStep = rowStep * blockRows;
-	int32 colBlockStep = colStep * blockCols;
-	
-	uint32 blockColBytes = blockCols * buffer.fPlanes * buffer.fPixelSize;
+	int32 rowStep = SafeInt32Mult (buffer.fRowStep,
+								   (int32) buffer.fPixelSize);
+
+	int32 colStep = SafeInt32Mult (buffer.fColStep,
+								   (int32) buffer.fPixelSize);
+
+	int32 rowBlockStep = SafeInt32Mult (rowStep, (int32) blockRows);
+	int32 colBlockStep = SafeInt32Mult (colStep, (int32) blockCols);
+
+	uint32 blockColBytes = SafeUint32Mult (blockCols,
+										   buffer.fPlanes,
+										   buffer.fPixelSize);
 	
 	const uint8 *s0 = (const uint8 *) buffer.fData;
-	      uint8 *d0 = tempBuffer->Buffer_uint8 ();
+		  uint8 *d0 = tempBuffer->Buffer_uint8 ();
 	
 	for (uint32 rowBlock = 0; rowBlock < rowBlocks; rowBlock++)
 		{
@@ -1051,24 +997,37 @@ dng_image_spooler::dng_image_spooler (dng_host &host,
 	
 	{
 	
-	uint32 bytesPerRow = fTileArea.W () * fPlanes * (uint32) sizeof (uint16);
+	uint32 bytesPerRow = SafeUint32Mult (fTileArea.W (),
+										 fPlanes,
+										 (uint32) sizeof (uint16));
 
-	DNG_REQUIRE (bytesPerRow > 0, "Bad bytesPerRow in dng_image_spooler");
-	
+	DNG_REQUIRE (bytesPerRow > 0,
+				 "Bad bytesPerRow in dng_image_spooler");
+
+	// CR-4208475 N-M1: sibling of the CR-4209037 ReorderSubTileBlocks guard.
+	// Reject zero fSubTileBlockRows here so the rounding division below
+	// cannot trigger undefined behavior on read paths that bypass
+	// dng_ifd::IsValidDNG.
+
+	if (ifd.fSubTileBlockRows == 0)
+		{
+		ThrowBadFormat ();
+		}
+
 	uint32 stripLength = Pin_uint32 (ifd.fSubTileBlockRows,
 									 fBlock.LogicalSize () / bytesPerRow,
 									 fTileArea.H ());
-									
+
 	stripLength = stripLength / ifd.fSubTileBlockRows
 							  * ifd.fSubTileBlockRows;
 	
-	fTileStrip   = fTileArea;
+	fTileStrip	 = fTileArea;
 	fTileStrip.b = fTileArea.t + stripLength;
 	
 	fBuffer = (uint8 *) fBlock.Buffer ();
 	
 	fBufferCount = 0;
-	fBufferSize  = bytesPerRow * stripLength;
+	fBufferSize	 = SafeUint32Mult (bytesPerRow, stripLength);
 				  
 	}
 
@@ -1097,7 +1056,7 @@ void dng_image_spooler::Spool (const void *data,
 		
 		DoCopyBytes (data,
 					 fBuffer + fBufferCount,
-				     block);
+					 block);
 				
 		data = ((const uint8 *) data) + block;
 		
@@ -1138,9 +1097,10 @@ void dng_image_spooler::Spool (const void *data,
 			
 			fBufferCount = 0;
 			
-			fBufferSize = fTileStrip.W () *
-						  fTileStrip.H () *
-						  fPlanes * (uint32) sizeof (uint16);
+			fBufferSize = SafeUint32Mult (fTileStrip.W (),
+										  fTileStrip.H (),
+										  fPlanes,
+										  (uint32) sizeof (uint16));
 	
 			}
 
@@ -1167,6 +1127,42 @@ dng_read_image::~dng_read_image ()
 
 /*****************************************************************************/
 
+static uint8 ReverseBits8 (uint8 x)
+	{
+
+	x = (uint8) (((x & 0x55) << 1) | ((x & 0xAA) >> 1));
+	x = (uint8) (((x & 0x33) << 2) | ((x & 0xCC) >> 2));
+	x = (uint8) (((x & 0x0F) << 4) | ((x & 0xF0) >> 4));
+
+	return x;
+
+	}
+
+/*****************************************************************************/
+
+static void ApplyFillOrder (uint8 *data,
+							uint32 count,
+							uint32 fillOrder)
+	{
+
+	// CR-4208575: Some uncompressed TIFFs store samples with FillOrder=2.
+	// Normalize the byte stream before interpreting the samples so later
+	// rendering sees normal sample values instead of bit-reversed pixels.
+
+	if (fillOrder == 2)
+		{
+
+		for (uint32 j = 0; j < count; j++)
+			{
+			data [j] = ReverseBits8 (data [j]);
+			}
+
+		}
+
+	}
+
+/*****************************************************************************/
+
 bool dng_read_image::ReadUncompressed (dng_host &host,
 									   const dng_ifd &ifd,
 									   dng_stream &stream,
@@ -1178,20 +1174,20 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 									   AutoPtr<dng_memory_block> &subTileBlockBuffer)
 	{
 	
-	uint32 rows          = tileArea.H ();
+	uint32 rows			 = tileArea.H ();
 	uint32 samplesPerRow = tileArea.W ();
 	
 	if (ifd.fPlanarConfiguration == pcRowInterleaved)
 		{
-		rows *= planes;
+		rows = SafeUint32Mult (rows, planes);
 		}
 	else
 		{
-		samplesPerRow *= planes;
+		samplesPerRow = SafeUint32Mult (samplesPerRow, planes);
 		}
 	
-	uint32 samplesPerTile = samplesPerRow * rows;
-	
+	uint32 samplesPerTile = SafeUint32Mult (samplesPerRow, rows);
+		
 	if (uncompressedBuffer.Get () == NULL)
 		{
 
@@ -1215,6 +1211,10 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 		pixelType = ttByte;
 				
 		stream.Get (uncompressedBuffer->Buffer (), samplesPerTile);
+
+		ApplyFillOrder (uncompressedBuffer->Buffer_uint8 (),
+						samplesPerTile,
+						ifd.fFillOrder);
 		
 		}
 		
@@ -1270,15 +1270,22 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 		{
 		
 		pixelType = ttShort;
+
+		const uint32 byteCount = SafeUint32Mult (samplesPerTile, 2);
 		
-		stream.Get (uncompressedBuffer->Buffer (), samplesPerTile * 2);
+		stream.Get (uncompressedBuffer->Buffer (),
+					byteCount);
+
+		ApplyFillOrder (uncompressedBuffer->Buffer_uint8 (),
+						byteCount,
+						ifd.fFillOrder);
 		
 		if (stream.SwapBytes ())
 			{
 			
 			DoSwapBytes16 ((uint16 *) uncompressedBuffer->Buffer (),
 						   samplesPerTile);
-						
+					
 			}
 				
 		}
@@ -1287,15 +1294,22 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 		{
 		
 		pixelType = image.PixelType ();
+
+		const uint32 byteCount = SafeUint32Mult (samplesPerTile, 4);
 		
-		stream.Get (uncompressedBuffer->Buffer (), samplesPerTile * 4);
+		stream.Get (uncompressedBuffer->Buffer (),
+					byteCount);
+
+		ApplyFillOrder (uncompressedBuffer->Buffer_uint8 (),
+						byteCount,
+						ifd.fFillOrder);
 		
 		if (stream.SwapBytes ())
 			{
 			
 			DoSwapBytes32 ((uint32 *) uncompressedBuffer->Buffer (),
 						   samplesPerTile);
-						
+					
 			}
 				
 		}
@@ -1388,7 +1402,7 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 		
 		uint32 *p = (uint32 *) uncompressedBuffer->Buffer ();
 			
-		uint32 bitMask = (1 << bitDepth) - 1;
+		uint32 bitMask = ((uint32) 1 << bitDepth) - 1;
 							
 		for (uint32 row = 0; row < rows; row++)
 			{
@@ -1433,6 +1447,10 @@ bool dng_read_image::ReadUncompressed (dng_host &host,
 							 pixelType,
 							 ifd.fPlanarConfiguration, 
 							 uncompressedBuffer->Buffer ());
+
+	DecodePredictor (host,
+					 ifd,
+					 buffer);
 	
 	if (ifd.fSampleBitShift)
 		{
@@ -1521,7 +1539,7 @@ void dng_read_image::DecodeLossyJPEG (dng_host &host,
 									  uint32 /* photometricInterpretation */,
 									  uint32 jpegDataSize,
 									  uint8 *jpegDataInMemory,
-                                      bool /* usingMultipleThreads */)
+									  bool /* usingMultipleThreads */)
 	{
 	
 	#if qDNGUseLibJPEG
@@ -1534,7 +1552,7 @@ void dng_read_image::DecodeLossyJPEG (dng_host &host,
 
 	cinfo.err = jpeg_std_error (&jerr);
 	
-	jerr.error_exit     = dng_error_exit;
+	jerr.error_exit		= dng_error_exit;
 	jerr.output_message = dng_output_message;
 	
 	try
@@ -1546,9 +1564,15 @@ void dng_read_image::DecodeLossyJPEG (dng_host &host,
 		
 		// Set up the memory data source manager.
 		
-		jpeg_mem_src (&cinfo,
-					  jpegDataInMemory,
-					  jpegDataSize);
+		size_t jpegDataSizeAsSizet = 0;
+		
+		ConvertUnsigned (jpegDataSize, &jpegDataSizeAsSizet);
+
+		jpeg_source_mgr memorySource =
+			CreateJpegMemorySource (jpegDataInMemory,
+									jpegDataSizeAsSizet);
+
+		cinfo.src = &memorySource;
 			
 		// Read the JPEG header.
 			
@@ -1689,8 +1713,8 @@ static dng_memory_block * ReadJPEGDataToBlock (dng_host &host,
 		}
 		
 	// The JPEG tables start with a two byte SOI marker, and
-	// and end with a two byte EOI marker.  The JPEG tile
-	// data also starts with a two byte SOI marker.  We can
+	// and end with a two byte EOI marker.	The JPEG tile
+	// data also starts with a two byte SOI marker.	 We can
 	// convert this combination a normal JPEG stream removing
 	// the last two bytes of the JPEG tables and the first two
 	// bytes of the tile data, and then concatenating them.
@@ -1707,7 +1731,7 @@ static dng_memory_block * ReadJPEGDataToBlock (dng_host &host,
 		
 		tablesByteCount -= 2;
 		
-		tileOffset    += 2;
+		tileOffset	  += 2;
 		tileByteCount -= 2;
 		
 		}
@@ -1760,7 +1784,7 @@ bool dng_read_image::ReadBaselineJPEG (dng_host &host,
 									   uint32 planes,
 									   uint32 tileByteCount,
 									   uint8 *jpegDataInMemory,
-                                       bool usingMultipleThreads)
+									   bool usingMultipleThreads)
 	{
 	
 	// Setup the data source.
@@ -1785,7 +1809,7 @@ bool dng_read_image::ReadBaselineJPEG (dng_host &host,
 						 ifd.fPhotometricInterpretation,
 						 jpegDataBlock->LogicalSize (),
 						 jpegDataBlock->Buffer_uint8 (),
-                         usingMultipleThreads);
+						 usingMultipleThreads);
 		
 		}
 		
@@ -1805,7 +1829,7 @@ bool dng_read_image::ReadBaselineJPEG (dng_host &host,
 						 ifd.fPhotometricInterpretation,
 						 tileByteCount,
 						 jpegDataInMemory,
-                         usingMultipleThreads);
+						 usingMultipleThreads);
 		
 		}
 				
@@ -1837,11 +1861,18 @@ bool dng_read_image::ReadLosslessJPEG (dng_host &host,
 	dng_safe_uint32 bytesPerRow =
 		(dng_safe_uint32 (tileArea.W ()) * planes *
 		 static_cast<uint32> (sizeof (uint16)));
-	
+
+	// CR-4208475 N-M1: sibling of the CR-4209037 ReorderSubTileBlocks guard.
+
+	if (ifd.fSubTileBlockRows == 0)
+		{
+		ThrowBadFormat ();
+		}
+
 	uint32 rowsPerStrip = Pin_uint32 (ifd.fSubTileBlockRows,
 									  kImageBufferSize / bytesPerRow.Get (),
 									  tileArea.H ());
-									  
+
 	rowsPerStrip = rowsPerStrip / ifd.fSubTileBlockRows
 								* ifd.fSubTileBlockRows;
 									  
@@ -1881,18 +1912,90 @@ bool dng_read_image::ReadLosslessJPEG (dng_host &host,
 	bool bug16 = ifd.fLosslessJPEGBug16;
 	
 	uint64 tileOffset = stream.Position ();
-	
-	DecodeLosslessJPEG (stream,
-					    spooler,
-					    decodedSize.Get (),
-					    decodedSize.Get (),
-						bug16,
-						tileOffset + tileByteCount);
+
+	DoDecodeLosslessJPEG (stream,
+						  spooler,
+						  decodedSize.Get (),
+						  decodedSize.Get (),
+						  bug16,
+						  tileOffset + tileByteCount);
 
 	return true;
 	
 	}
+
+/*****************************************************************************/
+
+bool dng_read_image::ReadJXL (dng_host &host,
+							  const dng_ifd &ifd,
+							  dng_stream &stream,
+							  dng_image &image,
+							  const dng_rect &tileArea,
+							  uint32 tileByteCount,
+							  uint8 *jxlCompressedRawBitStream,
+							  bool usingMultipleThreads)
+	{
+
+	(void) ifd;
 	
+	dng_jxl_decoder decoder;
+
+	decoder.fNeedBoxMeta     = false;
+	decoder.fNeedImage       = true;
+	decoder.fUsePixelBuffer  = true;
+	decoder.fUseSingleThread = usingMultipleThreads;
+		
+	if (!jxlCompressedRawBitStream)
+		{
+		
+		decoder.Decode (host,
+						stream);
+
+		}
+
+	else
+		{
+		
+		dng_stream tempStream (jxlCompressedRawBitStream,
+							   tileByteCount);
+
+		decoder.Decode (host,
+						tempStream);
+
+		}
+
+	// Check there is a result pixel buffer.
+
+	DNG_REQUIRE (decoder.fMainPixelBuffer.Get (),
+				 "missing fMainPixelBuffer in ReadJXL");
+
+	auto &buffer = *decoder.fMainPixelBuffer;
+
+	// Check that it has the same dimensions as the requested tile area.
+
+	DNG_REQUIRE (buffer.fArea.Size () == tileArea.Size (),
+				 "mismatch tile size in ReadJXL");
+
+	// Check matching pixel type.
+
+	DNG_REQUIRE (buffer.fPixelType == image.PixelType (),
+				 "mismatch pixel type in ReadJXL");
+
+	// Check matching plane count.
+
+	DNG_REQUIRE (buffer.fPlanes == image.Planes (),
+				 "mismatch plane count in ReadJXL");
+
+	// Store in image.
+
+	buffer.fArea = tileArea;
+
+	image.Put (buffer);
+
+	return true;
+	
+	}
+
 /*****************************************************************************/
 
 bool dng_read_image::CanReadTile (const dng_ifd &ifd)
@@ -1912,11 +2015,57 @@ bool dng_read_image::CanReadTile (const dng_ifd &ifd)
 			
 			if (ifd.fSampleFormat [0] == sfFloatingPoint)
 				{
+
+				if (ifd.fPredictor != cpNullPredictor ||
+					ifd.fFillOrder != 1)
+					{
+					return false;
+					}
 				
 				return (ifd.fBitsPerSample [0] == 16 ||
 						ifd.fBitsPerSample [0] == 24 ||
 						ifd.fBitsPerSample [0] == 32);
 						
+				}
+
+			// CR-4208575: Some writers preserve horizontal predictor data in
+			// otherwise uncompressed TIFFs. Treat the predictor as part of the
+			// sample encoding instead of displaying the deltas as image data.
+
+			if (ifd.fPredictor != cpNullPredictor		   &&
+				ifd.fPredictor != cpHorizontalDifference   &&
+				ifd.fPredictor != cpHorizontalDifferenceX2 &&
+				ifd.fPredictor != cpHorizontalDifferenceX4)
+				{
+				return false;
+				}
+
+			if (ifd.fPredictor != cpNullPredictor &&
+				ifd.fBitsPerSample [0] != 8	 &&
+				ifd.fBitsPerSample [0] != 16 &&
+				ifd.fBitsPerSample [0] != 32)
+				{
+				return false;
+				}
+
+			if (ifd.fPredictor != cpNullPredictor &&
+				ifd.fPlanarConfiguration == pcRowInterleaved)
+				{
+				return false;
+				}
+
+			if (ifd.fFillOrder != 1 &&
+				ifd.fFillOrder != 2)
+				{
+				return false;
+				}
+
+			if (ifd.fFillOrder == 2 &&
+				ifd.fBitsPerSample [0] != 8	 &&
+				ifd.fBitsPerSample [0] != 16 &&
+				ifd.fBitsPerSample [0] != 32)
+				{
+				return false;
 				}
 				
 			return ifd.fBitsPerSample [0] >= 8 &&
@@ -1955,6 +2104,35 @@ bool dng_read_image::CanReadTile (const dng_ifd &ifd)
 			
 			}
 
+		case ccJXL:
+			{
+
+			if (ifd.fSamplesPerPixel != 1 &&
+				ifd.fSamplesPerPixel != 3)
+				{
+				return false;
+				}
+
+			if (ifd.fSampleFormat [0] == sfUnsignedInteger)
+				{
+				
+				return ifd.fBitsPerSample [0] >= 8 &&
+					   ifd.fBitsPerSample [0] <= 16;
+				
+				}
+
+			else
+				{
+				
+				return ifd.fBitsPerSample [0] >= 16 &&
+					   ifd.fBitsPerSample [0] <= 32;
+				
+				}
+				
+			break;
+			
+			}
+
 		case ccLZW:
 		case ccDeflate:
 		case ccOldDeflate:
@@ -1969,8 +2147,8 @@ bool dng_read_image::CanReadTile (const dng_ifd &ifd)
 					return false;
 					}
 				
-				if (ifd.fPredictor != cpNullPredictor   &&
-					ifd.fPredictor != cpFloatingPoint   &&
+				if (ifd.fPredictor != cpNullPredictor	&&
+					ifd.fPredictor != cpFloatingPoint	&&
 					ifd.fPredictor != cpFloatingPointX2 &&
 					ifd.fPredictor != cpFloatingPointX4)
 					{
@@ -1997,7 +2175,7 @@ bool dng_read_image::CanReadTile (const dng_ifd &ifd)
 					return false;
 					}
 					
-				if (ifd.fBitsPerSample [0] != 8  &&
+				if (ifd.fBitsPerSample [0] != 8	 &&
 					ifd.fBitsPerSample [0] != 16 &&
 					ifd.fBitsPerSample [0] != 32)
 					{
@@ -2026,8 +2204,8 @@ bool dng_read_image::CanReadTile (const dng_ifd &ifd)
 bool dng_read_image::NeedsCompressedBuffer (const dng_ifd &ifd)
 	{
 	
-	if (ifd.fCompression == ccLZW        ||
-		ifd.fCompression == ccDeflate    ||
+	if (ifd.fCompression == ccLZW		 ||
+		ifd.fCompression == ccDeflate	 ||
 		ifd.fCompression == ccOldDeflate ||
 		ifd.fCompression == ccPackBits)
 		{
@@ -2044,7 +2222,10 @@ void dng_read_image::ByteSwapBuffer (dng_host & /* host */,
 									 dng_pixel_buffer &buffer)
 	{
 	
-	uint32 pixels = buffer.fRowStep * buffer.fArea.H ();
+	DNG_REQUIRE (buffer.fArea.H () == 0 || buffer.fRowStep > 0,
+				 "buffer.fRowStep");
+
+	uint32 pixels = SafeUint32Mult ((uint32) buffer.fRowStep, buffer.fArea.H ());
 	
 	switch (buffer.fPixelSize)
 		{
@@ -2075,12 +2256,12 @@ void dng_read_image::ByteSwapBuffer (dng_host & /* host */,
 		}
 
 	}
-						    
+							
 /*****************************************************************************/
 
 void dng_read_image::DecodePredictor (dng_host & /* host */,
 									  const dng_ifd &ifd,
-						        	  dng_pixel_buffer &buffer)
+									  dng_pixel_buffer &buffer)
 	{
 	
 	switch (ifd.fPredictor)
@@ -2119,7 +2300,7 @@ void dng_read_image::DecodePredictor (dng_host & /* host */,
 					DecodeDelta8 ((uint8 *) buffer.fData,
 								  buffer.fArea.H (),
 								  buffer.fArea.W () / xFactor,
-								  buffer.fPlanes    * xFactor);
+								  buffer.fPlanes	* xFactor);
 					
 					return;
 					
@@ -2131,7 +2312,7 @@ void dng_read_image::DecodePredictor (dng_host & /* host */,
 					DecodeDelta16 ((uint16 *) buffer.fData,
 								   buffer.fArea.H (),
 								   buffer.fArea.W () / xFactor,
-								   buffer.fPlanes    * xFactor);
+								   buffer.fPlanes	 * xFactor);
 					
 					return;
 					
@@ -2143,7 +2324,7 @@ void dng_read_image::DecodePredictor (dng_host & /* host */,
 					DecodeDelta32 ((uint32 *) buffer.fData,
 								   buffer.fArea.H (),
 								   buffer.fArea.W () / xFactor,
-								   buffer.fPlanes    * xFactor);
+								   buffer.fPlanes	 * xFactor);
 					
 					return;
 					
@@ -2166,21 +2347,21 @@ void dng_read_image::DecodePredictor (dng_host & /* host */,
 	ThrowBadFormat ();
 	
 	}
-						    
+							
 /*****************************************************************************/
 
 void dng_read_image::ReadTile (dng_host &host,
-						       const dng_ifd &ifd,
-						       dng_stream &stream,
-						       dng_image &image,
-						       const dng_rect &tileArea,
-						       uint32 plane,
-						       uint32 planes,
-						       uint32 tileByteCount,
-							   AutoPtr<dng_memory_block> &compressedBuffer,
+							   const dng_ifd &ifd,
+							   dng_stream &stream,
+							   dng_image &image,
+							   const dng_rect &tileArea,
+							   uint32 plane,
+							   uint32 planes,
+							   uint32 tileByteCount,
+							   std::shared_ptr<dng_memory_block> &compressedBuffer,
 							   AutoPtr<dng_memory_block> &uncompressedBuffer,
 							   AutoPtr<dng_memory_block> &subTileBlockBuffer,
-                               bool usingMultipleThreads)
+							   bool usingMultipleThreads)
 	{
 	
 	switch (ifd.fCompression)
@@ -2195,12 +2376,28 @@ void dng_read_image::ReadTile (dng_host &host,
 			// Figure out uncompressed size.
 
 			dng_safe_uint32 bytesPerSample = (ifd.fBitsPerSample [0] >> 3);
-			
+
+			const bool floatingPointPredictor =
+				ifd.fPredictor == cpFloatingPoint	||
+				ifd.fPredictor == cpFloatingPointX2 ||
+				ifd.fPredictor == cpFloatingPointX4;
+
+			// CR-4209035: FP predictor byte shuffling assumes float samples;
+			// reject mismatched integer encodings before decoding.
+
+			if (floatingPointPredictor &&
+				ifd.fSampleFormat [0] != sfFloatingPoint)
+				{
+				ThrowBadFormat ();
+				}
+
 			dng_safe_uint32 sampleCount = (dng_safe_uint32 (planes)		   * 
 										   dng_safe_uint32 (tileArea.W ()) * 
 										   dng_safe_uint32 (tileArea.H ()));
-			
+
 			dng_safe_uint32 uncompressedSize = sampleCount * bytesPerSample;
+
+			bool decodedFullTile = false;
 
 			// Setup pixel buffer to hold uncompressed data.
 			
@@ -2248,9 +2445,7 @@ void dng_read_image::ReadTile (dng_host &host,
 			// If we are using the floating point predictor, we need an extra
 			// buffer row.
 			
-			if (ifd.fPredictor == cpFloatingPoint   ||
-				ifd.fPredictor == cpFloatingPointX2 ||
-				ifd.fPredictor == cpFloatingPointX4)
+			if (floatingPointPredictor)
 				{
 
 				bufferSize += (dng_safe_uint32 (dng_safe_int32 (buffer.fRowStep)) * 
@@ -2290,9 +2485,7 @@ void dng_read_image::ReadTile (dng_host &host,
 			
 			// If using floating point predictor, move buffer pointer to second row.
 			
-			if (ifd.fPredictor == cpFloatingPoint   ||
-				ifd.fPredictor == cpFloatingPointX2 ||
-				ifd.fPredictor == cpFloatingPointX4)
+			if (floatingPointPredictor)
 				{
 				
 				buffer.fData = (uint8 *) buffer.fData +
@@ -2341,7 +2534,87 @@ void dng_read_image::ReadTile (dng_host &host,
 									  &dstLen,
 									  (const Bytef *) compressedBuffer->Buffer (),
 									  tileByteCount);
-									  
+
+				// CR-4209182: Some TIFF writers store a full-height
+				// compressed edge strip even though the visible strip area
+				// is clipped to the image bounds. Retry with the complete
+				// stored tile size, then copy only the visible area below.
+
+				if (err == Z_BUF_ERROR && !floatingPointPredictor)
+					{
+
+					dng_rect fullTileArea (tileArea);
+
+					fullTileArea.r = fullTileArea.l + ifd.fTileWidth;
+					fullTileArea.b = fullTileArea.t + ifd.fTileLength;
+
+					if (fullTileArea != tileArea)
+						{
+
+						dng_safe_uint32 fullSampleCount =
+							(dng_safe_uint32 (planes) *
+							 dng_safe_uint32 (fullTileArea.W ()) *
+							 dng_safe_uint32 (fullTileArea.H ()));
+
+						dng_safe_uint32 fullUncompressedSize =
+							fullSampleCount * bytesPerSample;
+
+						dng_pixel_buffer fullBuffer (fullTileArea,
+													 plane,
+													 planes,
+													 pixelType,
+													 pcInterleaved,
+													 NULL);
+
+						fullBuffer.fPixelSize = bytesPerSample.Get ();
+
+						dng_safe_uint32 fullBufferSize =
+							fullUncompressedSize;
+
+						if (fullBuffer.fPixelType == ttFloat)
+							{
+							fullBufferSize =
+								Max_uint32 (fullBufferSize.Get (),
+											(fullSampleCount * 4u).Get ());
+							}
+
+						if (uncompressedBuffer.Get () &&
+							uncompressedBuffer->LogicalSize () <
+								fullBufferSize.Get ())
+							{
+							uncompressedBuffer.Reset ();
+							}
+
+						if (uncompressedBuffer.Get () == NULL)
+							{
+							uncompressedBuffer.Reset (
+								host.Allocate (fullBufferSize.Get ()));
+							}
+
+						fullBuffer.fData = uncompressedBuffer->Buffer ();
+
+						uLongf fullDstLen = fullUncompressedSize.Get ();
+
+						err = uncompress ((Bytef *) fullBuffer.fData,
+										  &fullDstLen,
+										  (const Bytef *)
+											compressedBuffer->Buffer (),
+										  tileByteCount);
+
+						if (err == Z_OK &&
+							fullDstLen == fullUncompressedSize.Get ())
+							{
+							buffer = fullBuffer;
+							sampleCount = fullSampleCount;
+							uncompressedSize = fullUncompressedSize;
+							dstLen = fullDstLen;
+							decodedFullTile = true;
+							}
+
+						}
+
+					}
+
 				if (err != Z_OK)
 					{
 					
@@ -2374,9 +2647,7 @@ void dng_read_image::ReadTile (dng_host &host,
 				
 			// The floating point predictor is byte order independent.
 			
-			if (ifd.fPredictor == cpFloatingPoint   ||
-				ifd.fPredictor == cpFloatingPointX2 ||
-				ifd.fPredictor == cpFloatingPointX4)
+			if (floatingPointPredictor)
 				{
 				
 				int32 xFactor = 1;
@@ -2394,13 +2665,13 @@ void dng_read_image::ReadTile (dng_host &host,
 				for (int32 row = tileArea.t; row < tileArea.b; row++)
 					{
 					
-					uint8 *srcPtr = (uint8 *) buffer.DirtyPixel (row    , tileArea.l, plane);
+					uint8 *srcPtr = (uint8 *) buffer.DirtyPixel (row	, tileArea.l, plane);
 					uint8 *dstPtr = (uint8 *) buffer.DirtyPixel (row - 1, tileArea.l, plane);
 					
 					DecodeFPDelta (srcPtr,
 								   dstPtr,
 								   tileArea.W () / xFactor,
-								   planes        * xFactor,
+								   planes		 * xFactor,
 								   bytesPerSample.Get ());
 					
 					}
@@ -2497,6 +2768,11 @@ void dng_read_image::ReadTile (dng_host &host,
 				}
 			
 			// Save the data.
+
+			if (decodedFullTile)
+				{
+				buffer.fArea = tileArea;
+				}
 			
 			image.Put (buffer);
 			
@@ -2542,8 +2818,8 @@ void dng_read_image::ReadTile (dng_host &host,
 									  plane,
 									  planes,
 									  tileByteCount,
-									  compressedBuffer.Get () ? compressedBuffer->Buffer_uint8 () : NULL,
-                                      usingMultipleThreads))
+									  compressedBuffer ? compressedBuffer->Buffer_uint8 () : NULL,
+									  usingMultipleThreads))
 					{
 					
 					return;
@@ -2555,7 +2831,7 @@ void dng_read_image::ReadTile (dng_host &host,
 			else
 				{
 				
-				// Otherwise is should be lossless JPEG.
+				// Otherwise it should be lossless JPEG.
 				
 				if (ReadLosslessJPEG (host,
 									  ifd,
@@ -2590,8 +2866,8 @@ void dng_read_image::ReadTile (dng_host &host,
 								  plane,
 								  planes,
 								  tileByteCount,
-								  compressedBuffer.Get () ? compressedBuffer->Buffer_uint8 () : NULL,
-                                  usingMultipleThreads))
+								  compressedBuffer ? compressedBuffer->Buffer_uint8 () : NULL,
+								  usingMultipleThreads))
 				{
 				
 				return;
@@ -2601,7 +2877,35 @@ void dng_read_image::ReadTile (dng_host &host,
 			break;
 			
 			}
+
+		case ccJXL:
+			{
+
+			DNG_REQUIRE (plane == 0,
+						 "Unexpected plane in ReadTile for ccJXL");
+
+			DNG_REQUIRE (planes == 1 ||
+						 planes == 3,
+						 "Unexpected planes in ReadTile for ccJXL");
 			
+			if (ReadJXL (host,
+						 ifd,
+						 stream,
+						 image,
+						 tileArea,
+						 tileByteCount,
+						 compressedBuffer ? compressedBuffer->Buffer_uint8 () : NULL,
+						 usingMultipleThreads))
+				{
+				
+				return;
+				
+				}
+							
+			break;
+			
+			}
+
 		default:
 			break;
 			
@@ -2616,7 +2920,7 @@ void dng_read_image::ReadTile (dng_host &host,
 bool dng_read_image::CanRead (const dng_ifd &ifd)
 	{
 	
-	if (ifd.fImageWidth  < 1 ||
+	if (ifd.fImageWidth	 < 1 ||
 		ifd.fImageLength < 1)
 		{
 		return false;
@@ -2650,8 +2954,8 @@ bool dng_read_image::CanRead (const dng_ifd &ifd)
 
 		}
 		
-	if ((ifd.fPlanarConfiguration != pcInterleaved   ) &&
-		(ifd.fPlanarConfiguration != pcPlanar        ) &&
+	if ((ifd.fPlanarConfiguration != pcInterleaved	 ) &&
+		(ifd.fPlanarConfiguration != pcPlanar		 ) &&
 		(ifd.fPlanarConfiguration != pcRowInterleaved))
 		{
 		return false;
@@ -2722,8 +3026,8 @@ dng_read_tiles_task::dng_read_tiles_task (dng_read_image &readImage,
 										  const dng_ifd &ifd,
 										  dng_stream &stream,
 										  dng_image &image,
-										  dng_jpeg_image *jpegImage,
-										  dng_fingerprint *jpegTileDigest,
+										  dng_lossy_compressed_image *lossyImage,
+										  dng_fingerprint *lossyTileDigest,
 										  uint32 outerSamples,
 										  uint32 innerSamples,
 										  uint32 tilesDown,
@@ -2735,20 +3039,20 @@ dng_read_tiles_task::dng_read_tiles_task (dng_read_image &readImage,
 
 	:	dng_area_task ("dng_read_tiles_task")
 
-	,	fReadImage        (readImage)
-	,	fHost		      (host)
-	,	fIFD		      (ifd)
-	,	fStream		      (stream)
-	,	fImage		      (image)
-	,	fJPEGImage		  (jpegImage)
-	,	fJPEGTileDigest   (jpegTileDigest)
-	,	fOuterSamples     (outerSamples)
-	,	fInnerSamples     (innerSamples)
-	,	fTilesDown        (tilesDown)
+	,	fReadImage		  (readImage)
+	,	fHost			  (host)
+	,	fIFD			  (ifd)
+	,	fStream			  (stream)
+	,	fImage			  (image)
+	,	fLossyImage		  (lossyImage)
+	,	fLossyTileDigest  (lossyTileDigest)
+	,	fOuterSamples	  (outerSamples)
+	,	fInnerSamples	  (innerSamples)
+	,	fTilesDown		  (tilesDown)
 	,	fTilesAcross	  (tilesAcross)
 	,	fTileOffset		  (tileOffset)
 	,	fTileByteCount	  (tileByteCount)
-	,	fCompressedSize   (compressedSize)
+	,	fCompressedSize	  (compressedSize)
 	,	fUncompressedSize (uncompressedSize)
 	,	fMutex			  ("dng_read_tiles_task")
 	,	fNextTileIndex	  (0)
@@ -2756,7 +3060,7 @@ dng_read_tiles_task::dng_read_tiles_task (dng_read_image &readImage,
 	{
 
 	fMinTaskArea = 16 * 16;
-	fUnitCell    = dng_point (16, 16);
+	fUnitCell	 = dng_point (16, 16);
 	fMaxTileSize = dng_point (16, 16);
 
 	}
@@ -2768,13 +3072,14 @@ void dng_read_tiles_task::Process (uint32 /* threadIndex */,
 								   dng_abort_sniffer *sniffer)
 	{
 			
-	AutoPtr<dng_memory_block> compressedBuffer;
+	std::shared_ptr<dng_memory_block> compressedBuffer;
+	
 	AutoPtr<dng_memory_block> uncompressedBuffer;
 	AutoPtr<dng_memory_block> subTileBlockBuffer;
 
-	if (!fJPEGImage)
+	if (!fLossyImage)
 		{
-		compressedBuffer.Reset (fHost.Allocate (fCompressedSize));
+		compressedBuffer.reset (fHost.Allocate (fCompressedSize));
 		}
 
 	if (fUncompressedSize)
@@ -2801,7 +3106,7 @@ void dng_read_tiles_task::Process (uint32 /* threadIndex */,
 
 			ReadTask (tileIndex,
 					  byteCount,
-					  compressedBuffer.Get ());
+					  compressedBuffer.get ());
 
 			}
 
@@ -2829,15 +3134,15 @@ void dng_read_tiles_task::ReadTask (uint32 tileIndex,
 
 	byteCount = fTileByteCount [tileIndex];
 
-	if (fJPEGImage)
+	if (fLossyImage)
 		{
 
-		fJPEGImage->fJPEGData [tileIndex] . Reset (fHost.Allocate (byteCount));
+		fLossyImage->fData [tileIndex] . reset (fHost.Allocate (byteCount));
 
 		}
 
-	fStream.Get (fJPEGImage ? fJPEGImage->fJPEGData [tileIndex]->Buffer ()
-							: compressedBuffer->Buffer (),
+	fStream.Get (fLossyImage ? fLossyImage->fData [tileIndex]->Buffer ()
+							 : compressedBuffer->Buffer (),
 				 byteCount);	
 
 	}
@@ -2847,27 +3152,27 @@ void dng_read_tiles_task::ReadTask (uint32 tileIndex,
 void dng_read_tiles_task::ProcessTask (uint32 tileIndex,
 									   uint32 byteCount,
 									   dng_abort_sniffer *sniffer,
-									   AutoPtr<dng_memory_block> &compressedBuffer,
+									   std::shared_ptr<dng_memory_block> &compressedBuffer,
 									   AutoPtr<dng_memory_block> &uncompressedBuffer,
 									   AutoPtr<dng_memory_block> &subTileBlockBuffer)
 	{
 	
 	dng_abort_sniffer::SniffForAbort (sniffer);
 
-	if (fJPEGTileDigest)
+	if (fLossyTileDigest)
 		{
 
-		dng_md5_printer printer;
+		dng_md5_direct_printer printer;
 
-		printer.Process (compressedBuffer->Buffer (),
-						 byteCount);
+		printer.ProcessPtr (compressedBuffer->Buffer (),
+							byteCount);
 
-		fJPEGTileDigest [tileIndex] = printer.Result ();
+		fLossyTileDigest [tileIndex] = printer.Result ();
 
 		}
 
-	dng_stream tileStream (fJPEGImage ? fJPEGImage->fJPEGData [tileIndex]->Buffer ()
-									  : compressedBuffer->Buffer (),
+	dng_stream tileStream (fLossyImage ? fLossyImage->fData [tileIndex]->Buffer ()
+									   : compressedBuffer->Buffer (),
 						   byteCount);
 
 	tileStream.SetLittleEndian (fStream.LittleEndian ());
@@ -2891,8 +3196,8 @@ void dng_read_tiles_task::ProcessTask (uint32 tileIndex,
 						 plane,
 						 fInnerSamples,
 						 byteCount,
-						 fJPEGImage ? fJPEGImage->fJPEGData [tileIndex]
-									: compressedBuffer,
+						 fLossyImage ? fLossyImage->fData [tileIndex]
+									 : compressedBuffer,
 						 uncompressedBuffer,
 						 subTileBlockBuffer,
 						 true);
@@ -2901,12 +3206,250 @@ void dng_read_tiles_task::ProcessTask (uint32 tileIndex,
 
 /*****************************************************************************/
 
+class dng_interleave_task : public dng_area_task
+						  , private dng_uncopyable
+	{
+	
+	public:
+	
+		const dng_image &fSrcImage;
+			  dng_image &fDstImage;
+			  
+		int32 fRowFactor = 1;
+		int32 fColFactor = 1;
+		
+		bool fEncode = false;
+		
+	private:
+	
+		enum
+			{
+			kMaxThreads = 4
+			};
+		
+		AutoPtr<dng_memory_block> fSrcBuffer [kMaxThreads];
+		AutoPtr<dng_memory_block> fDstBuffer [kMaxThreads];
+		
+	public:
+	
+		dng_interleave_task (const dng_image &srcImage,
+							 dng_image &dstImage,
+							 const int32 rowFactor,
+							 const int32 colFactor,
+							 bool encode)
+								  
+			:	dng_area_task ("dng_interleave_task")
+								  
+			,	fSrcImage  (srcImage)
+			,	fDstImage  (dstImage)
+			,	fRowFactor (rowFactor)
+			,	fColFactor (colFactor)
+			,	fEncode    (encode)
+			
+			{
+			
+			if (fRowFactor >= (int32) fSrcImage.Bounds ().H ())
+				{
+				fRowFactor = 1;
+				}
+			
+			if (fColFactor >= (int32) fSrcImage.Bounds ().W ())
+				{
+				fColFactor = 1;
+				}
+			
+			fMaxThreads = kMaxThreads;
+			
+			fMaxTileSize = dng_point (512, 512);
+			
+			}
+	
+		dng_rect RepeatingTile1 () const override
+			{
+			return fDstImage.RepeatingTile ();
+			}
+			
+		void Start (uint32 threadCount,
+					const dng_rect &dstArea,
+					const dng_point &tileSize,
+					dng_memory_allocator *allocator,
+					dng_abort_sniffer *sniffer) override;
+
+		void Process (uint32 threadIndex,
+					  const dng_rect &tile,
+					  dng_abort_sniffer *sniffer) override;
+		
+	};
+
+/*****************************************************************************/
+
+void dng_interleave_task::Start (uint32 threadCount,
+								 const dng_rect & /* dstArea */,
+								 const dng_point &tileSize,
+								 dng_memory_allocator *allocator,
+								 dng_abort_sniffer * /* sniffer */)
+	{
+	
+	uint32 srcBufferSize =
+		SafeUint32Mult ((tileSize.h + fColFactor - 1) / fColFactor,
+						(tileSize.v + fRowFactor - 1) / fRowFactor,
+						fDstImage.PixelSize (),
+						fDstImage.Planes ());
+
+	uint32 dstBufferSize =
+		SafeUint32Mult ((uint32) tileSize.h,
+						(uint32) tileSize.v,
+						fDstImage.PixelSize (),
+						fDstImage.Planes ());
+	
+	for (uint32 threadIndex = 0; threadIndex < threadCount; threadIndex++)
+		{
+		
+		fSrcBuffer [threadIndex].Reset (allocator->Allocate (srcBufferSize));
+		
+		fDstBuffer [threadIndex].Reset (allocator->Allocate (dstBufferSize));
+		
+		}
+	
+	}
+
+/*****************************************************************************/
+
+void dng_interleave_task::Process (uint32 threadIndex,
+								   const dng_rect &tile,
+								   dng_abort_sniffer * /* sniffer */)
+	{
+	
+	dng_pixel_buffer dstBuffer;
+	
+	dstBuffer.fArea      = tile;
+	dstBuffer.fPlane     = 0;
+	dstBuffer.fPlanes    = fDstImage.Planes ();
+	dstBuffer.fPlaneStep = 1;
+	dstBuffer.fColStep   = dstBuffer.fPlaneStep * dstBuffer.fPlanes;
+	dstBuffer.fRowStep   = SafeInt32Mult (dstBuffer.fColStep,
+										  (int32) dstBuffer.fArea.W ());
+	dstBuffer.fPixelType = fDstImage.PixelType ();
+	dstBuffer.fPixelSize = fDstImage.PixelSize ();
+	dstBuffer.fData      = fDstBuffer [threadIndex]->Buffer ();
+	dstBuffer.fDirty     = true;
+	
+	dng_pixel_buffer srcBuffer = dstBuffer;
+	
+	srcBuffer.fData = fSrcBuffer [threadIndex]->Buffer ();
+	
+	if (fEncode)
+		{
+		fSrcImage.Get (dstBuffer);
+		}
+		
+	for (int32 rOffset = 0; rOffset < Min_int32 (fRowFactor, tile.H ()); rOffset++)
+		{
+		
+		for (int32 cOffset = 0; cOffset < Min_int32 (fColFactor, tile.W ()); cOffset++)
+			{
+			
+			int32 rField = (tile.t + rOffset) % fRowFactor;
+			int32 cField = (tile.l + cOffset) % fColFactor;
+			
+			int32 rFieldOffset = rField * (fDstImage.Height () / fRowFactor) +
+								 Min_int32 (rField, fDstImage.Height () % fRowFactor);
+			
+			int32 cFieldOffset = cField * (fDstImage.Width  () / fColFactor) +
+								 Min_int32 (cField, fDstImage.Width  () % fColFactor);
+								 
+			srcBuffer.fArea.t = rFieldOffset + (tile.t + rOffset) / fRowFactor;
+			srcBuffer.fArea.l = cFieldOffset + (tile.l + cOffset) / fColFactor;
+			
+			srcBuffer.fArea.b = srcBuffer.fArea.t + (tile.H () - rOffset + fRowFactor - 1) / fRowFactor;
+			srcBuffer.fArea.r = srcBuffer.fArea.l + (tile.W () - cOffset + fColFactor - 1) / fColFactor;
+			
+			srcBuffer.fRowStep = SafeInt32Mult (srcBuffer.fColStep,
+												(int32) srcBuffer.fArea.W ());
+			
+			if (!fEncode)
+				{
+				fSrcImage.Get (srcBuffer);
+				}
+				
+			dng_pixel_buffer tmpBuffer = dstBuffer;
+			
+			tmpBuffer.fArea = srcBuffer.fArea;
+
+			tmpBuffer.fData = dstBuffer.DirtyPixel (tile.t + rOffset,
+													tile.l + cOffset);
+													
+			tmpBuffer.fRowStep = SafeInt32Mult (tmpBuffer.fRowStep, fRowFactor);
+			tmpBuffer.fColStep = SafeInt32Mult (tmpBuffer.fColStep, fColFactor);
+			
+			if (fEncode)
+				{
+				srcBuffer.CopyArea (tmpBuffer,
+									tmpBuffer.fArea,
+									tmpBuffer.fPlane,
+									tmpBuffer.fPlanes);
+				}
+			else
+				{
+				tmpBuffer.CopyArea (srcBuffer,
+									srcBuffer.fArea,
+									srcBuffer.fPlane,
+									srcBuffer.fPlanes);
+				}
+			
+			if (fEncode)
+				{
+				fDstImage.Put (srcBuffer);
+				}
+			
+			}
+		
+		}
+		
+	if (!fEncode)
+		{
+		fDstImage.Put (dstBuffer);
+		}
+	
+	}
+	
+/*****************************************************************************/
+
+void Interleave2D (dng_host &host,
+				   const dng_image &srcImage,
+				   dng_image &dstImage,
+				   const int32 rowFactor,
+				   const int32 colFactor,
+				   bool encode)
+	{
+	
+	#if qDNGValidate
+	dng_timer timer ("Interleave2D");
+	#endif
+	
+	DNG_REQUIRE (srcImage.Bounds    () == dstImage.Bounds    () &&
+				 srcImage.Planes    () == dstImage.Planes    () &&
+				 srcImage.PixelType () == dstImage.PixelType (),
+				 "Mismatched src and dst in Interleave2D");
+				 
+	dng_interleave_task task (srcImage,
+							  dstImage,
+							  rowFactor,
+							  colFactor,
+							  encode);
+								   
+	host.PerformAreaTask (task, dstImage.Bounds ());
+	
+	}
+
+/*****************************************************************************/
+
 void dng_read_image::Read (dng_host &host,
 						   const dng_ifd &ifd,
 						   dng_stream &stream,
 						   dng_image &image,
-						   dng_jpeg_image *jpegImage,
-						   dng_fingerprint *jpegDigest)
+						   dng_lossy_compressed_image *lossyImage,
+						   dng_fingerprint *lossyDigest)
 	{
 	
 	// Reject images that are too big.
@@ -2916,40 +3459,53 @@ void dng_read_image::Read (dng_host &host,
 
 	static const uint32 kLimit = 2 * kMaxImageSide;
 
-	if (ifd.fImageWidth  > kLimit ||
+	if (ifd.fImageWidth	 > kLimit ||
 		ifd.fImageLength > kLimit)
 		{
 		
 		ThrowBadFormat ("dng_read_image::Read image too large");
 		
 		}
-	
+
 	uint32 tileIndex;
 
-	// Deal with row interleaved images.
-	
-	if (ifd.fRowInterleaveFactor > 1 &&
-		ifd.fRowInterleaveFactor < ifd.fImageLength)
+	// Deal with both images that have row or column interleaving.
+
+	if (ifd.fRowInterleaveFactor	> 1	||
+		ifd.fColumnInterleaveFactor > 1)
 		{
+
+		// First, read into a full interleaved temporary image.
+		
+		AutoPtr<dng_image> tempImage (host.Make_dng_image (image.Bounds (),
+														   image.Planes (),
+														   image.PixelType ()));
 		
 		dng_ifd tempIFD (ifd);
 		
-		tempIFD.fRowInterleaveFactor = 1;
-		
-		dng_row_interleaved_image tempImage (image,
-											 ifd.fRowInterleaveFactor);
-		
+		tempIFD.fRowInterleaveFactor    = 1;
+		tempIFD.fColumnInterleaveFactor = 1;
+
 		Read (host,
 			  tempIFD,
 			  stream,
-			  tempImage,
-			  jpegImage,
-			  jpegDigest);
-			  
+			  *tempImage,
+			  lossyImage,
+			  lossyDigest);
+
+		// Interleave both rows and columns.
+		
+		Interleave2D (host,
+					  *tempImage,
+					  image,
+					  ifd.fRowInterleaveFactor,
+					  ifd.fColumnInterleaveFactor,
+					  false);
+						
 		return;
 		
 		}
-	
+
 	// Figure out inner and outer samples.
 	
 	uint32 innerSamples = 1;
@@ -2967,7 +3523,7 @@ void dng_read_image::Read (dng_host &host,
 	// Calculate number of tiles to read.
 	
 	uint32 tilesAcross = ifd.TilesAcross ();
-	uint32 tilesDown   = ifd.TilesDown   ();
+	uint32 tilesDown   = ifd.TilesDown	 ();
 	
 	uint32 tileCount = SafeUint32Mult (tilesAcross, tilesDown, outerSamples);
 	
@@ -2997,7 +3553,7 @@ void dng_read_image::Read (dng_host &host,
 		for (tileIndex = 0; tileIndex < tileCount; tileIndex++)
 			{
 			
-			tileOffset [tileIndex] = stream.TagValue_uint32 (ifd.fTileOffsetsType);
+			tileOffset [tileIndex] = stream.TagValue_uint64 (ifd.fTileOffsetsType);
 			
 			}
 		
@@ -3046,14 +3602,22 @@ void dng_read_image::Read (dng_host &host,
 		
 		uint32 bytesPerPixel = TagTypeSize (ifd.PixelType ());
 		
-		uint32 bytesPerRow = SafeUint32Mult (ifd.fTileWidth, 
+		uint32 bytesPerRow = SafeUint32Mult (ifd.fTileWidth,
 											 innerSamples,
 											 bytesPerPixel);
-				
+
+		// CR-4208475 N-M1: sibling of the CR-4209037 ReorderSubTileBlocks
+		// guard.
+
+		if (ifd.fSubTileBlockRows == 0)
+			{
+			ThrowBadFormat ();
+			}
+
 		subTileLength = Pin_uint32 (ifd.fSubTileBlockRows,
-									kImageBufferSize / bytesPerRow, 
+									kImageBufferSize / bytesPerRow,
 									ifd.fTileLength);
-									
+
 		subTileLength = subTileLength / ifd.fSubTileBlockRows
 									  * ifd.fSubTileBlockRows;
 									  
@@ -3076,7 +3640,12 @@ void dng_read_image::Read (dng_host &host,
 			for (tileIndex = 0; tileIndex < tileCount; tileIndex++)
 				{
 				
-				tileByteCount [tileIndex] = ifd.fTileByteCount [tileIndex];
+				if (ifd.fTileByteCount [tileIndex] > 0xFFFFFFFF)
+					{
+					ThrowBadFormat ();
+					}
+				
+				tileByteCount [tileIndex] = (uint32) ifd.fTileByteCount [tileIndex];
 				
 				}
 			
@@ -3090,7 +3659,14 @@ void dng_read_image::Read (dng_host &host,
 			for (tileIndex = 0; tileIndex < tileCount; tileIndex++)
 				{
 				
-				tileByteCount [tileIndex] = stream.TagValue_uint32 (ifd.fTileByteCountsType);
+				uint64 tileByteCount64 = stream.TagValue_uint64 (ifd.fTileByteCountsType);
+				
+				if (tileByteCount64 > 0xFFFFFFFF)
+					{
+					ThrowBadFormat ();
+					}
+				
+				tileByteCount [tileIndex] = (uint32) tileByteCount64;
 				
 				}
 			
@@ -3148,30 +3724,31 @@ void dng_read_image::Read (dng_host &host,
 		
 		}
 		
-	// Are we keeping the compressed JPEG image data?
+	// Are we keeping the lossy compressed image data?
 	
-	if (jpegImage)
+	if (lossyImage)
 		{
 		
-		if (ifd.IsBaselineJPEG ())
+		if (ifd.IsBaselineJPEG () ||
+			(ifd.fCompression == ccJXL))
 			{
 			
-			jpegImage->fImageSize.h = ifd.fImageWidth;
-			jpegImage->fImageSize.v = ifd.fImageLength;
+			lossyImage->fImageSize.h = ifd.fImageWidth;
+			lossyImage->fImageSize.v = ifd.fImageLength;
 			
-			jpegImage->fTileSize.h = ifd.fTileWidth;
-			jpegImage->fTileSize.v = ifd.fTileLength;
+			lossyImage->fTileSize.h = ifd.fTileWidth;
+			lossyImage->fTileSize.v = ifd.fTileLength;
 			
-			jpegImage->fUsesStrips = ifd.fUsesStrips;
-			
-			jpegImage->fJPEGData.Reset (new dng_jpeg_image_tile_ptr [tileCount]);
+			lossyImage->fUsesStrips = ifd.fUsesStrips;
+
+			lossyImage->fData.resize (tileCount);
 						
 			}
-			
+
 		else
 			{
 			
-			jpegImage = NULL;
+			lossyImage = NULL;
 			
 			}
 		
@@ -3189,43 +3766,38 @@ void dng_read_image::Read (dng_host &host,
 			
 			stream.SetReadPosition (ifd.fJPEGTablesOffset);
 			
-			stream.Get (fJPEGTables->Buffer      (),
+			stream.Get (fJPEGTables->Buffer		 (),
 						fJPEGTables->LogicalSize ());
 			
 			}
 			
 		}
 		
-	AutoArray<dng_fingerprint> jpegTileDigest;
+	std::vector<dng_fingerprint> lossyTileDigests;
 	
-	if (jpegDigest)
-		{
-		
-		jpegTileDigest.Reset (new dng_fingerprint 
-							  [SafeUint32Add (tileCount, (fJPEGTables.Get () ? 1 : 0))]);
-		
-		}
+	if (lossyDigest)
+		lossyTileDigests.resize (tileCount);
 			
 	// Don't read planes we are not actually saving.
 	
 	outerSamples = Min_uint32 (image.Planes (), outerSamples);
 		
-    // Performance optimization.  We are reading in a potentially large image, which
-    // is usually in a fairly contiguous byte range in the file.  See if it makes sense
-    // to increase the stream buffer size for this operation.
-    
-    uint64 contiguousByteCount = 0;
-    
-        {
+	// Performance optimization. We are reading in a potentially large image,
+	// which is usually in a fairly contiguous byte range in the file. See if
+	// it makes sense to increase the stream buffer size for this operation.
+	
+	uint64 contiguousByteCount = 0;
+	
+		{
 
-        bool tilesInOrder = true;
-        
-        uint64 totalTileBytes = 0;
-        
-        uint64 minFileOffset = tileOffset [0];
-        uint64 maxFileOffset = tileOffset [0];
-        
- 		tileIndex = 0;
+		bool tilesInOrder = true;
+		
+		uint64 totalTileBytes = 0;
+		
+		uint64 minFileOffset = tileOffset [0];
+		uint64 maxFileOffset = tileOffset [0];
+		
+		tileIndex = 0;
 		
 		for (uint32 plane = 0; plane < outerSamples; plane++)
 			{
@@ -3235,77 +3807,84 @@ void dng_read_image::Read (dng_host &host,
 				
 				for (uint32 colIndex = 0; colIndex < tilesAcross; colIndex++)
 					{
-                    
-                    uint64 thisOffset = tileOffset [tileIndex];
-                    
-                    uint64 thisByteCount;
-                    
-                    if (tileByteCount)
-                        {
-                        
-                        thisByteCount = tileByteCount [tileIndex];
-                        
-                        }
-                        
-                    else
-                        {
-                        
-                        thisByteCount = ifd.TileByteCount (ifd.TileArea (rowIndex, colIndex));
-                        
-                        }
-                        
-                    if (thisOffset < maxFileOffset)
-                        {
-                        tilesInOrder = false;
-                        }
-                        
-                    totalTileBytes += thisByteCount;
-                    
-                    minFileOffset = Min_uint64 (minFileOffset, thisOffset);
-                    maxFileOffset = Max_uint64 (maxFileOffset, thisOffset + thisByteCount);
-                    
-                    tileIndex++;
-                    
-                    }
-                    
-                }
-                
-            }
-            
-        // Quick check for enough data in file.
-        
-        if (maxFileOffset > stream.Length ())
-            {
+					
+					uint64 thisOffset = tileOffset [tileIndex];
+					
+					uint64 thisByteCount;
+					
+					if (tileByteCount)
+						{
+						
+						thisByteCount = tileByteCount [tileIndex];
+						
+						}
+						
+					else
+						{
+						
+						thisByteCount = ifd.TileByteCount (ifd.TileArea (rowIndex, colIndex));
+						
+						}
+						
+					if (thisOffset < maxFileOffset)
+						{
+						tilesInOrder = false;
+						}
+
+					const uint64 tileEnd = SafeUint64Add (thisOffset,
+														  thisByteCount);
+
+					totalTileBytes = SafeUint64Add (totalTileBytes,
+													thisByteCount);
+					
+					minFileOffset = Min_uint64 (minFileOffset, thisOffset);
+					maxFileOffset = Max_uint64 (maxFileOffset, tileEnd);
+					
+					tileIndex++;
+					
+					}
+					
+				}
+				
+			}
+			
+		// Quick check for enough data in file.
+		
+		if (maxFileOffset > stream.Length ())
+			{
 			
 			ThrowBadFormat ();
 			
 			}
-            
-        // Are all the tiles in order?
-            
-        if (tilesInOrder)
-            {
-            
-            // And are going to read at least 90% of the bytes in the range?
-            
-            uint64 totalFileBytes = maxFileOffset - minFileOffset;
-            
-            if (totalTileBytes >= totalFileBytes * 9 / 10)
-                {
-                
-                contiguousByteCount = totalFileBytes;
-                
-                }
-        
-            }
-            
-        }
-        
-    dng_stream_contiguous_read_hint readHint (stream,
-                                              host.Allocator (),
-                                              tileOffset [0],
-                                              contiguousByteCount);
-        
+			
+		// Are all the tiles in order?
+			
+		if (tilesInOrder)
+			{
+			
+			// And are going to read at least 90% of the bytes in the range?
+			
+			uint64 totalFileBytes = maxFileOffset - minFileOffset;
+
+			uint64 threshold = (totalFileBytes / 10) * 9 +
+							   ((totalFileBytes % 10) * 9) / 10;
+			
+			if (totalTileBytes >= threshold)
+				{
+				
+				contiguousByteCount = totalFileBytes;
+				
+				}
+		
+			}
+			
+		}
+		
+	dng_stream_contiguous_read_hint readHint (stream,
+											  host.Allocator (),
+											  tileOffset [0],
+											  contiguousByteCount);
+		
 	// See if we can do this read using multiple threads.
 	
 	bool useMultipleThreads = (outerSamples * tilesDown * tilesAcross >= 2) &&
@@ -3321,8 +3900,8 @@ void dng_read_image::Read (dng_host &host,
 					 ifd,
 					 stream,
 					 image,
-					 jpegImage,
-					 jpegTileDigest.Get (),
+					 lossyImage,
+					 lossyDigest ? &lossyTileDigests [0] : nullptr,
 					 outerSamples,
 					 innerSamples,
 					 tilesDown,
@@ -3339,7 +3918,7 @@ void dng_read_image::Read (dng_host &host,
 	else
 		{
 		
-		AutoPtr<dng_memory_block> compressedBuffer;
+		std::shared_ptr<dng_memory_block> compressedBuffer;
 		AutoPtr<dng_memory_block> uncompressedBuffer;
 		AutoPtr<dng_memory_block> subTileBlockBuffer;
 		
@@ -3348,14 +3927,14 @@ void dng_read_image::Read (dng_host &host,
 			uncompressedBuffer.Reset (host.Allocate (uncompressedSize));
 			}
 			
-		if (compressedSize && !jpegImage)
+		if (compressedSize && !lossyImage)
 			{
-			compressedBuffer.Reset (host.Allocate (compressedSize));
+			compressedBuffer.reset (host.Allocate (compressedSize));
 			}
 			
-		else if (jpegDigest)
+		else if (lossyDigest)
 			{
-			compressedBuffer.Reset (host.Allocate (maxTileByteCount));
+			compressedBuffer.reset (host.Allocate (maxTileByteCount));
 			}
 			
 		tileIndex = 0;
@@ -3399,31 +3978,31 @@ void dng_read_image::Read (dng_host &host,
 							subByteCount = ifd.TileByteCount (subArea);
 							}
 							
-						if (jpegImage)
+						if (lossyImage)
 							{
 							
-							jpegImage->fJPEGData [tileIndex].Reset (host.Allocate (subByteCount));
+							lossyImage->fData [tileIndex].reset (host.Allocate (subByteCount));
 							
-							stream.Get (jpegImage->fJPEGData [tileIndex]->Buffer (), subByteCount);
+							stream.Get (lossyImage->fData [tileIndex]->Buffer (), subByteCount);
 							
 							stream.SetReadPosition (tileOffset [tileIndex]);
 							
 							}
 							
-						else if ((needsCompressedBuffer || jpegDigest) && subByteCount)
+						else if ((needsCompressedBuffer || lossyDigest) && subByteCount)
 							{
 							
 							stream.Get (compressedBuffer->Buffer (), subByteCount);
 							
-							if (jpegDigest)
+							if (lossyDigest)
 								{
 								
-								dng_md5_printer printer;
+								dng_md5_direct_printer printer;
 								
-								printer.Process (compressedBuffer->Buffer (),
-												 subByteCount);
+								printer.ProcessPtr (compressedBuffer->Buffer (),
+													subByteCount);
 												 
-								jpegTileDigest [tileIndex] = printer.Result ();
+								lossyTileDigests [tileIndex] = printer.Result ();
 								
 								}
 							
@@ -3437,10 +4016,10 @@ void dng_read_image::Read (dng_host &host,
 								  plane,
 								  innerSamples,
 								  subByteCount,
-								  jpegImage ? jpegImage->fJPEGData [tileIndex] : compressedBuffer,
+								  lossyImage ? lossyImage->fData [tileIndex] : compressedBuffer,
 								  uncompressedBuffer,
 								  subTileBlockBuffer,
-                                  useMultipleThreads);
+								  useMultipleThreads);
 								  
 						}
 					
@@ -3456,43 +4035,34 @@ void dng_read_image::Read (dng_host &host,
 		
 	// Finish up JPEG digest computation, if needed.
 	
-	if (jpegDigest)
+	if (lossyDigest)
 		{
-		
+
 		if (fJPEGTables.Get ())
 			{
 			
-			dng_md5_printer printer;
+			dng_md5_direct_printer printer;
 			
-			printer.Process (fJPEGTables->Buffer      (),
-							 fJPEGTables->LogicalSize ());
+			printer.ProcessPtr (fJPEGTables->Buffer		 (),
+								fJPEGTables->LogicalSize ());
 							 
-			jpegTileDigest [tileCount] = printer.Result ();
+			lossyTileDigests.push_back (printer.Result ());
 			
 			}
 			
-		dng_md5_printer printer2;
-		
-		for (uint32 j = 0; j < tileCount + (fJPEGTables.Get () ? 1 : 0); j++)
-			{
-			
-			printer2.Process (jpegTileDigest [j].data,
-							  dng_fingerprint::kDNGFingerprintSize);
+		dng_md5_direct_printer printer2;
+
+		for (const auto &digest : lossyTileDigests)
+			printer2.Process (digest);
 							  
-			}
-			
-		*jpegDigest = printer2.Result ();
+		*lossyDigest = printer2.Result ();
 		
 		}
 		
 	// Keep the JPEG table in the jpeg image, if any.
 	
-	if (jpegImage)
-		{
-		
-		jpegImage->fJPEGTables.Reset (fJPEGTables.Release ());
-		
-		}
+	if (lossyImage && fJPEGTables.Get ())
+		((dng_jpeg_image *) lossyImage)->fJPEGTables.Reset (fJPEGTables.Release ());	
 
 	}
 
@@ -3502,8 +4072,8 @@ void dng_read_image::DoReadTiles (dng_host &host,
 								  const dng_ifd &ifd,
 								  dng_stream &stream,
 								  dng_image &image,
-								  dng_jpeg_image *jpegImage,
-								  dng_fingerprint *jpegTileDigest,
+								  dng_lossy_compressed_image *lossyImage,
+								  dng_fingerprint *lossyTileDigest,
 								  uint32 outerSamples,
 								  uint32 innerSamples,
 								  uint32 tilesDown,
@@ -3522,8 +4092,8 @@ void dng_read_image::DoReadTiles (dng_host &host,
 							  ifd,
 							  stream,
 							  image,
-							  jpegImage,
-							  jpegTileDigest,
+							  lossyImage,
+							  lossyTileDigest,
 							  outerSamples,
 							  innerSamples,
 							  tilesDown,

@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -18,6 +18,20 @@
 
 #include "dng_classes.h"
 #include "dng_types.h"
+
+/*****************************************************************************/
+
+// Runtime flag for enabling extended low-temperature behavior in
+// dng_temperature.
+
+void SetDNGEnableLowTemperatureLimit (bool enable);
+
+bool GetDNGEnableLowTemperatureLimit ();
+
+// Explicitly initialize the extended temperature LUT.
+// Safe to call multiple times.
+
+void InitExtendedTemperatureLUT ();
 
 /*****************************************************************************/
 

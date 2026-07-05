@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -10,6 +10,7 @@
 
 #include "dng_assertions.h"
 #include "dng_exceptions.h"
+#include "dng_fingerprint.h"
 #include "dng_utils.h"
 
 /*****************************************************************************/
@@ -105,7 +106,7 @@ bool dng_matrix::operator== (const dng_matrix &m) const
 	{
 	
 	if (Rows () != m.Rows () ||
-	    Cols () != m.Cols ())
+		Cols () != m.Cols ())
 		{
 		
 		return false;
@@ -168,25 +169,25 @@ bool dng_matrix::IsDiagonal () const
 
 bool dng_matrix::IsIdentity () const
 	{
-    
-    if (IsDiagonal ())
-        {
-        
-        for (uint32 j = 0; j < Rows (); j++)
-            {
-                
-            if (fData [j] [j] != 1.0)
-                {
-                return false;
-                }
-             
-            }
-            
-        return true;
+	
+	if (IsDiagonal ())
+		{
+		
+		for (uint32 j = 0; j < Rows (); j++)
+			{
+				
+			if (fData [j] [j] != 1.0)
+				{
+				return false;
+				}
+			 
+			}
 			
-        }
-        
-    return false;
+		return true;
+			
+		}
+		
+	return false;
 	
 	}
 
@@ -310,46 +311,68 @@ void dng_matrix::SafeRound (real64 factor)
 /*****************************************************************************/
 
 bool dng_matrix::AlmostEqual (const dng_matrix &m,
-                              real64 slop) const
-    {
-    
-    if (Rows () != m.Rows () ||
-        Cols () != m.Cols ())
-        {
-        return false;
-        }
-        
+							  real64 slop) const
+	{
+	
+	if (Rows () != m.Rows () ||
+		Cols () != m.Cols ())
+		{
+		return false;
+		}
+		
 	for (uint32 j = 0; j < Rows (); j++)
 		{
-        
+		
 		for (uint32 k = 0; k < Cols (); k++)
 			{
-            
-            if (Abs_real64 (fData [j] [k] - m [j] [k]) > slop)
-                {
-                return false;
-                }
-            
-            }
-            
-        }
 			
-    return true;
-    
-    }
+			if (Abs_real64 (fData [j] [k] - m [j] [k]) > slop)
+				{
+				return false;
+				}
+			
+			}
+			
+		}
+			
+	return true;
+	
+	}
 
 /*****************************************************************************/
 
 bool dng_matrix::AlmostIdentity (real64 slop) const
-    {
-    
-    dng_matrix m;
-    
-    m.SetIdentity (Rows ());
-    
-    return AlmostEqual (m, slop);
-    
-    }
+	{
+	
+	dng_matrix m;
+	
+	m.SetIdentity (Rows ());
+	
+	return AlmostEqual (m, slop);
+	
+	}
+
+/*****************************************************************************/
+
+void dng_matrix::Process (dng_md5_printer_stream &printer) const
+	{
+
+	printer.Put_uint32 (fRows);
+	printer.Put_uint32 (fCols);
+
+	for (uint32 j = 0; j < Rows (); j++)
+		{
+
+		for (uint32 k = 0; k < Cols (); k++)
+			{
+
+			printer.Put_real64 (fData [j] [k]);
+
+			}
+
+		}
+
+	}
 
 /*****************************************************************************/
 
@@ -381,9 +404,9 @@ dng_matrix_3by3::dng_matrix_3by3 (const dng_matrix &m)
 /*****************************************************************************/
 
 dng_matrix_3by3::dng_matrix_3by3 (real64 a00, real64 a01, real64 a02,
-				        		  real64 a10, real64 a11, real64 a12,
-				        		  real64 a20, real64 a21, real64 a22)
-				        	   
+								  real64 a10, real64 a11, real64 a12,
+								  real64 a20, real64 a21, real64 a22)
+							   
 
 	:	dng_matrix (3, 3)
 	
@@ -447,10 +470,10 @@ dng_matrix_4by3::dng_matrix_4by3 (const dng_matrix &m)
 /*****************************************************************************/
 
 dng_matrix_4by3::dng_matrix_4by3 (real64 a00, real64 a01, real64 a02,
-				       			  real64 a10, real64 a11, real64 a12,
-				        		  real64 a20, real64 a21, real64 a22,
-				        		  real64 a30, real64 a31, real64 a32)
-				        	   
+								  real64 a10, real64 a11, real64 a12,
+								  real64 a20, real64 a21, real64 a22,
+								  real64 a30, real64 a31, real64 a32)
+							   
 
 	:	dng_matrix (4, 3)
 	
@@ -802,6 +825,22 @@ dng_matrix dng_vector::AsColumn () const
 	
 	}
 
+/*****************************************************************************/
+
+void dng_vector::Process (dng_md5_printer_stream &printer) const
+	{
+
+	printer.Put_uint32 (fCount);
+
+	for (uint32 j = 0; j < Count (); j++)
+		{
+
+		printer.Put_real64 (fData [j]);
+
+		}
+
+	}
+
 /******************************************************************************/
 
 dng_vector_3::dng_vector_3 ()
@@ -832,7 +871,7 @@ dng_vector_3::dng_vector_3 (const dng_vector &v)
 
 dng_vector_3::dng_vector_3 (real64 a0,
 							real64 a1,
-						    real64 a2)
+							real64 a2)
 
 	:	dng_vector (3)
 	
@@ -874,8 +913,8 @@ dng_vector_4::dng_vector_4 (const dng_vector &v)
 
 dng_vector_4::dng_vector_4 (real64 a0,
 							real64 a1,
-						    real64 a2,
-						    real64 a3)
+							real64 a2,
+							real64 a3)
 
 	:	dng_vector (4)
 	
@@ -1054,10 +1093,42 @@ const real64 kNearZero = 1.0E-10;
 
 /******************************************************************************/
 
+static dng_matrix Invert2by2 (const dng_matrix &A)
+	{
+	
+	real64 a00 = A [0] [0];
+	real64 a01 = A [0] [1];
+	real64 a10 = A [1] [0];
+	real64 a11 = A [1] [1];
+	
+	real64 det = (a00 * a11 - a10 * a01);
+	
+	if (Abs_real64 (det) < kNearZero)
+		{
+		
+		ThrowMatrixMath ();
+					 
+		}
+
+	dng_matrix B (2, 2);
+		
+	B [0] [0] =	 a11 / det;
+	B [0] [1] = -a01 / det;
+	B [1] [0] = -a10 / det;
+	B [1] [1] =	 a00 / det;
+	
+	return B;
+
+	}
+		
+/******************************************************************************/
+
 // Work around bug #1294195, which may be a hardware problem on a specific machine.
 // This pragma turns on "improved" floating-point consistency.
 #ifdef _MSC_VER
+#if !defined(__clang__)
 #pragma optimize ("p", on)
+#endif
 #endif
 
 static dng_matrix Invert3by3 (const dng_matrix &A)
@@ -1112,7 +1183,9 @@ static dng_matrix Invert3by3 (const dng_matrix &A)
 		
 // Reset floating-point optimization. See comment above.
 #ifdef _MSC_VER
+#if !defined(__clang__)
 #pragma optimize ("p", off)
+#endif
 #endif
 
 /******************************************************************************/
@@ -1136,7 +1209,7 @@ static dng_matrix InvertNbyN (const dng_matrix &A)
 		for (j = 0; j < n; j++)
 			{
 			
-			temp [i] [j    ] = A [i] [j];
+			temp [i] [j	   ] = A [i] [j];
 			
 			temp [i] [j + n] = (i == j ? 1.0 : 0.0);
 			
@@ -1270,6 +1343,13 @@ dng_matrix Invert (const dng_matrix &A)
 			
 			}
 			
+		else if (A.Rows () == 2)
+			{
+			
+			return Invert2by2 (A);
+			
+			}
+			
 		return InvertNbyN (A);
 		
 		}
@@ -1293,7 +1373,7 @@ dng_matrix Invert (const dng_matrix &A,
 				   const dng_matrix &hint)
 	{
 	
-	if (A.Rows () == A   .Cols () ||
+	if (A.Rows () == A	 .Cols () ||
 		A.Rows () != hint.Cols () ||
 		A.Cols () != hint.Rows ())
 		{
@@ -1323,7 +1403,7 @@ real64 Dot (const dng_vector &a,
 				 "Cannot take dot product between vectors of different size.");
 	
 	// DNG_REQUIRE (a.Count () > 0,
-	// 			 "Cannot take dot product with an empty vector.");
+	//			 "Cannot take dot product with an empty vector.");
 
 	real64 sum = 0.0;
 

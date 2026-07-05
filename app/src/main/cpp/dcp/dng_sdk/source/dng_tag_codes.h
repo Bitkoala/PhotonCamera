@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -175,9 +175,9 @@ enum
 	tcExifVersion					= 36864,
 	tcDateTimeOriginal				= 36867,
 	tcDateTimeDigitized				= 36868,
-    tcOffsetTime                    = 36880,
-    tcOffsetTimeOriginal            = 36881,
-    tcOffsetTimeDigitized           = 36882,
+	tcOffsetTime					= 36880,
+	tcOffsetTimeOriginal			= 36881,
+	tcOffsetTimeDigitized			= 36882,
 	tcComponentsConfiguration		= 37121,
 	tcCompressedBitsPerPixel		= 37122,
 	tcShutterSpeedValue				= 37377,
@@ -209,12 +209,13 @@ enum
 	tcSubsecTimeOriginal			= 37521,
 	tcSubsecTimeDigitized			= 37522,
 	tcAdobeLayerData				= 37724,
-    tcTemperature                   = 37888,
-    tcHumidity                      = 37889,
-    tcPressure                      = 37890,
-    tcWaterDepth                    = 37891,
-    tcAcceleration                  = 37892,
-    tcCameraElevationAngle          = 37893,
+	tcTemperature					= 37888,
+	tcHumidity						= 37889,
+	tcPressure						= 37890,
+	tcWaterDepth					= 37891,
+	tcAcceleration					= 37892,
+	tcCameraElevationAngle			= 37893,
+	tcDJIPrivateEXIFKeywords		= 40094,
 	tcFlashPixVersion				= 40960,
 	tcColorSpace					= 40961,
 	tcPixelXDimension				= 40962,
@@ -344,12 +345,43 @@ enum
 	tcCacheBlob						= 51113,
 	tcCacheVersion					= 51114,
 	tcDefaultUserCrop				= 51125,
-    tcDepthFormat                   = 51177,
-    tcDepthNear                     = 51178,
-    tcDepthFar                      = 51179,
-    tcDepthUnits                    = 51180,
-    tcDepthMeasureType              = 51181,
-    tcEnhanceParams                 = 51182,
+	tcDepthFormat					= 51177,
+	tcDepthNear						= 51178,
+	tcDepthFar						= 51179,
+	tcDepthUnits					= 51180,
+	tcDepthMeasureType				= 51181,
+	tcEnhanceParams					= 51182,
+	tcProfileGainTableMap			= 52525, // Added in DNG 1.6
+	tcSemanticName					= 52526, // Added in DNG 1.6
+	tcSemanticInstanceID			= 52528, // Added in DNG 1.6
+	tcCalibrationIlluminant3		= 52529,
+	tcCameraCalibration3			= 52530,
+	tcColorMatrix3					= 52531,
+	tcForwardMatrix3				= 52532,
+	tcIlluminantData1				= 52533,
+	tcIlluminantData2				= 52534,
+	tcIlluminantData3				= 52535,
+	tcMaskSubArea					= 52536,
+	tcProfileHueSatMapData3			= 52537,
+	tcReductionMatrix3				= 52538,
+	tcRGBTablesDraft				= 52539, // Added in earlier draft of DNG 1.6
+	tcRGBTables						= 52543, // Added in DNG 1.6
+	tcBigTableDigests				= 52540,
+	tcBigTableOffsets				= 52541,
+	tcBigTableByteCounts			= 52542,
+	tcProfileGainTableMap2			= 52544,
+	tcC2PAManifest					= 52545,
+	tcColumnInterleaveFactor		= 52547,
+	tcImageSequenceInfo				= 52548,
+	tcProfileToneMethod				= 52549,
+	tcImageStats					= 52550,
+	tcProfileDynamicRange			= 52551,
+	tcProfileGroupName				= 52552,
+	tcJXLDistance					= 52553,
+	tcJXLEffort						= 52554,
+	tcJXLDecodeSpeed				= 52555,
+	tcBigTableGroupIndex			= 52556,
+	tcGainMapMetadata_ISO_21496_1	= 52557,
 	tcKodakKDCPrivateIFD			= 65024
 	};
 
@@ -369,7 +401,8 @@ enum
 	tcFirstMakerNoteIFD				= 0x30000,
 	tcLastMakerNoteIFD				= 0x3FFFF,
 	
-	tcCanonMakerNote				= tcFirstMakerNoteIFD,
+	tcAppleMakerNote				= tcFirstMakerNoteIFD,
+	tcCanonMakerNote,
 	tcCasioMakerNote,
 	tcEpsonMakerNote,
 	tcFujiMakerNote,
@@ -393,6 +426,7 @@ enum
 	tcRicohMakerNote,
 	tcRicohMakerNoteCameraInfo,
 	tcSamsungMakerNote,
+	tcSIGMAMakerNote,
 	tcSonyMakerNote,
 	tcSonyMakerNoteSubInfo,
 	tcSonyPrivateIFD1,
@@ -416,7 +450,11 @@ enum
 	tcAdobePSD,
 	tcPNG,
 	tcHEIC,
-	tcCanonCR3
+	tcCanonCR3,
+	tcJXL,
+	tcAVIF,
+	tcWebP,
+	tcEXR,
 	
 	};
 

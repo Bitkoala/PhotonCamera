@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -11,15 +11,17 @@
 #include "dng_1d_function.h"
 #include "dng_assertions.h"
 #include "dng_memory.h"
+#include "dng_safe_arithmetic.h"
 #include "dng_utils.h"
 
 /*****************************************************************************/
 
 dng_1d_table::dng_1d_table (uint32 count)
 
-	:	fBuffer		()
-	,	fTable		(NULL)
-	,	fTableCount (count)
+	:	fBuffer		  ()
+	,	fTable		  (NULL)
+	,	fTableCount   (count)
+	,	fTableCount32 ((real32) count)
 	
 	{
 
@@ -45,7 +47,19 @@ void dng_1d_table::SubDivide (const dng_1d_function &function,
 							  uint32 upper,
 							  real32 maxDelta)
 	{
-	
+
+	// CR-4208475 M-L8: Reject a zero-width range. Current call sites
+	// (Initialize and recursive SubDivide gated by range > 2) cannot
+	// produce range == 0, but the linear-fill else branch below
+	// otherwise divides (y1 - y0) by range and yields 0.0 / 0.0 = NaN
+	// in the unused delta. Bail early to keep the helper safe under
+	// any future caller.
+
+	if (upper <= lower)
+		{
+		return;
+		}
+
 	uint32 range = upper - lower;
 		
 	bool subDivide = (range > (fTableCount >> 8));
@@ -142,7 +156,7 @@ void dng_1d_table::Initialize (dng_memory_allocator &allocator,
 			
 			real64 y = function.Evaluate (x);
 			
-			fTable [j] = (real32) y;
+			fTable [j] = ConvertDoubleToFloat (y);
 			
 			}
 			
@@ -162,7 +176,7 @@ void dng_1d_table::Expand16 (uint16 *table16) const
 	real64 y0 = fTable [0];
 	real64 y1 = fTable [1];
 	
-	real64 base  = y0 * 65535.0 + 0.5;
+	real64 base	 = y0 * 65535.0 + 0.5;
 	real64 slope = (y1 - y0) * 65535.0;
 	
 	uint32 index = 1;

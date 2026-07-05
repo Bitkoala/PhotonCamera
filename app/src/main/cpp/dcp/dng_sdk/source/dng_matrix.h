@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -19,6 +19,7 @@
 /*****************************************************************************/
 
 #include "dng_sdk_limits.h"
+#include "dng_classes.h"
 #include "dng_types.h"
 
 /*****************************************************************************/
@@ -91,8 +92,8 @@ class dng_matrix
 			}
 			
 		bool IsDiagonal () const;
-        
-        bool IsIdentity () const;
+		
+		bool IsIdentity () const;
 			
 		real64 MaxEntry () const;
 		
@@ -103,11 +104,13 @@ class dng_matrix
 		void Round (real64 factor);
 		
 		void SafeRound (real64 factor);
-        
-        bool AlmostEqual (const dng_matrix &m,
-                          real64 slop = 1.0e-8) const;
+		
+		bool AlmostEqual (const dng_matrix &m,
+						  real64 slop = 1.0e-8) const;
 
-        bool AlmostIdentity (real64 slop = 1.0e-8) const;
+		bool AlmostIdentity (real64 slop = 1.0e-8) const;
+
+		void Process (dng_md5_printer_stream &printer) const;
 
 	};
 	
@@ -125,9 +128,9 @@ class dng_matrix_3by3: public dng_matrix
 		dng_matrix_3by3 (const dng_matrix &m);
 		
 		dng_matrix_3by3 (real64 a00, real64 a01, real64 a02,
-				         real64 a10, real64 a11, real64 a12,
-				         real64 a20, real64 a21, real64 a22);
-				    
+						 real64 a10, real64 a11, real64 a12,
+						 real64 a20, real64 a21, real64 a22);
+					
 		dng_matrix_3by3 (real64 a00, real64 a11, real64 a22);
 	
 	};
@@ -146,9 +149,9 @@ class dng_matrix_4by3: public dng_matrix
 		dng_matrix_4by3 (const dng_matrix &m);
 		
 		dng_matrix_4by3 (real64 a00, real64 a01, real64 a02,
-				         real64 a10, real64 a11, real64 a12,
-				         real64 a20, real64 a21, real64 a22,
-				         real64 a30, real64 a31, real64 a32);
+						 real64 a10, real64 a11, real64 a12,
+						 real64 a20, real64 a21, real64 a22,
+						 real64 a30, real64 a31, real64 a32);
 	
 	};
 
@@ -166,10 +169,10 @@ class dng_matrix_4by4: public dng_matrix
 		dng_matrix_4by4 (const dng_matrix &m);
 		
 		dng_matrix_4by4 (real64 a00, real64 a01, real64 a02, real64 a03,
-				         real64 a10, real64 a11, real64 a12, real64 a13,
-				         real64 a20, real64 a21, real64 a22, real64 a23,
-				         real64 a30, real64 a31, real64 a32, real64 a33);
-				    
+						 real64 a10, real64 a11, real64 a12, real64 a13,
+						 real64 a20, real64 a21, real64 a22, real64 a23,
+						 real64 a30, real64 a31, real64 a32, real64 a33);
+					
 		dng_matrix_4by4 (real64 a00, real64 a11, real64 a22, real64 a33);
 	
 	};
@@ -247,7 +250,9 @@ class dng_vector
 		dng_matrix AsDiagonal () const;
 		
 		dng_matrix AsColumn () const;
-		
+
+		void Process (dng_md5_printer_stream &printer) const;
+
 	};
 
 /*****************************************************************************/

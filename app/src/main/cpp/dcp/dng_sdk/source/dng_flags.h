@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -19,6 +19,21 @@
 
 /*****************************************************************************/
 
+// Update these for each public DNG SDK release.
+
+#define kDNGSDK_MajorVersion 1
+#define kDNGSDK_MinorVersion 7
+#define kDNGSDK_DotVersion   1
+
+#define kDNGSDK_VersionString "1.7.1"
+
+#define kDNGSDK_BuildVersion 2611
+#define kDNGSDK_BuildString  "2611"
+
+#define kDNGSDK_GetInfoVersion	"1.7.1 (" kDNGSDK_BuildString ")"
+
+/*****************************************************************************/
+
 /// \def qMacOS 
 /// 1 if compiling for Mac OS X.
 
@@ -27,13 +42,13 @@
 
 // Make sure a platform is defined
 
-#if !(defined(qMacOS) || defined(qWinOS) || defined(qAndroid) || defined(qiPhone) || defined(qLinux))
+#if !(defined(qMacOS) || defined(qWinOS) || defined(qAndroid) || defined(qiPhone) || defined(qLinux) || defined(qWeb))
 #include "RawEnvironment.h"
 #endif
 
 // This requires a force include or compiler define.  These are the unique platforms.
 
-#if !(defined(qMacOS) || defined(qWinOS) || defined(qAndroid) || defined(qiPhone) || defined(qLinux))
+#if !(defined(qMacOS) || defined(qWinOS) || defined(qAndroid) || defined(qiPhone) || defined(qLinux) || defined(qWeb))
 #error Unable to figure out platform
 #endif
 
@@ -76,6 +91,26 @@
 
 /*****************************************************************************/
 
+#ifndef qIsFauxPlatformBuild
+#define qIsFauxPlatformBuild 0
+#endif
+
+#ifndef qIsFauxWebPlatformBuild
+#define qIsFauxWebPlatformBuild 0
+#endif
+
+#ifndef qIsFauxLinuxPlatformBuild
+#define qIsFauxLinuxPlatformBuild 0
+#endif
+
+/*****************************************************************************/
+
+#ifndef qMacOSNonFaux
+#define qMacOSNonFaux (qMacOS && !qIsFauxPlatformBuild)
+#endif
+
+/*****************************************************************************/
+
 #if qiPhoneSimulator
 #if !qiPhone
 #error "qiPhoneSimulator set and not qiPhone"
@@ -90,24 +125,36 @@
 
 /*****************************************************************************/
 
-// arm and neon support
+// arm and arm64 support
 
 // arm detect (apple vs. win)
-#if defined(__arm__) || defined(__arm64__) || defined(_M_ARM)
+#if defined(__arm__) || defined(__arm64__) || defined(_M_ARM) || defined(_M_ARM64) || defined(__aarch64__)
 #define qARM 1
 #endif
 
-// arm_neon detect
-#if defined(__ARM_NEON__) || defined(_M_ARM)
-#define qARMNeon 1
+#if defined(__arm64__) || defined(_M_ARM64) || defined(__aarch64__)
+#define qARM64 1
 #endif
 
 #ifndef qARM 
 #define qARM 0
 #endif
 
-#ifndef qARMNeon
-#define qARMNeon 0
+#ifndef qARM64 
+#define qARM64 0
+#endif
+
+/*****************************************************************************/
+
+/// \def qX86_64
+/// 1 if and only if this target platform is 64-bit x86 architecture
+
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64)
+#define qX86_64 1
+#endif
+
+#ifndef qX86_64
+#define qX86_64 0
 #endif
 
 /*****************************************************************************/
@@ -145,23 +192,6 @@
 #endif
 
 /*****************************************************************************/
-// Support Intel Thread Building Blocks (TBB)?
-// 
-// This flag needs to be configured via the project, because there are sources
-// outside the cr_sdk (such as the CTJPEG and ACE libs) that need to use the
-// same flag to determine whether to use TBB or not.
-// 
-// By default, configure to 0 (disabled).
-
-#ifndef qCRSupportTBB
-#define qCRSupportTBB 0
-#endif
-
-#if qCRSupportTBB
-#ifndef TBB_DEPRECATED
-#define TBB_DEPRECATED 0
-#endif
-#endif
 
 // This is not really a switch, but rather a shorthand for determining whether
 // or not we're building a particular translation unit (source file) using the
@@ -170,6 +200,8 @@
 #ifndef qDNGIntelCompiler
 #if defined(__INTEL_COMPILER)
 #define qDNGIntelCompiler (__INTEL_COMPILER >= 1700)
+#elif defined(__INTEL_LLVM_COMPILER)
+#define qDNGIntelCompiler __INTEL_LLVM_COMPILER
 #else
 #define qDNGIntelCompiler 0
 #endif
@@ -188,7 +220,7 @@
 #ifndef qDNGBigEndian
 
 #if defined(qDNGLittleEndian)
-#define qDNGBigEndian !qDNGLittleEndian
+#define qDNGBigEndian (!qDNGLittleEndian)
 
 #elif defined(__POWERPC__)
 #define qDNGBigEndian 1
@@ -208,7 +240,11 @@
 #elif defined(__BIG_ENDIAN__)
 #define qDNGBigEndian 1
 
-#elif defined(_ARM_)
+#elif defined(_ARM_) || defined(__ARM_NEON) || defined(__mips__)
+#define qDNGBigEndian 0
+
+#elif defined(_M_ARM64)
+// See https://docs.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions?view=vs-2019
 #define qDNGBigEndian 0
 
 #else
@@ -223,7 +259,7 @@
 #ifndef qXCodeRez
 
 #ifndef qDNGLittleEndian
-#define qDNGLittleEndian !qDNGBigEndian
+#define qDNGLittleEndian (!qDNGBigEndian)
 #endif
 
 #endif
@@ -238,7 +274,7 @@
 #if qMacOS
 
 #ifdef __LP64__
-#if    __LP64__
+#if	   __LP64__
 #define qDNG64Bit 1
 #endif
 #endif
@@ -246,7 +282,7 @@
 #elif qWinOS
 
 #ifdef WIN64
-#if    WIN64
+#if	   WIN64
 #define qDNG64Bit 1
 #endif
 #endif
@@ -254,7 +290,15 @@
 #elif qLinux
 
 #ifdef __LP64__
-#if    __LP64__
+#if	   __LP64__
+#define qDNG64Bit 1
+#endif
+#endif
+
+#elif qAndroid
+
+#ifdef __LP64__
+#if	   __LP64__
 #define qDNG64Bit 1
 #endif
 #endif
@@ -262,9 +306,61 @@
 #endif
 
 #ifndef qDNG64Bit
+#ifdef qXCodeRez
+#define qDNG64Bit qXCodeRez
+#else
 #define qDNG64Bit 0
 #endif
+#endif
 
+#endif
+
+/*****************************************************************************/
+
+#ifdef __cplusplus
+#if defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
+#define DNG_RESTRICT __restrict
+#elif defined(qWinOS) && !defined(__INTEL_LLVM_COMPILER)
+#define DNG_RESTRICT __restrict
+#else
+#define DNG_RESTRICT
+#endif
+#endif	/* __cplusplus */
+
+/*****************************************************************************/
+
+#ifdef __cplusplus
+#if defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
+#define DNG_ALWAYS_INLINE __attribute__((__always_inline__)) inline
+#else
+#define DNG_ALWAYS_INLINE inline
+#endif
+#endif	/* __cplusplus */
+
+/*****************************************************************************/
+
+// Switch statement [[fallthrough]]; attribute defined for C++17 and C23.
+//
+// This can be used to indicate an intentional "fall through".
+// For example, if one is seeing the clang diagnostic warning or error:
+//         Unannotated fall-through between switch labels
+// then if "fall through" is desired, this macro can be placed at the
+// point of "fall through".
+
+#if defined(__cplusplus)
+#if __cplusplus >= 201703L
+#define DNG_FALLTHROUGH [[fallthrough]];
+#else
+#define DNG_FALLTHROUGH
+#endif
+#elif defined(__STDC_VERSION__)
+#if __STDC_VERSION__ >= 202311L
+#define DNG_FALLTHROUGH [[fallthrough]];
+#else
+#define DNG_FALLTHROUGH
+#endif
+#else
+#define DNG_FALLTHROUGH
 #endif
 
 /*****************************************************************************/
@@ -358,42 +454,136 @@
 
 /*****************************************************************************/
 
+/// \def qDNGUsingAddressSanitizer
+/// Set to 1 when using the Address Sanitizer tool.
+
+#ifndef qDNGUsingAddressSanitizer
+#if defined(__clang__) && defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define qDNGUsingAddressSanitizer (1)
+#endif
+#endif
+#endif
+
+#ifndef qDNGUsingAddressSanitizer
+#if defined(__SANITIZE_ADDRESS__)
+#define qDNGUsingAddressSanitizer (1)
+#endif
+#endif
+
+#ifndef qDNGUsingAddressSanitizer
+#define qDNGUsingAddressSanitizer (0)
+#endif
+
+/*****************************************************************************/
+
+/// \def qDNGUsingThreadSanitizer
+/// Set to 1 when using the Thread Sanitizer tool.
+
+#ifndef qDNGUsingThreadSanitizer
+#if defined(__clang__) && defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define qDNGUsingThreadSanitizer (1)
+#endif
+#endif
+#endif
+
+#ifndef qDNGUsingThreadSanitizer
+#if defined(__SANITIZE_THREAD__)
+#define qDNGUsingThreadSanitizer (1)
+#endif
+#endif
+
+#ifndef qDNGUsingThreadSanitizer
+#define qDNGUsingThreadSanitizer (0)
+#endif
+
+/*****************************************************************************/
+
+/// \def qDNGUsingUndefinedBehaviorSanitizer
+/// Set to 1 when using the UB Sanitizer tool.
+
+#ifndef qDNGUsingUndefinedBehaviorSanitizer
+#if defined(__clang__) && defined(__has_feature)
+#if __has_feature(undefined_behavior_sanitizer)
+#define qDNGUsingUndefinedBehaviorSanitizer (1)
+#endif
+#endif
+#endif
+
+// Currently no GCC macro available to check if UBSAN enabled.
+
+#ifndef qDNGUsingUndefinedBehaviorSanitizer
+#define qDNGUsingUndefinedBehaviorSanitizer (0)
+#endif
+
+/*****************************************************************************/
+
 /// \def qDNGUsingSanitizer
 /// Set to 1 when using a Sanitizer tool.
 
 #ifndef qDNGUsingSanitizer
-#define qDNGUsingSanitizer (0)
+#define qDNGUsingSanitizer ((qDNGUsingAddressSanitizer || qDNGUsingThreadSanitizer || qDNGUsingUndefinedBehaviorSanitizer) || 0)
 #endif
 
 /*****************************************************************************/
 
 #ifndef DNG_ATTRIB_NO_SANITIZE
+// Disabled if RC_INVOKED is defined to quiet RC.EXE RC4011 warning.
+#ifndef RC_INVOKED
 #if qDNGUsingSanitizer && defined(__clang__)
 #define DNG_ATTRIB_NO_SANITIZE(type) __attribute__((no_sanitize(type)))
 #else
 #define DNG_ATTRIB_NO_SANITIZE(type)
 #endif
 #endif
-
-/*****************************************************************************/
-
-/// \def qDNGDepthSupport
-/// 1 to add support for depth maps in DNG format.
-/// Deprecated 2018-09-19.
-
-#ifdef __cplusplus
-#define qDNGDepthSupport #error
 #endif
 
 /*****************************************************************************/
 
-/// \def qDNGPreserveBlackPoint
-/// 1 to add support for non-zero black point in early raw pipeline.
-/// Deprecated 2018-09-19.
+// Big image support?
+//
+// When set to true:
+// - maximum linear image dimensions is 300000 pixels
+// - maximum total number of pixels is 10 gigapixels (10 * 1000 * 1000 * 1000 pixels)
+//
+// When set to false:
+// - maximum linear image dimensions is 65000 pixels
+// - maximum total number of pixels is 512 megapixels (512 * 1024 * 1024 pixels)
 
-#ifdef __cplusplus
-#define qDNGPreserveBlackPoint #error
+#ifndef qDNGBigImage
+#define qDNGBigImage (qDNGExperimental && 1)
 #endif
+
+/*****************************************************************************/
+
+// Enable XMP support in the DNG SDK?
+
+#ifndef qDNGUseXMP
+#define qDNGUseXMP 1
+#endif
+
+/*****************************************************************************/
+
+// Use custom integral types?
+
+#ifndef qDNGUseCustomIntegralTypes
+#define qDNGUseCustomIntegralTypes 0
+#endif
+
+/*****************************************************************************/
+
+// Enable verbose exceptions
+
+#ifndef qDNGVerboseExceptions
+#define qDNGVerboseExceptions 1
+#endif
+
+/*****************************************************************************/
+
+// Place deprecated flags into this file.
+
+#include "dng_deprecated_flags.h"
 
 /*****************************************************************************/
 

@@ -1,8 +1,8 @@
 /*****************************************************************************/
-// Copyright 2006-2019 Adobe Systems Incorporated
+// Copyright 2006-2022 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -19,25 +19,29 @@
 /*****************************************************************************/
 
 #include "dng_classes.h"
+#include "dng_image.h"
 #include "dng_point.h"
 #include "dng_string.h"
 #include "dng_types.h"
 #include "dng_uncopyable.h"
 
+#include <functional>
+#include <vector>
+
 /*****************************************************************************/
 
 class dng_area_task_progress: private dng_uncopyable
-    {
+	{
 
-    public:
+	public:
 
-        virtual ~dng_area_task_progress ()
-            {
-            }
+		virtual ~dng_area_task_progress ()
+			{
+			}
 
-        virtual void FinishedTile (const dng_rect & /* tile */) = 0;
+		virtual void FinishedTile (const dng_rect & /* tile */) = 0;
 
-    };
+	};
 
 /*****************************************************************************/
 
@@ -89,7 +93,7 @@ class dng_area_task
 		/// partitioning. Default is 256x256 pixels.
 		///
 		/// \retval Minimum area for a partitoned tile in order to give performant
-        /// operation. (Partitions can be smaller due to small inputs and edge cases.)
+		/// operation. (Partitions can be smaller due to small inputs and edge cases.)
 
 		virtual uint32 MinTaskArea () const
 			{
@@ -131,7 +135,7 @@ class dng_area_task
 		/// way. A RepeatingTile value is valid if it is non-empty. Higher
 		/// numbered RepeatingTile patterns are only used if all lower ones are
 		/// non-empty. A RepeatingTile pattern must be a multiple of UnitCell in
-		/// size for all constraints of the partitionerr to be met.
+		/// size for all constraints of the partitioner to be met.
 
 		virtual dng_rect RepeatingTile1 () const;
 		
@@ -145,7 +149,7 @@ class dng_area_task
 		/// way. A RepeatingTile value is valid if it is non-empty. Higher
 		/// numbered RepeatingTile patterns are only used if all lower ones are
 		/// non-empty. A RepeatingTile pattern must be a multiple of UnitCell in
-		/// size for all constraints of the partitionerr to be met.
+		/// size for all constraints of the partitioner to be met.
 
 		virtual dng_rect RepeatingTile2 () const;
 
@@ -159,7 +163,7 @@ class dng_area_task
 		/// way. A RepeatingTile value is valid if it is non-empty. Higher
 		/// numbered RepeatingTile patterns are only used if all lower ones are
 		/// non-empty. A RepeatingTile pattern must be a multiple of UnitCell in
-		/// size for all constraints of the partitionerr to be met.
+		/// size for all constraints of the partitioner to be met.
 		
 		virtual dng_rect RepeatingTile3 () const;
 
@@ -168,10 +172,10 @@ class dng_area_task
 		/// overridden to allocate temporary buffers, etc.
 		///
 		/// \param threadCount Total number of threads that will be used for processing.
-        /// Less than or equal to MaxThreads.
+		/// Less than or equal to MaxThreads.
 		/// \param dstArea Area to be processed in the current run of the task.
 		/// \param tileSize Size of source tiles which will be processed.
-        /// (Not all tiles will be this size due to edge conditions.)
+		/// (Not all tiles will be this size due to edge conditions.)
 		/// \param allocator dng_memory_allocator to use for allocating temporary buffers, etc.
 		/// \param sniffer Sniffer to test for user cancellation and to set up progress.
 
@@ -190,10 +194,10 @@ class dng_area_task
 		/// Start.
 		///
 		/// \param threadIndex 0 to threadCount - 1 index indicating which thread this is.
-        /// (Can be used to get a thread-specific buffer allocated in the Start method.)
+		/// (Can be used to get a thread-specific buffer allocated in the Start method.)
 		/// \param tile Area to process.
 		/// \param sniffer dng_abort_sniffer to use to check for user cancellation
-        /// and progress updates.
+		/// and progress updates.
 
 		virtual void Process (uint32 threadIndex,
 							  const dng_rect &tile,
@@ -228,7 +232,7 @@ class dng_area_task
 							  const dng_rect &area,
 							  const dng_point &tileSize,
 							  dng_abort_sniffer *sniffer,
-                              dng_area_task_progress *progress);
+							  dng_area_task_progress *progress);
 
 		/// Factory method to make a tile iterator. This iterator will be used
 		/// by a thread to process tiles in an area in a specific order. The
@@ -272,15 +276,209 @@ class dng_area_task
 		/// \param progress optional pointer to progress reporting object.
 
 		static void Perform (dng_area_task &task,
-				  			 const dng_rect &area,
-				  			 dng_memory_allocator *allocator,
-				  			 dng_abort_sniffer *sniffer,
-                             dng_area_task_progress *progress);
+							 const dng_rect &area,
+							 dng_memory_allocator *allocator,
+							 dng_abort_sniffer *sniffer,
+							 dng_area_task_progress *progress);
 
 	};
 
 /*****************************************************************************/
 
-#endif
+class dng_range_parallel_task: public dng_area_task, dng_uncopyable
+	{
+
+	private:
+
+		static const int32 kDummySize = 16;
+
+	protected:
+	
+		dng_host &fHost;
+
+		const int32 fStartIndex;
+		const int32 fStopIndex;
+		
+		std::vector<int32> fIndices;
+
+	public:
+	
+		dng_range_parallel_task (dng_host &host,
+								int32 startIndex,
+								int32 stopIndex,
+								const char *name = NULL);
+
+		void Run ();
+
+		virtual uint32 RecommendedThreadCount () const;
+
+		virtual int32 MinIndicesPerThread () const;
+
+		virtual void Prepare (uint32 threadCount,
+							  dng_memory_allocator *allocator,
+							  dng_abort_sniffer *sniffer);
+
+		virtual void ProcessRange (uint32 threadIndex,
+								   int32 startIndex,
+								   int32 stopIndex,
+								   dng_abort_sniffer *sniffer) = 0;
+
+		void Start (uint32 threadCount,
+					const dng_rect &dstArea,
+					const dng_point &tileSize,
+					dng_memory_allocator *allocator,
+					dng_abort_sniffer *sniffer) override;
+	
+		void Process (uint32 threadIndex,
+					  const dng_rect & /* tile */,
+					  dng_abort_sniffer *sniffer) override;
+
+	public:
+
+		class info
+			{
+
+			public:
+
+				int32  fBegin;
+				int32  fEnd;
+				uint32 fMinIndicesPerThread;
+				uint32 fRecommendedThreadCount; // 0 = automatic
+
+			public:
+
+				info (int32 begin,
+					  int32 end,
+					  uint32 minIndicesPerThread = 1,
+					  uint32 recommendedThreadCount = 0)
+
+					:	fBegin					(begin)
+					,	fEnd					(end)
+					,	fMinIndicesPerThread	(minIndicesPerThread)
+					,	fRecommendedThreadCount (recommendedThreadCount)
+						
+					{
+
+					}
+					  
+			};
+		
+		struct range
+			{
+			uint32 fThreadIndex;
+			int32 fBegin;
+			int32 fEnd;
+			dng_abort_sniffer *fSniffer;
+			dng_memory_allocator *fAllocator;
+			};
+		
+		typedef std::function<void(const range &)> function_t;
+
+		static void Do (dng_host &host,
+						const info &params,
+						const char *taskName,
+						const function_t &func);
+		
+	};
+
+/*****************************************************************************/
+
+class dng_get_buffer_task : public dng_area_task
+	{
+		
+	private:
+
+		const dng_image &fSrc;
+
+		dng_pixel_buffer &fDst;
+
+		const dng_image::edge_option fEdgeOption;
+
+	public:
+
+		dng_get_buffer_task (const dng_image &image,
+							 dng_pixel_buffer &buffer,
+							 dng_image::edge_option edgeOption = dng_image::edge_repeat)
+			
+			:	dng_area_task ("dng_get_buffer_task")
+				
+			,	fSrc (image)
+			,	fDst (buffer)
+
+			,	fEdgeOption (edgeOption)
+				
+			{
+			
+			}
+
+		dng_rect RepeatingTile1 () const override;
+			
+		void Process (uint32 /* threadIndex */,
+					  const dng_rect &tile,
+					  dng_abort_sniffer * /* sniffer */) override;
+		
+	};
+
+/*****************************************************************************/
+
+class dng_copy_buffer_task : public dng_area_task
+	{
+		
+	private:
+
+		const dng_pixel_buffer &fSrc;
+
+		dng_pixel_buffer &fDst;
+
+	public:
+
+		dng_copy_buffer_task (const dng_pixel_buffer &src,
+							  dng_pixel_buffer &dst);
+
+		dng_rect RepeatingTile1 () const override;
+			
+		void Process (uint32 /* threadIndex */,
+					  const dng_rect &tile,
+					  dng_abort_sniffer * /* sniffer */) override;
+		
+	};
+
+/*****************************************************************************/
+
+class dng_put_buffer_task : public dng_area_task
+	{
+		
+	private:
+
+		const dng_pixel_buffer &fSrc;
+
+		dng_image &fDst;
+
+	public:
+
+		dng_put_buffer_task (const dng_pixel_buffer &buffer,
+							 dng_image &image)
+			
+			:	dng_area_task ("dng_put_buffer_task")
+				
+			,	fSrc (buffer)
+				
+			,	fDst (image)
+				
+			{
+			
+			}
+
+		dng_rect RepeatingTile1 () const override;
+			
+		void Process (uint32 /* threadIndex */,
+					  const dng_rect &tile,
+					  dng_abort_sniffer * /* sniffer */) override;
+		
+	};
+
+/*****************************************************************************/
+
+#endif	// __dng_area_task__
 	
 /*****************************************************************************/

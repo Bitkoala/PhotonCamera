@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -16,6 +16,12 @@
 #include "dng_safe_arithmetic.h"
 #include "dng_types.h"
 #include "dng_utils.h"
+
+#include <cstdint>
+
+/*****************************************************************************/
+
+#define DNG_RECT_FMT(x) (x).t, (x).l, (x).b, (x).r
 
 /*****************************************************************************/
 
@@ -111,7 +117,29 @@ class dng_rect
 			{
 			return !IsEmpty ();
 			}
-			
+
+		bool Contains (const dng_rect &rect) const
+			{
+			return (rect.IsEmpty () || (t <= rect.t && l <= rect.l &&
+										b >= rect.b && r >= rect.r));
+			}
+
+		bool DoesNotContain (const dng_rect &rect) const
+			{
+			return !Contains (rect);
+			}
+
+		bool Contains (const dng_point &pt) const
+			{
+			return (t <= pt.v && l <= pt.h &&
+					b >	 pt.v && r >  pt.h);
+			}
+
+		bool DoesNotContain (const dng_point &pt) const
+			{
+			return !Contains (pt);
+			}
+
 		// Returns the width of the rectangle, or 0 if r is smaller than l.
 		// Throws an exception if the width is too large to be represented as
 		// a _signed_ int32 (even if it would fit in a uint32). This is
@@ -200,15 +228,15 @@ class dng_rect
 			return dng_point ((int32) H (), (int32) W ());
 			}
 
-        uint32 LongSide () const
-            {
-            return Max_uint32 (W (), H ());
-            }
+		uint32 LongSide () const
+			{
+			return Max_uint32 (W (), H ());
+			}
 		
-        uint32 ShortSide () const
-            {
-            return Min_uint32 (W (), H ());
-            }
+		uint32 ShortSide () const
+			{
+			return Min_uint32 (W (), H ());
+			}
 		
 		real64 Diagonal () const
 			{
@@ -309,7 +337,19 @@ class dng_rect_real64
 			{
 			return !IsEmpty ();
 			}
-			
+
+		bool Contains (const dng_rect_real64 &rect) const
+			{
+			return (rect.IsEmpty () || (t <= rect.t && l <= rect.l &&
+										b >= rect.b && r >= rect.r));
+			}
+
+		bool Contains (const dng_point_real64 &pt) const
+			{
+			return (t <= pt.v && l <= pt.h &&
+					b >	 pt.v && r >  pt.h);
+			}
+
 		real64 W () const
 			{
 			return Max_real64 (r - l, 0.0);
@@ -353,26 +393,26 @@ class dng_rect_real64
 							 Round_int32 (r));
 			}
 	
-        real64 LongSide () const
-            {
-            return Max_real64 (W (), H ());
-            }
+		real64 LongSide () const
+			{
+			return Max_real64 (W (), H ());
+			}
 		
-        real64 ShortSide () const
-            {
-            return Min_real64 (W (), H ());
-            }
+		real64 ShortSide () const
+			{
+			return Min_real64 (W (), H ());
+			}
 		
 		real64 Diagonal () const
 			{
 			return hypot (W (), H ());
 			}
-        
-        dng_point_real64 Center () const
-            {
-            return dng_point_real64 ((t + b) * 0.5,
-                                     (l + r) * 0.5);
-            }
+		
+		dng_point_real64 Center () const
+			{
+			return dng_point_real64 ((t + b) * 0.5,
+									 (l + r) * 0.5);
+			}
 	
 	};
 
@@ -395,52 +435,52 @@ dng_rect_real64 operator| (const dng_rect_real64 &a,
 /*****************************************************************************/
 
 inline dng_rect operator+ (const dng_rect &a,
-					       const dng_point &b)
+						   const dng_point &b)
 	{
 	
-	return dng_rect (a.t + b.v,
-					 a.l + b.h,
-					 a.b + b.v,
-					 a.r + b.h);
+	return dng_rect (SafeInt32Add (a.t, b.v),
+					 SafeInt32Add (a.l, b.h),
+					 SafeInt32Add (a.b, b.v),
+					 SafeInt32Add (a.r, b.h));
 	
 	}
 
 /*****************************************************************************/
 
 inline dng_rect_real64 operator+ (const dng_rect_real64 &a,
-					       		  const dng_point_real64 &b)
+								  const dng_point_real64 &b)
 	{
 	
 	return dng_rect_real64 (a.t + b.v,
-					 		a.l + b.h,
-					 		a.b + b.v,
-					 		a.r + b.h);
+							a.l + b.h,
+							a.b + b.v,
+							a.r + b.h);
 	
 	}
 
 /*****************************************************************************/
 
 inline dng_rect operator- (const dng_rect &a,
-					       const dng_point &b)
+						   const dng_point &b)
 	{
 	
-	return dng_rect (a.t - b.v,
-					 a.l - b.h,
-					 a.b - b.v,
-					 a.r - b.h);
+	return dng_rect (SafeInt32Sub (a.t, b.v),
+					 SafeInt32Sub (a.l, b.h),
+					 SafeInt32Sub (a.b, b.v),
+					 SafeInt32Sub (a.r, b.h));
 	
 	}
 
 /*****************************************************************************/
 
 inline dng_rect_real64 operator- (const dng_rect_real64 &a,
-					       		  const dng_point_real64 &b)
+								  const dng_point_real64 &b)
 	{
 	
 	return dng_rect_real64 (a.t - b.v,
-					 		a.l - b.h,
-					 		a.b - b.v,
-					 		a.r - b.h);
+							a.l - b.h,
+							a.b - b.v,
+							a.r - b.h);
 	
 	}
 
@@ -467,8 +507,8 @@ inline dng_rect_real64 Transpose (const dng_rect_real64 &a)
 inline void HalfRect (dng_rect &rect)
 	{
 
-	rect.r = rect.l + (int32) (rect.W () >> 1);
-	rect.b = rect.t + (int32) (rect.H () >> 1);
+	rect.r = SafeInt32Add (rect.l, (int32) (rect.W () >> 1));
+	rect.b = SafeInt32Add (rect.t, (int32) (rect.H () >> 1));
 
 	}
 
@@ -477,8 +517,11 @@ inline void HalfRect (dng_rect &rect)
 inline void DoubleRect (dng_rect &rect)
 	{
 
-	rect.r = rect.l + (int32) (rect.W () << 1);
-	rect.b = rect.t + (int32) (rect.H () << 1);
+	int32 w = (int32) rect.W ();
+	int32 h = (int32) rect.H ();
+
+	rect.r = SafeInt32Add (SafeInt32Add (rect.l, w), w);
+	rect.b = SafeInt32Add (SafeInt32Add (rect.t, h), h);
 
 	}
 
@@ -488,10 +531,10 @@ inline void InnerPadRect (dng_rect &rect,
 						  int32 pad)
 	{
 
-	rect.l += pad;
-	rect.r -= pad;
-	rect.t += pad;
-	rect.b -= pad;
+	rect.l = SafeInt32Add (rect.l, pad);
+	rect.r = SafeInt32Sub (rect.r, pad);
+	rect.t = SafeInt32Add (rect.t, pad);
+	rect.b = SafeInt32Sub (rect.b, pad);
 
 	}
 
@@ -500,6 +543,11 @@ inline void InnerPadRect (dng_rect &rect,
 inline void OuterPadRect (dng_rect &rect,
 						  int32 pad)
 	{
+
+	if (pad == INT32_MIN)
+		{
+		ThrowOverflow ("pad");
+		}
 
 	InnerPadRect (rect, -pad);
 
@@ -511,8 +559,8 @@ inline void InnerPadRectH (dng_rect &rect,
 						   int32 pad)
 	{
 
-	rect.l += pad;
-	rect.r -= pad;
+	rect.l = SafeInt32Add (rect.l, pad);
+	rect.r = SafeInt32Sub (rect.r, pad);
 
 	}
 
@@ -522,8 +570,8 @@ inline void InnerPadRectV (dng_rect &rect,
 						   int32 pad)
 	{
 
-	rect.t += pad;
-	rect.b -= pad;
+	rect.t = SafeInt32Add (rect.t, pad);
+	rect.b = SafeInt32Sub (rect.b, pad);
 
 	}
 
@@ -564,6 +612,23 @@ inline dng_rect MakeInnerPadRect (const dng_rect &rect,
 	InnerPadRect (out, pad);
 
 	return out;
+	
+	}
+
+/*****************************************************************************/
+
+inline dng_rect_real64 MakeInnerPadRect (const dng_rect_real64 &rect,
+										 const real64 pad)
+	{
+	
+	dng_rect_real64 result = rect;
+
+	result.t += pad;
+	result.l += pad;
+	result.b -= pad;
+	result.r -= pad;
+
+	return result;
 	
 	}
 
@@ -618,6 +683,85 @@ dng_rect_real64 Bounds (const dng_point_real64 &a,
 						const dng_point_real64 &b,
 						const dng_point_real64 &c,
 						const dng_point_real64 &d);
+
+/*****************************************************************************/
+
+// An oriented bounding box (a dng_rect_real64 with rotation).
+
+class dng_oriented_bounding_box
+	{
+	
+	public:
+
+		// The center of the OBB.
+
+		dng_point_real64 fCenter;
+
+		// The two normal vectors. These vectors should be perpendicular to
+		// each other. The length of the vector is half the edge length.
+
+		dng_point_real64 fVec1;
+		dng_point_real64 fVec2;
+
+	public:
+
+		// Create an empty, invalid OBB.
+
+		dng_oriented_bounding_box ()
+			{
+			}
+
+		// Create an OBB from an axis-aligned bounding box (AABB).
+
+		dng_oriented_bounding_box (const dng_rect_real64 &rect)
+			{
+
+			fCenter = rect.Center ();
+
+			fVec1 = (0.5 * (rect.TR () + rect.BR ())) - fCenter;
+			fVec2 = (0.5 * (rect.BL () + rect.BR ())) - fCenter;
+
+			}
+
+		// Create an OBB from four corners.
+
+		dng_oriented_bounding_box (const dng_point_real64 &tl,
+								   const dng_point_real64 &tr,
+								   const dng_point_real64 &bl,
+								   const dng_point_real64 &br)
+			{
+
+			fCenter = 0.25 * (tl + tr + bl + br);
+
+			fVec1 = (0.5 * (tr + br)) - fCenter;
+			fVec2 = (0.5 * (bl + br)) - fCenter;
+
+			}
+
+		// Calculate four corners from this OBB.
+
+		void CalcCorners (dng_point_real64 &tl,
+						  dng_point_real64 &tr,
+						  dng_point_real64 &bl,
+						  dng_point_real64 &br) const
+			{
+
+			tl = fCenter - fVec1 - fVec2;
+			tr = fCenter + fVec1 - fVec2;
+
+			bl = fCenter - fVec1 + fVec2;
+			br = fCenter + fVec1 + fVec2;
+
+			}
+		
+	};
+
+/*****************************************************************************/
+
+// Returns true iff the two oriented bounding boxes intersect.
+
+bool Intersect (const dng_oriented_bounding_box &aBox,
+				const dng_oriented_bounding_box &bBox);
 
 /*****************************************************************************/
 

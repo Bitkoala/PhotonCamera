@@ -1,5 +1,5 @@
 /*****************************************************************************/
-// Copyright 2006-2019 Adobe Systems Incorporated
+// Copyright 2006-2023 Adobe Systems Incorporated
 // All Rights Reserved.
 //
 // NOTICE:	Adobe permits you to use, modify, and distribute this file in
@@ -10,14 +10,74 @@
 
 #include "dng_camera_profile.h"
 #include "dng_exceptions.h"
+#include "dng_gain_map.h"
 #include "dng_globals.h"
+#include "dng_host.h"
 #include "dng_memory.h"
 #include "dng_parse_utils.h"
+#include "dng_safe_arithmetic.h"
+#include "dng_sdk_limits.h"
 #include "dng_tag_codes.h"
 #include "dng_tag_types.h"
 #include "dng_tag_values.h"
+#include "dng_temperature.h"
 #include "dng_utils.h"
+
+#include <cstdio>
 									 
+/*****************************************************************************/
+
+bool dng_camera_profile_dynamic_range::IsValid () const
+	{
+	
+	if (fVersion != 1)
+		return false;
+
+	if (fDynamicRange >= 2)
+		return false;
+
+	if (IsSDR () && fHintMaxOutputValue > 1.0f)
+		return false;
+
+	return true;
+	
+	}
+
+/*****************************************************************************/
+
+void dng_camera_profile_dynamic_range::PutStream (dng_stream &stream) const
+	{
+	
+	stream.Put_uint16 (fVersion);
+	
+	stream.Put_uint16 (fDynamicRange);
+
+	stream.Put_real32 (fHintMaxOutputValue);
+	
+	}
+
+/*****************************************************************************/
+
+#if qDNGValidate
+
+/*****************************************************************************/
+
+void dng_camera_profile_dynamic_range::Dump () const
+	{
+	
+	printf ("ProfileDynamicRange: version=%u, range=%s, hint_max=%g\n",
+			unsigned (fVersion),
+			IsHDR () ? "high" : "standard",
+			float (fHintMaxOutputValue));
+	
+	}
+
+/*****************************************************************************/
+
+#endif	// qDNGValidate
+
+/*****************************************************************************/
+/*****************************************************************************/
 /*****************************************************************************/
 
 dng_camera_profile_info::dng_camera_profile_info ()
@@ -28,15 +88,19 @@ dng_camera_profile_info::dng_camera_profile_info ()
 	
 	,	fCalibrationIlluminant1 (lsUnknown)
 	,	fCalibrationIlluminant2 (lsUnknown)
+	,	fCalibrationIlluminant3 (lsUnknown)
 
 	,	fColorMatrix1 ()
 	,	fColorMatrix2 ()
+	,	fColorMatrix3 ()
 		
 	,	fForwardMatrix1 ()
 	,	fForwardMatrix2 ()
+	,	fForwardMatrix3 ()
 		
 	,	fReductionMatrix1 ()
 	,	fReductionMatrix2 ()
+	,	fReductionMatrix3 ()
 		
 	,	fProfileCalibrationSignature ()
 	
@@ -56,6 +120,9 @@ dng_camera_profile_info::dng_camera_profile_info ()
 	,	fHueSatDeltas2Offset (0)
 	,	fHueSatDeltas2Count	 (0)
 
+	,	fHueSatDeltas3Offset (0)
+	,	fHueSatDeltas3Count	 (0)
+
 	,	fHueSatMapEncoding (encoding_Linear)
 	
 	,	fLookTableHues (0)
@@ -73,6 +140,8 @@ dng_camera_profile_info::dng_camera_profile_info ()
 
 	,	fToneCurveOffset	 (0)
 	,	fToneCurveCount		 (0)
+	
+	,	fToneMethod (profileToneMethod_Unspecified)
 	
 	,	fUniqueCameraModel ()
 
@@ -146,6 +215,72 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 				}
 				
 			#endif
+				
+			break;
+			
+			}
+
+		case tcCalibrationIlluminant3:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttShort);
+			
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
+			
+			fCalibrationIlluminant3 = stream.TagValue_uint32 (tagType);
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				printf ("CalibrationIlluminant3: %s\n",
+						LookupLightSource (fCalibrationIlluminant3));
+				
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+
+		case tcIlluminantData1:
+		case tcIlluminantData2:
+		case tcIlluminantData3:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttUndefined))
+				{
+				return false;
+				}
+
+			if (!CheckTagCount (parentCode, tagCode, tagCount, 2, 10000))
+				{
+				return false;
+				}
+
+			dng_illuminant_data *dstPtr = &fIlluminantData1;
+
+			if (tagCode == tcIlluminantData2)
+				{
+				dstPtr = &fIlluminantData2;
+				}
+
+			else if (tagCode == tcIlluminantData3)
+				{
+				dstPtr = &fIlluminantData3;
+				}
+
+			#if qDNGValidate
+			const char *tagName = LookupTagCode (parentCode, tagCode);
+			#else
+			const char *tagName = "";
+			#endif
+			
+			dstPtr->Get (stream,
+						 tagCount,
+						 tagName);
 				
 			break;
 			
@@ -255,6 +390,48 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 			
 			}
 
+		case tcColorMatrix3:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttSRational);
+			
+			if (fColorPlanes == 0)
+				{
+			
+				fColorPlanes = Pin_uint32 (0, tagCount / 3, kMaxColorPlanes);
+									
+				}
+				
+			if (!CheckColorImage (parentCode, tagCode, fColorPlanes))
+				return false;
+				
+			if (!ParseMatrixTag (stream,
+								 parentCode,
+								 tagCode,
+								 tagType,
+								 tagCount,
+								 fColorPlanes,
+								 3,
+								 fColorMatrix3))
+				return false;
+				
+			#if qDNGValidate
+			
+			if (gVerbose)
+				{
+				
+				printf ("ColorMatrix3:\n");
+				
+				DumpMatrix (fColorMatrix3);
+								
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+
 		case tcForwardMatrix1:
 			{
 			
@@ -325,6 +502,41 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 			
 			}
 
+		case tcForwardMatrix3:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttSRational);
+			
+			if (!CheckColorImage (parentCode, tagCode, fColorPlanes))
+				return false;
+				
+			if (!ParseMatrixTag (stream,
+								 parentCode,
+								 tagCode,
+								 tagType,
+								 tagCount,
+								 3,
+								 fColorPlanes,
+								 fForwardMatrix3))
+				return false;
+				
+			#if qDNGValidate
+			
+			if (gVerbose)
+				{
+				
+				printf ("ForwardMatrix3:\n");
+				
+				DumpMatrix (fForwardMatrix3);
+								
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+
 		case tcReductionMatrix1:
 			{
 			
@@ -386,6 +598,41 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 				printf ("ReductionMatrix2:\n");
 				
 				DumpMatrix (fReductionMatrix2);
+								
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+
+		case tcReductionMatrix3:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttSRational);
+			
+			if (!CheckColorImage (parentCode, tagCode, fColorPlanes))
+				return false;
+				
+			if (!ParseMatrixTag (stream,
+								 parentCode,
+								 tagCode,
+								 tagType,
+								 tagCount,
+								 3,
+								 fColorPlanes,
+								 fReductionMatrix3))
+				return false;
+				
+			#if qDNGValidate
+			
+			if (gVerbose)
+				{
+				
+				printf ("ReductionMatrix3:\n");
+				
+				DumpMatrix (fReductionMatrix3);
 								
 				}
 				
@@ -685,6 +932,63 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 			
 			}
 
+		case tcProfileHueSatMapData3:
+			{
+
+			if (!CheckTagType (parentCode, tagCode, tagType, ttFloat))
+				return false;
+			
+			if (fProfileSats == 0)
+				return false;
+
+			dng_safe_uint32 hueCount (fProfileHues);
+			dng_safe_uint32 valCount (fProfileVals);
+				
+			bool skipSat0 = (tagCount == (hueCount * 
+										  (fProfileSats - 1) *
+										  (valCount * 3u)).Get ());
+			
+			if (!skipSat0)
+				{
+			
+				dng_safe_uint32 expected = hueCount * valCount * fProfileSats * 3u;
+			
+				if (!CheckTagCount (parentCode, 
+									tagCode, 
+									tagCount, 
+									expected.Get ()))
+					{
+					return false;
+					}
+					
+				}
+			
+			fBigEndian = stream.BigEndian ();
+				
+			fHueSatDeltas3Offset = tagOffset;
+			fHueSatDeltas3Count	 = tagCount;
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				printf ("ProfileHueSatMapData3:\n");
+				
+				DumpHueSatMap (stream,
+							   fProfileHues,
+							   fProfileSats,
+							   fProfileVals,
+							   skipSat0);
+					
+				}
+				
+			#endif
+
+			break;
+			
+			}
+
 		case tcProfileHueSatMapEncoding:
 			{
 
@@ -945,11 +1249,12 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 						
 					char message [256];
 					
-					sprintf (message,
-							 "%s %s has odd count (%u)",
-							 LookupParentCode (parentCode),
-							 LookupTagCode (parentCode, tagCode),
-							 (unsigned) tagCount);
+					snprintf (message,
+							  256,
+							  "%s %s has odd count (%u)",
+							  LookupParentCode (parentCode),
+							  LookupTagCode (parentCode, tagCode),
+							  (unsigned) tagCount);
 							 
 					ReportWarning (message);
 								 
@@ -981,6 +1286,53 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 								
 				}
 				
+			#endif
+
+			break;
+			
+			}
+
+		case tcProfileToneMethod:
+			{
+
+			CheckTagType (parentCode, tagCode, tagType, ttLong);
+			
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
+			
+			fToneMethod = stream.TagValue_uint32 (tagType);
+
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				const char *setting = NULL;
+
+				switch (fToneMethod)
+					{
+
+					case profileToneMethod_Unspecified:
+						setting = "Unspecified";
+						break;
+
+					case profileToneMethod_AdobePV5:
+						setting = "Adobe PV5";
+						break;
+
+					case profileToneMethod_AdobePV6:
+						setting = "Adobe PV6";
+						break;
+
+					default:
+						setting = "INVALID VALUE";
+	
+					}
+
+				printf ("ProfileToneMethod: %s\n",
+						setting);
+								
+				}
+
 			#endif
 
 			break;
@@ -1030,6 +1382,178 @@ bool dng_camera_profile_info::ParseTag (dng_stream &stream,
 			(void) didTrim;		// Unused
 				
 			#endif
+			
+			break;
+			
+			}
+
+		case tcProfileGainTableMap2:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttUndefined))
+				return false;
+
+			// For Camera Profile IFD, only ProfileGainTableMap2 is permitted;
+			// not the original ProfileGainTableMap.
+			
+			constexpr bool useVersion2format = true;
+
+			dng_host host;					 // use default allocator
+
+			fProfileGainTableMap.reset
+				(dng_gain_table_map::GetStream (host,
+												stream,
+												useVersion2format,
+												tagCount));
+
+			auto pgtm = fProfileGainTableMap;
+			
+			#if qDNGValidate
+
+			if (pgtm && gVerbose)
+				{
+
+				dng_md5_printer_le_stream printer;
+				
+				pgtm->AddDigest (printer);
+
+				auto digest = printer.Result ();
+
+				char str [2 * dng_fingerprint::kDNGFingerprintSize + 1];
+
+				digest.ToUtf8HexString (str);
+
+				printf ("ProfileGainTableMap2 (digest): %s\n", str);
+				
+				}
+
+			#endif	// qDNGValidate
+			
+			if (stream.Position () > SafeUint64Add (tagOffset,
+													(uint64) tagCount))
+				ThrowBadFormat ("tcProfileGainTableMap2 parse error");
+			
+			break;
+			
+			}
+
+		case tcProfileDynamicRange:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttUndefined))
+				return false;
+
+			if (!CheckTagCount (parentCode, tagCode, tagCount, 8))
+				return false;
+
+			uint16 version = stream.Get_uint16 ();
+
+			if (version == 1)
+				{
+				
+				fProfileDynamicRange.fVersion = version;
+				
+				fProfileDynamicRange.fDynamicRange = stream.Get_uint16 ();
+				
+				fProfileDynamicRange.fHintMaxOutputValue = stream.Get_real32 ();
+				
+				}
+
+			else
+				{
+				
+				ThrowBadFormat ("Unsupported version in ProfileDynamicRange");
+				
+				}
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				fProfileDynamicRange.Dump ();
+			
+			#endif
+
+			break;
+
+			}
+
+		case tcProfileGroupName:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttAscii, ttByte);
+
+			ParseStringTag (stream,
+							parentCode,
+							tagCode,
+							tagCount,
+							fProfileGroupName,
+							false);
+			
+			#if qDNGValidate
+						
+			if (gVerbose)
+				{
+				
+				printf ("ProfileGroupName: ");
+				
+				DumpString (fProfileGroupName);
+				
+				printf ("\n");
+				
+				}
+
+			#endif	// qDNGValidate
+			
+			break;
+
+			}
+
+		case tcRGBTablesDraft:
+		case tcRGBTables:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttUndefined))
+				return false;
+
+			const bool isDraft = (tagCode == tcRGBTablesDraft);
+
+			dng_host host;
+
+			fMaskedRGBTables.reset (dng_masked_rgb_tables::GetStream (host,
+																	  stream,
+																	  isDraft,
+																	  tagCount));
+
+			#if qDNGValidate
+
+			if (gVerbose && fMaskedRGBTables)
+				{
+
+				dng_md5_printer_le_stream printer;
+				
+				fMaskedRGBTables->AddDigest (printer);
+
+				const dng_fingerprint &digest = printer.Result ();
+
+				dng_string str = digest.ToUtf8HexString ();
+
+				const char *tagName = isDraft ? "RGBTablesDraft" : "RGBTables";
+
+				printf ("%s (digest): %s\n", tagName, str.Get ());
+
+				fMaskedRGBTables->Dump ();
+				
+				}
+
+			#endif	// qDNGValidate
+			
+			if (stream.Position () > SafeUint64Add (tagOffset,
+													(uint64) tagCount))
+				{
+				
+				ThrowBadFormat ("tcRGBTables parse error");
+				
+				}
 			
 			break;
 			
@@ -1086,7 +1610,19 @@ bool dng_camera_profile_info::ParseExtended (dng_stream &stream)
 
 		uint32 offset = stream.Get_uint32 ();
 
-		stream.Skip (offset - 8);
+		if (offset < 8)
+			{
+			return false;
+			}
+
+		const uint64 ifdOffset = SafeUint64Add (startPosition, offset);
+
+		if (ifdOffset > stream.Length ())
+			{
+			return false;
+			}
+
+		stream.SetReadPosition (ifdOffset);
 
 		// Start on IFD entries.
 
@@ -1096,11 +1632,23 @@ bool dng_camera_profile_info::ParseExtended (dng_stream &stream)
 			{
 			return false;
 			}
+
+		const uint32 entryTableBytes = SafeUint32Mult (ifdEntries, 12u);
+
+		if (SafeUint64Add (stream.Position (), entryTableBytes) > stream.Length ())
+			{
+			return false;
+			}
 		
 		for (uint32 tag_index = 0; tag_index < ifdEntries; tag_index++)
 			{
 			
-			stream.SetReadPosition (startPosition + 8 + 2 + tag_index * 12);
+			const uint64 entryOffset =
+				SafeUint64Add (ifdOffset,
+							   2u,
+							   SafeUint32Mult (tag_index, 12u));
+
+			stream.SetReadPosition (entryOffset);
 			
 			uint16 tagCode	= stream.Get_uint16 ();
 			uint32 tagType	= stream.Get_uint16 ();
@@ -1108,10 +1656,18 @@ bool dng_camera_profile_info::ParseExtended (dng_stream &stream)
 			
 			uint64 tagOffset = stream.Position ();
 
-			if (TagTypeSize (tagType) * tagCount > 4)
+			const uint32 tagSize = SafeUint32Mult (TagTypeSize (tagType),
+												   tagCount);
+
+			if (tagSize > 4)
 				{
 
-				tagOffset = startPosition + stream.Get_uint32 ();
+				tagOffset = SafeUint64Add (startPosition, stream.Get_uint32 ());
+
+				if (SafeUint64Add (tagOffset, tagSize) > stream.Length ())
+					{
+					return false;
+					}
 
 				stream.SetReadPosition (tagOffset);
 
@@ -1196,6 +1752,7 @@ dng_shared::dng_shared ()
 	
 	,	fCameraCalibration1 ()
 	,	fCameraCalibration2 ()
+	,	fCameraCalibration3 ()
 		
 	,	fCameraCalibrationSignature	 ()
 
@@ -1249,12 +1806,16 @@ dng_shared::dng_shared ()
 	,	fOriginalDefaultCropSizeH ()
 	,	fOriginalDefaultCropSizeV ()
 
-    ,   fDepthFormat      (depthFormatUnknown)
-    ,   fDepthNear        (0, 0)
-    ,   fDepthFar         (0, 0)
-    ,   fDepthUnits       (depthUnitsUnknown)
-    ,   fDepthMeasureType (depthMeasureUnknown)
+	,	fDepthFormat	  (depthFormatUnknown)
+	,	fDepthNear		  (0, 0)
+	,	fDepthFar		  (0, 0)
+	,	fDepthUnits		  (depthUnitsUnknown)
+	,	fDepthMeasureType (depthMeasureUnknown)
 
+	,	fBigTableDigests	()
+	,	fBigTableOffsets	()
+	,	fBigTableByteCounts ()
+		
 	{
 	
 	}
@@ -1316,6 +1877,28 @@ bool dng_shared::ParseTag (dng_stream &stream,
 
 		}
 		
+	if (parentCode == 0 ||
+		(parentCode >= tcFirstChainedIFD &&
+		 parentCode <= tcLastChainedIFD))
+		{
+
+		// Parse tags allowed to appear in IFD0 or any IFD in the main chain.
+
+		if (Parse_main_chain_ifd (stream,
+								  exif,
+								  parentCode,
+								  tagCode,
+								  tagType,
+								  tagCount,
+								  tagOffset))
+			{
+
+			return true;
+
+			}
+
+		}
+
 	return false;
 		
 	}
@@ -1381,9 +1964,9 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			if (gVerbose)
 				{
 				
-				printf ("IPTC/NAA: Count = %u, Offset = %u\n",
+				printf ("IPTC/NAA: Count = %u, Offset = %llu\n",
 						(unsigned) fIPTC_NAA_Count,
-						(unsigned) fIPTC_NAA_Offset);
+						(unsigned long long) fIPTC_NAA_Offset);
 						
 				if (fIPTC_NAA_Count)
 					{
@@ -1408,9 +1991,9 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 				
 					{
 					
-					dng_md5_printer printer;
+					dng_md5_direct_printer printer;
 		
-					printer.Process (data, count);
+					printer.ProcessPtr (data, count);
 					
 					printf ("IPTCDigest: ");
 					
@@ -1435,9 +2018,9 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 					if (removed != 0)
 						{
 					
-						dng_md5_printer printer;
+						dng_md5_direct_printer printer;
 			
-						printer.Process (data, count);
+						printer.ProcessPtr (data, count);
 						
 						printf ("IPTCDigest (ignoring zero padding): ");
 						
@@ -1460,17 +2043,17 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 		case tcExifIFD:
 			{
 			
-			CheckTagType (parentCode, tagCode, tagType, ttLong, ttIFD);
+			CheckTagType (parentCode, tagCode, tagType, ttLong, ttIFD, ttLong8, ttIFD8);
 			
 			CheckTagCount (parentCode, tagCode, tagCount, 1);
 			
-			fExifIFD = stream.TagValue_uint32 (tagType);
+			fExifIFD = stream.TagValue_uint64 (tagType);
 			
 			#if qDNGValidate
 			
 			if (gVerbose)
 				{
-				printf ("ExifIFD: %u\n", (unsigned) fExifIFD);
+				printf ("ExifIFD: %llu\n", (unsigned long long) fExifIFD);
 				}
 				
 			#endif
@@ -1482,17 +2065,17 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 		case tcGPSInfo:
 			{
 			
-			CheckTagType (parentCode, tagCode, tagType, ttLong, ttIFD);
+			CheckTagType (parentCode, tagCode, tagType, ttLong, ttIFD, ttLong8, ttIFD8);
 			
 			CheckTagCount (parentCode, tagCode, tagCount, 1);
 			
-			fGPSInfo = stream.TagValue_uint32 (tagType);
+			fGPSInfo = stream.TagValue_uint64 (tagType);
 			
 			#if qDNGValidate
 			
 			if (gVerbose)
 				{
-				printf ("GPSInfo: %u\n", (unsigned) fGPSInfo);
+				printf ("GPSInfo: %llu\n", (unsigned long long) fGPSInfo);
 				}
 				
 			#endif
@@ -1544,7 +2127,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			break;
 			
 			}
-		
+			
 		case tcDNGVersion:
 			{
 			
@@ -1756,6 +2339,41 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 				printf ("CameraCalibration2:\n");
 				
 				DumpMatrix (fCameraCalibration2);
+								
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+
+		case tcCameraCalibration3:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttSRational);
+			
+			if (!CheckColorImage (parentCode, tagCode, fCameraProfile.fColorPlanes))
+				return false;
+				
+			if (!ParseMatrixTag (stream,
+								 parentCode,
+								 tagCode,
+								 tagType,
+								 tagCount,
+								 fCameraProfile.fColorPlanes,
+								 fCameraProfile.fColorPlanes,
+								 fCameraCalibration3))
+				return false;
+				
+			#if qDNGValidate
+			
+			if (gVerbose)
+				{
+				
+				printf ("CameraCalibration3:\n");
+				
+				DumpMatrix (fCameraCalibration3);
 								
 				}
 				
@@ -2123,7 +2741,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			if (!CheckTagCount (parentCode, tagCode, tagCount, 16))
 				return false;
 				
-			stream.Get (fRawImageDigest.data, 16);
+			stream.Get (fRawImageDigest);
 				
 			#if qDNGValidate
 
@@ -2153,7 +2771,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			if (!CheckTagCount (parentCode, tagCode, tagCount, 16))
 				return false;
 				
-			stream.Get (fNewRawImageDigest.data, 16);
+			stream.Get (fNewRawImageDigest);
 			
 			#if qDNGValidate
 
@@ -2183,7 +2801,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			if (!CheckTagCount (parentCode, tagCode, tagCount, 16))
 				return false;
 				
-			stream.Get (fRawDataUniqueID.data, 16);
+			stream.Get (fRawDataUniqueID);
 				
 			#if qDNGValidate
 
@@ -2271,7 +2889,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			if (!CheckTagCount (parentCode, tagCode, tagCount, 16))
 				return false;
 				
-			stream.Get (fOriginalRawFileDigest.data, 16);
+			stream.Get (fOriginalRawFileDigest);
 				
 			#if qDNGValidate
 
@@ -2458,7 +3076,7 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 		case tcExtraCameraProfiles:
 			{
 				
-			CheckTagType (parentCode, tagCode, tagType, ttLong);
+			CheckTagType (parentCode, tagCode, tagType, ttLong, ttLong8);
 			
 			CheckTagCount (parentCode, tagCode, tagCount, 1, tagCount);
 			
@@ -2473,6 +3091,11 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 				
 			#endif
 			
+			if (tagCount > 1000)
+				{
+				ThrowBadFormat ("Too many ExtraCameraProfiles");
+				}
+
 			fExtraCameraProfiles.reserve (tagCount);
 			
 			for (uint32 index = 0; index < tagCount; index++)
@@ -2489,9 +3112,9 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 					
 				#endif
 			
-				stream.SetReadPosition (tagOffset + index * 4);
+				uint64 profileOffset = stream.TagValue_uint64 (tagType);
 				
-				uint32 profileOffset = stream.TagValue_uint32 (tagType);
+				uint64 savePosition = stream.Position ();
 				
 				dng_camera_profile_info profileInfo;
 				
@@ -2514,6 +3137,8 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 					#endif
 			
 					}
+					
+				stream.SetReadPosition (savePosition);
 				
 				}
 
@@ -2646,160 +3271,538 @@ bool dng_shared::Parse_ifd0 (dng_stream &stream,
 			break;
 			
 			}
-        
-        case tcDepthFormat:
-            {
-            
-            CheckTagType (parentCode, tagCode, tagType, ttShort);
-            
-            CheckTagCount (parentCode, tagCode, tagCount, 1);
-            
-            fDepthFormat = stream.TagValue_uint32 (tagType);
-            
-            #if qDNGValidate
-
-            if (gVerbose)
-                {
-                
-                printf ("DepthFormat: %s\n",
-                        LookupDepthFormat (fDepthFormat));
-                
-                }
-                
-            #endif
-                
-            break;
-            
-            }
+		
+		case tcDepthFormat:
+			{
 			
-        case tcDepthNear:
-            {
-            
-            CheckTagType (parentCode, tagCode, tagType, ttRational);
+			CheckTagType (parentCode, tagCode, tagType, ttShort);
+			
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
+			
+			fDepthFormat = stream.TagValue_uint32 (tagType);
+			
+			#if qDNGValidate
 
-            CheckTagCount (parentCode, tagCode, tagCount, 1);
+			if (gVerbose)
+				{
+				
+				printf ("DepthFormat: %s\n",
+						LookupDepthFormat (fDepthFormat));
+				
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+			
+		case tcDepthNear:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttRational);
 
-            fDepthNear = stream.TagValue_urational (tagType);
-            
-            #if qDNGValidate
-                
-            if (gVerbose)
-                {
-                
-                printf ("DepthNear: ");
-                
-                if (fDepthNear == dng_urational (0, 0))
-                    {
-                    printf ("Unknown");
-                    }
-                else if (fDepthNear.d == 0)
-                    {
-                    printf ("Infinity");
-                    }
-                else
-                    {
-                    printf ("%0.2f", fDepthNear.As_real64 ());
-                    }
-                    
-                printf ("\n");
-                    
-                }
-                
-            #endif
-            
-            break;
-            
-            }
-        
-         case tcDepthFar:
-            {
-            
-            CheckTagType (parentCode, tagCode, tagType, ttRational);
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
 
-            CheckTagCount (parentCode, tagCode, tagCount, 1);
+			fDepthNear = stream.TagValue_urational (tagType);
+			
+			#if qDNGValidate
+				
+			if (gVerbose)
+				{
+				
+				printf ("DepthNear: ");
+				
+				if (fDepthNear == dng_urational (0, 0))
+					{
+					printf ("Unknown");
+					}
+				else if (fDepthNear.d == 0)
+					{
+					printf ("Infinity");
+					}
+				else
+					{
+					printf ("%0.2f", fDepthNear.As_real64 ());
+					}
+					
+				printf ("\n");
+					
+				}
+				
+			#endif
+			
+			break;
+			
+			}
+		
+		 case tcDepthFar:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttRational);
 
-            fDepthFar = stream.TagValue_urational (tagType);
-            
-            #if qDNGValidate
-                
-            if (gVerbose)
-                {
-                
-                printf ("DepthFar: ");
-                
-                if (fDepthFar == dng_urational (0, 0))
-                    {
-                    printf ("Unknown");
-                    }
-                else if (fDepthFar.d == 0)
-                    {
-                    printf ("Infinity");
-                    }
-                else
-                    {
-                    printf ("%0.2f", fDepthFar.As_real64 ());
-                    }
-                    
-                printf ("\n");
-                    
-                }
-                
-            #endif
-            
-            break;
-            
-            }
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
 
-        case tcDepthUnits:
-            {
-            
-            CheckTagType (parentCode, tagCode, tagType, ttShort);
-            
-            CheckTagCount (parentCode, tagCode, tagCount, 1);
-            
-            fDepthUnits = stream.TagValue_uint32 (tagType);
-            
-            #if qDNGValidate
+			fDepthFar = stream.TagValue_urational (tagType);
+			
+			#if qDNGValidate
+				
+			if (gVerbose)
+				{
+				
+				printf ("DepthFar: ");
+				
+				if (fDepthFar == dng_urational (0, 0))
+					{
+					printf ("Unknown");
+					}
+				else if (fDepthFar.d == 0)
+					{
+					printf ("Infinity");
+					}
+				else
+					{
+					printf ("%0.2f", fDepthFar.As_real64 ());
+					}
+					
+				printf ("\n");
+					
+				}
+				
+			#endif
+			
+			break;
+			
+			}
 
-            if (gVerbose)
-                {
-                
-                printf ("DepthUnits: %s\n",
-                        LookupDepthUnits (fDepthUnits));
-                
-                }
-                
-            #endif
-                
-            break;
-            
-            }
-            
-        case tcDepthMeasureType:
-            {
-            
-            CheckTagType (parentCode, tagCode, tagType, ttShort);
-            
-            CheckTagCount (parentCode, tagCode, tagCount, 1);
-            
-            fDepthMeasureType = stream.TagValue_uint32 (tagType);
-            
-            #if qDNGValidate
+		case tcDepthUnits:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttShort);
+			
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
+			
+			fDepthUnits = stream.TagValue_uint32 (tagType);
+			
+			#if qDNGValidate
 
-            if (gVerbose)
-                {
-                
-                printf ("DepthMeasureType: %s\n",
-                        LookupDepthMeasureType (fDepthMeasureType));
-                
-                }
-                
-            #endif
-                
-            break;
-            
-            }
-            
+			if (gVerbose)
+				{
+				
+				printf ("DepthUnits: %s\n",
+						LookupDepthUnits (fDepthUnits));
+				
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+			
+		case tcDepthMeasureType:
+			{
+			
+			CheckTagType (parentCode, tagCode, tagType, ttShort);
+			
+			CheckTagCount (parentCode, tagCode, tagCount, 1);
+			
+			fDepthMeasureType = stream.TagValue_uint32 (tagType);
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				printf ("DepthMeasureType: %s\n",
+						LookupDepthMeasureType (fDepthMeasureType));
+				
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+			
+		case tcBigTableDigests:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttByte))
+				return false;
+			
+			if (!CheckTagCount (parentCode, tagCode, tagCount, 16, 0xFFFFFFF0))
+				return false;
+			
+			uint32 count = tagCount >> 4;
+			
+			if (count > 10000)
+				{
+				ThrowBadFormat ("Too many BigTable entries");
+				}
+
+			fBigTableDigests.clear ();
+			fBigTableDigests.reserve (count);
+			
+			fBigTableOffsets.clear ();
+			fBigTableOffsets.reserve (count);
+			
+			fBigTableByteCounts.clear ();
+			fBigTableByteCounts.reserve (count);
+			
+			for (uint32 index = 0; index < count; index++)
+				{
+				
+				dng_fingerprint fingerprint;
+				
+				stream.Get (fingerprint);
+				
+				fBigTableDigests.push_back (fingerprint);
+				
+				fBigTableOffsets   .push_back (0);
+				fBigTableByteCounts.push_back (0);
+				
+				}
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				printf ("BigTableDigests:\n");
+				
+				for (uint32 index = 0; index < count; index++)
+					{
+					
+					printf ("\t[%u] = ", index);
+					
+					DumpFingerprint (fBigTableDigests [index]);
+					
+					printf ("\n");
+					
+					}
+				
+				}
+				
+			#endif
+				
+			break;
+			
+			}
+			
+		case tcBigTableOffsets:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttLong, ttLong8))
+				return false;
+			
+			if (!CheckTagCount (parentCode, tagCode, tagCount, (uint32) fBigTableOffsets.size ()))
+				return false;
+				
+			for (uint32 index = 0; index < tagCount; index++)
+				{
+				
+				fBigTableOffsets [index] = stream.TagValue_uint64 (tagType);
+				
+				if (fBigTableOffsets [index] >= stream.Length ())
+					{
+					
+					DNG_REPORT ("Invalid big table offset");
+					
+					fBigTableDigests   .clear ();
+					fBigTableOffsets   .clear ();
+					fBigTableByteCounts.clear ();
+					
+					return false;
+					
+					}
+				
+				}
+				
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				stream.SetReadPosition (tagOffset);
+				
+				DumpTagValues (stream,
+							   "Offset",
+							   parentCode,
+							   tagCode,
+							   tagType,
+							   tagCount);
+				
+				}
+				
+			#endif
+			
+			break;
+				
+			}
+			
+		case tcBigTableByteCounts:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttLong, ttLong8))
+				return false;
+			
+			if (!CheckTagCount (parentCode, tagCode, tagCount, (uint32) fBigTableByteCounts.size ()))
+				return false;
+				
+			for (uint32 index = 0; index < tagCount; index++)
+				{
+				
+				uint64 byteCount64 = stream.TagValue_uint64 (tagType);
+				
+				if (byteCount64 > 0xFFFFFFFF)
+					{
+					continue;
+					}
+				
+				fBigTableByteCounts [index] = (uint32) byteCount64;
+				
+				if (fBigTableOffsets [index] > stream.Length () ||
+					fBigTableByteCounts [index] >
+						stream.Length () - fBigTableOffsets [index])
+					{
+					
+					DNG_REPORT ("Invalid big table byte count");
+					
+					fBigTableDigests   .clear ();
+					fBigTableOffsets   .clear ();
+					fBigTableByteCounts.clear ();
+					
+					return false;
+					
+					}
+				
+				}
+				
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				stream.SetReadPosition (tagOffset);
+				
+				DumpTagValues (stream,
+							   "Count",
+							   parentCode,
+							   tagCode,
+							   tagType,
+							   tagCount);
+				
+				}
+				
+			#endif
+			
+			break;
+				
+			}
+
+		case tcBigTableGroupIndex:
+			{
+			
+			if (!CheckTagType (parentCode, tagCode, tagType, ttByte))
+				return false;
+
+			if (!CheckTagCount (parentCode, tagCode, tagCount, 32, 0xFFFFFFF0))
+				return false;
+
+			// Pairs of digests:
+			// group_digest, dng_fingerprint, 16 bytes
+			// instance_digest, dng_fingerprint, 16 bytes
+			// Each pair is 32 bytes.
+			
+			const uint32 count = tagCount >> 5;
+
+			fBigTableGroupIndex.clear ();
+			
+			for (uint32 index = 0; index < count; index++)
+				{
+				
+				dng_fingerprint groupDigest;
+				dng_fingerprint instanceDigest;
+				
+				stream.Get (groupDigest);
+				stream.Get (instanceDigest);
+
+				fBigTableGroupIndex.insert (std::make_pair (groupDigest,
+															instanceDigest));
+								
+				}
+			
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+				
+				printf ("BigTableGroupIndex:\n");
+
+				uint32 index = 0;
+
+				for (const auto &entry : fBigTableGroupIndex)
+					{
+					
+					printf ("\t[%u] = ", index);
+					
+					DumpFingerprint (entry.first);
+
+					printf (" -> ");
+					
+					DumpFingerprint (entry.second);
+
+					printf ("\n");
+
+					index++;
+					
+					}
+				
+				}
+				
+			#endif	// qDNGValidate
+				
+			break;
+			
+			}
+			
+		case tcImageSequenceInfo:
+			{
+
+			if (!CheckTagType (parentCode, tagCode, tagType, ttUndefined))
+				return false;
+			
+			constexpr uint32 kMaxTagCount = 1024 * 1024;
+			
+			constexpr uint32 kMinTagCount = (9 + // Sequence ID
+											 2 + // Sequence Type
+											 1 + // Frame Info
+											 4 + // Index
+											 4 + // Count
+											 1); // Final
+
+			if (tagCount < kMinTagCount)
+				{
+				
+				#if qDNGValidate
+				ReportWarning ("ImageSequenceInfo tag too small -- skipping");
+				#endif
+				
+				return false;
+				
+				}
+
+			if (tagCount > kMaxTagCount)
+				{
+				
+				#if qDNGValidate
+				ReportWarning ("ImageSequenceInfo tag unusually large -- skipping");
+				#endif
+				
+				return false;
+				
+				}
+
+			dng_image_sequence_info &info = fImageSequenceInfo;
+
+			std::vector<char> buf;
+
+			buf.resize (tagCount + 1);
+
+			char *ptr = &buf [0];
+
+			const uint64 startPosition = stream.Position ();
+
+			if (startPosition > 0xFFFFFFFFFFFFFFFFull - tagCount)
+				{
+				ThrowBadFormat ("Invalid ImageSequenceInfo tag count");
+				}
+
+			const uint64 endPosition = startPosition + tagCount;
+
+			auto getString = [&] ()
+				{
+
+				memset (ptr, 0, tagCount + 1);
+
+				uint32 index = 0;
+
+				while (stream.Position () < endPosition)
+					{
+
+					char c = (char) stream.Get_uint8 ();
+
+					if (index + 1 < tagCount)
+						ptr [index++] = c;
+
+					if (c == 0)
+						return;
+
+					}
+
+				ThrowBadFormat ("Unterminated ImageSequenceInfo string");
+
+				};
+
+			// Read sequence ID.
+
+			getString ();
+
+			info.fSequenceID.Set (ptr);
+
+			// Read sequence type.
+			
+			getString ();
+
+			info.fSequenceType.Set (ptr);
+
+			// Read frame info.
+
+			getString ();
+
+			info.fFrameInfo.Set (ptr);
+
+			if (stream.Position () > endPosition ||
+				9 > endPosition - stream.Position ())
+				{
+				ThrowBadFormat ("Truncated ImageSequenceInfo fields");
+				}
+
+			// Get index, count, and final fields.
+
+			TempBigEndian tempEndian (stream);
+
+			info.fIndex = stream.Get_uint32 ();
+			info.fCount = stream.Get_uint32 ();
+			
+			info.fIsFinal = stream.Get_uint8 ();
+
+			stream.SetReadPosition (endPosition);
+
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+
+				printf ("ImageSequenceInfo: seq_id=%s, seq_type=%s, "
+						"frame_info=%s, index=%u, count=%u, final=%u\n",
+						info.fSequenceID.Get (),
+						info.fSequenceType.Get (),
+						info.fFrameInfo.Get (),
+						unsigned (info.fIndex),
+						unsigned (info.fCount),
+						unsigned (info.fIsFinal));
+						
+				
+				}
+				
+			#endif	// qDNGValidate
+			
+			break;
+			
+			}
+
 		default:
 			{
 			
@@ -2925,6 +3928,7 @@ void dng_shared::PostParse (dng_host & /* host */,
 			
 			fCameraProfile.fCalibrationIlluminant1 = lsStandardLightA;
 			fCameraProfile.fCalibrationIlluminant2 = lsD65;
+			fCameraProfile.fCalibrationIlluminant3 = lsD65;
 			
 			fDNGVersion = dngVersion_1_0_0_0;
 
@@ -2990,20 +3994,133 @@ void dng_shared::PostParse (dng_host & /* host */,
 			fCameraProfile.fColorPlanes = 1;
 			
 			}
+
+		if ((fCameraProfile.fCalibrationIlluminant3 != lsUnknown) &&
+			fCameraProfile.fColorMatrix3.IsEmpty ())
+			{
 			
+			#if qDNGValidate
+			
+			ReportWarning ("Ignoring CalibrationIlluminant3 because "
+						   "ColorMatrix3 invalid or missing");
+
+			#endif
+
+			fCameraProfile.fCalibrationIlluminant3 = lsUnknown;
+						 
+			}
+
+		if (fCameraProfile.fCalibrationIlluminant3 == lsUnknown)
+			{
+
+			if (fCameraProfile.fColorMatrix3.NotEmpty ())
+				{
+				
+				#if qDNGValidate
+			
+				ReportWarning ("Ignoring ColorMatrix3 because "
+							   "CalibrationIlluminant3 is unknown/missing");
+						 
+				#endif
+
+				fCameraProfile.fColorMatrix3.Clear ();
+
+				}
+			
+			if (fCameraProfile.fForwardMatrix3.NotEmpty ())
+				{
+				
+				#if qDNGValidate
+			
+				ReportWarning ("Ignoring ForwardMatrix3 because "
+							   "CalibrationIlluminant3 is unknown/missing");
+						 
+				#endif
+
+				fCameraProfile.fForwardMatrix3.Clear ();
+
+				}
+			
+			if (fCameraProfile.fReductionMatrix3.NotEmpty ())
+				{
+				
+				#if qDNGValidate
+			
+				ReportWarning ("Ignoring ReductionMatrix3 because "
+							   "CalibrationIlluminant3 is unknown/missing");
+						 
+				#endif
+
+				fCameraProfile.fReductionMatrix3.Clear ();
+
+				}
+			
+			if (fCameraProfile.fHueSatDeltas3Offset != 0 ||
+				fCameraProfile.fHueSatDeltas3Count	!= 0)
+				{
+				
+				#if qDNGValidate
+			
+				ReportWarning ("Ignoring ProfileHueSatMapData3 because "
+							   "CalibrationIlluminant3 is unknown/missing");
+						 
+				#endif
+
+				fCameraProfile.fHueSatDeltas3Offset = 0;
+				fCameraProfile.fHueSatDeltas3Count	= 0;
+
+				}
+			
+			}
+
 		// Check color info.
 		
 		if (fCameraProfile.fColorPlanes > 1)
 			{
 			
-			// Check illuminant pair.
+			// Check illuminant pair. This is for the dual-illuminant model.
+
+			// More detailed checks for triple-illuminant profiles are done in
+			// dng_camera_profile::IsValid.
 			
 			if (fCameraProfile.fColorMatrix2.NotEmpty ())
 				{
+
+				// Are illuminants 1 and 2 the same? Start by assuming not.
+
+				bool sameLight = false;
+
+				if (fCameraProfile.fCalibrationIlluminant1 == fCameraProfile.fCalibrationIlluminant2)
+					{
+
+					// Lights 1 and 2 have the same tag code. If they are
+					// something besides lsOther, then they're the same light.
+					
+					if (fCameraProfile.fCalibrationIlluminant1 != lsOther)
+						{
+						
+						sameLight = true;
+						
+						}
+
+					// Both are lsOther, so check the custom data fields for
+					// the same white point.
+
+					else
+						{
+						
+						dng_xy_coord white1 = fCameraProfile.fIlluminantData1.WhiteXY ();
+						dng_xy_coord white2 = fCameraProfile.fIlluminantData2.WhiteXY ();
+
+						sameLight = (white1 == white2);
+						
+						}
+					
+					}
 				
 				if (fCameraProfile.fCalibrationIlluminant1 == lsUnknown ||
-					(fCameraProfile.fCalibrationIlluminant2 == lsUnknown ||
-					(fCameraProfile.fCalibrationIlluminant1 == fCameraProfile.fCalibrationIlluminant2)))
+					fCameraProfile.fCalibrationIlluminant2 == lsUnknown ||
+					sameLight)
 					{
 						
 					#if qDNGValidate
@@ -3019,10 +4136,11 @@ void dng_shared::PostParse (dng_host & /* host */,
 				}
 				
 			// If the colorimetric reference is the ICC profile PCS, then the
-			// data must already be white balanced.	 The "AsShotWhiteXY" is required
-			// to be the ICC Profile PCS white point.
+			// data must already be white balanced. The "AsShotWhiteXY" is
+			// required to be the ICC Profile PCS white point.
 			
-			if (fColorimetricReference == crICCProfilePCS)
+			if (fColorimetricReference == crICCProfilePCS ||
+				fColorimetricReference == crOutputReferredHDR)
 				{
 				
 				if (fAsShotNeutral.NotEmpty ())
@@ -3097,14 +4215,16 @@ void dng_shared::PostParse (dng_host & /* host */,
 				}
 				
 			// Default values of calibration signatures are required for legacy
-			// compatiblity.
+			// compatibility.
 
 			if (fCameraProfile.fCalibrationIlluminant1 == lsStandardLightA &&
 				fCameraProfile.fCalibrationIlluminant2 == lsD65			   &&
+				fCameraProfile.fCalibrationIlluminant3 == lsUnknown		   &&
 				fCameraCalibration1.Rows () == fCameraProfile.fColorPlanes &&
 				fCameraCalibration1.Cols () == fCameraProfile.fColorPlanes &&
 				fCameraCalibration2.Rows () == fCameraProfile.fColorPlanes &&
 				fCameraCalibration2.Cols () == fCameraProfile.fColorPlanes &&
+				fCameraCalibration3.IsEmpty ()							   &&
 				fCameraCalibrationSignature.IsEmpty ()					   &&
 				fCameraProfile.fProfileCalibrationSignature.IsEmpty ()	   )
 				{
@@ -3326,6 +4446,50 @@ bool dng_shared::IsValidDNG ()
 					
 			}
 			
+		// CameraCalibration3 is optional, but it must be valid if present.
+		
+		if (fCameraCalibration3.Cols () != 0 ||
+			fCameraCalibration3.Rows () != 0)
+			{
+			
+			if (fCameraCalibration3.Cols () != fCameraProfile.fColorPlanes ||
+				fCameraCalibration3.Rows () != fCameraProfile.fColorPlanes)
+				{
+				
+				#if qDNGValidate
+		
+				ReportError ("CameraCalibration3 is wrong size");
+							 
+				#endif
+
+				return false;
+				
+				}
+			
+			// Make sure it is invertable.
+			
+			try
+				{
+				
+				(void) Invert (fCameraCalibration3);
+				
+				}
+				
+			catch (...)
+				{
+				
+				#if qDNGValidate
+	
+				ReportError ("CameraCalibration3 is not invertable");
+							 
+				#endif
+							 
+				return false;
+			
+				}
+					
+			}
+			
 		// Check analog balance
 		
 		dng_matrix analogBalance;
@@ -3363,4 +4527,67 @@ bool dng_shared::IsValidDNG ()
 	
 	}
 	
+/*****************************************************************************/
+
+// Parses tags that may appear in any IFD in the main IFD chain
+// (IFD 0 or any chained IFD reached via the NextIFD pointer).
+// If a tag appears in more than one IFD then data from the last
+// occurrence will overwrite that of any previous occurrence.
+//
+// tcC2PAManifest:
+// Per the C2PA specification, the C2PA manifest tag shall be located
+// within the last IFD of the main-IFD chain.  For TIFF assets with a
+// single IFD, it resides in IFD 0.  For assets with more than one IFD,
+// it shall be in the last chained IFD.  Because any main-chain IFD is
+// a conformant location, we accept the tag from all of them and let
+// the last occurrence win (matching the C2PA spec's placement intent).
+
+bool dng_shared::Parse_main_chain_ifd (dng_stream &stream,
+									   dng_exif & /* exif */,
+									   uint32 parentCode,
+									   uint32 tagCode,
+									   uint32 tagType,
+									   uint32 tagCount,
+									   uint64 /* tagOffset */)
+	{
+
+	switch (tagCode)
+		{
+
+		case tcC2PAManifest:
+			{
+
+			CheckTagType (parentCode, tagCode, tagType, ttUndefined);
+
+			fC2PAManifestOffset = stream.Position ();
+			fC2PAManifestCount  = tagCount;
+
+			#if qDNGValidate
+
+			if (gVerbose)
+				{
+
+				printf ("C2PAManifest: offset = %llu, count = %u\n",
+						(unsigned long long) fC2PAManifestOffset,
+						(unsigned) 			 fC2PAManifestCount);
+
+				DumpHexAscii (stream, fC2PAManifestCount);
+
+				}
+
+			#endif
+
+			break;
+
+			}
+
+		default:
+			return false;
+
+		}
+
+	return true;
+
+	}
+
 /*****************************************************************************/

@@ -1080,6 +1080,7 @@ class RawDemosaicProcessor {
                     0f, 0f, 1f
                 ),
                 applyDngBaselineExposure = false,
+                applyProfileGainTableMap = false,
                 clampProfileRgb = false,
                 label = "LinearRcdExport"
             )
@@ -1552,11 +1553,8 @@ class RawDemosaicProcessor {
             )
         }
         val hasProfileGainTableMap = actualMetadata.profileGainTableMap?.isValid == true
-        val skipRawAutoExposureForEmbeddedHdrRaw = shouldSkipRawAutoExposureForEmbeddedHdrRaw(
-            metadata = actualMetadata,
-            embeddedDngRenderPlan = activeDcpRenderPlan,
-            hasDcpSelection = hasDcpSelection
-        ) || googlePixelToneMapActive
+        val applyLinearDngBaselineExposure = shouldApplyLinearDngBaselineExposure(actualMetadata)
+        val applyProfileDngBaselineExposure = !applyLinearDngBaselineExposure
         val applyDcpBaselineExposureOffset =
             shouldApplyDcpBaselineExposureOffset(activeDcpRenderPlan)
         val useProfileExposureRamp = useAdobeProfilePipeline
@@ -1587,13 +1585,6 @@ class RawDemosaicProcessor {
         )
         val viewfinderThumbnailMeteringImage = when {
             !rawAutoExposure -> null
-            skipRawAutoExposureForEmbeddedHdrRaw -> {
-                PLog.d(
-                    TAG,
-                    "RAW auto exposure disabled: embedded HDR RAW uses ProfileGainTableMap and tone curve"
-                )
-                null
-            }
             else -> {
                 analyzeSrgbThumbnailForMetering(
                     capturePreviewThumbnail,
@@ -1932,35 +1923,31 @@ class RawDemosaicProcessor {
             }
 
             // RAW AE 使用低分辨率实际渲染结果测光，使高光压缩和最终输出保持一致。
-            val meteringResult = if (skipRawAutoExposureForEmbeddedHdrRaw) {
-                MeteringSystem.MeteringResult.EMPTY
-            } else {
-                resolveRawAutoExposureEv(
-                    metadata = actualMetadata,
-                    sourceTextureId = demosaicTextureId,
-                    rawBlackPointCorrection = rawBlackPointCorrection,
-                    rawWhitePointCorrection = rawWhitePointCorrection,
-                    colorCorrectionMatrix = linearColorCorrectionMatrix,
-                    cameraWhite = linearCameraWhite,
-                    dcpRenderPlan = activeDcpRenderPlan,
-                    applyLinearDngBaselineExposure = hasProfileGainTableMap,
-                    clampProfileRgb = useAdobeProfilePipeline,
-                    viewfinderThumbnailStats = viewfinderThumbnailStats,
-                    viewfinderCenterAverageReference = viewfinderCenterAverageReference,
-                    outputBounds = rawAeContentBounds?.rawRenderBounds ?: bounds,
-                    outputRotation = actualRotation,
-                    spectralFilmLut = spektrafilmLut,
-                    colorEngine = colorEngine,
-                    outputWorkingColorSpace = engineWorkingColorSpace,
-                    profileToEngineTransform = profileToEngineTransform,
-                    rawToneMappingParameters = rawToneMappingParameters,
-                    useProfileExposureRamp = useProfileExposureRamp,
-                    applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
-                )
-            }
+            val meteringResult = resolveRawAutoExposureEv(
+                metadata = actualMetadata,
+                sourceTextureId = demosaicTextureId,
+                rawBlackPointCorrection = rawBlackPointCorrection,
+                rawWhitePointCorrection = rawWhitePointCorrection,
+                colorCorrectionMatrix = linearColorCorrectionMatrix,
+                cameraWhite = linearCameraWhite,
+                dcpRenderPlan = activeDcpRenderPlan,
+                applyLinearDngBaselineExposure = applyLinearDngBaselineExposure,
+                applyProfileGainTableMap = hasProfileGainTableMap,
+                clampProfileRgb = useAdobeProfilePipeline,
+                viewfinderThumbnailStats = viewfinderThumbnailStats,
+                viewfinderCenterAverageReference = viewfinderCenterAverageReference,
+                outputBounds = rawAeContentBounds?.rawRenderBounds ?: bounds,
+                outputRotation = actualRotation,
+                spectralFilmLut = spektrafilmLut,
+                colorEngine = colorEngine,
+                outputWorkingColorSpace = engineWorkingColorSpace,
+                profileToEngineTransform = profileToEngineTransform,
+                rawToneMappingParameters = rawToneMappingParameters,
+                useProfileExposureRamp = useProfileExposureRamp,
+                applyProfileDcpBaselineExposureOffset = applyDcpBaselineExposureOffset
+            )
 
             val autoDevelopAvailable = rawAutoExposure &&
-                !skipRawAutoExposureForEmbeddedHdrRaw &&
                 viewfinderThumbnailStats != null &&
                 meteringResult != MeteringSystem.MeteringResult.EMPTY
             val useAutoExposureAdjustment = autoDevelopAvailable &&
@@ -1986,11 +1973,11 @@ class RawDemosaicProcessor {
                 profileExposureCompensation = profileExposureCompensation,
                 dcpRenderPlan = activeDcpRenderPlan,
                 applyDcpBaselineExposureOffset = applyDcpBaselineExposureOffset,
-                applyDngBaselineExposure = !hasProfileGainTableMap,
+                applyDngBaselineExposure = applyProfileDngBaselineExposure,
                 useRamp = useProfileExposureRamp
             )
             val profileLinearExposureGain = 2.0f.pow(profileExposureUniforms.exposureEv)
-            val linearExposureGain = if (hasProfileGainTableMap) {
+            val linearExposureGain = if (applyLinearDngBaselineExposure) {
                 profileLinearExposureGain * exactDngBaselineExposureGain(actualMetadata)
             } else {
                 profileLinearExposureGain
@@ -2035,12 +2022,13 @@ class RawDemosaicProcessor {
                     "profileRampBlack=${profileExposureUniforms.rampBlack} " +
                     "dngShadowScale=${actualMetadata.shadowScale} " +
                     "dngBaselineExposure=${actualMetadata.baselineExposure} " +
-                    "dngBaselineExposureInLinear=$hasProfileGainTableMap " +
+                    "dngBaselineExposureInLinear=$applyLinearDngBaselineExposure " +
+                    "profileGainTableMapActive=$hasProfileGainTableMap " +
                     "dcpBaselineExposureOffsetApplied=$applyDcpBaselineExposureOffset"
             )
 
             // 运行 linearRcdProgram 将相机矩阵应用在已解马赛克的浮点 RCD 图像上。
-            // 有 PGTM 时，DNG BaselineExposure 按规范在 PGTM 之前于线性 ProPhoto/RIMM 阶段应用。
+            // DNG BaselineExposure 按规范在线性 ProPhoto/RIMM 阶段应用，PGTM 只作为可选局部 tone map。
             checkGlError("Before LinearRcdPass")
 
             renderLinearRcdPass(
@@ -2052,7 +2040,8 @@ class RawDemosaicProcessor {
                 rawExposureCompensation = 0f,
                 colorCorrectionMatrix = linearColorCorrectionMatrix,
                 cameraWhite = linearCameraWhite,
-                applyDngBaselineExposure = hasProfileGainTableMap,
+                applyDngBaselineExposure = applyLinearDngBaselineExposure,
+                applyProfileGainTableMap = hasProfileGainTableMap,
                 clampProfileRgb = useAdobeProfilePipeline,
                 label = "LinearRcdPass"
             )
@@ -4053,6 +4042,7 @@ class RawDemosaicProcessor {
                 0f, 0f, 1f
             ),
             applyDngBaselineExposure = false,
+            applyProfileGainTableMap = false,
             clampProfileRgb = false,
             label = label
         )
@@ -7052,14 +7042,8 @@ class RawDemosaicProcessor {
         return dcpBaselineExposureOffsetOrZero(dcpRenderPlan) != 0f
     }
 
-    private fun shouldSkipRawAutoExposureForEmbeddedHdrRaw(
-        metadata: RawMetadata,
-        embeddedDngRenderPlan: DcpRenderPlan?,
-        hasDcpSelection: Boolean
-    ): Boolean {
-        return !hasDcpSelection &&
-            metadata.profileGainTableMap?.isValid == true &&
-            embeddedDngRenderPlan?.toneCurveLut != null
+    private fun shouldApplyLinearDngBaselineExposure(metadata: RawMetadata): Boolean {
+        return DngBaselineExposure.sanitize(metadata.baselineExposure) != 0f
     }
 
     private fun dcpBaselineExposureOffsetOrZero(dcpRenderPlan: DcpRenderPlan?): Float {
@@ -7124,7 +7108,7 @@ class RawDemosaicProcessor {
         applyDngBaselineExposure: Boolean
     ): Float {
         val normalizationGain = if (applyDngBaselineExposure) {
-            ExposureNormalization.compute(metadata)
+            exactDngBaselineExposureGain(metadata)
         } else {
             1f
         }
@@ -7145,6 +7129,7 @@ class RawDemosaicProcessor {
         colorCorrectionMatrix: FloatArray,
         cameraWhite: FloatArray = metadata.cameraWhite,
         applyDngBaselineExposure: Boolean,
+        applyProfileGainTableMap: Boolean,
         clampProfileRgb: Boolean,
         label: String
     ) {
@@ -7174,16 +7159,12 @@ class RawDemosaicProcessor {
             linearCameraWhite[2]
         )
         val hasActiveProfileGainTableMap = metadata.profileGainTableMap?.isValid == true &&
+            applyProfileGainTableMap
+        val exposureGain = computeLinearExposureGain(
+            metadata,
+            rawExposureCompensation,
             applyDngBaselineExposure
-        val exposureGain = if (hasActiveProfileGainTableMap) {
-            exactDngBaselineExposureGain(metadata) * 2.0f.pow(rawExposureCompensation)
-        } else {
-            computeLinearExposureGain(
-                metadata,
-                rawExposureCompensation,
-                applyDngBaselineExposure
-            )
-        }
+        )
         bindProfileGainTableMapForLinearRcd(
             linearRcdProgram,
             metadata,
@@ -7212,10 +7193,10 @@ class RawDemosaicProcessor {
     private fun bindProfileGainTableMapForLinearRcd(
         program: Int,
         metadata: RawMetadata,
-        applyAfterDngBaselineExposure: Boolean
+        applyProfileGainTableMap: Boolean
     ) {
         val profileGainTableMap = metadata.profileGainTableMap?.takeIf { it.isValid }
-        if (profileGainTableMap == null || !applyAfterDngBaselineExposure) {
+        if (profileGainTableMap == null || !applyProfileGainTableMap) {
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainEnabled"), 0)
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "uProfileGainDebugOverlay"), 0)
             return
@@ -7262,8 +7243,9 @@ class RawDemosaicProcessor {
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(program, "uProfileGainGamma"),
-            profileGainTableMap.gamma.coerceIn(0.25f, 4.0f)
+            profileGainTableMap.gamma.coerceIn(0.125f, 8.0f)
         )
+        // Match the DNG SDK PGTM path: scale table input by DNG baseline exposure only.
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(program, "uProfileGainBaselineGain"),
             exactDngBaselineExposureGain(metadata)
@@ -7353,6 +7335,7 @@ class RawDemosaicProcessor {
         cameraWhite: FloatArray,
         dcpRenderPlan: DcpRenderPlan?,
         applyLinearDngBaselineExposure: Boolean,
+        applyProfileGainTableMap: Boolean,
         clampProfileRgb: Boolean,
         viewfinderThumbnailStats: MeteringSystem.SrgbThumbnailMeteringStats?,
         viewfinderCenterAverageReference: RawAeCenterAverageReference?,
@@ -7388,6 +7371,7 @@ class RawDemosaicProcessor {
                 colorCorrectionMatrix = colorCorrectionMatrix,
                 cameraWhite = cameraWhite,
                 applyDngBaselineExposure = applyLinearDngBaselineExposure,
+                applyProfileGainTableMap = applyProfileGainTableMap,
                 clampProfileRgb = clampProfileRgb,
                 label = "LinearMeteringPass"
             )

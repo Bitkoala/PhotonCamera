@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -21,24 +21,24 @@
 /*****************************************************************************/
 
 void ReportWarning (const char *message,
-				    const char *sub_message)
+					const char *sub_message)
 	{
 	
 	#if qDNGReportErrors
-        
-    #ifdef cr_logw
-    
-    cr_logs("report", 2, NULL, 0, cr_logfunc(), "%s %s\n", message, sub_message ? sub_message : "");
-    
-    #else
-    
-    if (sub_message)
-        fprintf (stderr, "*** Warning: %s (%s) ***\n", message, sub_message);
-    else 
-        fprintf (stderr, "*** Warning: %s ***\n", message);
-    
-    #endif
-        
+		
+	#ifdef cr_logw
+	
+	cr_logs("report", 2, NULL, 0, cr_logfunc(), "%s %s\n", message, sub_message ? sub_message : "");
+	
+	#else
+	
+	if (sub_message)
+		fprintf (stderr, "*** Warning: %s (%s) ***\n", message, sub_message);
+	else 
+		fprintf (stderr, "*** Warning: %s ***\n", message);
+	
+	#endif
+		
 	#else
 
 	(void) message;
@@ -54,21 +54,21 @@ void ReportError (const char *message,
 				  const char *sub_message)
 	{
 
-    #if qDNGReportErrors
+	#if qDNGReportErrors
 
-    #ifdef cr_loge
-    
-    cr_logs("report", 3, NULL, 0, cr_logfunc(), "%s %s\n", message, sub_message ? sub_message : "");
-   
-    #else
+	#ifdef cr_loge
 	
-    if (sub_message)
+	cr_logs("report", 3, NULL, 0, cr_logfunc(), "%s %s\n", message, sub_message ? sub_message : "");
+   
+	#else
+	
+	if (sub_message)
 		fprintf (stderr, "*** Error: %s (%s) ***\n", message, sub_message);
 	else 
 		fprintf (stderr, "*** Error: %s ***\n", message);
-        
-    #endif
-        
+		
+	#endif
+		
 	#else
 
 	(void) message;
@@ -80,6 +80,7 @@ void ReportError (const char *message,
 
 /*****************************************************************************/
 
+// DNG_NO_RETURN
 void Throw_dng_error (dng_error_code err,
 					  const char *message,
 					  const char *sub_message,
@@ -206,13 +207,19 @@ void Throw_dng_error (dng_error_code err,
 		
 	#else
 	
+	#if !qDNGVerboseExceptions
 	(void) message;
 	(void) sub_message;
+	#endif
 	(void) silent;
 	
 	#endif
 	
+	#if qDNGVerboseExceptions
+	throw dng_exception (err, message, sub_message);
+	#else
 	throw dng_exception (err);
+	#endif
 	
 	}
 

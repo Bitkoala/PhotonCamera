@@ -2,7 +2,7 @@
 // Copyright 2006-2019 Adobe Systems Incorporated
 // All Rights Reserved.
 //
-// NOTICE:  Adobe permits you to use, modify, and distribute this file in
+// NOTICE:	Adobe permits you to use, modify, and distribute this file in
 // accordance with the terms of the Adobe license agreement accompanying it.
 /*****************************************************************************/
 
@@ -52,8 +52,17 @@ void dng_ref_counted_block::Allocate (uint32 size)
 	
 	if (size)
 		{
-		
-		fBuffer = malloc (size + sizeof (header));
+
+		size_t mallocSize = size + sizeof (header);
+
+		if (mallocSize <= size)
+			{
+
+			ThrowOverflow ();
+
+			}
+
+		fBuffer = malloc (mallocSize);
 		
 		if (!fBuffer)
 			{
@@ -86,7 +95,7 @@ void dng_ref_counted_block::Clear ()
 
 			if (--blockHeader->fRefCount == 0)
 				doFree = true;
-                
+				
 			}
 
 		if (doFree)
@@ -108,22 +117,22 @@ void dng_ref_counted_block::Clear ()
 
 dng_ref_counted_block::dng_ref_counted_block (const dng_ref_counted_block &data)
 
-	:   fBuffer (NULL)
+	:	fBuffer (NULL)
 
 	{
 
 	header *blockHeader = (struct header *) data.fBuffer;
-    
-    if (blockHeader)
-        {
+	
+	if (blockHeader)
+		{
 
 		dng_lock_std_mutex lock (blockHeader->fMutex);
 
-        blockHeader->fRefCount++;
+		blockHeader->fRefCount++;
 
-        fBuffer = blockHeader;
-        
-        }
+		fBuffer = blockHeader;
+		
+		}
 
 	}
 		
@@ -134,21 +143,21 @@ dng_ref_counted_block & dng_ref_counted_block::operator= (const dng_ref_counted_
 
 	if (this != &data)
 		{
-        
+		
 		Clear ();
 
 		header *blockHeader = (struct header *) data.fBuffer;
-        
-        if (blockHeader)
-            {
+		
+		if (blockHeader)
+			{
 
-            dng_lock_std_mutex lock (blockHeader->fMutex);
+			dng_lock_std_mutex lock (blockHeader->fMutex);
 
-            blockHeader->fRefCount++;
+			blockHeader->fRefCount++;
 
-            fBuffer = blockHeader;
-            
-            }
+			fBuffer = blockHeader;
+			
+			}
 
 		}
 
@@ -173,22 +182,26 @@ void dng_ref_counted_block::EnsureWriteable ()
 			if (possiblySharedHeader->fRefCount > 1)
 				{
 
-				fBuffer = NULL;
+				uint32 copySize = (uint32) possiblySharedHeader->fSize;
 
-				Allocate ((uint32)possiblySharedHeader->fSize);
-
-				memcpy (Buffer (),
-					((char *)possiblySharedHeader) + sizeof (struct header), // could just do + 1 w/o cast, but this makes the type mixing more explicit
-					possiblySharedHeader->fSize);
+				const void *srcData =
+					((const char *) possiblySharedHeader) +
+					sizeof (struct header);
 
 				possiblySharedHeader->fRefCount--;
+
+				fBuffer = NULL;
+
+				Allocate (copySize);
+
+				memcpy (Buffer (), srcData, copySize);
 
 				}
 
 			}
 
 		}
-        
+		
 	}
 
 /*****************************************************************************/
