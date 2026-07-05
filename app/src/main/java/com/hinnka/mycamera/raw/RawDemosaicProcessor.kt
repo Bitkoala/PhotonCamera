@@ -168,8 +168,6 @@ class RawDemosaicProcessor {
 
     companion object {
         private const val TAG = "RawDemosaicProcessor"
-        private const val RAW_HDR_HIGHLIGHT_START = 0.72f
-        private const val RAW_HDR_WHITE_POINT_SCENE_LUMA = 2.4f
         private const val EGL_CONTEXT_PRIORITY_LEVEL_IMG = 0x3100
         private const val EGL_CONTEXT_PRIORITY_LOW_IMG = 0x3103
         private const val PROFILE_GAIN_TABLE_TEXTURE_UNIT = 2
@@ -6811,11 +6809,11 @@ class RawDemosaicProcessor {
         GLES30.glUniform1i(GLES30.glGetUniformLocation(hdrReferenceProgram, "uInputTexture"), 0)
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(hdrReferenceProgram, "uHighlightStart"),
-            RAW_HDR_HIGHLIGHT_START
+            RawHdrReferenceMath.HIGHLIGHT_START
         )
         GLES30.glUniform1f(
             GLES30.glGetUniformLocation(hdrReferenceProgram, "uWhitePointSceneLuma"),
-            RAW_HDR_WHITE_POINT_SCENE_LUMA
+            RawHdrReferenceMath.WHITE_POINT_SCENE_LUMA
         )
 
         val identityMatrix = FloatArray(16)

@@ -192,6 +192,10 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceHdrWeight"), config.referenceHdrWeight)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceDeltaWeight"), config.referenceDeltaWeight)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uReferenceExtraScale"), config.referenceExtraScale)
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(computeProgram, "uReferenceDisplayMapWeight"),
+            config.referenceDisplayMapWeight
+        )
         drawQuad(computeProgram)
         checkGlError("renderComputePass")
     }
@@ -529,20 +533,21 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                 shoulderEnd = 0.98f,
                 shoulderPower = 1.55f,
                 saturationPenalty = 0.12f,
-                referenceSceneStart = 0.02f,
-                referenceSceneEnd = 0.50f,
-                referenceScenePower = 1.0f,
-                referenceSceneWeight = 0.92f,
+                referenceSceneStart = 0.68f,
+                referenceSceneEnd = 2.40f,
+                referenceScenePower = 0.82f,
+                referenceSceneWeight = 0.58f,
                 referenceSaturationPenalty = 0.10f,
                 referenceTonalStart = 0.06f,
                 referenceTonalEnd = 0.90f,
-                referenceHdrStart = 0.20f,
-                referenceHdrEnd = 0.95f,
+                referenceHdrStart = 0.68f,
+                referenceHdrEnd = 2.40f,
                 referenceDeltaStart = 0.04f,
-                referenceDeltaEnd = 0.36f,
+                referenceDeltaEnd = 0.42f,
                 referenceHdrWeight = 0.55f,
                 referenceDeltaWeight = 0.45f,
-                referenceExtraScale = 0.55f,
+                referenceExtraScale = 0.92f,
+                referenceDisplayMapWeight = 0.35f,
             )
             SourceKind.HLG_CAPTURE -> Config(maxGainRatio = 3.5f, defaultFullHdrRatio = 1.45f, requiresHdrReference = true)
             SourceKind.SDR_BITMAP -> Config(
@@ -588,6 +593,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         val referenceHdrWeight: Float = 0.35f,
         val referenceDeltaWeight: Float = 0.65f,
         val referenceExtraScale: Float = 0.82f,
+        val referenceDisplayMapWeight: Float = 1.0f,
     )
 
     private data class RenderTarget(
@@ -684,6 +690,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             uniform float uReferenceHdrWeight;
             uniform float uReferenceDeltaWeight;
             uniform float uReferenceExtraScale;
+            uniform float uReferenceDisplayMapWeight;
 
             float srgbToLinear(float value) {
                 return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
@@ -734,12 +741,17 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                     float hdrMinChannel = min(hdr.r, min(hdr.g, hdr.b));
                     float hdrSaturation = hdrMaxChannel <= 0.0001 ? 0.0 : clamp((hdrMaxChannel - hdrMinChannel) / hdrMaxChannel, 0.0, 1.0);
                     float hdrDisplayLuma = displayLuma(hdrSceneLuma, uFullHdrRatio);
-                    float referenceRatio = clamp(hdrDisplayLuma / max(sdrLuma, 0.0001), uMinGainRatio, uMaxGainRatio);
+                    float hdrMappedLuma = mix(
+                        hdrSceneLuma,
+                        hdrDisplayLuma,
+                        clamp(uReferenceDisplayMapWeight, 0.0, 1.0)
+                    );
+                    float referenceRatio = clamp(hdrMappedLuma / max(sdrLuma, 0.0001), uMinGainRatio, uMaxGainRatio);
                     float referenceWeight = clamp(
                         gainmapSmoothstep(uReferenceTonalStart, uReferenceTonalEnd, sdrLuma * 0.70 + maxChannel * 0.30) *
                         (
                             uReferenceHdrWeight * gainmapSmoothstep(uReferenceHdrStart, uReferenceHdrEnd, hdrSceneLuma) +
-                            uReferenceDeltaWeight * gainmapSmoothstep(uReferenceDeltaStart, uReferenceDeltaEnd, hdrDisplayLuma - sdrLuma)
+                            uReferenceDeltaWeight * gainmapSmoothstep(uReferenceDeltaStart, uReferenceDeltaEnd, hdrMappedLuma - sdrLuma)
                         ),
                         0.0,
                         1.0

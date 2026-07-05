@@ -12,7 +12,6 @@ import android.opengl.GLES31
 import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.ColorPaletteMapper
 import com.hinnka.mycamera.lut.ChromaDenoiseShaders
-import com.hinnka.mycamera.raw.ACR3Curve
 import com.hinnka.mycamera.raw.DenoiseProfileShaders
 import com.hinnka.mycamera.raw.RawProfileExposureGl
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -1065,7 +1064,7 @@ class LutImageProcessor {
         bindNaturalLightDisabledDcpUniforms(program)
         bindNaturalLightColorTransforms(program, engine)
         if (engine == RawRenderingEngine.AdobeCurve) {
-            bindNaturalLightAdobeCurve(program)
+            bindNaturalLightAdobeCurve(program, toneMappingParameters)
         }
         if (engine == RawRenderingEngine.Spektrafilm) {
             bindNaturalLightDummySpectralFilmUniforms(program)
@@ -1235,8 +1234,11 @@ class LutImageProcessor {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, dummyTextureId)
     }
 
-    private fun bindNaturalLightAdobeCurve(program: Int) {
-        val curve = ACR3Curve.samples()
+    private fun bindNaturalLightAdobeCurve(
+        program: Int,
+        toneMappingParameters: RawToneMappingParameters
+    ) {
+        val curve = RawToneMappingGl.adobeCurveSamplesFor(toneMappingParameters)
         uploadNaturalLightCurveTexture(curve)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, naturalLightCurveTextureId)

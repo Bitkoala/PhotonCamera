@@ -5,7 +5,6 @@ import android.graphics.PointF
 import android.graphics.SurfaceTexture
 import android.opengl.*
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
-import com.hinnka.mycamera.raw.ACR3Curve
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.RawProfileExposureGl
 import com.hinnka.mycamera.raw.RawRenderingEngine
@@ -976,7 +975,7 @@ class LutRenderer : GLSurfaceView.Renderer {
     }
 
     private fun bindRawPreviewAdobeCurve(program: Int) {
-        val curve = ACR3Curve.samples()
+        val curve = RawToneMappingGl.adobeCurveSamplesFor(rawPreviewToneMappingParameters)
         uploadRawPreviewCurveTexture(curve)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, rawPreviewCurveTextureId)

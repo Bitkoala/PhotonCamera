@@ -7,6 +7,10 @@ import kotlin.math.min
 import kotlin.math.pow
 
 object RawToneMappingGl {
+    private val OPPO_MASTER_ADOBE_CURVE by lazy {
+        DngProfileToneCurve.oppoEmbeddedToneCurveLut()
+    }
+
     data class FilmicToneCurveUniforms(
         val blackRelativeExposure: Float,
         val whiteRelativeExposure: Float,
@@ -21,6 +25,15 @@ object RawToneMappingGl {
         val m4: FloatArray,
         val m5: FloatArray
     )
+
+    fun adobeCurveSamplesFor(params: RawToneMappingParameters): FloatArray {
+        val normalized = params.normalized()
+        return if (normalized.useOppoMasterToneMap) {
+            OPPO_MASTER_ADOBE_CURVE
+        } else {
+            ACR3Curve.samples()
+        }
+    }
 
     fun bindRawToneMappingUniforms(program: Int, params: RawToneMappingParameters) {
         val normalized = params.normalized()
