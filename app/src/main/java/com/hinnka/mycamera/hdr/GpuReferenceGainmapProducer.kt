@@ -175,6 +175,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMinGainRatio"), config.minGainRatio)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMaxGainRatio"), maxGainRatio)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uStrength"), strength)
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(computeProgram, "uLocalContrastTexelSize"),
+            1f / target.width.toFloat(),
+            1f / target.height.toFloat()
+        )
         GLES30.glUniform1i(GLES30.glGetUniformLocation(computeProgram, "uHasHdrReference"), if (config.requiresHdrReference) 1 else 0)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uBaseSceneLift"), config.baseSceneLift)
         GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uGlobalSceneLift"), config.globalSceneLift)
@@ -209,6 +214,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             GLES30.glGetUniformLocation(computeProgram, "uReferenceDisplayMapWeight"),
             config.referenceDisplayMapWeight
         )
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uNonBlackFloorLowEv"), config.nonBlackFloorLowEv)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uNonBlackFloorHighEv"), config.nonBlackFloorHighEv)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uMidtoneFeatureLift"), config.midtoneFeatureLift)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uDetailFeatureLift"), config.detailFeatureLift)
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(computeProgram, "uBlueSkySuppression"), config.blueSkySuppression)
         drawQuad(computeProgram)
         checkGlError("renderComputePass")
     }
@@ -561,6 +571,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                 referenceDeltaWeight = 0.65f,
                 referenceExtraScale = 0.76f,
                 referenceDisplayMapWeight = 0.35f,
+                nonBlackFloorLowEv = 0.22f,
+                nonBlackFloorHighEv = 0.045f,
+                midtoneFeatureLift = 0.18f,
+                detailFeatureLift = 0.10f,
+                blueSkySuppression = 0.50f,
             )
             SourceKind.HLG_CAPTURE -> Config(maxGainRatio = 3.5f, defaultFullHdrRatio = 1.45f, requiresHdrReference = true)
             SourceKind.SDR_BITMAP -> Config(
@@ -607,6 +622,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
         val referenceDeltaWeight: Float = 0.65f,
         val referenceExtraScale: Float = 0.82f,
         val referenceDisplayMapWeight: Float = 1.0f,
+        val nonBlackFloorLowEv: Float = 0.0f,
+        val nonBlackFloorHighEv: Float = 0.0f,
+        val midtoneFeatureLift: Float = 0.0f,
+        val detailFeatureLift: Float = 0.0f,
+        val blueSkySuppression: Float = 0.0f,
     )
 
     private data class RenderTarget(
@@ -676,6 +696,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             uniform float uMinGainRatio;
             uniform float uMaxGainRatio;
             uniform float uStrength;
+            uniform vec2 uLocalContrastTexelSize;
             uniform int uHasHdrReference;
             uniform float uBaseSceneLift;
             uniform float uGlobalSceneLift;
@@ -704,14 +725,47 @@ class GpuReferenceGainmapProducer : GainmapProducer {
             uniform float uReferenceDeltaWeight;
             uniform float uReferenceExtraScale;
             uniform float uReferenceDisplayMapWeight;
+            uniform float uNonBlackFloorLowEv;
+            uniform float uNonBlackFloorHighEv;
+            uniform float uMidtoneFeatureLift;
+            uniform float uDetailFeatureLift;
+            uniform float uBlueSkySuppression;
 
             float srgbToLinear(float value) {
                 return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
             }
 
+            vec3 srgbToLinear(vec3 value) {
+                return vec3(
+                    srgbToLinear(value.r),
+                    srgbToLinear(value.g),
+                    srgbToLinear(value.b)
+                );
+            }
+
+            float sdrLumaAt(vec2 uv) {
+                vec3 linearRgb = srgbToLinear(texture(uSdrTexture, clamp(uv, vec2(0.0), vec2(1.0))).rgb);
+                return max(dot(linearRgb, vec3(0.2126, 0.7152, 0.0722)), 0.0);
+            }
+
             float gainmapSmoothstep(float edge0, float edge1, float x) {
                 float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
                 return t * t * (3.0 - 2.0 * t);
+            }
+
+            float localLumaContrast(vec2 uv, float centerLuma) {
+                vec2 texel = max(uLocalContrastTexelSize, vec2(0.000001));
+                float left = sdrLumaAt(uv - vec2(texel.x, 0.0));
+                float right = sdrLumaAt(uv + vec2(texel.x, 0.0));
+                float up = sdrLumaAt(uv - vec2(0.0, texel.y));
+                float down = sdrLumaAt(uv + vec2(0.0, texel.y));
+                float averageDelta = (
+                    abs(left - centerLuma) +
+                    abs(right - centerLuma) +
+                    abs(up - centerLuma) +
+                    abs(down - centerLuma)
+                ) * 0.25;
+                return clamp(averageDelta / max(centerLuma + 0.05, 0.08), 0.0, 1.0);
             }
 
             float displayLuma(float sceneLuma, float fullHdrRatio) {
@@ -726,15 +780,12 @@ class GpuReferenceGainmapProducer : GainmapProducer {
 
             void main() {
                 vec3 sdrEncoded = texture(uSdrTexture, vTexCoord).rgb;
-                vec3 sdr = vec3(
-                    srgbToLinear(sdrEncoded.r),
-                    srgbToLinear(sdrEncoded.g),
-                    srgbToLinear(sdrEncoded.b)
-                );
+                vec3 sdr = srgbToLinear(sdrEncoded);
                 float sdrLuma = max(dot(sdr, vec3(0.2126, 0.7152, 0.0722)), 0.0);
                 float maxChannel = max(sdr.r, max(sdr.g, sdr.b));
                 float minChannel = min(sdr.r, min(sdr.g, sdr.b));
                 float saturation = maxChannel <= 0.0001 ? 0.0 : clamp((maxChannel - minChannel) / maxChannel, 0.0, 1.0);
+                float localContrast = localLumaContrast(vTexCoord, sdrLuma);
 
                 float displayHeadroom = clamp(uFullHdrRatio, 1.1, uMaxGainRatio);
                 float tonalPosition = max(sdrLuma * 0.72 + maxChannel * 0.28, 0.0);
@@ -742,9 +793,49 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                 float shoulderRamp = pow(gainmapSmoothstep(uShoulderStart, uShoulderEnd, maxChannel), uShoulderPower);
                 float chromaPenalty = 1.0 - saturation * uSaturationPenalty;
                 float darkGate = gainmapSmoothstep(uDarkStart, uDarkEnd, tonalPosition);
+                float blueDominance = clamp((sdr.b - max(sdr.r, sdr.g)) / max(maxChannel, 0.0001), 0.0, 1.0);
+                float lowContrastWeight = 1.0 - gainmapSmoothstep(0.025, 0.12, localContrast);
+                float blueSkyMask = clamp(
+                    gainmapSmoothstep(0.32, 0.74, saturation) *
+                    gainmapSmoothstep(0.08, 0.30, blueDominance) *
+                    gainmapSmoothstep(0.12, 0.62, tonalPosition) *
+                    lowContrastWeight *
+                    (1.0 - gainmapSmoothstep(0.84, 1.0, minChannel)),
+                    0.0,
+                    1.0
+                );
+                float neutralDetailMask = clamp(
+                    (1.0 - gainmapSmoothstep(0.28, 0.68, saturation)) *
+                    gainmapSmoothstep(0.20, 0.78, tonalPosition) *
+                    gainmapSmoothstep(0.025, 0.14, localContrast),
+                    0.0,
+                    1.0
+                );
+                float midtoneLiftMask = clamp(
+                    gainmapSmoothstep(0.08, 0.30, tonalPosition) *
+                    (1.0 - gainmapSmoothstep(0.78, 0.96, maxChannel)) *
+                    (1.0 - gainmapSmoothstep(0.45, 0.82, saturation)) *
+                    (1.0 - blueSkyMask),
+                    0.0,
+                    1.0
+                );
+                float featureLiftScale = 1.0 +
+                    uMidtoneFeatureLift * midtoneLiftMask +
+                    uDetailFeatureLift * neutralDetailMask;
+                float skyProtection = 1.0 - clamp(uBlueSkySuppression, 0.0, 0.95) * blueSkyMask;
                 float lift = (uBaseSceneLift + uGlobalSceneLift * globalRamp + uShoulderSceneLift * shoulderRamp) *
-                    chromaPenalty * darkGate;
+                    chromaPenalty * darkGate * featureLiftScale * skyProtection;
                 float toneRatio = clamp(1.0 + (displayHeadroom - 1.0) * lift, 1.0, uMaxGainRatio);
+                float lowHeadroomWeight = 1.0 - gainmapSmoothstep(1.80, 3.20, displayHeadroom);
+                float nonBlackFloorEv = mix(
+                    max(uNonBlackFloorHighEv, 0.0),
+                    max(uNonBlackFloorLowEv, 0.0),
+                    lowHeadroomWeight
+                );
+                float nonBlackGate = gainmapSmoothstep(0.004, 0.030, tonalPosition);
+                float floorSkyProtection = mix(1.0, skyProtection, 0.60);
+                float nonBlackFloorRatio = exp(log(2.0) * nonBlackFloorEv * nonBlackGate * floorSkyProtection);
+                toneRatio = max(toneRatio, clamp(nonBlackFloorRatio, 1.0, uMaxGainRatio));
 
                 float targetRatio = toneRatio;
                 if (uHasHdrReference == 1) {
@@ -769,6 +860,11 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                         0.0,
                         1.0
                     );
+                    referenceWeight = clamp(
+                        referenceWeight * skyProtection * (1.0 + uDetailFeatureLift * 0.5 * neutralDetailMask),
+                        0.0,
+                        1.0
+                    );
                     targetRatio = toneRatio + max(referenceRatio - toneRatio, 0.0) * referenceWeight * uReferenceExtraScale;
 
                     float referenceSignal = max(hdrSceneLuma, hdrMaxChannel);
@@ -778,7 +874,7 @@ class GpuReferenceGainmapProducer : GainmapProducer {
                     );
                     float referenceSceneChroma = clamp(1.0 - hdrSaturation * uReferenceSaturationPenalty, 0.0, 1.0);
                     float referenceSceneEv = log(uMaxGainRatio / uMinGainRatio) *
-                        clamp(referenceSceneLevel * referenceSceneChroma * uReferenceSceneWeight, 0.0, 1.0);
+                        clamp(referenceSceneLevel * referenceSceneChroma * uReferenceSceneWeight * skyProtection, 0.0, 1.0);
                     float referenceSceneRatio = uMinGainRatio * exp(referenceSceneEv);
                     targetRatio = max(targetRatio, referenceSceneRatio);
                 }
