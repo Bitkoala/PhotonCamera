@@ -2496,7 +2496,7 @@ class Camera2Controller(private val context: Context) {
         if (openCameraId.isEmpty()) return
 
         try {
-            val characteristics = getCameraCharacteristicsCached(openCameraId)
+            val characteristics = resolveZoomRequestCharacteristics(openCameraId)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
@@ -2514,6 +2514,16 @@ class Camera2Controller(private val context: Context) {
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply zoom settings", e)
         }
+    }
+
+    private fun resolveZoomRequestCharacteristics(openCameraId: String): CameraCharacteristics {
+        val physicalCameraId = activeOutputPhysicalCameraId
+        if (physicalCameraId != null) {
+            getCameraCharacteristicsOrNull(physicalCameraId, "physical zoom request")?.let {
+                return it
+            }
+        }
+        return getCameraCharacteristicsCached(openCameraId)
     }
 
     private fun applyZoomRequestSettings(
@@ -3593,7 +3603,7 @@ class Camera2Controller(private val context: Context) {
         val openCameraId = activeOpenCameraId.takeIf { it.isNotEmpty() } ?: return
 
         try {
-            val characteristics = getCameraCharacteristicsCached(openCameraId)
+            val characteristics = resolveZoomRequestCharacteristics(openCameraId)
             val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
             val zoomRatioRange = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
             val minZoom = zoomRatioRange?.lower ?: 1f
