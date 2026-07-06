@@ -84,7 +84,8 @@ enum {
     kXMP_ExactPacketLength,
     kXMP_OmitPacketWrapper,
     kXMP_Part_All,
-    kXMP_Part_Metadata
+    kXMP_Part_Metadata,
+    kXMP_IterJustChildren
     
 };
 
@@ -261,6 +262,9 @@ public:
     SXMPIterator (SXMPMeta const &val, const char *ns);
     
     SXMPIterator (SXMPMeta const &val, const char *ns, const char *path);
+
+    SXMPIterator (SXMPMeta const &val, const char *ns, const char *path,
+                  XMP_OptionBits options);
     
     bool Next ( TXMP_STRING_TYPE *     schemaNS = 0,
                TXMP_STRING_TYPE *     propPath = 0,
@@ -306,6 +310,13 @@ public:
     
     static void MergeFromJPEG ( SXMPMeta *       fullXMP,
                                const SXMPMeta & extendedXMP );
+
+    static void DuplicateSubtree ( const SXMPMeta & source,
+                                  SXMPMeta * dest,
+                                  const char * sourceNS,
+                                  const char * sourceRoot,
+                                  const char * destNS,
+                                  const char * destRoot );
 };
 
 #endif /* XMPStub_h */
@@ -526,6 +537,11 @@ SXMPIterator::SXMPIterator (SXMPMeta const &val, const char *ns, const char *pat
 {
 }
 
+SXMPIterator::SXMPIterator (SXMPMeta const &val, const char *ns, const char *path,
+                            XMP_OptionBits options)
+{
+}
+
 bool SXMPIterator::Next ( TXMP_STRING_TYPE *     schemaNS,
            TXMP_STRING_TYPE *     propPath,
            TXMP_STRING_TYPE *     propValue,
@@ -584,6 +600,14 @@ void SXMPUtils::MergeFromJPEG ( SXMPMeta *       fullXMP,
 {
 }
 
+void SXMPUtils::DuplicateSubtree ( const SXMPMeta & source,
+                              SXMPMeta * dest,
+                              const char * sourceNS,
+                              const char * sourceRoot,
+                              const char * destNS,
+                              const char * destRoot )
+{
+}
 
 
 

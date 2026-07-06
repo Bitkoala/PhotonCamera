@@ -722,6 +722,7 @@ object RcdShaders {
         precision highp int;
         layout (local_size_x = 16, local_size_y = 16) in;
 
+        layout(std430, binding = 0) buffer CFA_Buf    { float cfa[]; };
         layout(std430, binding = 1) buffer RGB0_Buf   { float rgb0[]; }; // R
         layout(std430, binding = 2) buffer RGB1_Buf   { float rgb1[]; }; // G
         layout(std430, binding = 3) buffer RGB2_Buf   { float rgb2[]; }; // B
@@ -729,23 +730,230 @@ object RcdShaders {
         layout (rgba16f, binding = 0) writeonly uniform highp image2D uOutputImage;
 
         uniform ivec2 uImageSize;
+        uniform int uCfaPattern;
         uniform int uBorder;
+
+        #define RED 0
+        #define GREEN 1
+        #define BLUE 2
+
+        int getBayerColor(int cfaPattern, int col, int row) {
+            int r = row % 2;
+            int c = col % 2;
+            if (cfaPattern == 0) { // RGGB
+                if (r == 0) return (c == 0) ? 0 : 1;
+                else return (c == 0) ? 1 : 2;
+            } else if (cfaPattern == 1) { // GRBG
+                if (r == 0) return (c == 0) ? 1 : 0;
+                else return (c == 0) ? 2 : 1;
+            } else if (cfaPattern == 2) { // GBRG
+                if (r == 0) return (c == 0) ? 1 : 2;
+                else return (c == 0) ? 0 : 1;
+            } else { // BGGR (3)
+                if (r == 0) return (c == 0) ? 2 : 1;
+                else return (c == 0) ? 1 : 0;
+            }
+        }
+
+        ivec2 clampCoord(ivec2 coord) {
+            return clamp(coord, ivec2(0), uImageSize - ivec2(1));
+        }
+
+        int indexAt(ivec2 coord) {
+            ivec2 safe = clampCoord(coord);
+            return safe.y * uImageSize.x + safe.x;
+        }
+
+        int colorAt(ivec2 coord) {
+            ivec2 safe = clampCoord(coord);
+            return getBayerColor(uCfaPattern, safe.x, safe.y);
+        }
+
+        float rawAt(ivec2 coord) {
+            return cfa[indexAt(coord)];
+        }
+
+        bool inImage(ivec2 coord) {
+            return coord.x >= 0 && coord.y >= 0 &&
+                coord.x < uImageSize.x && coord.y < uImageSize.y;
+        }
+
+        bool inOutermostBorder(ivec2 coord) {
+            return coord.x < 3 || coord.y < 3 ||
+                coord.x >= uImageSize.x - 3 || coord.y >= uImageSize.y - 3;
+        }
+
+        vec3 borderInterpolateAt(ivec2 coord) {
+            ivec2 center = clampCoord(coord);
+            vec3 sum = vec3(0.0);
+            vec3 count = vec3(0.0);
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    ivec2 sampleCoord = center + ivec2(dx, dy);
+                    if (!inImage(sampleCoord)) continue;
+                    int sampleColor = colorAt(sampleCoord);
+                    float sampleValue = max(0.0, rawAt(sampleCoord));
+                    if (sampleColor == RED) {
+                        sum.r += sampleValue;
+                        count.r += 1.0;
+                    } else if (sampleColor == GREEN) {
+                        sum.g += sampleValue;
+                        count.g += 1.0;
+                    } else {
+                        sum.b += sampleValue;
+                        count.b += 1.0;
+                    }
+                }
+            }
+
+            float self = max(0.0, rawAt(center));
+            vec3 color = vec3(
+                count.r > 0.0 ? sum.r / count.r : self,
+                count.g > 0.0 ? sum.g / count.g : self,
+                count.b > 0.0 ? sum.b / count.b : self
+            );
+            int ownColor = colorAt(center);
+            if (ownColor == RED) {
+                color.r = self;
+            } else if (ownColor == GREEN) {
+                color.g = self;
+            } else {
+                color.b = self;
+            }
+            return max(color, vec3(0.0));
+        }
+
+        float ppgGreenAt(ivec2 coord) {
+            ivec2 center = clampCoord(coord);
+            if (inOutermostBorder(center)) {
+                return borderInterpolateAt(center).g;
+            }
+
+            int ownColor = colorAt(center);
+            float pc = rawAt(center);
+            if (ownColor == GREEN) {
+                return max(0.0, pc);
+            }
+
+            float pym = rawAt(center + ivec2(0, -1));
+            float pym2 = rawAt(center + ivec2(0, -2));
+            float pym3 = rawAt(center + ivec2(0, -3));
+            float pyM = rawAt(center + ivec2(0, 1));
+            float pyM2 = rawAt(center + ivec2(0, 2));
+            float pyM3 = rawAt(center + ivec2(0, 3));
+            float pxm = rawAt(center + ivec2(-1, 0));
+            float pxm2 = rawAt(center + ivec2(-2, 0));
+            float pxm3 = rawAt(center + ivec2(-3, 0));
+            float pxM = rawAt(center + ivec2(1, 0));
+            float pxM2 = rawAt(center + ivec2(2, 0));
+            float pxM3 = rawAt(center + ivec2(3, 0));
+
+            float guessx = (pxm + pc + pxM) * 2.0 - pxM2 - pxm2;
+            float diffx = (abs(pxm2 - pc) + abs(pxM2 - pc) + abs(pxm - pxM)) * 3.0 +
+                (abs(pxM3 - pxM) + abs(pxm3 - pxm)) * 2.0;
+            float guessy = (pym + pc + pyM) * 2.0 - pyM2 - pym2;
+            float diffy = (abs(pym2 - pc) + abs(pyM2 - pc) + abs(pym - pyM)) * 3.0 +
+                (abs(pyM3 - pyM) + abs(pym3 - pym)) * 2.0;
+
+            float green;
+            if (diffx > diffy) {
+                green = clamp(guessy * 0.25, min(pym, pyM), max(pym, pyM));
+            } else {
+                green = clamp(guessx * 0.25, min(pxm, pxM), max(pxm, pxM));
+            }
+            return max(0.0, green);
+        }
+
+        vec3 ppgColorAt(ivec2 coord) {
+            ivec2 center = clampCoord(coord);
+            if (inOutermostBorder(center)) {
+                return borderInterpolateAt(center);
+            }
+
+            int ownColor = colorAt(center);
+            float pc = max(0.0, rawAt(center));
+            float green = ppgGreenAt(center);
+            vec3 color = vec3(0.0, green, 0.0);
+
+            if (ownColor == RED) {
+                color.r = pc;
+                ivec2 nw = center + ivec2(-1, -1);
+                ivec2 ne = center + ivec2(1, -1);
+                ivec2 sw = center + ivec2(-1, 1);
+                ivec2 se = center + ivec2(1, 1);
+                float diff1 = abs(rawAt(nw) - rawAt(se)) +
+                    abs(ppgGreenAt(nw) - green) + abs(ppgGreenAt(se) - green);
+                float guess1 = rawAt(nw) + rawAt(se) + 2.0 * green -
+                    ppgGreenAt(nw) - ppgGreenAt(se);
+                float diff2 = abs(rawAt(ne) - rawAt(sw)) +
+                    abs(ppgGreenAt(ne) - green) + abs(ppgGreenAt(sw) - green);
+                float guess2 = rawAt(ne) + rawAt(sw) + 2.0 * green -
+                    ppgGreenAt(ne) - ppgGreenAt(sw);
+                if (diff1 > diff2) {
+                    color.b = guess2 * 0.5;
+                } else if (diff1 < diff2) {
+                    color.b = guess1 * 0.5;
+                } else {
+                    color.b = (guess1 + guess2) * 0.25;
+                }
+            } else if (ownColor == BLUE) {
+                color.b = pc;
+                ivec2 nw = center + ivec2(-1, -1);
+                ivec2 ne = center + ivec2(1, -1);
+                ivec2 sw = center + ivec2(-1, 1);
+                ivec2 se = center + ivec2(1, 1);
+                float diff1 = abs(rawAt(nw) - rawAt(se)) +
+                    abs(ppgGreenAt(nw) - green) + abs(ppgGreenAt(se) - green);
+                float guess1 = rawAt(nw) + rawAt(se) + 2.0 * green -
+                    ppgGreenAt(nw) - ppgGreenAt(se);
+                float diff2 = abs(rawAt(ne) - rawAt(sw)) +
+                    abs(ppgGreenAt(ne) - green) + abs(ppgGreenAt(sw) - green);
+                float guess2 = rawAt(ne) + rawAt(sw) + 2.0 * green -
+                    ppgGreenAt(ne) - ppgGreenAt(sw);
+                if (diff1 > diff2) {
+                    color.r = guess2 * 0.5;
+                } else if (diff1 < diff2) {
+                    color.r = guess1 * 0.5;
+                } else {
+                    color.r = (guess1 + guess2) * 0.25;
+                }
+            } else {
+                color.g = pc;
+                if (colorAt(center + ivec2(1, 0)) == RED) {
+                    color.b = (rawAt(center + ivec2(0, -1)) + rawAt(center + ivec2(0, 1)) +
+                        2.0 * color.g - ppgGreenAt(center + ivec2(0, -1)) -
+                        ppgGreenAt(center + ivec2(0, 1))) * 0.5;
+                    color.r = (rawAt(center + ivec2(-1, 0)) + rawAt(center + ivec2(1, 0)) +
+                        2.0 * color.g - ppgGreenAt(center + ivec2(-1, 0)) -
+                        ppgGreenAt(center + ivec2(1, 0))) * 0.5;
+                } else {
+                    color.r = (rawAt(center + ivec2(0, -1)) + rawAt(center + ivec2(0, 1)) +
+                        2.0 * color.g - ppgGreenAt(center + ivec2(0, -1)) -
+                        ppgGreenAt(center + ivec2(0, 1))) * 0.5;
+                    color.b = (rawAt(center + ivec2(-1, 0)) + rawAt(center + ivec2(1, 0)) +
+                        2.0 * color.g - ppgGreenAt(center + ivec2(-1, 0)) -
+                        ppgGreenAt(center + ivec2(1, 0))) * 0.5;
+                }
+            }
+
+            return max(color, vec3(0.0));
+        }
 
         void main() {
             ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
             if (coord.x >= uImageSize.x || coord.y >= uImageSize.y) return;
 
-            vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+            vec3 color;
 
             if (coord.x >= uBorder && coord.x < uImageSize.x - uBorder &&
                 coord.y >= uBorder && coord.y < uImageSize.y - uBorder) {
                 int idx = coord.y * uImageSize.x + coord.x;
-                color.r = max(0.0f, rgb0[idx]);
-                color.g = max(0.0f, rgb1[idx]);
-                color.b = max(0.0f, rgb2[idx]);
+                color = vec3(max(0.0, rgb0[idx]), max(0.0, rgb1[idx]), max(0.0, rgb2[idx]));
+            } else {
+                color = ppgColorAt(coord);
             }
 
-            imageStore(uOutputImage, coord, color);
+            imageStore(uOutputImage, coord, vec4(color, 1.0));
         }
     """.trimIndent()
 }

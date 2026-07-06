@@ -448,21 +448,18 @@ object QuadBayerShaders {
         layout (rgba16f, binding = 0) writeonly uniform highp image2D uOutputImage;
 
         uniform ivec2 uImageSize;
-        uniform int uBorder;
 
         void main() {
             ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
             if (coord.x >= uImageSize.x || coord.y >= uImageSize.y) return;
 
-            vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-            if (coord.x >= uBorder && coord.x < uImageSize.x - uBorder &&
-                coord.y >= uBorder && coord.y < uImageSize.y - uBorder) {
-                int idx = coord.y * uImageSize.x + coord.x;
-                color.r = max(0.0, tmpR[idx]);
-                color.g = max(0.0, rgb1[idx]);
-                color.b = max(0.0, tmpB[idx]);
-            }
-
+            int idx = coord.y * uImageSize.x + coord.x;
+            vec4 color = vec4(
+                max(0.0, tmpR[idx]),
+                max(0.0, rgb1[idx]),
+                max(0.0, tmpB[idx]),
+                1.0
+            );
             imageStore(uOutputImage, coord, color);
         }
     """.trimIndent()

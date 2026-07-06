@@ -177,6 +177,7 @@ class RawDemosaicProcessor {
         private const val RCD_PQ_WRITE_BINDING = 5
         private const val RCD_PQ_READ_BINDING = 4
         private const val RCD_VH_DIR_BINDING = 4
+        private const val RCD_OUTPUT_MARGIN = 9
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD = 0.985f
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_CEILING = 8.0f
         private const val RCD_HIGHLIGHT_RECONSTRUCTION_MIN_WB_GAIN = 1e-3f
@@ -1885,7 +1886,14 @@ class RawDemosaicProcessor {
                 actualWidth,
                 actualHeight
             )
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), 4)
+            GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uCfaPattern"),
+                actualMetadata.cfaPattern
+            )
+            GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"),
+                RCD_OUTPUT_MARGIN
+            )
             GLES31.glBindImageTexture(
                 RCD_OUTPUT_IMAGE_UNIT,
                 demosaicTextureId,
@@ -4632,7 +4640,8 @@ class RawDemosaicProcessor {
 
             GLES31.glUseProgram(rcdWriteOutputProgram)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uImageSize"), width, height)
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), 4)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uCfaPattern"), metadata.cfaPattern)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), RCD_OUTPUT_MARGIN)
             GLES31.glBindImageTexture(
                 RCD_OUTPUT_IMAGE_UNIT,
                 demosaicTextureId,
@@ -4694,7 +4703,6 @@ class RawDemosaicProcessor {
         val highlightWbGains = highlightReconstructionWbGains(metadata)
         val lscSize = lensShadingLogString(metadata)
         val expandedBlockSize = RawCfaCorrection.expandedBayerBlockSize(metadata.cfaPattern)
-        val outputBorder = (expandedBlockSize * 2).coerceAtLeast(4)
 
         GLES31.glUseProgram(quadPopulateProgram)
         GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + RCD_RAW_TEXTURE_UNIT)
@@ -4791,7 +4799,6 @@ class RawDemosaicProcessor {
             width,
             height
         )
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(quadWriteOutputProgram, "uBorder"), outputBorder)
         GLES31.glBindImageTexture(
             RCD_OUTPUT_IMAGE_UNIT,
             demosaicTextureId,

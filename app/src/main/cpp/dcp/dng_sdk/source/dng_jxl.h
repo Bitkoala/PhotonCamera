@@ -33,7 +33,11 @@
 #include <vector>
 #include <unordered_set>
 
+#if PHOTON_ENABLE_DNG_JXL
 #include "jxl/color_encoding.h"
+#else
+#include "photon_jxl_stub.h"
+#endif
 
 /*****************************************************************************/
 

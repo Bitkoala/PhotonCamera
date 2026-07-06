@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "common.h"
+#include "dng_bottlenecks.h"
 #include "dng_lossless_jpeg.h"
 #include "dng_memory.h"
 #include "dng_memory_stream.h"
@@ -3766,14 +3767,14 @@ Java_com_hinnka_mycamera_utils_SuperResolutionDngWriter_encodeLosslessJpegNative
 
   try {
     dng_memory_stream stream(gDefaultDNGMemoryAllocator);
-    EncodeLosslessJPEG(reinterpret_cast<const uint16 *>(rawPtr),
-                       static_cast<uint32>(height),
-                       static_cast<uint32>(width),
-                       static_cast<uint32>(samplesPerPixel),
-                       static_cast<uint32>(bitsPerSample),
-                       static_cast<int32>(rowStep),
-                       static_cast<int32>(colStep),
-                       stream);
+    DoEncodeLosslessJPEG(reinterpret_cast<const uint16 *>(rawPtr),
+                         static_cast<uint32>(height),
+                         static_cast<uint32>(width),
+                         static_cast<uint32>(samplesPerPixel),
+                         static_cast<uint32>(bitsPerSample),
+                         static_cast<int32>(rowStep),
+                         static_cast<int32>(colStep),
+                         stream);
     AutoPtr<dng_memory_block> block(
         stream.AsMemoryBlock(gDefaultDNGMemoryAllocator));
     if (!block.Get() || block->LogicalSize() == 0) {

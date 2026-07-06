@@ -3,6 +3,7 @@ project("native-tool")
 
 set(ADOBE_DNG_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dcp/dng_sdk/source)
 set(ADOBE_XMP_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/dcp/XMPStub/include)
+option(PHOTON_ENABLE_DNG_JXL "Enable Adobe DNG SDK JPEG XL support" OFF)
 
 # 4. 添加头文件路径
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/LibRaw)
@@ -19,6 +20,12 @@ file(GLOB_RECURSE LIBRAW_SOURCES LibRaw/src/*.cpp LibRaw/src/*.c)
 list(FILTER LIBRAW_SOURCES EXCLUDE REGEX ".*_ph\\.cpp$")
 file(GLOB ADOBE_DNG_SOURCES "${ADOBE_DNG_SOURCE_DIR}/*.cpp")
 list(FILTER ADOBE_DNG_SOURCES EXCLUDE REGEX ".*/dng_validate\\.cpp$")
+
+if(PHOTON_ENABLE_DNG_JXL)
+    list(FILTER ADOBE_DNG_SOURCES EXCLUDE REGEX ".*/dng_jxl_disabled\\.cpp$")
+else()
+    list(FILTER ADOBE_DNG_SOURCES EXCLUDE REGEX ".*/dng_jxl\\.cpp$")
+endif()
 
 # 6. 将你的 native 库链接到 libyuv
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O3 -ffast-math")
@@ -50,6 +57,7 @@ target_compile_definitions(
     qDNGValidate=0
     qDNGValidateTarget=0
     qDNGThreadSafe=0
+    PHOTON_ENABLE_DNG_JXL=$<BOOL:${PHOTON_ENABLE_DNG_JXL}>
 )
 target_compile_options(my-native-lib PRIVATE -O3 -ffast-math -w ${OpenMP_CXX_FLAGS})
 
