@@ -67,17 +67,27 @@ object DarktableFilmicHighlightReconstructionShaders {
             return uvec2(v.y >> (shift - 32), 0u);
         }
 
+        uvec2 mul32Wide(uint a, uint b) {
+            const uint mask = 0xffffu;
+            uint a0 = a & mask;
+            uint a1 = a >> 16;
+            uint b0 = b & mask;
+            uint b1 = b >> 16;
+            uint p0 = a0 * b0;
+            uint p1 = a0 * b1;
+            uint p2 = a1 * b0;
+            uint p3 = a1 * b1;
+            uint mid = (p0 >> 16) + (p1 & mask) + (p2 & mask);
+            uint lo = (p0 & mask) | (mid << 16);
+            uint hi = p3 + (p1 >> 16) + (p2 >> 16) + (mid >> 16);
+            return uvec2(lo, hi);
+        }
+
         uvec2 mul64(uvec2 a, uvec2 b) {
-            uint hi0;
-            uint lo0;
-            uint hi1;
-            uint lo1;
-            uint hi2;
-            uint lo2;
-            umulExtended(a.x, b.x, hi0, lo0);
-            umulExtended(a.x, b.y, hi1, lo1);
-            umulExtended(a.y, b.x, hi2, lo2);
-            return uvec2(lo0, hi0 + lo1 + lo2);
+            uvec2 p0 = mul32Wide(a.x, b.x);
+            uvec2 p1 = mul32Wide(a.x, b.y);
+            uvec2 p2 = mul32Wide(a.y, b.x);
+            return uvec2(p0.x, p0.y + p1.x + p2.x);
         }
 
         uint splitmix32(uint seed) {
