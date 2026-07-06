@@ -2112,9 +2112,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             (userPreferencesRepository.userPreferences.firstOrNull()?.mirrorFrontCamera ?: true)
         val aperture = if (state.value.isVirtualApertureEnabled) state.value.virtualAperture else null
 
+        val rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs)
+        val hdrDefaultToneMappingParameters = if (baselineTarget == BaselineColorCorrectionTarget.RAW) {
+            rawToneMappingParameters
+        } else {
+            null
+        }
         val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
             hasEmbeddedGainmap = false,
-            userPrefs = userPrefs
+            userPrefs = userPrefs,
+            rawToneMappingParameters = hdrDefaultToneMappingParameters
         )
         val baselineMetadata = resolveBaselineMetadata(
             target = baselineTarget,
@@ -2155,7 +2162,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameraId = currentCameraId,
             rawBlackBorderCrop = currentRawBlackBorderCrop(),
             rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
-            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
+            rawToneMappingParameters = rawToneMappingParameters,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -2237,9 +2244,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun defaultHdrEffectEnabled(
         hasEmbeddedGainmap: Boolean,
-        userPrefs: UserPreferences?
+        userPrefs: UserPreferences?,
+        rawToneMappingParameters: RawToneMappingParameters? = null
     ): Boolean {
         if (hasEmbeddedGainmap) return true
+        if (rawToneMappingParameters?.normalized()?.useGooglePixelToneMap == true) return true
         return userPrefs?.autoEnableHdr ?: false
     }
 
@@ -4485,15 +4494,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     (userPreferencesRepository.userPreferences.firstOrNull()?.mirrorFrontCamera ?: true)
 
             val aperture = if (state.value.isVirtualApertureEnabled) state.value.virtualAperture else null
-            val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
-                hasEmbeddedGainmap = false,
-                userPrefs = userPrefs
-            )
             val baselineTarget = if (isRawCaptureFormat(image.format)) {
                 BaselineColorCorrectionTarget.RAW
             } else {
                 BaselineColorCorrectionTarget.JPG
             }
+            val rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs)
+            val hdrDefaultToneMappingParameters = if (baselineTarget == BaselineColorCorrectionTarget.RAW) {
+                rawToneMappingParameters
+            } else {
+                null
+            }
+            val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
+                hasEmbeddedGainmap = false,
+                userPrefs = userPrefs,
+                rawToneMappingParameters = hdrDefaultToneMappingParameters
+            )
             val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
@@ -4530,7 +4546,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraId = currentCameraId,
                 rawBlackBorderCrop = currentRawBlackBorderCrop(),
                 rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
-                rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
+                rawToneMappingParameters = rawToneMappingParameters,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -4974,15 +4990,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val superResScale = if (useSuperRes) 2f else 1.0f
 
             val aperture = if (state.value.isVirtualApertureEnabled) state.value.virtualAperture else null
-            val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
-                hasEmbeddedGainmap = false,
-                userPrefs = userPrefs
-            )
             val baselineTarget = if (isRawStack) {
                 BaselineColorCorrectionTarget.RAW
             } else {
                 BaselineColorCorrectionTarget.JPG
             }
+            val rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs)
+            val hdrDefaultToneMappingParameters = if (baselineTarget == BaselineColorCorrectionTarget.RAW) {
+                rawToneMappingParameters
+            } else {
+                null
+            }
+            val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
+                hasEmbeddedGainmap = false,
+                userPrefs = userPrefs,
+                rawToneMappingParameters = hdrDefaultToneMappingParameters
+            )
             val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
             val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
                 userPrefs = userPrefs,
@@ -5019,7 +5042,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 cameraId = currentCameraId,
                 rawBlackBorderCrop = currentRawBlackBorderCrop(),
                 rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
-                rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
+                rawToneMappingParameters = rawToneMappingParameters,
                 spectralFilmStock = spectralFilmSettings.stock,
                 spectralFilmPrint = spectralFilmSettings.print,
                 spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,
@@ -5512,15 +5535,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 (userPreferencesRepository.userPreferences.firstOrNull()?.mirrorFrontCamera ?: true)
 
         val aperture = if (state.value.isVirtualApertureEnabled) state.value.virtualAperture else null
-        val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
-            hasEmbeddedGainmap = false,
-            userPrefs = userPrefs
-        )
         val baselineTarget = if (isRawCaptureFormat(image.format)) {
             BaselineColorCorrectionTarget.RAW
         } else {
             BaselineColorCorrectionTarget.JPG
         }
+        val rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs)
+        val hdrDefaultToneMappingParameters = if (baselineTarget == BaselineColorCorrectionTarget.RAW) {
+            rawToneMappingParameters
+        } else {
+            null
+        }
+        val defaultHdrEffectEnabled = defaultHdrEffectEnabled(
+            hasEmbeddedGainmap = false,
+            userPrefs = userPrefs,
+            rawToneMappingParameters = hdrDefaultToneMappingParameters
+        )
         val baselineMetadata = resolveBaselineMetadata(baselineTarget, userPrefs)
         val effectiveRawAutoExposure = resolveEffectiveRawAutoExposure(
             userPrefs = userPrefs,
@@ -5557,7 +5587,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameraId = currentCameraId,
             rawBlackBorderCrop = currentRawBlackBorderCrop(),
             rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
-            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
+            rawToneMappingParameters = rawToneMappingParameters,
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,

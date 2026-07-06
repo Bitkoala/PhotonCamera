@@ -1959,7 +1959,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private fun persistRawEditMetadata(
         mediaData: MediaData,
-        onComplete: ((Boolean) -> Unit)? = null
+        onComplete: ((Boolean) -> Unit)? = null,
+        enableHdrGainmapForGoogleToneMap: Boolean = false
     ) {
         val sharpening = editSharpening.value
         val noiseReduction = editNoiseReduction.value
@@ -2015,6 +2016,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     baselineColorRecipeParams = baselineRecipeParams,
                     rawRenderingEngine = rawColorEngine,
                     rawToneMappingParameters = rawToneMappingParameters,
+                    manualHdrEffectEnabled = current.manualHdrEffectEnabled || enableHdrGainmapForGoogleToneMap,
                     spectralFilmStock = spectralFilmStock,
                     spectralFilmPrint = spectralFilmPrint,
                     spectralFilmCDensityGain = spectralFilmCDensityGain,
@@ -2056,8 +2058,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         value: RawToneMappingParameters,
         onComplete: ((Boolean) -> Unit)? = null
     ) {
-        editRawToneMappingParameters.value = value.normalized()
-        persistRawEditMetadata(mediaData, onComplete)
+        val previous = editRawToneMappingParameters.value.normalized()
+        val updated = value.normalized()
+        val shouldEnableHdrGainmap = !previous.useGooglePixelToneMap && updated.useGooglePixelToneMap
+        editRawToneMappingParameters.value = updated
+        persistRawEditMetadata(
+            mediaData = mediaData,
+            onComplete = onComplete,
+            enableHdrGainmapForGoogleToneMap = shouldEnableHdrGainmap
+        )
     }
 
     fun saveRawExposureCompensationValue(mediaData: MediaData, value: Float, onComplete: ((Boolean) -> Unit)? = null) {

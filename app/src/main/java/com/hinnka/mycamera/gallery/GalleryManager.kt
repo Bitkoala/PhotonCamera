@@ -3158,7 +3158,7 @@ object GalleryManager {
         val photoDir = getPhotoDir(context, photoId, true)
         val photoFile = File(photoDir, PHOTO_FILE)
         val tempFile = File(photoDir, "temp.jpg")
-        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapEnabled(dngFile)
+        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapDefaults(dngFile)
         val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
         val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
@@ -4179,15 +4179,17 @@ object GalleryManager {
         return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), maxEdge = 512, preserveHdr = true))
     }
 
-    private fun MediaMetadata.withEmbeddedDngGooglePixelToneMapEnabled(
+    private fun MediaMetadata.withEmbeddedDngGooglePixelToneMapDefaults(
         dngFile: File
     ): MediaMetadata {
         val hasProfileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)?.isValid == true
         if (!hasProfileGainTableMap || !DngEmbeddedProfile.hasGoogleToneMapProfile(dngFile)) return this
-        if (rawToneMappingParameters.useGooglePixelToneMap) return this
-        PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map for this photo")
+        val toneMappingParameters = rawToneMappingParameters.withGooglePixelToneMap(true)
+        if (toneMappingParameters == rawToneMappingParameters && manualHdrEffectEnabled) return this
+        PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map and HDR gainmap for this photo")
         return copy(
-            rawToneMappingParameters = rawToneMappingParameters.withGooglePixelToneMap(true)
+            rawToneMappingParameters = toneMappingParameters,
+            manualHdrEffectEnabled = true
         )
     }
 
@@ -4297,7 +4299,7 @@ object GalleryManager {
                     }
 
                     // 3. 处理 RAW 以生成 JPEG 预览
-                    var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapEnabled(dngFile)
+                    var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapDefaults(dngFile)
                     val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, 0f)
                     val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, 0f)
                     val processedBitmap = RawDemosaicProcessor.getInstance().process(
@@ -4350,8 +4352,7 @@ object GalleryManager {
                         updatedMetadata = updatedMetadata.copy(
                             width = processedBitmap.width,
                             height = processedBitmap.height,
-                            rotation = 0,
-                            manualHdrEffectEnabled = false,
+                            rotation = 0
                         )
                         saveMetadata(context, photoId, updatedMetadata)
 //                        if (updatedMetadata.computationalAperture != null) {
