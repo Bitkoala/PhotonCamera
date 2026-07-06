@@ -4141,9 +4141,10 @@ object GalleryManager {
                 }
             }
         }.getOrNull() ?: return null
+        val decodedBitmap = bitmap.ensurePreviewCompatibleConfig(preserveHdr)
         val isDng = infoMimeType?.contains("dng", ignoreCase = true) == true
 
-        if (!isDng) return bitmap
+        if (!isDng) return decodedBitmap
 
         return try {
             val orientation = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -4152,13 +4153,14 @@ object GalleryManager {
 
             // 如果方向正常，直接返回
             if (orientation == ExifInterface.ORIENTATION_NORMAL || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
-                return bitmap
+                return decodedBitmap
             }
 
             val (infoW, infoH) = infoSize?.let { it.width to it.height } ?: (0 to 0)
 
             // 准确判断方向是否已被处理：
-            // 1. 检查当前方向是否涉及宽高交换
+            // 1. 检查当前方向是否涉及宽高交换。180 度和翻转不会交换宽高，无法通过尺寸判断，
+            //    对 DNG 内嵌预览按 EXIF 显式处理。
             val rotationSwapsSize = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
                     orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
                     orientation == ExifInterface.ORIENTATION_TRANSPOSE ||
@@ -4167,17 +4169,22 @@ object GalleryManager {
             val alreadyHandled = if (rotationSwapsSize && infoW != infoH && infoW > 0) {
                 // 如果是 90/270 度旋转且非正方形，检查 Bitmap 宽高比是否相对于原图已反转
                 // (bitmapW > bitmapH) 不等于 (infoW > infoH) 说明发生了交换，即已被处理
-                (bitmap.width > bitmap.height) != (infoW > infoH)
-            } else true
+                (decodedBitmap.width > decodedBitmap.height) != (infoW > infoH)
+            } else false
 
             if (alreadyHandled) {
-                bitmap
+                decodedBitmap
             } else {
-                rotateImageIfRequired(bitmap, orientation)
+                rotateImageIfRequired(decodedBitmap, orientation)
             }
         } catch (e: Exception) {
-            bitmap
+            decodedBitmap
         }
+    }
+
+    private fun Bitmap.ensurePreviewCompatibleConfig(preserveHdr: Boolean): Bitmap {
+        if (preserveHdr || config == Bitmap.Config.ARGB_8888) return this
+        return copy(Bitmap.Config.ARGB_8888, false) ?: this
     }
 
     private fun detectEmbeddedGainmap(context: Context, photoFile: File): Boolean {

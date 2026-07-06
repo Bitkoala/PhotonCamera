@@ -2,6 +2,7 @@ package com.hinnka.mycamera.gallery
 
 import android.content.Context
 import android.content.ContentUris
+import android.net.Uri
 import android.provider.MediaStore
 import com.hinnka.mycamera.gallery.db.GalleryMediaStore
 import com.hinnka.mycamera.utils.StartupTrace
@@ -111,6 +112,14 @@ class GalleryRepository(private val context: Context) {
         fallbackItems
     }
 
+    suspend fun getSystemMediaByUri(uri: Uri): MediaData? = withContext(Dispatchers.IO) {
+        when {
+            uri.isMediaStoreImageUri() -> querySystemImage(uri)
+            uri.isMediaStoreVideoUri() -> querySystemVideo(uri)
+            else -> null
+        }
+    }
+
     private suspend fun queryAllSystemPhotosByPages(pageSize: Int = 200): List<MediaData> {
         val imageItems = querySystemImagesByPages(pageSize)
         val videoItems = querySystemVideosByPages(pageSize)
@@ -129,6 +138,56 @@ class GalleryRepository(private val context: Context) {
             offset += pageSize
         }
         return items
+    }
+
+    private fun querySystemImage(uri: Uri): MediaData? {
+        val projection = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.DATE_TAKEN,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.SIZE,
+            MediaStore.Images.Media.WIDTH,
+            MediaStore.Images.Media.HEIGHT,
+            MediaStore.Images.Media.MIME_TYPE
+        )
+
+        return context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+
+            val idColumn = cursor.getColumnIndex(MediaStore.Images.Media._ID)
+            val mediaId = cursor.getOptionalLong(idColumn)
+                .takeIf { it > 0L }
+                ?: uri.mediaStoreIdOrNull()
+                ?: return@use null
+            val nameColumn = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+            val dateTakenColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
+            val dateColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
+            val sizeColumn = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
+            val widthColumn = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
+            val heightColumn = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
+            val mimeColumn = cursor.getColumnIndex(MediaStore.Images.Media.MIME_TYPE)
+            val contentUri = uri
+            val displayDate = resolveSystemMediaDate(
+                dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
+                dateAddedSeconds = cursor.getOptionalLong(dateColumn),
+                mediaId = "image_$mediaId"
+            )
+
+            MediaData(
+                id = "image_$mediaId",
+                uri = contentUri,
+                thumbnailUri = contentUri,
+                displayName = cursor.getOptionalString(nameColumn) ?: uri.lastPathSegment ?: "image_$mediaId",
+                dateAdded = displayDate,
+                size = cursor.getOptionalLong(sizeColumn),
+                width = cursor.getOptionalInt(widthColumn),
+                height = cursor.getOptionalInt(heightColumn),
+                mediaType = MediaType.IMAGE,
+                mimeType = cursor.getOptionalString(mimeColumn),
+                sourceUri = contentUri
+            )
+        }
     }
 
     private suspend fun querySystemVideosByPages(pageSize: Int): List<MediaData> {
@@ -333,6 +392,78 @@ class GalleryRepository(private val context: Context) {
         return items
     }
 
+    private fun querySystemVideo(uri: Uri): MediaData? {
+        val projection = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.DATE_TAKEN,
+            MediaStore.Video.Media.DATE_ADDED,
+            MediaStore.Video.Media.SIZE,
+            MediaStore.Video.Media.WIDTH,
+            MediaStore.Video.Media.HEIGHT,
+            MediaStore.Video.Media.ORIENTATION,
+            MediaStore.Video.Media.MIME_TYPE,
+            MediaStore.Video.Media.DURATION
+        )
+
+        return context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+
+            val idColumn = cursor.getColumnIndex(MediaStore.Video.Media._ID)
+            val mediaId = cursor.getOptionalLong(idColumn)
+                .takeIf { it > 0L }
+                ?: uri.mediaStoreIdOrNull()
+                ?: return@use null
+            val nameColumn = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
+            val dateTakenColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_TAKEN)
+            val dateColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_ADDED)
+            val sizeColumn = cursor.getColumnIndex(MediaStore.Video.Media.SIZE)
+            val widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
+            val heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
+            val orientationColumn = cursor.getColumnIndex(MediaStore.Video.Media.ORIENTATION)
+            val mimeColumn = cursor.getColumnIndex(MediaStore.Video.Media.MIME_TYPE)
+            val durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
+            val contentUri = uri
+            val mimeType = cursor.getOptionalString(mimeColumn)
+            val durationMs = cursor.getOptionalLong(durationColumn)
+            val width = cursor.getOptionalInt(widthColumn)
+            val height = cursor.getOptionalInt(heightColumn)
+            val orientation = cursor.getOptionalInt(orientationColumn)
+            val displayDate = resolveSystemMediaDate(
+                dateTakenMillis = cursor.getOptionalLong(dateTakenColumn),
+                dateAddedSeconds = cursor.getOptionalLong(dateColumn),
+                mediaId = "video_$mediaId"
+            )
+
+            MediaData(
+                id = "video_$mediaId",
+                uri = contentUri,
+                thumbnailUri = contentUri,
+                displayName = cursor.getOptionalString(nameColumn) ?: uri.lastPathSegment ?: "video_$mediaId",
+                dateAdded = displayDate,
+                size = cursor.getOptionalLong(sizeColumn),
+                width = width,
+                height = height,
+                mediaType = MediaType.VIDEO,
+                mimeType = mimeType,
+                durationMs = durationMs,
+                sourceUri = contentUri,
+                metadata = MediaMetadata(
+                    mediaType = MediaType.VIDEO,
+                    dateTaken = displayDate,
+                    width = width,
+                    height = height,
+                    sourceUri = contentUri.toString(),
+                    mimeType = mimeType,
+                    durationMs = durationMs,
+                    rotationDegrees = orientation,
+                    videoWidth = width,
+                    videoHeight = height
+                )
+            )
+        }
+    }
+
     private fun resolveSystemMediaDate(
         dateTakenMillis: Long,
         dateAddedSeconds: Long,
@@ -354,5 +485,23 @@ class GalleryRepository(private val context: Context) {
 
     private fun android.database.Cursor.getOptionalString(columnIndex: Int): String? {
         return if (columnIndex >= 0 && !isNull(columnIndex)) getString(columnIndex) else null
+    }
+
+    private fun Uri.isMediaStoreImageUri(): Boolean {
+        return scheme == "content" &&
+            authority == MediaStore.AUTHORITY &&
+            pathSegments.any { it == "images" }
+    }
+
+    private fun Uri.isMediaStoreVideoUri(): Boolean {
+        return scheme == "content" &&
+            authority == MediaStore.AUTHORITY &&
+            pathSegments.any { it == "video" }
+    }
+
+    private fun Uri.mediaStoreIdOrNull(): Long? {
+        return runCatching { ContentUris.parseId(this) }
+            .getOrNull()
+            ?.takeIf { it > 0L }
     }
 }

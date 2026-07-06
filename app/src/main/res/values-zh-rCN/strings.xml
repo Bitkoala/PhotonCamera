@@ -74,6 +74,8 @@
 
     <!-- Gallery -->
     <string name="gallery_photon">光子相册</string>
+    <string name="gallery_system">系统相册</string>
+    <string name="gallery_prepare_edit_failed">无法准备这张照片用于编辑</string>
     <string name="gallery_group_today">今天</string>
     <string name="gallery_group_yesterday">昨天</string>
     <string name="permission_required_gallery">需要媒体访问权限以显示系统相册</string>
@@ -129,6 +131,7 @@
     <string name="video_info_bitrate">码率</string>
     <string name="video_info_has_audio">音轨</string>
     <string name="video_info_rotation">旋转角</string>
+    <string name="gallery_raw_badge">RAW</string>
 
     <!-- Frame Watermark -->
     <string name="frame">边框</string>

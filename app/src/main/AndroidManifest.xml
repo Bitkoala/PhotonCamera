@@ -123,6 +123,64 @@
                 <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.PICK" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="com.android.camera.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW_SECURE" />
+                <action android:name="com.google.android.apps.photos.action.SECURE_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                        android:scheme="content"
+                        android:host="com.google.android.libraries.photos.api.mars"
+                        android:pathPrefix="/file" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="com.android.camera.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW_SECURE" />
+                <action android:name="com.google.android.apps.photos.action.SECURE_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="com.android.camera.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW" />
+                <action android:name="android.provider.action.REVIEW_SECURE" />
+                <action android:name="com.google.android.apps.photos.action.SECURE_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW" />
+                <action android:name="com.google.android.apps.photos.mars.api.ACTION_REVIEW_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
         </activity>
 
         <provider
