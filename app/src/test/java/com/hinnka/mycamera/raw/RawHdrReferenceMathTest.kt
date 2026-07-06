@@ -11,6 +11,14 @@ class RawHdrReferenceMathTest {
     }
 
     @Test
+    fun givesOrdinaryHighlightsGentleLift() {
+        val highlight = RawHdrReferenceMath.expandedSceneLuma(0.6f)
+
+        assertTrue(highlight > 0.66f)
+        assertTrue(highlight < 0.72f)
+    }
+
+    @Test
     fun keepsNearWhiteHighlightSeparation() {
         val lower = RawHdrReferenceMath.expandedSceneLuma(0.98f)
         val white = RawHdrReferenceMath.expandedSceneLuma(1.0f)
@@ -22,6 +30,16 @@ class RawHdrReferenceMathTest {
     @Test
     fun broadHighlightsStillGetVisibleLift() {
         assertTrue(RawHdrReferenceMath.expandedSceneLuma(0.85f) > 1.35f)
+    }
+
+    @Test
+    fun keepsBrightCloudTonesOrdered() {
+        val lower = RawHdrReferenceMath.expandedSceneLuma(0.72f)
+        val middle = RawHdrReferenceMath.expandedSceneLuma(0.85f)
+        val upper = RawHdrReferenceMath.expandedSceneLuma(0.98f)
+
+        assertTrue(middle > lower)
+        assertTrue(upper > middle)
     }
 
     @Test

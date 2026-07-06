@@ -1512,7 +1512,7 @@ object RawShaders {
      *
      * RAW 线性输入已经按传感器白点归一化，直接输出会让拍到白点的灯光仍然只有
      * SDR reference white (= 1.0)，gainmap 没有高光余量可写。这里只按原始亮度比例
-     * 扩展接近白点的 RAW 高光到 scene-linear HDR headroom，保留白云等扩散高光的局部层次。
+     * 从普通高光开始逐步扩展到 scene-linear HDR headroom，保留白云等扩散高光的局部层次。
      */
     val HDR_REFERENCE_FRAGMENT_SHADER = """
         #version 300 es

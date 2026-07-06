@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 object RawHdrReferenceMath {
-    const val HIGHLIGHT_START = 0.68f
+    const val HIGHLIGHT_START = 0.50f
     const val WHITE_POINT_SCENE_LUMA = 2.4f
 
     fun expandedSceneLuma(
