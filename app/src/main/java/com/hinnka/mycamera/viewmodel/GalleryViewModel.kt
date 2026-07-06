@@ -145,12 +145,20 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             p.forEach { photo ->
                 photo.sourceUri?.toString()?.let { photonMap[it] = photo }
                 photo.metadata?.sourceUri?.let { photonMap[it] = photo }
+                photo.sourceUri?.lastPathSegment?.let { photonMap[it] = photo }
+                photo.metadata?.sourceUri?.toUri()?.lastPathSegment?.let { photonMap[it] = photo }
             }
 
             s.map { systemPhoto ->
-                photonMap[systemPhoto.uri.toString()]?.let { photonPhoto ->
+                val photonPhoto = listOfNotNull(
+                    systemPhoto.uri.toString(),
+                    systemPhoto.sourceUri?.toString(),
+                    systemPhoto.uri.lastPathSegment,
+                    systemPhoto.sourceUri?.lastPathSegment
+                ).firstNotNullOfOrNull { key -> photonMap[key] }
+                photonPhoto?.let {
                     systemPhoto.copy(
-                        relatedPhoto = photonPhoto
+                        relatedPhoto = it
                     )
                 } ?: systemPhoto
             }
@@ -208,6 +216,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     // 编辑状态
     var isEditing by mutableStateOf(false)
+        private set
+    var preparingEditPhotoId by mutableStateOf<String?>(null)
         private set
 
     // LUT 编辑状态
@@ -1035,6 +1045,118 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun openExternalGalleryContent(
+        uri: Uri,
+        onSuccess: (GalleryTab, String) -> Unit,
+        onFallback: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            PLog.d(TAG, "Open external gallery content: $uri")
+
+            val systemMedia = repository.getSystemMediaByUri(uri)
+            if (systemMedia != null) {
+                selectedTab = GalleryTab.SYSTEM
+                upsertSystemMedia(systemMedia)
+                setCurrentSystemPhotoById(systemMedia.id)
+                onSuccess(GalleryTab.SYSTEM, systemMedia.id)
+
+                if (hasGalleryPermission && _systemPhotos.value.size <= 1) {
+                    loadSystemPhotos(reset = true)
+                    setCurrentSystemPhotoById(systemMedia.id)
+                }
+                return@launch
+            }
+
+            loadPhotos(reset = true)
+            findPhotonPhotoBySourceUri(uri)?.let { existing ->
+                selectedTab = GalleryTab.PHOTON
+                setCurrentPhotoById(existing.id)
+                onSuccess(GalleryTab.PHOTON, existing.id)
+                return@launch
+            }
+
+            val importedPhotoId = GalleryManager.importPhoto(context, uri, null)
+            if (importedPhotoId != null) {
+                loadPhotos(reset = true)
+                selectedTab = GalleryTab.PHOTON
+                setCurrentPhotoById(importedPhotoId)
+                onSuccess(GalleryTab.PHOTON, importedPhotoId)
+            } else {
+                PLog.w(TAG, "Unable to open or import external gallery content: $uri")
+                onFallback()
+            }
+        }
+    }
+
+    private fun upsertSystemMedia(media: MediaData) {
+        _systemPhotos.update { current ->
+            val existing = current.firstOrNull { it.id == media.id }
+            val updatedMedia = if (existing != null) {
+                media.copy(
+                    metadata = media.metadata ?: existing.metadata,
+                    relatedPhoto = existing.relatedPhoto
+                )
+            } else {
+                media
+            }
+            (listOf(updatedMedia) + current.filterNot { it.id == media.id })
+                .sortedByDescending { it.dateAdded }
+        }
+    }
+
+    private fun linkSystemPhotoToPhoton(systemPhotoId: String, photonPhoto: MediaData) {
+        _systemPhotos.update { current ->
+            current.map { systemPhoto ->
+                if (systemPhoto.id == systemPhotoId) {
+                    systemPhoto.copy(relatedPhoto = photonPhoto)
+                } else {
+                    systemPhoto
+                }
+            }
+        }
+    }
+
+    private fun setCurrentSystemPhotoById(id: String) {
+        val index = _systemPhotos.value.indexOfFirst { it.id == id }
+        if (index != -1) {
+            currentPhotoIndex = index
+        }
+    }
+
+    private fun findPhotonPhotoBySourceUri(uri: Uri): MediaData? {
+        val uriString = uri.toString()
+        return _photos.value.firstOrNull { photo ->
+            photo.sourceUri?.toString() == uriString ||
+                photo.metadata?.sourceUri == uriString ||
+                photo.metadata?.exportedUris?.contains(uriString) == true
+        }
+    }
+
+    private fun loadSystemPhotoMetadataForEdit(photo: MediaData): MediaMetadata {
+        val context = getApplication<Application>()
+        return photo.relatedPhoto?.metadata
+            ?: photo.metadata
+            ?: runBlocking {
+                withContext(Dispatchers.IO) {
+                    val uriMetadata = MediaMetadata.fromUri(context, photo.uri)
+                    uriMetadata.copy(
+                        sourceUri = photo.uri.toString(),
+                        mediaType = photo.mediaType,
+                        width = photo.width.takeIf { it > 0 } ?: uriMetadata.width,
+                        height = photo.height.takeIf { it > 0 } ?: uriMetadata.height,
+                        mimeType = photo.mimeType ?: uriMetadata.mimeType,
+                        durationMs = photo.durationMs
+                    )
+                }
+            }.also { metadata ->
+                photo.metadata = metadata
+                _systemPhotos.update { current ->
+                    current.map { if (it.id == photo.id) it.withMetadataSnapshot(metadata) else it }
+                }
+            }
+    }
+
     /**
      * 加载当前照片的元数据
      */
@@ -1097,6 +1219,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             height = resolvedHeight,
             metadata = metadata
         )
+    }
+
+    private fun MediaData.isRawLikeMedia(): Boolean {
+        if (!isImage) return false
+        val lowerMime = mimeType.orEmpty().lowercase(Locale.US)
+        val lowerName = displayName.lowercase(Locale.US)
+        return lowerMime.contains("dng") ||
+            lowerMime.contains("raw") ||
+            lowerName.endsWith(".dng") ||
+            lowerName.endsWith(".rw2") ||
+            lowerName.endsWith(".arw") ||
+            lowerName.endsWith(".cr3")
     }
 
     private fun restoreCropEditState(photo: MediaData?, metadata: MediaMetadata?) {
@@ -1179,6 +1313,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun loadThumbnail(photo: MediaData): Bitmap? {
         val context = getApplication<Application>()
         return try {
+            if (photo.isRawLikeMedia()) {
+                return GalleryManager.loadBitmap(context, photo.thumbnailUri, maxEdge = 512, preserveHdr = false)
+            }
             if (photo.thumbnailUri.scheme == "content") {
                 context.contentResolver.loadThumbnail(photo.thumbnailUri, android.util.Size(512, 512), null)
             } else {
@@ -1730,11 +1867,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             } else {
-                targetPhoto.metadata ?: runBlocking {
-                    withContext(Dispatchers.IO) {
-                        GalleryManager.loadMetadata(context, targetPhoto.id)
-                    }
-                }
+                loadSystemPhotoMetadataForEdit(targetPhoto)
             }
             applyMetadataToEditState(metadata)
         }
@@ -1826,6 +1959,63 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+    }
+
+    fun prepareCurrentPhotoForEdit(
+        index: Int,
+        onReady: () -> Unit,
+        onFailure: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            setCurrentPhoto(index)
+            val requestedPhoto = getCurrentPhoto()
+            if (requestedPhoto == null) {
+                onFailure()
+                return@launch
+            }
+
+            preparingEditPhotoId = requestedPhoto.id
+            try {
+                val prepared = preparePhotoForEdit(requestedPhoto)
+                if (prepared) {
+                    enterEditMode()
+                    onReady()
+                } else {
+                    onFailure()
+                }
+            } finally {
+                preparingEditPhotoId = null
+            }
+        }
+    }
+
+    private suspend fun preparePhotoForEdit(photo: MediaData): Boolean {
+        if (selectedTab != GalleryTab.SYSTEM || !photo.isRawLikeMedia()) return true
+
+        val context = getApplication<Application>()
+        loadPhotos(reset = true)
+        val importedPhotoId = photo.relatedPhoto?.id
+            ?: findPhotonPhotoBySourceUri(photo.uri)?.id
+            ?: GalleryManager.importPhoto(context, photo.uri, null)
+
+        if (importedPhotoId == null) {
+            PLog.w(TAG, "Unable to import system RAW for editing: ${photo.uri}")
+            return false
+        }
+
+        loadPhotos(reset = true)
+        val importedPhoto = _photos.value.firstOrNull { it.id == importedPhotoId }
+        if (importedPhoto != null) {
+            linkSystemPhotoToPhoton(photo.id, importedPhoto)
+        }
+        GalleryManager.loadMetadata(context, importedPhotoId)?.let { metadata ->
+            applyPhotoMetadataUpdateToMemory(importedPhotoId, metadata)
+            applyMetadataToEditState(metadata)
+            _photos.value.firstOrNull { it.id == importedPhotoId }?.let { updatedPhoto ->
+                linkSystemPhotoToPhoton(photo.id, updatedPhoto)
+            }
+        }
+        return true
     }
 
     /**
@@ -2298,7 +2488,22 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun isRaw(photoId: String): Boolean {
         val context = getApplication<Application>()
+        if (selectedTab == GalleryTab.SYSTEM) {
+            currentPhotos.value.firstOrNull { it.id == photoId }?.relatedPhoto?.let { relatedPhoto ->
+                return GalleryManager.getDngFile(context, relatedPhoto.id).exists()
+            }
+        }
         return GalleryManager.getDngFile(context, photoId).exists()
+    }
+
+    fun isRawMedia(photo: MediaData): Boolean {
+        val context = getApplication<Application>()
+        if (GalleryManager.getDngFile(context, photo.id).exists()) return true
+        photo.relatedPhoto?.let { relatedPhoto ->
+            if (GalleryManager.getDngFile(context, relatedPhoto.id).exists()) return true
+            if (relatedPhoto.isRawLikeMedia()) return true
+        }
+        return photo.isRawLikeMedia()
     }
 
     /**
@@ -2385,6 +2590,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         return withContext(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                val isSystemExternal = selectedTab == GalleryTab.SYSTEM && photo.uri.scheme == "content"
 
                 var finalMetadata: MediaMetadata
                 var finalS = 0f
@@ -2394,7 +2600,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 val metadata =
                     photo.metadata
                         ?: photo.relatedPhoto?.metadata
-                        ?: GalleryManager.loadMetadata(getApplication(), photo.id)
+                        ?: GalleryManager.loadMetadata(context, photo.id)
                         ?: MediaMetadata()
 
                 if (useGlobalEdit) {
@@ -2475,16 +2681,20 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     return@withContext cached
                 }
 
-                val isSystem = selectedTab == GalleryTab.SYSTEM
                 val isRawPhoto = GalleryManager.getDngFile(context, photo.id).exists()
                 val sourceBackedUri = photo.sourceUri ?: finalMetadata.sourceUri?.toUri()
-                val canLoadExternalUri = isSystem || sourceBackedUri != null
+                val canLoadExternalUri = isSystemExternal || sourceBackedUri != null
                 val externalUri = sourceBackedUri ?: photo.uri
+                val preserveExternalHdr = isSystemExternal && showOrigin && !useGlobalEdit
 
                 // 2. 原始底图缓存（按 maxEdge 加载，快速预览走小尺寸，正式预览走高分辨率）
                 val currentBitmap = bitmap ?: if (showOrigin) {
-                    GalleryManager.loadOriginalBitmap(context, photo.id, maxEdge, isSystem)
-                        ?: if (canLoadExternalUri) GalleryManager.loadBitmap(context, externalUri, maxEdge, isSystem) else null
+                    GalleryManager.loadOriginalBitmap(context, photo.id, maxEdge, preserveExternalHdr)
+                        ?: if (canLoadExternalUri) {
+                            GalleryManager.loadBitmap(context, externalUri, maxEdge, preserveExternalHdr)
+                        } else {
+                            null
+                        }
                 } else {
                     val bokehFile = GalleryManager.getBokehFile(context, photo.id)
                     when {
@@ -2495,7 +2705,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                             maxEdge
                         )
                         else -> GalleryManager.loadOriginalBitmap(context, photo.id, maxEdge)
-                    } ?: if (canLoadExternalUri) GalleryManager.loadBitmap(context, externalUri, maxEdge, isSystem) else null
+                    } ?: if (canLoadExternalUri) GalleryManager.loadBitmap(context, externalUri, maxEdge, preserveHdr = false) else null
                 } ?: return@withContext null
 
                 // 只在全分辨率路径下缓存原始底图（避免低分辨率污染 origin 缓存）
@@ -2556,7 +2766,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 val metadata =
                     photo.metadata
                         ?: photo.relatedPhoto?.metadata
-                        ?: GalleryManager.loadMetadata(getApplication(), photo.id)
+                        ?: GalleryManager.loadMetadata(context, photo.id)
                         ?: MediaMetadata()
 
                 val detailCacheKey = detailCacheKey(photo, metadata, false)
@@ -2686,8 +2896,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
+                val wasSystemPhoto = selectedTab == GalleryTab.SYSTEM
 
-                val targetPhotoId = if (selectedTab == GalleryTab.SYSTEM) {
+                val targetPhotoId = if (wasSystemPhoto) {
                     photo.relatedPhoto?.id ?: run {
                         val importedId = GalleryManager.importPhoto(
                             context,
@@ -2766,9 +2977,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     currentMediaMetadata = success
                     photo.metadata = success
 
-                    // 如果是新导入的，刷相册列表
-                    if (selectedTab == GalleryTab.SYSTEM) {
-                        loadPhotos()
+                    // 系统相册项保存后保留 SYSTEM tab，通过 relatedPhoto 展示导入副本的编辑结果。
+                    if (wasSystemPhoto) {
+                        loadPhotos(reset = true)
+                        applyPhotoMetadataUpdateToMemory(targetPhotoId, success)
+                        _photos.value.firstOrNull { it.id == targetPhotoId }?.let { updatedPhoto ->
+                            linkSystemPhotoToPhoton(photo.id, updatedPhoto)
+                        }
                     } else {
                         // 更新 photos 列表中对应照片的 metadata，触发 UI 刷新
                         val updatedPhotos = _photos.value.map { p ->

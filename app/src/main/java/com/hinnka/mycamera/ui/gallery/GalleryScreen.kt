@@ -251,7 +251,6 @@ fun GalleryScreen(
 
     // 首次进入时先让导航过渡完成，再挂载重型网格，避免首屏动画和列表构建抢主线程。
     LaunchedEffect(Unit) {
-        viewModel.selectTab(GalleryTab.PHOTON)
         viewModel.loadCurrentTabData()
         delay(300L)
         shouldRenderGrid = true
@@ -281,63 +280,75 @@ fun GalleryScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                modifier = Modifier,
-                title = {
-                    if (isSelectionMode) {
-                        Text(
-                            text = stringResource(R.string.items_selected, selectedPhotos.size),
-                            color = Color.White
-                        )
-                    } else {
-                        Text(
-                            text = stringResource(R.string.gallery_photon),
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
+            Column {
+                TopAppBar(
+                    modifier = Modifier,
+                    title = {
                         if (isSelectionMode) {
-                            viewModel.exitSelectionMode()
+                            Text(
+                                text = stringResource(R.string.items_selected, selectedPhotos.size),
+                                color = Color.White
+                            )
                         } else {
-                            onBack()
-                        }
-                    }) {
-                        Icon(
-                            imageVector = if (isSelectionMode) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.back),
-                            tint = Color.White
-                        )
-                    }
-                },
-                actions = {
-                    if (isSelectionMode) {
-                        IconButton(onClick = { viewModel.toggleSelectAll() }) {
-                            Icon(
-                                imageVector = AppIcons.SelectAll,
-                                contentDescription = stringResource(R.string.select_all),
-                                tint = Color.White
+                            Text(
+                                text = stringResource(R.string.gallery_photon),
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                    } else {
+                    },
+                    navigationIcon = {
                         IconButton(onClick = {
-                            launcher.launch(buildSystemGalleryMediaPickIntent(context))
+                            if (isSelectionMode) {
+                                viewModel.exitSelectionMode()
+                            } else {
+                                onBack()
+                            }
                         }) {
                             Icon(
-                                imageVector = AppIcons.AddPhotoAlternate,
-                                contentDescription = stringResource(R.string.import_photo),
+                                imageVector = if (isSelectionMode) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.back),
                                 tint = Color.White
                             )
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF151515)
+                    },
+                    actions = {
+                        if (isSelectionMode) {
+                            IconButton(onClick = { viewModel.toggleSelectAll() }) {
+                                Icon(
+                                    imageVector = AppIcons.SelectAll,
+                                    contentDescription = stringResource(R.string.select_all),
+                                    tint = Color.White
+                                )
+                            }
+                        } else {
+                            IconButton(onClick = {
+                                launcher.launch(buildSystemGalleryMediaPickIntent(context))
+                            }) {
+                                Icon(
+                                    imageVector = AppIcons.AddPhotoAlternate,
+                                    contentDescription = stringResource(R.string.import_photo),
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF151515)
+                    )
                 )
-            )
+                if (!isSelectionMode) {
+                    GalleryTabRow(
+                        selectedTab = selectedTab,
+                        onTabSelected = { tab ->
+                            scope.launch {
+                                viewModel.selectTab(tab)
+                            }
+                        }
+                    )
+                }
+            }
         },
         bottomBar = {
             // 多选模式下显示操作栏
@@ -626,6 +637,36 @@ fun GalleryScreen(
             containerColor = Color(0xFF2D2D2D),
             titleContentColor = Color.White,
             textContentColor = Color.White
+        )
+    }
+}
+
+@Composable
+private fun GalleryTabRow(
+    selectedTab: GalleryTab,
+    onTabSelected: (GalleryTab) -> Unit
+) {
+    val selectedTabIndex = selectedTab.ordinal
+    TabRow(
+        selectedTabIndex = selectedTabIndex,
+        containerColor = Color(0xFF151515),
+        contentColor = Color.White,
+        indicator = { tabPositions ->
+            TabRowDefaults.SecondaryIndicator(
+                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                color = AccentOrange
+            )
+        }
+    ) {
+        Tab(
+            selected = selectedTab == GalleryTab.PHOTON,
+            onClick = { onTabSelected(GalleryTab.PHOTON) },
+            text = { Text(stringResource(R.string.gallery_photon)) }
+        )
+        Tab(
+            selected = selectedTab == GalleryTab.SYSTEM,
+            onClick = { onTabSelected(GalleryTab.SYSTEM) },
+            text = { Text(stringResource(R.string.gallery_system)) }
         )
     }
 }

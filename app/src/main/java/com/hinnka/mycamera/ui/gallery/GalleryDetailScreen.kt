@@ -203,13 +203,23 @@ fun GalleryDetailScreen(
     // 记录上次的照片数量，用于判断是否有新照片增加
     var lastPhotosCount by rememberSaveable { mutableIntStateOf(photos.size) }
 
-    // 同步当前索引，并在快到底部时加载更多系统照片
-    LaunchedEffect(pagerState.currentPage, photos.size) {
+    // 同步当前索引
+    LaunchedEffect(pagerState.currentPage) {
         viewModel.setCurrentPhoto(pagerState.currentPage)
         currentColorSpace.value = null
+    }
 
+    // 在快到底部时加载更多系统照片
+    LaunchedEffect(pagerState.currentPage, photos.size) {
         if (pagerState.currentPage >= photos.size - 5) {
             viewModel.loadCurrentTabMore()
+        }
+    }
+
+    LaunchedEffect(viewModel.selectedTab, photos, viewModel.currentPhotoIndex) {
+        val targetIndex = viewModel.currentPhotoIndex
+        if (targetIndex in photos.indices && pagerState.currentPage != targetIndex) {
+            pagerState.scrollToPage(targetIndex)
         }
     }
 
@@ -234,6 +244,7 @@ fun GalleryDetailScreen(
     }
 
     val currentPhoto = photos.getOrNull(pagerState.currentPage)
+    val preparingEditPhotoId = viewModel.preparingEditPhotoId
     var hdrStrengthSliderValue by remember(currentPhoto?.id) {
         mutableFloatStateOf(currentPhoto?.let { viewModel.getManualHdrStrength(it) } ?: HdrGainmapStrength.DEFAULT)
     }
@@ -437,10 +448,15 @@ fun GalleryDetailScreen(
                         GalleryActionItem(
                             icon = Icons.Default.Edit,
                             text = stringResource(R.string.edit),
+                            isLoading = preparingEditPhotoId == currentPhoto.id,
                             onClick = {
-                                viewModel.setCurrentPhoto(pagerState.currentPage)
-                                viewModel.enterEditMode()
-                                onEdit()
+                                viewModel.prepareCurrentPhotoForEdit(
+                                    index = pagerState.currentPage,
+                                    onReady = onEdit,
+                                    onFailure = {
+                                        Toast.makeText(context, R.string.gallery_prepare_edit_failed, Toast.LENGTH_SHORT).show()
+                                    }
+                                )
                             },
                         )
                     }
@@ -557,13 +573,16 @@ fun GalleryDetailScreen(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
+                                    val forceSystemOrigin = viewModel.selectedTab == GalleryTab.SYSTEM &&
+                                        photo.relatedPhoto == null
                                     ZoomableImage(
                                         photo = photo,
                                         colorSpace = currentColorSpace,
-                                        showOrigin = showOrigin || viewModel.selectedTab == GalleryTab.SYSTEM,
+                                        showOrigin = showOrigin || forceSystemOrigin,
                                         isActive = page == pagerState.currentPage,
                                         isScrollInProgress = pagerState.isScrollInProgress,
                                         viewModel = viewModel,
+                                        showRawBadge = photo.isImage && viewModel.isRawMedia(photo),
                                         onZoomChange = { zoomed ->
                                             if (page == pagerState.currentPage) {
                                                 isZoomed = zoomed
@@ -1552,6 +1571,7 @@ private fun ZoomableImage(
     isActive: Boolean,
     isScrollInProgress: Boolean,
     viewModel: GalleryViewModel,
+    showRawBadge: Boolean,
     onZoomChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1571,9 +1591,14 @@ private fun ZoomableImage(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        val displayPhoto = if (viewModel.selectedTab == GalleryTab.SYSTEM) {
+            photo.relatedPhoto ?: photo
+        } else {
+            photo
+        }
         // 使用 hashCode() 代替 toJson() 序列化，避免 composition 时做 JSON 序列化
-        val metadataHash = remember(photo.metadata, photo.relatedPhoto?.metadata) {
-            photo.metadata?.hashCode() ?: photo.relatedPhoto?.metadata?.hashCode() ?: 0
+        val metadataHash = remember(displayPhoto.metadata, photo.metadata) {
+            displayPhoto.metadata?.hashCode() ?: photo.metadata?.hashCode() ?: 0
         }
 
         var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -1584,13 +1609,13 @@ private fun ZoomableImage(
             animationSpec = tween(durationMillis = 750, easing = LinearOutSlowInEasing),
             label = "hdrFadeIn"
         )
-        val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
+        val refreshKey = viewModel.photoRefreshKeys[displayPhoto.id] ?: 0L
         val isSettledActive = isActive && !isScrollInProgress
 
-        LaunchedEffect(photo.id, metadataHash, showOrigin, refreshKey, isSettledActive) {
+        LaunchedEffect(displayPhoto.id, metadataHash, showOrigin, refreshKey, isSettledActive) {
             suspend fun loadBitmap() {
                 isLoading = bitmap == null
-                bitmap = viewModel.getPreviewBitmap(photo, showOrigin = showOrigin,
+                bitmap = viewModel.getPreviewBitmap(displayPhoto, showOrigin = showOrigin,
                     ignoreDenoise = !isSettledActive, maxEdge = if (isSettledActive) 4096 else 1024)
                 if (bitmap == null) {
                     delay(500)
@@ -1599,8 +1624,8 @@ private fun ZoomableImage(
                 colorSpace.value = bitmap?.colorSpace
                 isLoading = bitmap == null
 
-                if (photo.metadata?.manualHdrEffectEnabled == true && isSettledActive) {
-                    hdrBitmap = viewModel.getDetailBitmap(photo)
+                if (displayPhoto.metadata?.manualHdrEffectEnabled == true && isSettledActive) {
+                    hdrBitmap = viewModel.getDetailBitmap(displayPhoto)
                     hdrBitmap?.let {
                         colorSpace.value = it.colorSpace
                     }
@@ -1617,7 +1642,7 @@ private fun ZoomableImage(
         }
 
         if (bitmap != null) {
-            val imageModel = remember(photo.id, metadataHash, bitmap) {
+            val imageModel = remember(displayPhoto.id, metadataHash, bitmap) {
                 ImageRequest.Builder(context)
                     .data(bitmap)
                     .crossfade(false) // 禁用交叉淡入淡出，避免滑动时同时渲染两张大图
@@ -1626,7 +1651,7 @@ private fun ZoomableImage(
 
             ZoomableAsyncImage(
                 model = imageModel,
-                contentDescription = photo.displayName,
+                contentDescription = displayPhoto.displayName,
                 contentScale = ContentScale.Fit,
                 state = zoomableState,
                 onDoubleClick = DoubleClickToZoomListener.cycle(maxZoomFactor = 3f),
@@ -1635,7 +1660,7 @@ private fun ZoomableImage(
         }
 
         if (showHdr && hdrBitmap != null) {
-            val imageModel = remember(photo.id, metadataHash, hdrBitmap) {
+            val imageModel = remember(displayPhoto.id, metadataHash, hdrBitmap) {
                 ImageRequest.Builder(context)
                     .data(hdrBitmap)
                     .crossfade(false) // 禁用交叉淡入淡出，避免滑动时同时渲染两张大图
@@ -1644,11 +1669,29 @@ private fun ZoomableImage(
 
             ZoomableAsyncImage(
                 model = imageModel,
-                contentDescription = photo.displayName,
+                contentDescription = displayPhoto.displayName,
                 contentScale = ContentScale.Fit,
                 state = zoomableState,
                 modifier = Modifier.fillMaxSize().alpha(hdrAlpha).autoRotate(matchParentSize = true)
             )
+        }
+
+        if (showRawBadge && bitmap != null) {
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = Color.Black.copy(alpha = 0.58f),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.gallery_raw_badge),
+                    color = AccentOrange,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
 
         if (isLoading) {

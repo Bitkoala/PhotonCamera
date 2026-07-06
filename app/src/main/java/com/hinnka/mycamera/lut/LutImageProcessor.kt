@@ -1368,7 +1368,22 @@ class LutImageProcessor {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
 
-        android.opengl.GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+        val uploadBitmap = bitmap.asGlUploadCompatibleBitmap()
+        android.opengl.GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, uploadBitmap, 0)
+        if (uploadBitmap !== bitmap) {
+            uploadBitmap.recycle()
+        }
+    }
+
+    private fun Bitmap.asGlUploadCompatibleBitmap(): Bitmap {
+        if (config == Bitmap.Config.ARGB_8888 || config == Bitmap.Config.RGB_565) return this
+        return runCatching { copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
+            ?: runCatching {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { converted ->
+                    android.graphics.Canvas(converted).drawBitmap(this, 0f, 0f, null)
+                }
+            }.getOrNull()
+            ?: this
     }
 
     private fun uploadImageTextureFromArgb(argbData: ShortBuffer, width: Int, height: Int) {

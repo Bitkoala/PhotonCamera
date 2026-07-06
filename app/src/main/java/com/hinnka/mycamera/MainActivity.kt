@@ -161,6 +161,23 @@ private val CUBE_IMPORT_MIME_TYPES = setOf(
     "application/vnd.iridas.cube"
 )
 
+private const val CAMERA_REVIEW_ACTION = "com.android.camera.action.REVIEW"
+private const val PROVIDER_REVIEW_ACTION = "android.provider.action.REVIEW"
+private const val PROVIDER_REVIEW_SECURE_ACTION = "android.provider.action.REVIEW_SECURE"
+private const val PHOTOS_SECURE_REVIEW_ACTION = "com.google.android.apps.photos.action.SECURE_REVIEW"
+private const val PHOTOS_MARS_REVIEW_ACTION = "com.google.android.apps.photos.mars.api.ACTION_REVIEW"
+private const val PHOTOS_MARS_REVIEW_SECURE_ACTION = "com.google.android.apps.photos.mars.api.ACTION_REVIEW_SECURE"
+private const val MEDIASTORE_AUTHORITY = "media"
+
+private val EXTERNAL_GALLERY_REVIEW_ACTIONS = setOf(
+    CAMERA_REVIEW_ACTION,
+    PROVIDER_REVIEW_ACTION,
+    PROVIDER_REVIEW_SECURE_ACTION,
+    PHOTOS_SECURE_REVIEW_ACTION,
+    PHOTOS_MARS_REVIEW_ACTION,
+    PHOTOS_MARS_REVIEW_SECURE_ACTION
+)
+
 class MainActivity : ComponentActivity() {
 
     private val cameraViewModel: CameraViewModel by viewModels()
@@ -387,6 +404,8 @@ class MainActivity : ComponentActivity() {
                 galleryViewModel.importSharedImages(uris)
                 pendingRoute = Routes.GALLERY
             }
+        } else if (isExternalGalleryLaunchIntent(intent)) {
+            handleExternalGalleryLaunchIntent(intent)
         }
         intent.getStringExtra("route")?.let {
             pendingRoute = it
@@ -394,6 +413,31 @@ class MainActivity : ComponentActivity() {
         intent.getBooleanExtra("show_ghost_permissions", false).let {
             cameraViewModel.showGhostPermissions = it
         }
+    }
+
+    private fun handleExternalGalleryLaunchIntent(intent: Intent) {
+        val data = intent.data
+        PLog.d(
+            "MainActivity",
+            "External gallery launch intent: action=${intent.action}, type=${intent.type}, data=$data"
+        )
+        if (data == null) {
+            pendingRoute = Routes.GALLERY
+            return
+        }
+
+        galleryViewModel.openExternalGalleryContent(
+            uri = data,
+            onSuccess = { tab, photoId ->
+                val route = Routes.photoDetail(tab = tab, photoId = photoId)
+                PLog.d("MainActivity", "External gallery content resolved: tab=$tab, photoId=$photoId, route=$route")
+                pendingRoute = route
+            },
+            onFallback = {
+                PLog.w("MainActivity", "External gallery content fallback to gallery: data=$data")
+                pendingRoute = Routes.GALLERY
+            }
+        )
     }
 
     private fun getExternalLutImportUris(intent: Intent): List<Uri> {
@@ -412,6 +456,27 @@ class MainActivity : ComponentActivity() {
             }
             else -> emptyList()
         }
+    }
+
+    private fun isExternalGalleryLaunchIntent(intent: Intent): Boolean {
+        val action = intent.action ?: return false
+        return when {
+            action == Intent.ACTION_PICK && intent.type?.startsWith("image/") == true -> true
+            action == Intent.ACTION_VIEW && isMediaStoreImageViewIntent(intent) -> true
+            action in EXTERNAL_GALLERY_REVIEW_ACTIONS -> true
+            else -> false
+        }
+    }
+
+    private fun isMediaStoreImageViewIntent(intent: Intent): Boolean {
+        val data = intent.data ?: return false
+        val normalizedMimeType = intent.type
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase(Locale.US)
+        return data.scheme == "content" &&
+                data.authority == MEDIASTORE_AUTHORITY &&
+                (normalizedMimeType == null || normalizedMimeType.startsWith("image/"))
     }
 
     private fun shouldHandleExternalLutImportUri(uri: Uri, mimeType: String?): Boolean {

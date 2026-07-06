@@ -74,6 +74,8 @@
 
     <!-- Gallery -->
     <string name="gallery_photon">Photon</string>
+    <string name="gallery_system">System</string>
+    <string name="gallery_prepare_edit_failed">Unable to prepare this photo for editing</string>
     <string name="gallery_group_today">Today</string>
     <string name="gallery_group_yesterday">Yesterday</string>
     <string name="permission_required_gallery">Media permission is required to access system gallery</string>
@@ -131,6 +133,7 @@
     <string name="video_info_bitrate">Bitrate</string>
     <string name="video_info_has_audio">Audio</string>
     <string name="video_info_rotation">Rotation</string>
+    <string name="gallery_raw_badge">RAW</string>
 
     <!-- Frame Watermark -->
     <string name="frame">Frame</string>

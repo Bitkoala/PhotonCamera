@@ -148,7 +148,9 @@ fun GalleryEditScreen(
     val userPreferences by userPreferencesRepository.userPreferences.collectAsState(
         initial = com.hinnka.mycamera.data.UserPreferences()
     )
-    val currentPhoto = viewModel.getCurrentPhoto()
+    val currentPhotos by viewModel.currentPhotos.collectAsState()
+    val currentPhoto = currentPhotos.getOrNull(viewModel.currentPhotoIndex)
+    val editSourcePhoto = currentPhoto?.relatedPhoto ?: currentPhoto
     val editLutId by viewModel.editLutId.collectAsState()
     val editLutRecipeParams by viewModel.editLutRecipeParams.collectAsState()
     val editPhotoRecipeParams by viewModel.editPhotoRecipeParams.collectAsState()
@@ -218,7 +220,7 @@ fun GalleryEditScreen(
 
     val editAiDenoiseStrength by viewModel.editAiDenoiseStrength.collectAsState()
 
-    val isRaw = currentPhoto?.let { viewModel.isRaw(it.id) } ?: false
+    val isRaw = editSourcePhoto?.let { viewModel.isRaw(it.id) } ?: false
 
     var showOrigin by remember { mutableStateOf(false) }
 
@@ -227,7 +229,7 @@ fun GalleryEditScreen(
     var showControls by remember { mutableStateOf(true) }
     var isZoomed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val refreshKey = currentPhoto?.id?.let { viewModel.photoRefreshKeys[it] } ?: 0L
+    val refreshKey = editSourcePhoto?.id?.let { viewModel.photoRefreshKeys[it] } ?: 0L
     val isBaselineLutEditSheetVisible = showBaselineLutEditSheet && baselineLutEditId != null
     val isLutEditSheetVisible = (showLutEditDialog || showEffectsSheet) && editLutId != null
     val shouldShowEditControls = showControls &&
@@ -241,7 +243,7 @@ fun GalleryEditScreen(
     var previewRenderRequestId by remember { mutableLongStateOf(0L) }
 
     fun currentPreviewSignature(fast: Boolean = false): PreviewRenderSignature? {
-        val photo = currentPhoto ?: return null
+        val photo = editSourcePhoto ?: return null
         return PreviewRenderSignature(
             photoId = photo.id,
             refreshKey = refreshKey,
@@ -302,17 +304,17 @@ fun GalleryEditScreen(
 
 
 
-    LaunchedEffect(currentPhoto) {
-        currentPhoto ?: return@LaunchedEffect
-        editFrameCustomProperties = currentPhoto.metadata?.customProperties
-            ?: viewModel.getEditCustomProperties(currentPhoto.id)
+    LaunchedEffect(editSourcePhoto) {
+        val photo = editSourcePhoto ?: return@LaunchedEffect
+        editFrameCustomProperties = photo.metadata?.customProperties
+            ?: viewModel.getEditCustomProperties(photo.id)
     }
 
     val rawDcpLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        val photo = currentPhoto ?: return@rememberLauncherForActivityResult
+        val photo = editSourcePhoto ?: return@rememberLauncherForActivityResult
         scope.launch {
             val importedDcps = viewModel.importRawDcps(uris)
             val failedCount = uris.size - importedDcps.size
@@ -338,8 +340,8 @@ fun GalleryEditScreen(
         }
     }
 
-    LaunchedEffect(currentPhoto, refreshKey) {
-        val photo = currentPhoto ?: return@LaunchedEffect
+    LaunchedEffect(editSourcePhoto, refreshKey) {
+        val photo = editSourcePhoto ?: return@LaunchedEffect
         if (photo.isVideo) return@LaunchedEffect
         snapshotFlow {
             currentPreviewSignature(true)
@@ -351,8 +353,8 @@ fun GalleryEditScreen(
             }
     }
 
-    LaunchedEffect(currentPhoto, refreshKey) {
-        val photo = currentPhoto ?: return@LaunchedEffect
+    LaunchedEffect(editSourcePhoto, refreshKey) {
+        val photo = editSourcePhoto ?: return@LaunchedEffect
         if (photo.isVideo) return@LaunchedEffect
         snapshotFlow {
             currentPreviewSignature()
@@ -365,10 +367,10 @@ fun GalleryEditScreen(
             }
     }
 
-    LaunchedEffect(currentPhoto) {
-        if (currentPhoto == null) return@LaunchedEffect
+    LaunchedEffect(editSourcePhoto) {
+        val photo = editSourcePhoto ?: return@LaunchedEffect
         thumbnailBitmap = withContext(Dispatchers.IO) {
-            viewModel.loadThumbnail(currentPhoto)
+            viewModel.loadThumbnail(photo)
         }
     }
 
@@ -396,12 +398,13 @@ fun GalleryEditScreen(
         }
         return
     }
+    val currentEditSourcePhoto = editSourcePhoto ?: currentPhoto
 
-    var pendingRawPreviewRefresh by remember(currentPhoto.id) { mutableStateOf(false) }
-    val isRefreshingRawPreview = viewModel.refreshingPhotos.contains(currentPhoto.id)
+    var pendingRawPreviewRefresh by remember(currentEditSourcePhoto.id) { mutableStateOf(false) }
+    val isRefreshingRawPreview = viewModel.refreshingPhotos.contains(currentEditSourcePhoto.id)
 
     fun refreshRawPreview(showResultToast: Boolean = false) {
-        viewModel.refreshRawPreview(currentPhoto) { success ->
+        viewModel.refreshRawPreview(currentEditSourcePhoto) { success ->
             if (showResultToast) {
                 Toast.makeText(
                     context,
@@ -414,14 +417,14 @@ fun GalleryEditScreen(
 
     fun requestRawPreviewRefresh(showResultToast: Boolean = false) {
         if (!isRaw) return
-        if (viewModel.refreshingPhotos.contains(currentPhoto.id)) {
+        if (viewModel.refreshingPhotos.contains(currentEditSourcePhoto.id)) {
             pendingRawPreviewRefresh = true
             return
         }
         refreshRawPreview(showResultToast)
     }
 
-    LaunchedEffect(isRefreshingRawPreview, pendingRawPreviewRefresh, currentPhoto.id) {
+    LaunchedEffect(isRefreshingRawPreview, pendingRawPreviewRefresh, currentEditSourcePhoto.id) {
         if (!isRefreshingRawPreview && pendingRawPreviewRefresh) {
             pendingRawPreviewRefresh = false
             refreshRawPreview()
@@ -1007,7 +1010,7 @@ fun GalleryEditScreen(
                                                 if (isDnCNNDenoising) return@SliderSettingItem
                                                 if (editAiDenoiseStrength > 0.01f) {
                                                     viewModel.applyDnCNNDenoise(
-                                                        photo = currentPhoto,
+                                                        photo = currentEditSourcePhoto,
                                                         strength = editAiDenoiseStrength,
                                                         onComplete = { success ->
                                                             if (!success) {
@@ -1021,7 +1024,7 @@ fun GalleryEditScreen(
                                                     )
                                                 } else {
                                                     viewModel.resetDnCNNDenoise(
-                                                        photo = currentPhoto,
+                                                        photo = currentEditSourcePhoto,
                                                         onComplete = { success ->
                                                             if (!success) {
                                                                 Toast.makeText(
@@ -1062,7 +1065,7 @@ fun GalleryEditScreen(
                                         onValueChange = { viewModel.setSharpening(it) },
                                         onValueChangeFinished = {
                                             if (isRaw) {
-                                                viewModel.persistCurrentRawEditMetadata(currentPhoto) { success ->
+                                                viewModel.persistCurrentRawEditMetadata(currentEditSourcePhoto) { success ->
                                                     if (success) requestRawPreviewRefresh()
                                                 }
                                             }
@@ -1076,7 +1079,7 @@ fun GalleryEditScreen(
                                         onValueChange = { viewModel.setNoiseReduction(it) },
                                         onValueChangeFinished = {
                                             if (isRaw) {
-                                                viewModel.persistCurrentRawEditMetadata(currentPhoto) { success ->
+                                                viewModel.persistCurrentRawEditMetadata(currentEditSourcePhoto) { success ->
                                                     if (success) requestRawPreviewRefresh()
                                                 }
                                             }
@@ -1090,7 +1093,7 @@ fun GalleryEditScreen(
                                         onValueChange = { viewModel.setChromaNoiseReduction(it) },
                                         onValueChangeFinished = {
                                             if (isRaw) {
-                                                viewModel.persistCurrentRawEditMetadata(currentPhoto) { success ->
+                                                viewModel.persistCurrentRawEditMetadata(currentEditSourcePhoto) { success ->
                                                     if (success) requestRawPreviewRefresh()
                                                 }
                                             }
@@ -1103,7 +1106,7 @@ fun GalleryEditScreen(
                                         availableDcps = availableDcps,
                                         selectedBaselineLutId = editRawBaselineLutId,
                                         onSelectBaselineLut = { lutId ->
-                                            viewModel.saveRawBaselineLutSelection(currentPhoto, lutId)
+                                            viewModel.saveRawBaselineLutSelection(currentEditSourcePhoto, lutId)
                                         },
                                         onEditBaselineRecipe = { lutId ->
                                             baselineLutEditId = lutId
@@ -1135,7 +1138,7 @@ fun GalleryEditScreen(
                                         },
                                         spectralFilmPrint = editRawSpectralFilmPrint,
                                         onSelectDcp = { dcpId ->
-                                            viewModel.saveRawDcpSelection(currentPhoto, dcpId) {
+                                            viewModel.saveRawDcpSelection(currentEditSourcePhoto, dcpId) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
@@ -1144,7 +1147,7 @@ fun GalleryEditScreen(
                                         },
                                         onDeleteDcp = { dcp ->
                                             val isDeletingSelectedDcp = editRawDcpId == dcp.id
-                                            viewModel.deleteRawDcp(currentPhoto, dcp.id) { success ->
+                                            viewModel.deleteRawDcp(currentEditSourcePhoto, dcp.id) { success ->
                                                 Toast.makeText(
                                                     context,
                                                     if (success) R.string.raw_dcp_delete_success else R.string.raw_dcp_delete_failed,
@@ -1156,74 +1159,74 @@ fun GalleryEditScreen(
                                             }
                                         },
                                         onRawExposureCompensationChange = {
-                                            viewModel.saveRawExposureCompensationValue(currentPhoto, it)
+                                            viewModel.saveRawExposureCompensationValue(currentEditSourcePhoto, it)
                                         },
                                         onRawExposureCompensationReset = {
-                                            viewModel.resetRawExposureCompensationValue(currentPhoto) { success ->
+                                            viewModel.resetRawExposureCompensationValue(currentEditSourcePhoto) { success ->
                                                 if (success) requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawAutoExposureChange = {
                                             /*if (it) {
-                                                viewModel.saveRawExposureCompensationValue(currentPhoto, 0f)
+                                                viewModel.saveRawExposureCompensationValue(currentEditSourcePhoto, 0f)
                                             }
-                                            viewModel.saveRawAutoExposureValue(currentPhoto, it) {
+                                            viewModel.saveRawAutoExposureValue(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }*/
                                         },
                                         onRawHighlightsAdjustmentChange = {
-                                            viewModel.saveRawHighlightsAdjustmentValue(currentPhoto, it)
+                                            viewModel.saveRawHighlightsAdjustmentValue(currentEditSourcePhoto, it)
                                         },
                                         onRawShadowsAdjustmentChange = {
-                                            viewModel.saveRawShadowsAdjustmentValue(currentPhoto, it)
+                                            viewModel.saveRawShadowsAdjustmentValue(currentEditSourcePhoto, it)
                                         },
                                         onRawBlackPointCorrectionChange = {
-                                            viewModel.saveRawBlackPointCorrectionValue(currentPhoto, it)
+                                            viewModel.saveRawBlackPointCorrectionValue(currentEditSourcePhoto, it)
                                         },
                                         onRawWhitePointCorrectionChange = {
-                                            viewModel.saveRawWhitePointCorrectionValue(currentPhoto, it)
+                                            viewModel.saveRawWhitePointCorrectionValue(currentEditSourcePhoto, it)
                                         },
                                         onRawBlackLevelModeChange = {
-                                            viewModel.saveRawBlackLevelMode(currentPhoto, it) {
+                                            viewModel.saveRawBlackLevelMode(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawCustomBlackLevelChange = {
-                                            viewModel.saveRawCustomBlackLevel(currentPhoto, it) {
+                                            viewModel.saveRawCustomBlackLevel(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawWhiteLevelModeChange = {
-                                            viewModel.saveRawWhiteLevelMode(currentPhoto, it) {
+                                            viewModel.saveRawWhiteLevelMode(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawCfaCorrectionModeChange = {
-                                            viewModel.saveRawCfaCorrectionMode(currentPhoto, it) {
+                                            viewModel.saveRawCfaCorrectionMode(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawColorEngineChange = {
-                                            viewModel.saveRawColorEngine(currentPhoto, it) {
+                                            viewModel.saveRawColorEngine(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onRawToneMappingParametersChange = {
-                                            viewModel.saveRawToneMappingParameters(currentPhoto, it)
+                                            viewModel.saveRawToneMappingParameters(currentEditSourcePhoto, it)
                                         },
                                         onSpectralFilmSelectionChange = {
-                                            viewModel.saveRawSpectralFilmSelection(currentPhoto, it) {
+                                            viewModel.saveRawSpectralFilmSelection(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onSpectralFilmPrintChange = {
-                                            viewModel.saveRawSpectralFilmPrint(currentPhoto, it) {
+                                            viewModel.saveRawSpectralFilmPrint(currentEditSourcePhoto, it) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
                                         onAdjustmentStart = { },
                                         onAdjustmentEnd = {
-                                            viewModel.persistCurrentRawEditMetadata(currentPhoto) {
+                                            viewModel.persistCurrentRawEditMetadata(currentEditSourcePhoto) {
                                                 requestRawPreviewRefresh()
                                             }
                                         },
@@ -1307,7 +1310,7 @@ fun GalleryEditScreen(
             thumbnail = thumbnailBitmap,
             containerColor = Color(0x151A1A1A),
             onSelectLut = { lutId ->
-                viewModel.saveRawBaselineLutSelection(currentPhoto, lutId)
+                viewModel.saveRawBaselineLutSelection(currentEditSourcePhoto, lutId)
             },
             onEditRecipe = { lutId ->
                 baselineLutEditId = lutId
