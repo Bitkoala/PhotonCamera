@@ -220,6 +220,8 @@ object GalleryManager {
     val photoLibraryChangedEvents: SharedFlow<Unit> = _photoLibraryChangedEvents.asSharedFlow()
     private val _photoThumbnailUpdatedEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val photoThumbnailUpdatedEvents: SharedFlow<String> = _photoThumbnailUpdatedEvents.asSharedFlow()
+    private val _preparedPhotoThumbnailEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val preparedPhotoThumbnailEvents: SharedFlow<String> = _preparedPhotoThumbnailEvents.asSharedFlow()
     private val hdrWorkLock = Any()
     private val hdrWorkCounts = ConcurrentHashMap<String, Int>()
 
@@ -233,6 +235,10 @@ object GalleryManager {
 
     private fun notifyPhotoThumbnailUpdated(photoId: String) {
         _photoThumbnailUpdatedEvents.tryEmit(photoId)
+    }
+
+    private fun notifyPreparedPhotoThumbnail(photoId: String) {
+        _preparedPhotoThumbnailEvents.tryEmit(photoId)
     }
 
     private fun getPhotosBaseDir(context: Context): File {
@@ -1559,6 +1565,7 @@ object GalleryManager {
 
             if (thumbnail != null && !thumbnail.isRecycled) {
                 generateThumbnail(thumbnail, thumbnailFile)
+                notifyPreparedPhotoThumbnail(photoId)
             } else {
                 PLog.d(TAG, "Thumbnail unavailable: $thumbnail")
             }

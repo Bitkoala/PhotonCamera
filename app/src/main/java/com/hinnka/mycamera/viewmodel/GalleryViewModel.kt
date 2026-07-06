@@ -257,6 +257,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     // 照片刷新密钥，用于强制 UI 重新加载图片
     val photoRefreshKeys = SnapshotStateMap<String, Long>()
+    private val preparedPhotoThumbnailRefreshKeys = SnapshotStateMap<String, Long>()
     val rawPhotoStates = SnapshotStateMap<String, Boolean>()
 
     // 正在刷新的照片 ID 集合
@@ -703,6 +704,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
 
         viewModelScope.launch {
+            GalleryManager.preparedPhotoThumbnailEvents.collect { photoId ->
+                preparedPhotoThumbnailRefreshKeys[photoId] = System.currentTimeMillis()
+                PLog.d(TAG, "prepared thumbnail ready for camera entry: $photoId")
+            }
+        }
+
+        viewModelScope.launch {
             GalleryManager.photoMetadataUpdatedEvents.collect { update ->
                 applyPhotoMetadataUpdateToMemory(update.photoId, update.metadata)
             }
@@ -910,6 +918,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun isRawInGallery(photoId: String): Boolean {
         return rawPhotoStates[photoId] == true
+    }
+
+    fun getPreparedPhotoThumbnailRefreshKey(photoId: String): Long {
+        return preparedPhotoThumbnailRefreshKeys[photoId] ?: 0L
     }
 
     suspend fun getGridThumbnailBitmap(photo: MediaData): Bitmap? {
