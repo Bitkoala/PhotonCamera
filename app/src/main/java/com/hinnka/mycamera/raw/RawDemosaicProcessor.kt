@@ -1393,7 +1393,10 @@ class RawDemosaicProcessor {
             thumbnail = capturePreviewThumbnail
         )
         val embeddedGoogleToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
-            ?.takeIf { DngProfileToneCurve.isGoogleHdrToneCurveLut(it) }
+            ?.takeIf {
+                DngProfileToneCurve.isGoogleHdrToneCurveLut(it) ||
+                    DngEmbeddedProfile.isGoogleProfileName(embeddedDngRenderPlan.profileName)
+            }
         val embeddedProfileGainTableMap = actualMetadata.profileGainTableMap?.takeIf { it.isValid }
         val embeddedDngHdrToneMapAvailable = embeddedGoogleToneCurveLut != null &&
             embeddedProfileGainTableMap != null
@@ -1401,7 +1404,8 @@ class RawDemosaicProcessor {
         val oppoMasterToneMapRequested = useAdobeProfilePipeline &&
             normalizedToneMappingParameters.useOppoMasterToneMap
         val embeddedDngHdrToneMapDisabledByUser = embeddedDngHdrToneMapAvailable &&
-            normalizedToneMappingParameters.googlePixelToneMapExplicit &&
+            useAdobeProfilePipeline &&
+            !oppoMasterToneMapRequested &&
             !normalizedToneMappingParameters.useGooglePixelToneMap
         val embeddedDngHdrToneMapDisabledByOppo = embeddedDngHdrToneMapAvailable &&
             oppoMasterToneMapRequested
@@ -1411,30 +1415,26 @@ class RawDemosaicProcessor {
                 "Embedded DNG PGTM/ProfileToneCurve available: " +
                     "tag=${embeddedProfileGainTableMap.sourceTag} " +
                     "grid=${embeddedProfileGainTableMap.mapPointsH}x" +
-                    "${embeddedProfileGainTableMap.mapPointsV}x${embeddedProfileGainTableMap.mapPointsN}"
+                    "${embeddedProfileGainTableMap.mapPointsV}x${embeddedProfileGainTableMap.mapPointsN} " +
+                    "googleTone=${normalizedToneMappingParameters.useGooglePixelToneMap}"
             )
         }
         val embeddedDngHdrToneMapOverriddenByDcp = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
             hasDcpSelection &&
             resolvedDcpRenderPlan?.toneCurveLut != null
-        val regenerateEmbeddedDngHdrToneMap = embeddedDngHdrToneMapAvailable &&
-            useAdobeProfilePipeline &&
-            normalizedToneMappingParameters.googlePixelToneMapExplicit &&
-            normalizedToneMappingParameters.useGooglePixelToneMap
         val embeddedDngHdrToneMapRenderable = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
+            normalizedToneMappingParameters.useGooglePixelToneMap &&
             !embeddedDngHdrToneMapOverriddenByDcp &&
             !embeddedDngHdrToneMapDisabledByUser &&
-            !embeddedDngHdrToneMapDisabledByOppo &&
-            !regenerateEmbeddedDngHdrToneMap
+            !embeddedDngHdrToneMapDisabledByOppo
         if (embeddedDngHdrToneMapAvailable && !embeddedDngHdrToneMapRenderable) {
             val reason = when {
-                embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map explicitly disabled for this photo"
-                embeddedDngHdrToneMapDisabledByOppo -> "OPPO master tone map explicitly requested"
+                embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map disabled for this photo"
+                embeddedDngHdrToneMapDisabledByOppo -> "OPPO master tone map requested"
                 !useAdobeProfilePipeline -> "color engine $colorEngine does not use Adobe/DNG profile tone map"
                 embeddedDngHdrToneMapOverriddenByDcp -> "selected DCP has tone curve: ${resolvedDcpRenderPlan.profileName}"
-                regenerateEmbeddedDngHdrToneMap -> "Pixel-style tone map explicitly requested generated PGTM"
                 else -> "current render pipeline does not use embedded DNG HDR tone map"
             }
             actualMetadata = actualMetadata.copy(profileGainTableMap = null)
@@ -1445,7 +1445,7 @@ class RawDemosaicProcessor {
         }
         val requestedGeneratedPixelToneMap = useAdobeProfilePipeline &&
             normalizedToneMappingParameters.useGooglePixelToneMap &&
-            (!embeddedDngHdrToneMapAvailable || regenerateEmbeddedDngHdrToneMap)
+            !embeddedDngHdrToneMapAvailable
         val generatedPixelToneMapOverriddenByDcp = requestedGeneratedPixelToneMap &&
             hasDcpSelection &&
             resolvedDcpRenderPlan?.toneCurveLut != null
@@ -1499,9 +1499,9 @@ class RawDemosaicProcessor {
             withoutProfileToneCurve(
                 resolvedDcpRenderPlan,
                 reason = if (embeddedDngHdrToneMapDisabledByOppo) {
-                    "OPPO master tone map explicitly requested"
+                    "OPPO master tone map requested"
                 } else {
-                    "Pixel-style tone map explicitly disabled for this photo"
+                    "Pixel-style tone map disabled for this photo"
                 }
             )
         } else {

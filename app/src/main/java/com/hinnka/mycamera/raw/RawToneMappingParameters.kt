@@ -8,8 +8,7 @@ data class RawToneMappingParameters(
     val filmicBlackRelativeExposure: Float = FILMIC_BLACK_RELATIVE_EXPOSURE_DEFAULT,
     val filmicWhiteRelativeExposure: Float = FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT,
     val useGooglePixelToneMap: Boolean = false,
-    val useOppoMasterToneMap: Boolean = false,
-    val googlePixelToneMapExplicit: Boolean = false
+    val useOppoMasterToneMap: Boolean = false
 ) {
     fun normalized(): RawToneMappingParameters {
         val blackAgx = agxBlackRelativeExposure.coerceIn(
@@ -42,8 +41,7 @@ data class RawToneMappingParameters(
     fun withGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
         return copy(
             useGooglePixelToneMap = enabled,
-            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap,
-            googlePixelToneMapExplicit = true
+            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap
         ).normalized()
     }
 
@@ -52,14 +50,6 @@ data class RawToneMappingParameters(
             useOppoMasterToneMap = enabled,
             useGooglePixelToneMap = if (enabled) false else useGooglePixelToneMap
         ).normalized()
-    }
-
-    fun withDefaultGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
-        return if (googlePixelToneMapExplicit) {
-            normalized()
-        } else {
-            copy(useGooglePixelToneMap = enabled).normalized()
-        }
     }
 
     companion object {

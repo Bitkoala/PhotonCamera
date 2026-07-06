@@ -90,8 +90,13 @@ internal object DngEmbeddedProfile {
         }.getOrNull()
     }
 
-    fun hasGoogleHdrToneCurve(file: File): Boolean {
-        return DngProfileToneCurve.isGoogleHdrToneCurve(readFrom(file)?.toneCurve)
+    fun hasGoogleToneMapProfile(file: File): Boolean {
+        val profile = readFrom(file) ?: return false
+        return isGoogleProfileName(profile.profileName) && profile.toneCurve?.isValid == true
+    }
+
+    fun isGoogleProfileName(profileName: String?): Boolean {
+        return profileName?.contains("google", ignoreCase = true) == true
     }
 
     private fun decodeProfile(

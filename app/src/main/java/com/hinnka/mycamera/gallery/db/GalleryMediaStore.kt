@@ -237,7 +237,6 @@ object GalleryMediaStore {
             rawFilmicWhiteRelativeExposure = metadata.rawToneMappingParameters.filmicWhiteRelativeExposure,
             rawGooglePixelToneMap = metadata.rawToneMappingParameters.useGooglePixelToneMap,
             rawOppoMasterToneMap = metadata.rawToneMappingParameters.useOppoMasterToneMap,
-            rawGooglePixelToneMapExplicit = metadata.rawToneMappingParameters.googlePixelToneMapExplicit,
             frameId = metadata.frameId,
             width = metadata.width,
             height = metadata.height,
@@ -417,8 +416,7 @@ object GalleryMediaStore {
                 filmicBlackRelativeExposure = rawFilmicBlackRelativeExposure,
                 filmicWhiteRelativeExposure = rawFilmicWhiteRelativeExposure,
                 useGooglePixelToneMap = rawGooglePixelToneMap,
-                useOppoMasterToneMap = rawOppoMasterToneMap,
-                googlePixelToneMapExplicit = rawGooglePixelToneMapExplicit
+                useOppoMasterToneMap = rawOppoMasterToneMap
             ).normalized(),
             frameId = frameId,
             width = width,
@@ -486,10 +484,6 @@ object GalleryMediaStore {
             spectralFilmMDensityGain = spectralFilmMDensityGain,
             spectralFilmYDensityGain = spectralFilmYDensityGain
         )
-    }
-
-    private fun isRawHdrCaptureMode(captureMode: String?): Boolean {
-        return captureMode == "raw_hdr_mfnr" || captureMode == "raw_hdr_bracket"
     }
 
     private fun rectOrNull(left: Int?, top: Int?, right: Int?, bottom: Int?): Rect? {

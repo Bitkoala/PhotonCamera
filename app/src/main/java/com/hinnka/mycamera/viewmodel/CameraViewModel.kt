@@ -752,15 +752,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resolveCaptureRawToneMappingParameters(
-        userPrefs: UserPreferences?,
-        captureMode: String? = null
+        userPrefs: UserPreferences?
     ): RawToneMappingParameters {
         val base = userPrefs?.rawToneMappingParameters ?: RawToneMappingParameters.DEFAULT
-        return base.withDefaultGooglePixelToneMap(isRawHdrCaptureMode(captureMode))
-    }
-
-    private fun isRawHdrCaptureMode(captureMode: String?): Boolean {
-        return captureMode == "raw_hdr_mfnr" || captureMode == "raw_hdr_bracket"
+        return base.normalized()
     }
 
     private fun effectiveCameraTonemapMode(prefs: UserPreferences): String {
@@ -2160,7 +2155,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameraId = currentCameraId,
             rawBlackBorderCrop = currentRawBlackBorderCrop(),
             rawRenderingEngine = resolveCaptureRawRenderingEngine(userPrefs),
-            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs, captureMode),
+            rawToneMappingParameters = resolveCaptureRawToneMappingParameters(userPrefs),
             spectralFilmStock = spectralFilmSettings.stock,
             spectralFilmPrint = spectralFilmSettings.print,
             spectralFilmCDensityGain = spectralFilmSettings.tuning.cDensityGain,

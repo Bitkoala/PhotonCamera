@@ -3158,7 +3158,7 @@ object GalleryManager {
         val photoDir = getPhotoDir(context, photoId, true)
         val photoFile = File(photoDir, PHOTO_FILE)
         val tempFile = File(photoDir, "temp.jpg")
-        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngPixelToneMapDefault(dngFile)
+        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapEnabled(dngFile)
         val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
         val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
@@ -4179,14 +4179,15 @@ object GalleryManager {
         return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), maxEdge = 512, preserveHdr = true))
     }
 
-    private fun MediaMetadata.withEmbeddedDngPixelToneMapDefault(
+    private fun MediaMetadata.withEmbeddedDngGooglePixelToneMapEnabled(
         dngFile: File
     ): MediaMetadata {
         val hasProfileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)?.isValid == true
-        if (!hasProfileGainTableMap || !DngEmbeddedProfile.hasGoogleHdrToneCurve(dngFile)) return this
-        PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map by default")
+        if (!hasProfileGainTableMap || !DngEmbeddedProfile.hasGoogleToneMapProfile(dngFile)) return this
+        if (rawToneMappingParameters.useGooglePixelToneMap) return this
+        PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map for this photo")
         return copy(
-            rawToneMappingParameters = rawToneMappingParameters.withDefaultGooglePixelToneMap(true)
+            rawToneMappingParameters = rawToneMappingParameters.withGooglePixelToneMap(true)
         )
     }
 
@@ -4296,7 +4297,7 @@ object GalleryManager {
                     }
 
                     // 3. 处理 RAW 以生成 JPEG 预览
-                    var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngPixelToneMapDefault(dngFile)
+                    var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapEnabled(dngFile)
                     val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, 0f)
                     val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, 0f)
                     val processedBitmap = RawDemosaicProcessor.getInstance().process(
