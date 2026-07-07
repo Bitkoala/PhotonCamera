@@ -3480,7 +3480,11 @@ private fun AddIszLensDialog(
     val selectedBaseCamera = baseLensCandidates.firstOrNull { it.cameraId == selectedBaseCameraId }
     val selectedBaseLabel = selectedBaseCamera?.let { iszBaseLensLabel(it) }.orEmpty()
     val baseLensLabels = baseLensCandidates.map { it.cameraId to iszBaseLensLabel(it) }
-    val virtualLensId = IszLensConfig.createVirtualCameraId(selectedBaseCameraId, selectedIszZoomRatio)
+    val virtualLensId = IszLensConfig.createVirtualCameraId(
+        selectedBaseCameraId,
+        selectedIszZoomRatio,
+        settings.toVirtualLensProfileId()
+    )
     val virtualLensName = selectedBaseCamera?.let {
         stringResource(
             R.string.settings_isz_virtual_lens_name,
@@ -3641,6 +3645,8 @@ private fun AddIszLensDialog(
                         val displayRatio = baseCamera?.let {
                             IszLensConfig.displayRatioLabel(it.displayIntrinsicZoomRatio * config.iszZoomRatio)
                         } ?: IszLensConfig.displayRatioLabel(config.iszZoomRatio)
+                        val vendorSettings = vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId)
+                        val vendorProfileSummary = vendorCaptureSettingsSummary(vendorSettings)
                         val lensKind = stringResource(
                             if (config.isMacro) {
                                 R.string.settings_isz_lens_kind_macro
@@ -3659,7 +3665,7 @@ private fun AddIszLensDialog(
                                 config.virtualCameraId,
                                 displayRatio,
                                 lensKind,
-                                vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId).values.size,
+                                vendorProfileSummary,
                                 stringResource(
                                     R.string.settings_isz_raw_black_border_crop_summary,
                                     config.rawBlackBorderCrop.leftPx,
@@ -3779,6 +3785,23 @@ private fun iszBaseLensLabel(camera: CameraInfo): String {
         stringResource(R.string.settings_isz_lens_unknown_focal_length)
     }
     return stringResource(R.string.settings_isz_lens_label, prefix, camera.cameraId, focalLength)
+}
+
+@Composable
+private fun vendorCaptureSettingsSummary(settings: VendorCaptureSettings): String {
+    if (!settings.isEnabled) {
+        return stringResource(R.string.settings_isz_vendor_profile_none)
+    }
+
+    val parts = mutableListOf<String>()
+    for ((key, value) in settings.values.entries.sortedBy { it.key.ordinal }) {
+        parts += stringResource(
+            R.string.settings_isz_vendor_profile_entry,
+            key.displayName(),
+            key.normalizeValue(value)
+        )
+    }
+    return parts.joinToString(" / ")
 }
 
 @Composable

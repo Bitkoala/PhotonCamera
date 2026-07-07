@@ -102,7 +102,13 @@ private fun buildZoomRulerAdaptiveMetrics(
     separatorCount: Int,
     gapCount: Int
 ): ZoomRulerAdaptiveMetrics {
-    val scale = (itemSize / DefaultItemSize).coerceIn(0.3f, 1f)
+    val itemScale = (itemSize / DefaultItemSize).coerceIn(0.3f, 1f)
+    val pitchScale = if (gapCount == 0) {
+        itemScale
+    } else {
+        ((itemSize + spacing) / (DefaultItemSize + DefaultSpacing)).coerceIn(0.3f, 1f)
+    }
+    val scale = minOf(itemScale, pitchScale)
     return ZoomRulerAdaptiveMetrics(
         itemSize = itemSize.dp,
         spacing = spacing.dp,
@@ -113,8 +119,8 @@ private fun buildZoomRulerAdaptiveMetrics(
             separatorCount = separatorCount,
             gapCount = gapCount
         ).dp,
-        selectedFontSize = (13f * scale).coerceIn(5f, 13f).sp,
-        normalFontSize = (10f * scale).coerceIn(5f, 10f).sp,
+        selectedFontSize = (13f * scale).coerceIn(8f, 13f).sp,
+        normalFontSize = (10f * scale).coerceIn(7f, 10f).sp,
         selectedIconSize = (16f * scale).coerceIn(6f, 16f).dp,
         normalIconSize = (14f * scale).coerceIn(6f, 14f).dp,
         separatorLength = (12f * scale).coerceIn(4f, 12f).dp

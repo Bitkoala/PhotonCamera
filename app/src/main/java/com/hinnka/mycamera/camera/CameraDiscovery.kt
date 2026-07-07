@@ -1000,6 +1000,11 @@ class CameraDiscovery(private val context: Context) {
             }
 
             val existing = selectedCameras[sameFocalIndex]
+            if (shouldKeepSameFocalVirtualIszVariant(existing.info, camera.info)) {
+                selectedCameras.add(camera)
+                continue
+            }
+
             if (shouldReplaceSameFocalCamera(existing, camera, preferredMainCameraId)) {
                 PLog.d(
                     TAG,
@@ -1018,6 +1023,12 @@ class CameraDiscovery(private val context: Context) {
         }
 
         return selectedCameras
+    }
+
+    private fun shouldKeepSameFocalVirtualIszVariant(existing: CameraInfo, candidate: CameraInfo): Boolean {
+        return existing.isVirtualIszLens &&
+                candidate.isVirtualIszLens &&
+                existing.cameraId != candidate.cameraId
     }
 
     private fun shouldReplaceSameFocalCamera(

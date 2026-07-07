@@ -86,18 +86,6 @@ fun ZoomControlBar(
     val customFocalLengths by viewModel.customFocalLengths.collectAsState(initial = emptyList())
     val hiddenFocalLengths by viewModel.hiddenFocalLengths.collectAsState(initial = emptyList())
     val lensZoomStops = viewModel.calculateLensZoomStops(availableCameras, currentCamera)
-    val customLensZoomStops = remember(availableCameras, currentCamera) {
-        availableCameras
-            .filter { camera ->
-                camera.isCustomLensId &&
-                    if (currentCamera?.lensType == LensType.FRONT) {
-                        camera.lensType == LensType.FRONT
-                    } else {
-                        camera.lensType != LensType.FRONT && camera.lensType != LensType.BACK_MACRO
-                    }
-            }
-            .map { it.displayIntrinsicZoomRatio }
-    }
     val zoomStops = viewModel.allZoomStops(lensZoomStops, mainCamera, currentCamera, customFocalLengths, hiddenFocalLengths)
 
     val macroCameras = remember(availableCameras) {
@@ -300,11 +288,16 @@ fun ZoomControlBar(
                         replacedStopIndex = replacedStopIndex
                     )
                 }
+                val stopItems = remember(effectiveStops, availableCameras, currentCamera) {
+                    buildZoomStopItems(
+                        stops = effectiveStops,
+                        availableCameras = availableCameras,
+                        currentCamera = currentCamera
+                    )
+                }
                 ZoomRuler(
                     zoomRatio = internalZoomRatio,
-                    lensStops = lensZoomStops,
-                    customLensStops = customLensZoomStops,
-                    stops = effectiveStops,
+                    stopItems = stopItems,
                     macroCameras = macroCameras,
                     currentCameraId = currentCameraIdState,
                     mainCamera = mainCamera,
@@ -341,11 +334,9 @@ private fun buildEffectiveZoomStops(
 
 
 @Composable
-fun ZoomRuler(
+private fun ZoomRuler(
     zoomRatio: Float,
-    lensStops: List<Float>,
-    customLensStops: List<Float>,
-    stops: List<Float>,
+    stopItems: List<ZoomStopItem>,
     macroCameras: List<CameraInfo>,
     currentCameraId: String,
     mainCamera: CameraInfo?,
@@ -357,7 +348,7 @@ fun ZoomRuler(
     val activeColor = Color(0xFFFFD700)
     val inactiveColor = Color.White.copy(alpha = 0.5f)
 
-    val stopsState by rememberUpdatedState(stops)
+    val stopsState by rememberUpdatedState(stopItems)
 
     BoxWithConstraints(
         modifier = modifier,
@@ -380,12 +371,17 @@ fun ZoomRuler(
         ) {
             val isCurrentMacro = macroCameras.any { it.cameraId == currentCameraId }
             val selectedStopIndex = if (isCurrentMacro) -1 else stopsState.indices.minByOrNull {
-                abs(stopsState[it] - zoomRatio)
+                val item = stopsState[it]
+                if (item.containsCamera(currentCameraId) && abs(item.zoomRatio - zoomRatio) <= 0.01f) {
+                    -1f
+                } else {
+                    abs(item.zoomRatio - zoomRatio)
+                }
             }
 
-            stopsState.forEachIndexed { index, stop ->
+            stopsState.forEachIndexed { index, item ->
+                val stop = item.zoomRatio
                 val isSelected = index == selectedStopIndex && abs(stop - zoomRatio) <= 0.01f
-                val isCustomLensStop = customLensStops.any { abs(it - stop) <= 0.01f }
 
                 // 显示文本
                 val text = when (displayMode) {
@@ -396,22 +392,29 @@ fun ZoomRuler(
                     ZoomDisplayMode.FOCAL_LENGTH -> {
                         zoomRatioToFocalLength(stop, mainCamera)
                     }
-                } + if (isCustomLensStop) "*" else ""
+                } + if (item.isCustomLensStop) "*" else ""
 
                 val style = TextStyle(
                     fontSize = if (isSelected) adaptiveMetrics.selectedFontSize else adaptiveMetrics.normalFontSize,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                     color = if (isSelected) activeColor else inactiveColor,
                     textAlign = TextAlign.Center,
-                    textDecoration = if (lensStops.contains(stop)) TextDecoration.Underline else TextDecoration.None
+                    textDecoration = if (item.isLensStop) TextDecoration.Underline else TextDecoration.None
                 )
 
                 Box(
                     modifier = Modifier
                         .size(adaptiveMetrics.itemSize)
                         .autoRotate()
-                        .pointerInput(stop) {
-                            detectTapGestures { onZoomChange(stop) }
+                        .pointerInput(item.cameraIds, stop, currentCameraId) {
+                            detectTapGestures {
+                                val cameraId = item.targetCameraId(currentCameraId)
+                                if (cameraId != null && cameraId != currentCameraId) {
+                                    onLensSwitch(cameraId)
+                                } else {
+                                    onZoomChange(stop)
+                                }
+                            }
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -422,6 +425,22 @@ fun ZoomRuler(
                         softWrap = false,
                         overflow = TextOverflow.Clip
                     )
+                    if (item.hasVariantBadge) {
+                        val badgeText = item.selectedVariantIndex(currentCameraId)
+                            ?.takeIf { isSelected }
+                            ?.toString()
+                            ?: item.variantCount.toString()
+                        ZoomStopVariantBadge(
+                            text = badgeText,
+                            isSelected = isSelected,
+                            activeColor = activeColor,
+                            inactiveColor = inactiveColor,
+                            itemSize = adaptiveMetrics.itemSize,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 1.dp, end = 1.dp)
+                        )
+                    }
                 }
             }
 

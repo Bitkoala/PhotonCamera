@@ -4350,10 +4350,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (normalizedBaseCameraId.isEmpty() || iszZoomRatio < 1f) return@launch
 
             val config = IszLensConfig(
-                normalizedBaseCameraId,
-                iszZoomRatio,
-                isMacro,
-                IszLensConfig.sanitizeRawBlackBorderCrop(rawBlackBorderCrop)
+                baseCameraId = normalizedBaseCameraId,
+                iszZoomRatio = iszZoomRatio,
+                isMacro = isMacro,
+                rawBlackBorderCrop = IszLensConfig.sanitizeRawBlackBorderCrop(rawBlackBorderCrop),
+                vendorCaptureProfileId = settings.toVirtualLensProfileId()
             )
             val prefs = userPreferencesRepository.userPreferences.first()
             val updatedConfigs = (prefs.iszLensConfigs
