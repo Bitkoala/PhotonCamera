@@ -143,6 +143,10 @@ class RawDemosaicProcessor {
                 0f,
                 0f
             ),
+            channelNoiseProfile = dngRawData.noiseProfile ?: baseMetadata?.channelNoiseProfile ?: floatArrayOf(
+                0f,
+                0f
+            ),
             postRawSensitivityBoost = baseMetadata?.postRawSensitivityBoost ?: 1.0f,
             exposureCompensation = baseMetadata?.exposureCompensation ?: 0f,
             aeMode = baseMetadata?.aeMode ?: 1,

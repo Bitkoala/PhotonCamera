@@ -229,9 +229,11 @@ object MultiFrameStacker {
         masterBlackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
         whiteLevel: Int = 1023,
         noiseModel: FloatArray = floatArrayOf(0f, 0f),
+        rawNoiseModel: RawNoiseModel = RawNoiseModel.fromLegacyNoiseModel(noiseModel),
         lensShading: FloatArray? = null,
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
+        applyLensShadingCorrection: Boolean = true,
         colorCorrectionMatrix: FloatArray? = null,
         pgtmStatsBounds: Rect? = null,
     ): RawStackResult? {
@@ -250,6 +252,16 @@ object MultiFrameStacker {
             PLog.w(TAG, "RAW HDR denoise stack requires GLES; GPU acceleration setting is ignored")
         }
         PLog.i(TAG, "Using GLES RAW HDR stacker")
+        val tuning = RawStackTuningResolver.resolve(
+            mode = RawStackMode.HDR_MFNR,
+            frameCount = normalFrames.size + 1,
+        )
+        val stackLensShading = validLensShadingOrNull(
+            lensShading = lensShading,
+            width = lensShadingWidth,
+            height = lensShadingHeight,
+            enabled = applyLensShadingCorrection,
+        )
         return GlesRawStacker(
             width = width,
             height = height,
@@ -257,11 +269,13 @@ object MultiFrameStacker {
             blackLevel = masterBlackLevel,
             whiteLevel = whiteLevel,
             noiseModel = noiseModel,
-            lensShading = lensShading,
-            lensShadingWidth = lensShadingWidth,
-            lensShadingHeight = lensShadingHeight,
+            rawNoiseModel = rawNoiseModel,
+            lensShading = stackLensShading,
+            lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
+            lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
             colorCorrectionMatrix = colorCorrectionMatrix,
             pgtmStatsBounds = pgtmStatsBounds,
+            tuning = tuning,
         ).processHdr(
             shortFrame = GlesRawStacker.HdrInputFrame(shortFrame.image, shortFrame.exposureProduct),
             normalFrames = normalFrames.map { GlesRawStacker.HdrInputFrame(it.image, it.exposureProduct) },
@@ -279,6 +293,7 @@ object MultiFrameStacker {
         whiteLevel: Int = 1023,
         whiteBalanceGains: FloatArray = floatArrayOf(1f, 1f, 1f, 1f),
         noiseModel: FloatArray = floatArrayOf(0f, 0f),
+        rawNoiseModel: RawNoiseModel = RawNoiseModel.fromLegacyNoiseModel(noiseModel),
         lensShading: FloatArray? = null,
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
@@ -296,7 +311,16 @@ object MultiFrameStacker {
 
         if (useGpuAcceleration && !enableSuperResolution) {
             PLog.i(TAG, "Using GLES RAW stacker")
-            val stackLensShading = lensShading.takeIf { applyLensShadingCorrection }
+            val stackLensShading = validLensShadingOrNull(
+                lensShading = lensShading,
+                width = lensShadingWidth,
+                height = lensShadingHeight,
+                enabled = applyLensShadingCorrection,
+            )
+            val tuning = RawStackTuningResolver.resolve(
+                mode = RawStackMode.MFNR,
+                frameCount = images.size,
+            )
             return GlesRawStacker(
                 width = width,
                 height = height,
@@ -304,9 +328,11 @@ object MultiFrameStacker {
                 blackLevel = masterBlackLevel,
                 whiteLevel = whiteLevel,
                 noiseModel = noiseModel,
+                rawNoiseModel = rawNoiseModel,
                 lensShading = stackLensShading,
                 lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
                 lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
+                tuning = tuning,
             ).process(images)
         } else if (useGpuAcceleration && enableSuperResolution) {
             PLog.w(TAG, "GLES RAW stacker does not support SR; falling back to CPU RAW stacker")
@@ -369,6 +395,16 @@ object MultiFrameStacker {
             return null
         }
         return LargeDirectBuffer.allocate(byteCount, "$label fused Bayer")
+    }
+
+    private fun validLensShadingOrNull(
+        lensShading: FloatArray?,
+        width: Int,
+        height: Int,
+        enabled: Boolean,
+    ): FloatArray? {
+        if (!enabled || lensShading == null || width <= 0 || height <= 0) return null
+        return lensShading.takeIf { it.size >= width * height * 4 }
     }
 
     // --- Native Methods ---

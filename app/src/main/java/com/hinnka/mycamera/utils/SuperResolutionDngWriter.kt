@@ -232,6 +232,7 @@ object SuperResolutionDngWriter {
                 profileGainTableMap = profileGainTableMap?.takeIf { it.isValid },
                 imageLayout = imageLayout,
                 compression = compression,
+                valueDomain = valueDomain,
             )
             val header = buildHeader(entries)
             outputStream.write(header)
@@ -270,6 +271,7 @@ object SuperResolutionDngWriter {
         profileGainTableMap: DngProfileGainTableMap?,
         imageLayout: ImageLayout,
         compression: Compression,
+        valueDomain: RawProcessor.RawBufferValueDomain,
     ): List<TiffEntry> {
         // The custom writer is used when the fused RAW dimensions no longer
         // match the camera sensor. The fused buffer already lives in its final
@@ -300,12 +302,16 @@ object SuperResolutionDngWriter {
         }
         val isCfa = imageLayout == ImageLayout.CFA
         val samplesPerPixel = imageLayout.samplesPerPixel
-        val opcodeList2 = if (isCfa) buildOpcodeList2(
-            captureResult = captureResult,
-            cfaPattern = cfaPattern,
-            width = width,
-            height = height
-        ) else null
+        val opcodeList2 = if (isCfa && valueDomain != RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {
+            buildOpcodeList2(
+                captureResult = captureResult,
+                cfaPattern = cfaPattern,
+                width = width,
+                height = height
+            )
+        } else {
+            null
+        }
         val blackLevelRepeatDim = RawCfaCorrection.repeatPatternDim(cfaPattern)
         val encodedBlackLevels = if (isCfa) {
             blackLevelByCfaPosition(cfaPattern, blackLevel)

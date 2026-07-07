@@ -32,6 +32,7 @@ import com.hinnka.mycamera.lut.isVideoTransformerExportSupported
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
+import com.hinnka.mycamera.processor.RawNoiseModel
 import com.hinnka.mycamera.processor.RawStackResult
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
@@ -2672,6 +2673,7 @@ object GalleryManager {
             }
 
             var currentUseSuperResolution = useSuperResolution
+            val applyRawLensShading = resolveRawLensShadingCorrectionEnabled(context, metadata)
             var rawStackResult = MultiFrameStacker.processBurstRaw(
                 images, stackCfaPattern,
                 currentUseSuperResolution,
@@ -2681,10 +2683,11 @@ object GalleryManager {
                 whiteLevel = stackWhiteLevel,
                 whiteBalanceGains = rawMetadata.whiteBalanceGains,
                 noiseModel = rawMetadata.noiseProfile,
-                lensShading = null,
-                lensShadingWidth = 0,
-                lensShadingHeight = 0,
-                applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(context, metadata),
+                rawNoiseModel = RawNoiseModel.fromCamera2NoiseProfile(rawMetadata.channelNoiseProfile),
+                lensShading = rawMetadata.lensShadingMap,
+                lensShadingWidth = rawMetadata.lensShadingMapWidth,
+                lensShadingHeight = rawMetadata.lensShadingMapHeight,
+                applyLensShadingCorrection = applyRawLensShading,
             )
 
             val finalStackResult = rawStackResult ?: return@withContext
@@ -3005,9 +3008,11 @@ object GalleryManager {
                     masterBlackLevel = stackBlackLevel,
                     whiteLevel = stackWhiteLevel,
                     noiseModel = rawMetadata.noiseProfile,
-                    lensShading = null,
-                    lensShadingWidth = 0,
-                    lensShadingHeight = 0,
+                    rawNoiseModel = RawNoiseModel.fromCamera2NoiseProfile(rawMetadata.channelNoiseProfile),
+                    lensShading = rawMetadata.lensShadingMap,
+                    lensShadingWidth = rawMetadata.lensShadingMapWidth,
+                    lensShadingHeight = rawMetadata.lensShadingMapHeight,
+                    applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(context, metadata),
                     colorCorrectionMatrix = rawMetadata.colorCorrectionMatrix,
                     pgtmStatsBounds = rawHdrPgtmStatsBounds,
                 )

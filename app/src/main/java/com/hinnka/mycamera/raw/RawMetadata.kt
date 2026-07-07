@@ -85,6 +85,7 @@ data class RawMetadata(
     val baselineExposure: Float = 0.0f,
     val shadowScale: Float = 1.0f,
     val noiseProfile: FloatArray = floatArrayOf(0f, 0f),
+    val channelNoiseProfile: FloatArray = floatArrayOf(0f, 0f),
     val afRegions: Array<MeteringRectangle>? = null,
     val activeArray: android.graphics.Rect? = null,
     val defaultCrop: android.graphics.Rect? = null,
@@ -286,7 +287,8 @@ data class RawMetadata(
             val postRawSensitivityBoost = boost / 100.0f
 
             // 8. 获取噪声模型
-            val noiseProfile = extractNoiseProfile(captureResult)
+            val channelNoiseProfile = extractChannelNoiseProfile(captureResult)
+            val noiseProfile = averageNoiseProfile(channelNoiseProfile)
 
             // 9. 获取 AE 模式和曝光补偿
             val aeMode = captureResult.get(CaptureResult.CONTROL_AE_MODE) ?: CaptureResult.CONTROL_AE_MODE_ON
@@ -315,6 +317,7 @@ data class RawMetadata(
                 postRawSensitivityBoost = postRawSensitivityBoost,
                 baselineExposure = 0f,
                 noiseProfile = noiseProfile,
+                channelNoiseProfile = channelNoiseProfile,
                 afRegions = captureResult.get(CaptureResult.CONTROL_AF_REGIONS),
                 activeArray = activeArray,
                 aeMode = aeMode,
@@ -326,23 +329,40 @@ data class RawMetadata(
             )
         }
 
-        private fun extractNoiseProfile(captureResult: CaptureResult): FloatArray {
+        private fun extractChannelNoiseProfile(captureResult: CaptureResult): FloatArray {
             val noiseProfile = captureResult.get(CaptureResult.SENSOR_NOISE_PROFILE)
             return if (noiseProfile != null && noiseProfile.isNotEmpty()) {
-                // SENSOR_NOISE_PROFILE is an array of pairs (S, O) for each CFA channel
-                // We will average them to get a single global model for the structure tensor / robustness
-                var sumS = 0.0
-                var sumO = 0.0
-                for (pair in noiseProfile) {
-                    sumS += pair.first
-                    sumO += pair.second
+                FloatArray(noiseProfile.size * 2) { index ->
+                    val pair = noiseProfile[index / 2]
+                    if (index % 2 == 0) {
+                        sanitizeNoiseCoefficient(pair.first.toFloat())
+                    } else {
+                        sanitizeNoiseCoefficient(pair.second.toFloat())
+                    }
                 }
-                val count = noiseProfile.size.toDouble()
-                floatArrayOf((sumS / count).toFloat(), (sumO / count).toFloat())
             } else {
-                // Default fallback
                 floatArrayOf(0.0f, 0.0f)
             }
+        }
+
+        private fun averageNoiseProfile(channelNoiseProfile: FloatArray): FloatArray {
+            if (channelNoiseProfile.size < 2) return floatArrayOf(0f, 0f)
+            var sumS = 0.0
+            var sumO = 0.0
+            var count = 0
+            var index = 0
+            while (index + 1 < channelNoiseProfile.size) {
+                sumS += sanitizeNoiseCoefficient(channelNoiseProfile[index])
+                sumO += sanitizeNoiseCoefficient(channelNoiseProfile[index + 1])
+                count++
+                index += 2
+            }
+            if (count == 0) return floatArrayOf(0f, 0f)
+            return floatArrayOf((sumS / count).toFloat(), (sumO / count).toFloat())
+        }
+
+        private fun sanitizeNoiseCoefficient(value: Float): Float {
+            return value.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
         }
 
         /**

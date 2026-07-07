@@ -27,11 +27,13 @@ class GlesRawStacker(
     blackLevel: FloatArray,
     whiteLevel: Int,
     noiseModel: FloatArray,
+    private val rawNoiseModel: RawNoiseModel = RawNoiseModel.fromLegacyNoiseModel(noiseModel),
     private val lensShading: FloatArray?,
     private val lensShadingWidth: Int,
     private val lensShadingHeight: Int,
     colorCorrectionMatrix: FloatArray? = null,
     pgtmStatsBounds: Rect? = null,
+    private val tuning: RawStackTuningProfile = RawStackTuningResolver.resolve(RawStackMode.MFNR),
 ) {
     private data class TextureLevel(val texture: Int, val width: Int, val height: Int)
     private data class ReadOutputTiming(
@@ -59,8 +61,10 @@ class GlesRawStacker(
         blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
     }
     private val normalizedWhiteLevel = whiteLevel.coerceAtLeast(1).toFloat()
-    private val noiseAlpha = noiseModel.getOrElse(0) { 0f }.coerceAtLeast(0f) / 65535.0f
-    private val noiseBeta = noiseModel.getOrElse(1) { 0f }.coerceAtLeast(0f) / (65535.0f * 65535.0f)
+    private val normalizedNoiseAlphaByChannel = rawNoiseModel.normalizedShotNoiseForShader()
+    private val normalizedNoiseBetaByChannel = rawNoiseModel.normalizedReadNoiseForShader()
+    private val noiseAlpha = rawNoiseModel.greenShotNoise.coerceAtLeast(0f) / 65535.0f
+    private val noiseBeta = rawNoiseModel.greenReadNoise.coerceAtLeast(0f) / (65535.0f * 65535.0f)
     private val pgtmColorCorrectionMatrix = FloatArray(9) { index ->
         colorCorrectionMatrix
             ?.getOrNull(index)
@@ -68,6 +72,15 @@ class GlesRawStacker(
             ?: if (index % 4 == 0) 1f else 0f
     }
     private val pgtmStatsBounds = sanitizePgtmStatsBounds(pgtmStatsBounds)
+    private val hwmfPrefilter = tuning.prefilter
+    private val hwmfBlend = tuning.blend
+    private val hwmfPostfilter = tuning.postfilter
+    private val hwmfHdr = tuning.hdr
+    private val pyramidLevels = hwmfPrefilter.pyramidLevels.coerceAtLeast(1)
+    private val alignLevel = hwmfPrefilter.alignLevel.coerceAtLeast(0)
+    private val flowGridSpacing = hwmfPrefilter.flowGridSpacing.coerceAtLeast(1)
+    private val lkRefinePasses = hwmfBlend.lkRefinePasses.coerceAtLeast(0)
+    private val flowSmoothPasses = hwmfBlend.flowSmoothPasses.coerceAtLeast(0)
 
     private val planeWidth = max(1, width / 2)
     private val planeHeight = max(1, height / 2)
@@ -141,6 +154,12 @@ class GlesRawStacker(
             initPrograms()
             initResources()
             applyRawRenderState()
+            PLog.d(
+                TAG,
+                "HWMF RAW stack mode=${tuning.mode} frames=${images.size} " +
+                    "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
+                    "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
+            )
             images[0].use {
                 uploadRawTexture(it, refRaw, "reference")
             }
@@ -235,6 +254,12 @@ class GlesRawStacker(
             initHdrPrograms()
             initResources()
             applyRawRenderState()
+            PLog.d(
+                TAG,
+                "HWMF RAW HDR stack mode=${tuning.mode} normalFrames=${normalFrames.size} " +
+                    "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
+                    "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
+            )
 
             val shortExposureProduct = validExposureProduct(shortFrame.exposureProduct)
             val referenceExposureProduct = validExposureProduct(normalFrames.first().exposureProduct)
@@ -432,8 +457,8 @@ class GlesRawStacker(
     }
 
     private fun initResources() {
-        gridWidth = (planeWidth + FLOW_GRID_SPACING - 1) / FLOW_GRID_SPACING
-        gridHeight = (planeHeight + FLOW_GRID_SPACING - 1) / FLOW_GRID_SPACING
+        gridWidth = (planeWidth + flowGridSpacing - 1) / flowGridSpacing
+        gridHeight = (planeHeight + flowGridSpacing - 1) / flowGridSpacing
 
         refRaw = createTexture2D(width, height, GLES30.GL_R16UI, GLES30.GL_NEAREST)
         curRaw = createTexture2D(width, height, GLES30.GL_R16UI, GLES30.GL_NEAREST)
@@ -459,11 +484,11 @@ class GlesRawStacker(
     }
 
     private fun createPyramid(baseTexture: Int): List<TextureLevel> {
-        val levels = ArrayList<TextureLevel>(PYRAMID_LEVELS)
+        val levels = ArrayList<TextureLevel>(pyramidLevels)
         levels += TextureLevel(baseTexture, planeWidth, planeHeight)
         var levelWidth = planeWidth
         var levelHeight = planeHeight
-        repeat(PYRAMID_LEVELS - 1) {
+        repeat(pyramidLevels - 1) {
             levelWidth = max(1, (levelWidth + 1) / 2)
             levelHeight = max(1, (levelHeight + 1) / 2)
             levels += TextureLevel(
@@ -676,13 +701,14 @@ class GlesRawStacker(
         bindImage(1, kernelTexture, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
         setCommonUniforms(structureProgram)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(structureProgram, "uProxySize"), planeWidth, planeHeight)
+        setPrefilterStructureUniforms(structureProgram)
         GLES31.glDispatchCompute(groupCount(planeWidth), groupCount(planeHeight), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
         checkGlError("computeStructureTensor")
     }
 
     private fun alignCurrentToReference(reference: List<TextureLevel>, current: List<TextureLevel>) {
-        val levelIndex = ALIGN_LEVEL.coerceAtMost(reference.lastIndex).coerceAtMost(current.lastIndex)
+        val levelIndex = alignLevel.coerceAtMost(reference.lastIndex).coerceAtMost(current.lastIndex)
         val ref = reference[levelIndex]
         val cur = current[levelIndex]
         bindFramebufferOutput(flowTexture, "alignCurrentToReference")
@@ -692,22 +718,24 @@ class GlesRawStacker(
         bindTexture(alignProgram, "uCurrent", 1, cur.texture)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(alignProgram, "uLevelSize"), ref.width, ref.height)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(alignProgram, "uGridSize"), gridWidth, gridHeight)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uTileSize"), FLOW_GRID_SPACING)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uAlignWindowSize"), ALIGN_WINDOW_SIZE)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uTileSize"), flowGridSpacing)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uAlignWindowSize"), hwmfPrefilter.alignWindowSize)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uLevelScale"), 1 shl levelIndex)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSearchRadius"), SEARCH_RADIUS_LEVEL)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSampleStep"), ALIGN_SAMPLE_STEP)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSearchRadius"), hwmfPrefilter.alignSearchRadiusLevel)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignProgram, "uSampleStep"), hwmfPrefilter.alignSampleStep)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(alignProgram, "uCoveragePenalty"), hwmfPrefilter.alignCoveragePenalty)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(alignProgram, "uShiftPenalty"), hwmfPrefilter.alignShiftPenalty)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("alignCurrentToReference")
     }
 
     private fun alignHdrShortToReference(reference: List<TextureLevel>, shortFrame: List<TextureLevel>) {
-        val levelIndex = ALIGN_LEVEL.coerceAtMost(reference.lastIndex).coerceAtMost(shortFrame.lastIndex)
+        val levelIndex = alignLevel.coerceAtMost(reference.lastIndex).coerceAtMost(shortFrame.lastIndex)
         val ref = reference[levelIndex]
         val cur = shortFrame[levelIndex]
         val minLevelSide = minOf(ref.width, ref.height)
-        val searchRadius = minOf(HDR_SHORT_GLOBAL_SEARCH_RADIUS_LEVEL, max(1, minLevelSide / 6))
-        val sampleBorder = minOf(HDR_SHORT_GLOBAL_SAMPLE_BORDER, max(1, minLevelSide / 5))
+        val searchRadius = minOf(hwmfHdr.shortGlobalSearchRadiusLevel, max(1, minLevelSide / 6))
+        val sampleBorder = minOf(hwmfHdr.shortGlobalSampleBorder, max(1, minLevelSide / 5))
         val scoreSide = searchRadius * 2 + 1
         val scoreCount = scoreSide * scoreSide
         val floatCount = scoreCount * HDR_SHORT_ALIGNMENT_SCORE_STRIDE
@@ -735,9 +763,17 @@ class GlesRawStacker(
             GLES31.glUniform1i(GLES31.glGetUniformLocation(hdrShortGlobalAlignProgram, "uSearchRadius"), searchRadius)
             GLES31.glUniform1i(
                 GLES31.glGetUniformLocation(hdrShortGlobalAlignProgram, "uSampleStep"),
-                HDR_SHORT_GLOBAL_SAMPLE_STEP,
+                hwmfHdr.shortGlobalSampleStep,
             )
             GLES31.glUniform1i(GLES31.glGetUniformLocation(hdrShortGlobalAlignProgram, "uSampleBorder"), sampleBorder)
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(hdrShortGlobalAlignProgram, "uCoveragePenalty"),
+                hwmfHdr.shortGlobalCoveragePenalty,
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(hdrShortGlobalAlignProgram, "uShiftPenalty"),
+                hwmfHdr.shortGlobalShiftPenalty,
+            )
             GLES31.glDispatchCompute(scoreSide, scoreSide, 1)
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT)
             checkGlError("alignHdrShortToReference dispatch")
@@ -809,7 +845,7 @@ class GlesRawStacker(
     }
 
     private fun refineFlow() {
-        repeat(LK_REFINE_PASSES) { pass ->
+        repeat(lkRefinePasses) { pass ->
             val input = if (pass % 2 == 0) flowTexture else flowScratchTexture
             val output = if (pass % 2 == 0) flowScratchTexture else flowTexture
             GLES31.glUseProgram(lkRefineProgram)
@@ -819,18 +855,18 @@ class GlesRawStacker(
             bindImage(3, output, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(lkRefineProgram, "uPlaneSize"), planeWidth, planeHeight)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(lkRefineProgram, "uGridSize"), gridWidth, gridHeight)
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(lkRefineProgram, "uTileSize"), FLOW_GRID_SPACING)
+            GLES31.glUniform1i(GLES31.glGetUniformLocation(lkRefineProgram, "uTileSize"), flowGridSpacing)
             GLES31.glDispatchCompute(groupCount(gridWidth), groupCount(gridHeight), 1)
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
             checkGlError("refineFlow pass $pass")
         }
-        if (LK_REFINE_PASSES % 2 != 0) {
+        if (lkRefinePasses % 2 != 0) {
             copyFlow(flowScratchTexture, flowTexture, "refineFlow copy")
         }
     }
 
     private fun smoothFlow() {
-        repeat(FLOW_SMOOTH_PASSES) { pass ->
+        repeat(flowSmoothPasses) { pass ->
             val input = if (pass % 2 == 0) flowTexture else flowScratchTexture
             val output = if (pass % 2 == 0) flowScratchTexture else flowTexture
             bindFramebufferOutput(output, "smoothFlow pass $pass")
@@ -838,7 +874,8 @@ class GlesRawStacker(
             GLES30.glUseProgram(smoothFlowProgram)
             bindTexture(smoothFlowProgram, "uInputFlow", 0, input)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(smoothFlowProgram, "uGridSize"), gridWidth, gridHeight)
-            GLES31.glUniform1f(GLES31.glGetUniformLocation(smoothFlowProgram, "uOutlierThreshold"), FLOW_OUTLIER_THRESHOLD_PX)
+            GLES31.glUniform1f(GLES31.glGetUniformLocation(smoothFlowProgram, "uOutlierThreshold"), hwmfBlend.flowOutlierThresholdPx)
+            GLES31.glUniform1f(GLES31.glGetUniformLocation(smoothFlowProgram, "uOutlierWeight"), hwmfBlend.flowOutlierWeight)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
             finishFramebufferPass("smoothFlow pass $pass")
         }
@@ -851,6 +888,7 @@ class GlesRawStacker(
         bindTexture(smoothFlowProgram, "uInputFlow", 0, input)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(smoothFlowProgram, "uGridSize"), gridWidth, gridHeight)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(smoothFlowProgram, "uOutlierThreshold"), 100000.0f)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(smoothFlowProgram, "uOutlierWeight"), hwmfBlend.flowOutlierWeight)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass(label)
     }
@@ -864,7 +902,8 @@ class GlesRawStacker(
         setCommonUniforms(robustnessProgram)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(robustnessProgram, "uPlaneSize"), planeWidth, planeHeight)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(robustnessProgram, "uGridSize"), gridWidth, gridHeight)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(robustnessProgram, "uTileSize"), FLOW_GRID_SPACING)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(robustnessProgram, "uTileSize"), flowGridSpacing)
+        setBlendRobustnessUniforms(robustnessProgram)
         GLES31.glDispatchCompute(groupCount(planeWidth), groupCount(planeHeight), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
         checkGlError("computeRobustness")
@@ -878,7 +917,8 @@ class GlesRawStacker(
         bindTexture(tileMaskProgram, "uRobustness", 1, robustnessTexture)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(tileMaskProgram, "uPlaneSize"), planeWidth, planeHeight)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(tileMaskProgram, "uGridSize"), gridWidth, gridHeight)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(tileMaskProgram, "uTileSize"), FLOW_GRID_SPACING)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(tileMaskProgram, "uTileSize"), flowGridSpacing)
+        setTileMaskUniforms(tileMaskProgram)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("computeTileMask")
     }
@@ -917,14 +957,15 @@ class GlesRawStacker(
         GLES31.glUniform2i(GLES31.glGetUniformLocation(accumulateProgram, "uImageSize"), width, height)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(accumulateProgram, "uPlaneSize"), planeWidth, planeHeight)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(accumulateProgram, "uGridSize"), gridWidth, gridHeight)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uTileSize"), FLOW_GRID_SPACING)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uTileSize"), flowGridSpacing)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uIsReference"), if (isReference) 1 else 0)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(accumulateProgram, "uHdrMode"), if (hdrMode) 1 else 0)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(accumulateProgram, "uExposureScale"), exposureScale)
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(accumulateProgram, "uFrameWeight"),
-            if (isReference) 1.0f else NON_REFERENCE_FRAME_WEIGHT,
+            if (isReference) 1.0f else hwmfBlend.nonReferenceFrameWeight,
         )
+        setBlendAccumulatorUniforms(accumulateProgram)
         GLES31.glDispatchCompute(groupCount(width), groupCount(height), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
         checkGlError("accumulateFrame")
@@ -1000,6 +1041,7 @@ class GlesRawStacker(
             referenceExposureScale,
         )
         GLES31.glUniform1f(GLES31.glGetUniformLocation(normalizeProgram, "uShortExposureScale"), shortExposureScale)
+        setPostfilterUniforms(normalizeProgram)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("normalizeOutput")
     }
@@ -1107,6 +1149,131 @@ class GlesRawStacker(
         GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uWhiteLevel"), normalizedWhiteLevel)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uNoiseAlpha"), noiseAlpha)
         GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uNoiseBeta"), noiseBeta)
+        GLES31.glUniform1fv(
+            GLES31.glGetUniformLocation(program, "uNoiseAlphaByChannel[0]"),
+            4,
+            normalizedNoiseAlphaByChannel,
+            0
+        )
+        GLES31.glUniform1fv(
+            GLES31.glGetUniformLocation(program, "uNoiseBetaByChannel[0]"),
+            4,
+            normalizedNoiseBetaByChannel,
+            0
+        )
+    }
+
+    private fun setPrefilterStructureUniforms(program: Int) {
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureFlatnessSnrLow"), hwmfPrefilter.structureFlatnessSnrLow)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureFlatnessSnrHigh"), hwmfPrefilter.structureFlatnessSnrHigh)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureKernelDetail"), hwmfPrefilter.structureKernelDetail)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureKernelDenoise"), hwmfPrefilter.structureKernelDenoise)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureKernelShrink"), hwmfPrefilter.structureKernelShrink)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uStructureKernelStretch"), hwmfPrefilter.structureKernelStretch)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uStructureAnisotropyThreshold"),
+            hwmfPrefilter.structureAnisotropyThreshold
+        )
+    }
+
+    private fun setBlendRobustnessUniforms(program: Int) {
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uRobustNoiseFloorSpatialScale"),
+            hwmfBlend.robustnessNoiseFloorSpatialScale
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uRobustNoiseFloorEdgeScale"),
+            hwmfBlend.robustnessNoiseFloorEdgeScale
+        )
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustTauBase"), hwmfBlend.robustnessTauBase)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustTauEdge"), hwmfBlend.robustnessTauEdge)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustResidualPower"), hwmfBlend.robustnessResidualPower)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustFlowPenaltyStartPx"), hwmfBlend.flowPenaltyStartPx)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustFlowPenaltyDecay"), hwmfBlend.flowPenaltyDecay)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uRobustFlowRangePenaltyStartPx"),
+            hwmfBlend.flowRangePenaltyStartPx
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uRobustFlowRangePenaltyDecay"),
+            hwmfBlend.flowRangePenaltyDecay
+        )
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustMinMixFlat"), hwmfBlend.robustMinMixFlat)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustMinMixEdge"), hwmfBlend.robustMinMixEdge)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustCenterMixFlat"), hwmfBlend.robustCenterMixFlat)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustCenterMixEdge"), hwmfBlend.robustCenterMixEdge)
+    }
+
+    private fun setTileMaskUniforms(program: Int) {
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileRobustCenter"), hwmfBlend.tileRobustCenter)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileRobustWidth"), hwmfBlend.tileRobustWidth)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileWeakThreshold"), hwmfBlend.tileWeakThreshold)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileWeakStart"), hwmfBlend.tileWeakStart)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileWeakRange"), hwmfBlend.tileWeakRange)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileDetailMid"), hwmfBlend.tileDetailMid)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileDetailHigh"), hwmfBlend.tileDetailHigh)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileDetailBoostLow"), hwmfBlend.tileDetailBoostLow)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileDetailBoostMid"), hwmfBlend.tileDetailBoostMid)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileDetailBoostHigh"), hwmfBlend.tileDetailBoostHigh)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileMaskMinMidDetail"), hwmfBlend.tileMaskMinMidDetail)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uTileMaskMinHighDetail"), hwmfBlend.tileMaskMinHighDetail)
+    }
+
+    private fun setBlendAccumulatorUniforms(program: Int) {
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uMinBlendBaseWeight"), hwmfBlend.minBlendBaseWeight)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uRobustnessFloorFactor"), hwmfBlend.robustnessFloorFactor)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uPrecisionReferenceSignal"),
+            hwmfBlend.sensorPrecisionReferenceSignal
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLscNoiseGainMax"),
+            hwmfBlend.lscNoiseGainMax.coerceAtLeast(1.0f)
+        )
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uWienerBaseWeight"), hwmfBlend.wienerBaseWeight)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uHighlightSuppressionStrength"),
+            hwmfBlend.highlightSuppressionStrength
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uHighlightSuppressionStart"),
+            hwmfBlend.highlightSuppressionStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uHighlightSuppressionEnd"),
+            hwmfBlend.highlightSuppressionEnd
+        )
+    }
+
+    private fun setPostfilterUniforms(program: Int) {
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uFinalSmoothStrength"), hwmfPostfilter.finalSmoothStrength)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uFlatVarianceStart"), hwmfPostfilter.flatVarianceStart)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uFlatVarianceEnd"), hwmfPostfilter.flatVarianceEnd)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDetailKeepNoiseLowScale"),
+            hwmfPostfilter.detailKeepNoiseLowScale
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDetailKeepNoiseHighScale"),
+            hwmfPostfilter.detailKeepNoiseHighScale
+        )
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uDetailKeepOffsetLow"), hwmfPostfilter.detailKeepOffsetLow)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDetailKeepOffsetHigh"),
+            hwmfPostfilter.detailKeepOffsetHigh
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDetailKeepSuppression"),
+            hwmfPostfilter.detailKeepSuppression
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLscNoiseGainMax"),
+            hwmfPostfilter.lscNoiseGainMax.coerceAtLeast(1.0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uHdrRecoverySmoothSuppression"),
+            hwmfPostfilter.hdrRecoverySmoothSuppression
+        )
     }
 
     private fun createTexture2D(textureWidth: Int, textureHeight: Int, internalFormat: Int, filter: Int): Int {
@@ -1125,13 +1292,18 @@ class GlesRawStacker(
     }
 
     private fun createLensShadingTexture(): Int {
-        val texWidth = if (lensShading != null && lensShadingWidth > 0) lensShadingWidth else 1
-        val texHeight = if (lensShading != null && lensShadingHeight > 0) lensShadingHeight else 1
+        val hasValidLensShading = lensShading != null &&
+            lensShadingWidth > 0 &&
+            lensShadingHeight > 0 &&
+            lensShading.size >= lensShadingWidth * lensShadingHeight * 4
+        val texWidth = if (hasValidLensShading) lensShadingWidth else 1
+        val texHeight = if (hasValidLensShading) lensShadingHeight else 1
         val gainCount = texWidth * texHeight * 4
         val gains = FloatArray(gainCount) { 1.0f }
-        if (lensShading != null) {
-            val copyCount = minOf(lensShading.size, gains.size)
-            System.arraycopy(lensShading, 0, gains, 0, copyCount)
+        lensShading?.takeIf { hasValidLensShading }?.let { sourceLensShading ->
+            for (index in gains.indices) {
+                gains[index] = sourceLensShading[index].takeIf { it.isFinite() && it > 0f } ?: 1.0f
+            }
         }
         val buffer = ByteBuffer.allocateDirect(gains.size * 4)
             .order(ByteOrder.nativeOrder())
@@ -1302,19 +1474,6 @@ class GlesRawStacker(
 
         private const val EGL_OPENGL_ES3_BIT_KHR = 0x00000040
         private const val LOCAL_SIZE = 16
-        private const val PYRAMID_LEVELS = 4
-        private const val ALIGN_LEVEL = 2
-        private const val FLOW_GRID_SPACING = 8
-        private const val ALIGN_WINDOW_SIZE = 32
-        private const val SEARCH_RADIUS_LEVEL = 6
-        private const val ALIGN_SAMPLE_STEP = 2
-        private const val HDR_SHORT_GLOBAL_SEARCH_RADIUS_LEVEL = 8
-        private const val HDR_SHORT_GLOBAL_SAMPLE_STEP = 6
-        private const val HDR_SHORT_GLOBAL_SAMPLE_BORDER = 8
-        private const val LK_REFINE_PASSES = 2
-        private const val FLOW_SMOOTH_PASSES = 2
-        private const val FLOW_OUTLIER_THRESHOLD_PX = 12.0f
-        private const val NON_REFERENCE_FRAME_WEIGHT = 0.92f
         private const val PGTM_STATS_BUFFER_BINDING = 7
         private const val HDR_SHORT_ALIGNMENT_SCORE_BUFFER_BINDING = 8
         private const val HDR_SHORT_ALIGNMENT_SCORE_STRIDE = 4
@@ -1499,6 +1658,8 @@ class GlesRawStacker(
             uniform int uLevelScale;
             uniform int uSearchRadius;
             uniform int uSampleStep;
+            uniform float uCoveragePenalty;
+            uniform float uShiftPenalty;
             out vec4 fragColor;
 
             vec2 readProxy(sampler2D tex, ivec2 p) {
@@ -1533,8 +1694,8 @@ class GlesRawStacker(
                         }
                         float coverage = count / max(sampleCount, 1.0);
                         sad = sad / max(count, 1e-4) +
-                            0.08 * (1.0 - clamp(coverage, 0.0, 1.0)) +
-                            0.0006 * float(dx * dx + dy * dy);
+                            uCoveragePenalty * (1.0 - clamp(coverage, 0.0, 1.0)) +
+                            uShiftPenalty * float(dx * dx + dy * dy);
                         if (sad < bestSad) {
                             bestSad = sad;
                             bestShift = ivec2(dx, dy);
@@ -1557,6 +1718,8 @@ class GlesRawStacker(
             uniform int uSearchRadius;
             uniform int uSampleStep;
             uniform int uSampleBorder;
+            uniform float uCoveragePenalty;
+            uniform float uShiftPenalty;
             layout(std430, binding = $HDR_SHORT_ALIGNMENT_SCORE_BUFFER_BINDING) buffer HdrShortAlignmentScores {
                 float scores[];
             };
@@ -1643,9 +1806,9 @@ class GlesRawStacker(
                     totalSampleCount += sampleParts[i];
                 }
                 float coverage = totalWeight / max(totalSampleCount, 1.0);
-                float shiftPenalty = 0.0008 * float(shift.x * shift.x + shift.y * shift.y);
+                float shiftPenalty = uShiftPenalty * float(shift.x * shift.x + shift.y * shift.y);
                 float score = totalSad / max(totalWeight, 1e-4) +
-                    0.12 * (1.0 - clamp(coverage, 0.0, 1.0)) +
+                    uCoveragePenalty * (1.0 - clamp(coverage, 0.0, 1.0)) +
                     shiftPenalty;
                 int scoreIndex = candidate.y * scoreSide + candidate.x;
                 int offset = scoreIndex * SCORE_STRIDE;
@@ -1742,6 +1905,7 @@ class GlesRawStacker(
             uniform sampler2D uInputFlow;
             uniform ivec2 uGridSize;
             uniform float uOutlierThreshold;
+            uniform float uOutlierWeight;
             out vec4 fragColor;
 
             vec2 readFlow(ivec2 p) {
@@ -1759,7 +1923,7 @@ class GlesRawStacker(
                         if (x == 0 && y == 0) continue;
                         vec2 f = readFlow(p + ivec2(x, y));
                         float d = length(f - center);
-                        float w = d > uOutlierThreshold ? 0.15 : 1.0;
+                        float w = d > uOutlierThreshold ? uOutlierWeight : 1.0;
                         sum += f * w;
                         weight += w;
                     }
@@ -1778,6 +1942,13 @@ class GlesRawStacker(
             uniform ivec2 uProxySize;
             uniform float uNoiseAlpha;
             uniform float uNoiseBeta;
+            uniform float uStructureFlatnessSnrLow;
+            uniform float uStructureFlatnessSnrHigh;
+            uniform float uStructureKernelDetail;
+            uniform float uStructureKernelDenoise;
+            uniform float uStructureKernelShrink;
+            uniform float uStructureKernelStretch;
+            uniform float uStructureAnisotropyThreshold;
 
             float readProxy(ivec2 p) {
                 p = clamp(p, ivec2(0), uProxySize - ivec2(1));
@@ -1815,14 +1986,14 @@ class GlesRawStacker(
                 float noiseSignal = clamp(signalMean, 0.10, 0.75);
                 float noiseVar = uNoiseAlpha * noiseSignal + max(uNoiseBeta, 1e-10);
                 float snr = lambda1 / max(2.0 * noiseVar * 9.0, 1e-12);
-                float flatness = 1.0 - smoothstep(0.35, 4.0, snr);
+                float flatness = 1.0 - smoothstep(uStructureFlatnessSnrLow, uStructureFlatnessSnrHigh, snr);
                 float anisotropy = 1.0 + sqrt(max(lambda1 - lambda2, 0.0) / max(lambda1 + lambda2, 1e-7));
-                float kDetail = 0.26;
-                float kDenoise = 1.0;
-                float kShrink = 3.0;
-                float kStretch = 3.6;
-                float k1Base = anisotropy > 1.6 ? 1.0 / kShrink : 1.0;
-                float k2Base = anisotropy > 1.6 ? kStretch : 1.0;
+                float kDetail = uStructureKernelDetail;
+                float kDenoise = uStructureKernelDenoise;
+                float kShrink = uStructureKernelShrink;
+                float kStretch = uStructureKernelStretch;
+                float k1Base = anisotropy > uStructureAnisotropyThreshold ? 1.0 / kShrink : 1.0;
+                float k2Base = anisotropy > uStructureAnisotropyThreshold ? kStretch : 1.0;
                 float preK1 = kDetail * mix(k1Base, kDenoise, flatness);
                 float preK2 = kDetail * mix(k2Base, kDenoise, flatness);
                 float k1 = 1.0 / max(preK1 * preK1, 1e-7);
@@ -1853,6 +2024,19 @@ class GlesRawStacker(
             uniform int uTileSize;
             uniform float uNoiseAlpha;
             uniform float uNoiseBeta;
+            uniform float uRobustNoiseFloorSpatialScale;
+            uniform float uRobustNoiseFloorEdgeScale;
+            uniform float uRobustTauBase;
+            uniform float uRobustTauEdge;
+            uniform float uRobustResidualPower;
+            uniform float uRobustFlowPenaltyStartPx;
+            uniform float uRobustFlowPenaltyDecay;
+            uniform float uRobustFlowRangePenaltyStartPx;
+            uniform float uRobustFlowRangePenaltyDecay;
+            uniform float uRobustMinMixFlat;
+            uniform float uRobustMinMixEdge;
+            uniform float uRobustCenterMixFlat;
+            uniform float uRobustCenterMixEdge;
 
             float refProxy(ivec2 p) {
                 p = clamp(p, ivec2(0), uPlaneSize - ivec2(1));
@@ -1914,9 +2098,11 @@ class GlesRawStacker(
                     }
                 }
                 float flowMag = length(flow);
-                float flowPenalty = flowMag > 15.0 ? exp(-0.1 * (flowMag - 15.0)) : 1.0;
+                float flowPenalty = flowMag > uRobustFlowPenaltyStartPx ?
+                    exp(-uRobustFlowPenaltyDecay * (flowMag - uRobustFlowPenaltyStartPx)) : 1.0;
                 float flowRange = length(fMax - fMin);
-                float consistencyPenalty = flowRange > 8.0 ? exp(-0.1 * (flowRange - 8.0)) : 1.0;
+                float consistencyPenalty = flowRange > uRobustFlowRangePenaltyStartPx ?
+                    exp(-uRobustFlowRangePenaltyDecay * (flowRange - uRobustFlowRangePenaltyStartPx)) : 1.0;
                 float globalPenalty = flowPenalty * consistencyPenalty;
 
                 float minR = 1.0;
@@ -1930,11 +2116,15 @@ class GlesRawStacker(
                         float c = curProxy(vec2(rp) + flow);
                         float diff = r - c;
                         float d2 = diff * diff;
-                        float noiseFloor = mix(4.5 * sigma2, 0.75 * sigma2Noise, edgeRelax);
+                        float noiseFloor = mix(
+                            uRobustNoiseFloorSpatialScale * sigma2,
+                            uRobustNoiseFloorEdgeScale * sigma2Noise,
+                            edgeRelax
+                        );
                         float den = mix(sigma2, sigma2Noise, edgeRelax);
                         float residual = max(0.0, d2 - noiseFloor) / max(den, 1e-10);
-                        float tau = 1.0 + 0.75 * edgeRelax;
-                        float robust = exp(-0.5 * pow(residual / tau, 8.0)) * globalPenalty;
+                        float tau = uRobustTauBase + uRobustTauEdge * edgeRelax;
+                        float robust = exp(-0.5 * pow(residual / tau, uRobustResidualPower)) * globalPenalty;
                         float w = (x == 0 && y == 0) ? 2.0 : 1.0;
                         sumR += robust * w;
                         weightSum += w;
@@ -1943,8 +2133,8 @@ class GlesRawStacker(
                     }
                 }
                 float avgR = sumR / max(weightSum, 1.0);
-                float minMix = mix(0.35, 0.15, edgeRelax);
-                float centerMix = mix(0.35, 0.65, edgeRelax);
+                float minMix = mix(uRobustMinMixFlat, uRobustMinMixEdge, edgeRelax);
+                float centerMix = mix(uRobustCenterMixFlat, uRobustCenterMixEdge, edgeRelax);
                 float outR = clamp(minMix * minR + centerMix * centerR + (1.0 - minMix - centerMix) * avgR, 0.0, 1.0);
                 imageStore(uRobustness, p, vec4(outR));
             }
@@ -1958,6 +2148,18 @@ class GlesRawStacker(
             uniform ivec2 uPlaneSize;
             uniform ivec2 uGridSize;
             uniform int uTileSize;
+            uniform float uTileRobustCenter;
+            uniform float uTileRobustWidth;
+            uniform float uTileWeakThreshold;
+            uniform float uTileWeakStart;
+            uniform float uTileWeakRange;
+            uniform float uTileDetailMid;
+            uniform float uTileDetailHigh;
+            uniform float uTileDetailBoostLow;
+            uniform float uTileDetailBoostMid;
+            uniform float uTileDetailBoostHigh;
+            uniform float uTileMaskMinMidDetail;
+            uniform float uTileMaskMinHighDetail;
             out float fragColor;
 
             float readRef(ivec2 p) {
@@ -1981,9 +2183,9 @@ class GlesRawStacker(
                         float detail = abs(readRef(p + ivec2(1, 0)) - readRef(p - ivec2(1, 0))) +
                             abs(readRef(p + ivec2(0, 1)) - readRef(p - ivec2(0, 1))) +
                             0.5 * abs(4.0 * c - readRef(p + ivec2(1, 0)) - readRef(p - ivec2(1, 0)) -
-                                readRef(p + ivec2(0, 1)) - readRef(p - ivec2(0, 1)));
+                            readRef(p + ivec2(0, 1)) - readRef(p - ivec2(0, 1)));
                         robustSum += r;
-                        weakCount += r < 0.5 ? 1.0 : 0.0;
+                        weakCount += r < uTileWeakThreshold ? 1.0 : 0.0;
                         detailSum += detail;
                         count += 1.0;
                     }
@@ -1991,14 +2193,15 @@ class GlesRawStacker(
                 float meanR = robustSum / max(count, 1.0);
                 float weak = weakCount / max(count, 1.0);
                 float detail = detailSum / max(count, 1.0);
-                float robustNorm = clamp((meanR - 0.62) / 0.22, 0.0, 1.0);
-                float weakPenalty = clamp(1.0 - max(0.0, weak - 0.08) / 0.26, 0.0, 1.0);
-                float detailBoost = detail > 0.055 ? 0.85 : (detail > 0.025 ? 0.55 : 0.30);
+                float robustNorm = clamp((meanR - uTileRobustCenter) / uTileRobustWidth, 0.0, 1.0);
+                float weakPenalty = clamp(1.0 - max(0.0, weak - uTileWeakStart) / uTileWeakRange, 0.0, 1.0);
+                float detailBoost = detail > uTileDetailHigh ?
+                    uTileDetailBoostHigh : (detail > uTileDetailMid ? uTileDetailBoostMid : uTileDetailBoostLow);
                 float mask = clamp((0.60 * robustNorm + 0.40 * weakPenalty) * (0.55 + 0.45 * detailBoost), 0.0, 1.0);
-                if (detail > 0.055) {
-                    mask = max(mask, 0.28 * robustNorm);
-                } else if (detail > 0.025) {
-                    mask = max(mask, 0.14 * robustNorm);
+                if (detail > uTileDetailHigh) {
+                    mask = max(mask, uTileMaskMinHighDetail * robustNorm);
+                } else if (detail > uTileDetailMid) {
+                    mask = max(mask, uTileMaskMinMidDetail * robustNorm);
                 }
                 fragColor = mask;
             }
@@ -2041,9 +2244,19 @@ class GlesRawStacker(
             uniform float uWhiteLevel;
             uniform float uNoiseAlpha;
             uniform float uNoiseBeta;
+            uniform float uNoiseAlphaByChannel[4];
+            uniform float uNoiseBetaByChannel[4];
             uniform float uFrameWeight;
             uniform int uHdrMode;
             uniform float uExposureScale;
+            uniform float uMinBlendBaseWeight;
+            uniform float uRobustnessFloorFactor;
+            uniform float uPrecisionReferenceSignal;
+            uniform float uLscNoiseGainMax;
+            uniform float uWienerBaseWeight;
+            uniform float uHighlightSuppressionStrength;
+            uniform float uHighlightSuppressionStart;
+            uniform float uHighlightSuppressionEnd;
 
             vec2 flowAt(vec2 planePos) {
                 vec2 grid = planePos / float(uTileSize);
@@ -2070,6 +2283,10 @@ class GlesRawStacker(
                 if (channel == 1) return gains.g;
                 if (channel == 2) return gains.b;
                 return gains.a;
+            }
+
+            float lscNoiseGain(ivec2 samplePos) {
+                return clamp(lscGain(samplePos), 1e-3, max(uLscNoiseGainMax, 1.0));
             }
 
             float rawNormAt(ivec2 samplePos, int bayerIndex) {
@@ -2185,10 +2402,24 @@ class GlesRawStacker(
                 return exp(-0.5 * max(mahalanobis, 0.0));
             }
 
-            float sensorPrecisionWeight(float signalNorm) {
-                if (uNoiseAlpha <= 0.0 && uNoiseBeta <= 0.0) return 1.0;
-                float variance = max(uNoiseAlpha * clamp(signalNorm, 0.0, 1.0) + uNoiseBeta, 1e-10);
-                float referenceVariance = max(uNoiseAlpha * 0.18 + uNoiseBeta, 1e-10);
+            float noiseVarianceForChannel(float correctedSignalNorm, int bayerIndex, float lscGainForNoise) {
+                float channelAlpha = uNoiseAlphaByChannel[bayerIndex];
+                float channelBeta = uNoiseBetaByChannel[bayerIndex];
+                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return 1e-10;
+                float gain = clamp(lscGainForNoise, 1e-3, max(uLscNoiseGainMax, 1.0));
+                return max(
+                    channelAlpha * clamp(correctedSignalNorm, 0.0, 1.0) * gain +
+                    channelBeta * gain * gain,
+                    1e-10
+                );
+            }
+
+            float sensorPrecisionWeight(float correctedSignalNorm, int bayerIndex, float lscGainForNoise) {
+                float channelAlpha = uNoiseAlphaByChannel[bayerIndex];
+                float channelBeta = uNoiseBetaByChannel[bayerIndex];
+                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return 1.0;
+                float variance = noiseVarianceForChannel(correctedSignalNorm, bayerIndex, lscGainForNoise);
+                float referenceVariance = noiseVarianceForChannel(uPrecisionReferenceSignal, bayerIndex, 1.0);
                 return clamp(referenceVariance / variance, 0.05, 4.0);
             }
 
@@ -2211,8 +2442,10 @@ class GlesRawStacker(
                 float robust = 1.0;
                 float local = 1.0;
                 float clipAlpha = 0.0;
+                float sourceLscNoiseGain = 1.0;
                 if (uIsReference != 0) {
                     value = rawNormAt(p, bayerIndex);
+                    sourceLscNoiseGain = lscNoiseGain(p);
                     if (uHdrMode != 0) {
                         clipAlpha = highlightClipAlpha(p);
                     }
@@ -2227,8 +2460,8 @@ class GlesRawStacker(
                     }
                     robust = mapAt(uRobustness, planePos);
                     local = tileMaskAt(planePos);
-                    float base = local * max(robust, 0.01 * local);
-                    if (base <= 0.001) {
+                    float base = local * max(robust, uRobustnessFloorFactor * local);
+                    if (base <= uMinBlendBaseWeight) {
                         imageStore(uAccumulatorOutput, p, prev);
                         return;
                     }
@@ -2247,22 +2480,25 @@ class GlesRawStacker(
                     }
                     value = sumValue / max(sumWeight, 1e-5);
                     ivec2 sourceSample = nearestSamePhase(sourceRaw, phaseOffset, period);
+                    sourceLscNoiseGain = lscNoiseGain(sourceSample);
                     if (uHdrMode != 0) {
                         clipAlpha = highlightClipAlpha(sourceSample);
                     } else {
                         clipAlpha = nonReferenceOverexposureAlpha(sourceSample, value);
                     }
-                    float highlightSuppression = 1.0 - 0.62 * smoothstep(0.78, 0.98, value);
+                    float highlightSuppression = 1.0 - uHighlightSuppressionStrength *
+                        smoothstep(uHighlightSuppressionStart, uHighlightSuppressionEnd, value);
                     highlightSuppression *= 1.0 - clipAlpha;
                     robust = base * highlightSuppression;
                 }
 
                 float sourceValue = value;
                 float outputValue = uHdrMode != 0 ? clamp(sourceValue * uExposureScale, 0.0, 1.0) : sourceValue;
-                float variance = max(uNoiseAlpha * sourceValue + uNoiseBeta, 1e-10);
+                float variance = noiseVarianceForChannel(sourceValue, bayerIndex, sourceLscNoiseGain);
                 float outputVariance = uHdrMode != 0 ? variance * uExposureScale * uExposureScale : variance;
                 float wiener = (outputValue * outputValue) / (outputValue * outputValue + outputVariance + 1e-6);
-                float weight = sensorPrecisionWeight(sourceValue) * (0.25 + wiener);
+                float precisionWeight = sensorPrecisionWeight(sourceValue, bayerIndex, sourceLscNoiseGain);
+                float weight = precisionWeight * (uWienerBaseWeight + wiener);
                 if (uIsReference == 0) {
                     weight *= uFrameWeight * robust;
                 }
@@ -2274,7 +2510,9 @@ class GlesRawStacker(
                     return;
                 }
 
-                float clipMass = uHdrMode != 0 ? sensorPrecisionWeight(sourceValue) * uFrameWeight * clipAlpha : weight * clamp(robust, 0.0, 1.0);
+                float clipMass = uHdrMode != 0 ?
+                    precisionWeight * uFrameWeight * clipAlpha :
+                    weight * clamp(robust, 0.0, 1.0);
                 vec4 next = prev + vec4(
                     outputValue * weight,
                     weight,
@@ -2686,9 +2924,21 @@ class GlesRawStacker(
             uniform float uWhiteLevel;
             uniform float uNoiseAlpha;
             uniform float uNoiseBeta;
+            uniform float uNoiseAlphaByChannel[4];
+            uniform float uNoiseBetaByChannel[4];
             uniform int uHdrMode;
             uniform float uReferenceExposureScale;
             uniform float uShortExposureScale;
+            uniform float uFinalSmoothStrength;
+            uniform float uFlatVarianceStart;
+            uniform float uFlatVarianceEnd;
+            uniform float uDetailKeepNoiseLowScale;
+            uniform float uDetailKeepNoiseHighScale;
+            uniform float uDetailKeepOffsetLow;
+            uniform float uDetailKeepOffsetHigh;
+            uniform float uDetailKeepSuppression;
+            uniform float uLscNoiseGainMax;
+            uniform float uHdrRecoverySmoothSuppression;
 
             float lscGain(ivec2 samplePos) {
                 vec2 uv = (vec2(samplePos) + vec2(0.5)) / vec2(uImageSize);
@@ -2698,6 +2948,22 @@ class GlesRawStacker(
                 if (channel == 1) return gains.g;
                 if (channel == 2) return gains.b;
                 return gains.a;
+            }
+
+            float lscNoiseGain(ivec2 samplePos) {
+                return clamp(lscGain(samplePos), 1e-3, max(uLscNoiseGainMax, 1.0));
+            }
+
+            float noiseVarianceForChannel(float correctedSignalNorm, int bayerIndex, float lscGainForNoise) {
+                float channelAlpha = uNoiseAlphaByChannel[bayerIndex];
+                float channelBeta = uNoiseBetaByChannel[bayerIndex];
+                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return 0.0;
+                float gain = clamp(lscGainForNoise, 1e-3, max(uLscNoiseGainMax, 1.0));
+                return max(
+                    channelAlpha * clamp(correctedSignalNorm, 0.0, 1.0) * gain +
+                    channelBeta * gain * gain,
+                    0.0
+                );
             }
 
             float referenceNorm(ivec2 p, int bayerIndex) {
@@ -2755,10 +3021,14 @@ class GlesRawStacker(
             }
 
             float finalSmoothAmount(float variance, float noise, float detailDeviation) {
-                float flatness = 1.0 - smoothstep(0.00025, 0.0035, variance);
+                float flatness = 1.0 - smoothstep(uFlatVarianceStart, uFlatVarianceEnd, variance);
                 float noiseStd = sqrt(max(noise, 1e-10));
-                float detailKeep = smoothstep(1.4 * noiseStd + 0.0025, 3.2 * noiseStd + 0.010, detailDeviation);
-                return 0.38 * flatness * (1.0 - 0.85 * detailKeep);
+                float detailKeep = smoothstep(
+                    uDetailKeepNoiseLowScale * noiseStd + uDetailKeepOffsetLow,
+                    uDetailKeepNoiseHighScale * noiseStd + uDetailKeepOffsetHigh,
+                    detailDeviation
+                );
+                return uFinalSmoothStrength * flatness * (1.0 - uDetailKeepSuppression * detailKeep);
             }
 
             void main() {
@@ -2823,12 +3093,12 @@ class GlesRawStacker(
                 mean /= max(count, 1.0);
                 mean2 /= max(count, 1.0);
                 float variance = max(mean2 - mean * mean, 0.0);
-                float noise = max(uNoiseAlpha * fused + uNoiseBeta, uNoiseBeta) / max(a.g, 1.0);
+                float noise = noiseVarianceForChannel(fused, bayerIndex, lscNoiseGain(p)) / max(a.g, 1.0);
                 float wienerGain = max(variance - noise, 0.0) / max(variance, 1e-6);
                 float detailDeviation = abs(fused - mean);
                 float smoothAmount = finalSmoothAmount(variance, noise, detailDeviation);
                 if (uHdrMode != 0) {
-                    smoothAmount *= 1.0 - 0.65 * recoveryMix;
+                    smoothAmount *= 1.0 - uHdrRecoverySmoothSuppression * recoveryMix;
                 }
                 fused = mix(fused, mean + wienerGain * (fused - mean), smoothAmount);
                 fused = clamp(fused, 0.0, 1.0);
