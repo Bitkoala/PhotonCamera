@@ -698,6 +698,9 @@
     <string name="settings_main_camera_id">Main Camera ID</string>
     <string name="settings_main_camera_id_description">Choose which 1x rear camera ID is used as the main camera.</string>
     <string name="settings_main_camera_id_option">Camera ID %1$s</string>
+    <string name="settings_macro_camera_id">Macro Camera ID</string>
+    <string name="settings_macro_camera_id_description">Choose a rear camera ID to force as the macro lens. Auto keeps the current camera discovery behavior.</string>
+    <string name="settings_macro_camera_id_auto">Auto</string>
     <string name="settings_logical_multi_camera_discovery">Logical Multi-Camera Discovery</string>
     <string name="settings_logical_multi_camera_discovery_description">Detect physical lenses exposed by logical multi-camera IDs. Off by default for compatibility.</string>
     <string name="settings_logical_camera_binding_whitelist">Logical/Physical Camera Whitelist</string>

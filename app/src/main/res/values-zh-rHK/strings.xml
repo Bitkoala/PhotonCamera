@@ -430,6 +430,9 @@
     <string name="settings_main_camera_id">主攝 ID</string>
     <string name="settings_main_camera_id_description">選擇將哪個 1x 後置相機 ID 作為主攝。</string>
     <string name="settings_main_camera_id_option">相機 ID %1$s</string>
+    <string name="settings_macro_camera_id">微距鏡頭 ID</string>
+    <string name="settings_macro_camera_id_description">選擇一個後置相機 ID 強制作為微距鏡頭。自動識別會保留目前相機偵測邏輯。</string>
+    <string name="settings_macro_camera_id_auto">自動識別</string>
     <string name="settings_logical_multi_camera_discovery">邏輯多攝偵測</string>
     <string name="settings_logical_multi_camera_discovery_description">偵測邏輯多攝 ID 暴露的物理鏡頭。預設關閉以提高兼容性。</string>
     <string name="settings_logical_camera_binding_whitelist">邏輯/物理相機白名單</string>

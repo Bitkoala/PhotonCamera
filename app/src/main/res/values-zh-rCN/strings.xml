@@ -689,6 +689,9 @@
     <string name="settings_main_camera_id">主摄 ID</string>
     <string name="settings_main_camera_id_description">选择将哪个 1x 后置相机 ID 作为主摄。</string>
     <string name="settings_main_camera_id_option">相机 ID %1$s</string>
+    <string name="settings_macro_camera_id">微距镜头 ID</string>
+    <string name="settings_macro_camera_id_description">选择一个后置相机 ID 强制作为微距镜头。自动识别会保留当前相机发现逻辑。</string>
+    <string name="settings_macro_camera_id_auto">自动识别</string>
     <string name="settings_logical_multi_camera_discovery">逻辑多摄探测</string>
     <string name="settings_logical_multi_camera_discovery_description">探测逻辑多摄 ID 暴露的物理镜头。默认关闭以提高兼容性。</string>
     <string name="settings_logical_camera_binding_whitelist">逻辑/物理摄像头白名单</string>

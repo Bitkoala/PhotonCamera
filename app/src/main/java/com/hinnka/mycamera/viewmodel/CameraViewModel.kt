@@ -1084,6 +1084,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val lensIdBlacklist: Flow<List<String>> = userPreferencesRepository.userPreferences.map { it.lensIdBlacklist }
     val iszLensConfigs: Flow<List<IszLensConfig>> = userPreferencesRepository.userPreferences.map { it.iszLensConfigs }
     val preferredMainCameraId: Flow<String?> = userPreferencesRepository.userPreferences.map { it.preferredMainCameraId }
+    val preferredMacroCameraId: Flow<String?> = userPreferencesRepository.userPreferences.map { it.preferredMacroCameraId }
     val enableLogicalMultiCameraDiscovery: Flow<Boolean> =
         userPreferencesRepository.userPreferences.map { it.enableLogicalMultiCameraDiscovery }
     val logicalCameraBindingWhitelist: Flow<List<String>> =
@@ -4384,9 +4385,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         CameraDiscovery(getApplication()).discoverMainCameraIdOptions()
     }
 
+    suspend fun discoverMacroCameraIdOptions(): List<String> = withContext(Dispatchers.IO) {
+        CameraDiscovery(getApplication()).discoverMacroCameraIdOptions()
+    }
+
     fun setPreferredMainCameraId(cameraId: String?) {
         viewModelScope.launch {
             userPreferencesRepository.savePreferredMainCameraId(cameraId)
+            cameraController.refreshCameraList()
+        }
+    }
+
+    fun setPreferredMacroCameraId(cameraId: String?) {
+        viewModelScope.launch {
+            userPreferencesRepository.savePreferredMacroCameraId(cameraId)
             cameraController.refreshCameraList()
         }
     }

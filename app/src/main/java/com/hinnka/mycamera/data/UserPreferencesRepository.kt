@@ -208,6 +208,7 @@ data class UserPreferences(
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val iszLensConfigs: List<IszLensConfig> = emptyList(), // 用户新增的 ISZ 虚拟镜头
     val preferredMainCameraId: String? = null, // 用户选择的主摄 ID
+    val preferredMacroCameraId: String? = null, // 用户选择的微距镜头 ID
     val enableLogicalMultiCameraDiscovery: Boolean = false, // 是否自动探测逻辑多摄物理镜头绑定
     val logicalCameraBindingWhitelist: List<String> = emptyList(), // 强制启用的逻辑/物理镜头绑定，格式 logical/physical
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
@@ -415,6 +416,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val LENS_ID_BLACKLIST = stringPreferencesKey("lens_id_blacklist")
         private val ISZ_LENS_CONFIGS = stringPreferencesKey("isz_lens_configs")
         private val PREFERRED_MAIN_CAMERA_ID = stringPreferencesKey("preferred_main_camera_id")
+        private val PREFERRED_MACRO_CAMERA_ID = stringPreferencesKey("preferred_macro_camera_id")
         private val ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY = booleanPreferencesKey("enable_logical_multi_camera_discovery")
         private val LOGICAL_CAMERA_BINDING_WHITELIST = stringPreferencesKey("logical_camera_binding_whitelist")
         private val HIDDEN_FOCAL_LENGTHS = stringPreferencesKey("hidden_focal_lengths")
@@ -618,6 +620,7 @@ class UserPreferencesRepository(private val context: Context) {
                 lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
                 iszLensConfigs = IszLensConfig.deserializeList(preferences[ISZ_LENS_CONFIGS]),
                 preferredMainCameraId = preferences[PREFERRED_MAIN_CAMERA_ID]?.takeIf { it.isNotBlank() },
+                preferredMacroCameraId = preferences[PREFERRED_MACRO_CAMERA_ID]?.takeIf { it.isNotBlank() },
                 enableLogicalMultiCameraDiscovery = preferences[ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY] ?: false,
                 logicalCameraBindingWhitelist = parseLogicalCameraBindingWhitelist(
                     preferences[LOGICAL_CAMERA_BINDING_WHITELIST]
@@ -1456,6 +1459,17 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences.remove(PREFERRED_MAIN_CAMERA_ID)
             } else {
                 preferences[PREFERRED_MAIN_CAMERA_ID] = normalizedCameraId
+            }
+        }
+    }
+
+    suspend fun savePreferredMacroCameraId(cameraId: String?) {
+        context.dataStore.edit { preferences ->
+            val normalizedCameraId = cameraId?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedCameraId == null) {
+                preferences.remove(PREFERRED_MACRO_CAMERA_ID)
+            } else {
+                preferences[PREFERRED_MACRO_CAMERA_ID] = normalizedCameraId
             }
         }
     }

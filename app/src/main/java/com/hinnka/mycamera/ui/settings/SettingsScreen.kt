@@ -267,6 +267,7 @@ fun SettingsScreen(
     val lensIdBlacklist by viewModel.lensIdBlacklist.collectAsState(initial = emptyList())
     val iszLensConfigs by viewModel.iszLensConfigs.collectAsState(initial = emptyList())
     val preferredMainCameraId by viewModel.preferredMainCameraId.collectAsState(initial = null)
+    val preferredMacroCameraId by viewModel.preferredMacroCameraId.collectAsState(initial = null)
     val enableLogicalMultiCameraDiscovery by viewModel.enableLogicalMultiCameraDiscovery.collectAsState(initial = false)
     val logicalCameraBindingWhitelist by viewModel.logicalCameraBindingWhitelist.collectAsState(initial = emptyList())
     val multiFrameCount by viewModel.multiFrameCount.collectAsState()
@@ -339,6 +340,7 @@ fun SettingsScreen(
     var isRawSliderAdjusting by remember { mutableStateOf(false) }
     var isSoftwareProcessingSliderAdjusting by remember { mutableStateOf(false) }
     var mainCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var macroCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
     var rawHighlightsAdjustmentUi by remember { mutableStateOf(rawHighlightsAdjustment) }
     var rawShadowsAdjustmentUi by remember { mutableStateOf(rawShadowsAdjustment) }
@@ -384,11 +386,17 @@ fun SettingsScreen(
     LaunchedEffect(
         customLensIds,
         lensIdBlacklist,
+        preferredMacroCameraId,
         enableLogicalMultiCameraDiscovery,
         logicalCameraBindingWhitelist
     ) {
         mainCameraIdOptions = runCatching {
             viewModel.discoverMainCameraIdOptions()
+        }.getOrElse {
+            emptyList()
+        }
+        macroCameraIdOptions = runCatching {
+            viewModel.discoverMacroCameraIdOptions()
         }.getOrElse {
             emptyList()
         }
@@ -998,6 +1006,39 @@ fun SettingsScreen(
                                 onOptionSelected = { label ->
                                     mainCameraIdLabels.firstOrNull { it.second == label }?.first?.let {
                                         viewModel.setPreferredMainCameraId(it)
+                                    }
+                                }
+                            )
+                        }
+
+                        if (macroCameraIdOptions.size > 1) {
+                            HorizontalDivider(
+                                color = Color.White.copy(alpha = 0.1f),
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            val macroCameraAutoLabel = stringResource(R.string.settings_macro_camera_id_auto)
+                            val selectedMacroCameraId = preferredMacroCameraId
+                                ?.takeIf { macroCameraIdOptions.contains(it) }
+                            val macroCameraIdLabels: List<Pair<String?, String>> =
+                                listOf(null to macroCameraAutoLabel) + macroCameraIdOptions.map { cameraId ->
+                                    cameraId to stringResource(R.string.settings_main_camera_id_option, cameraId)
+                                }
+                            val selectedMacroCameraLabel = macroCameraIdLabels
+                                .firstOrNull { it.first == selectedMacroCameraId }
+                                ?.second
+                                ?: macroCameraAutoLabel
+
+                            DropdownSettingItem(
+                                title = stringResource(R.string.settings_macro_camera_id),
+                                description = stringResource(R.string.settings_macro_camera_id_description),
+                                value = selectedMacroCameraLabel,
+                                options = macroCameraIdLabels.map { it.second },
+                                isLoading = false,
+                                onExpanded = {},
+                                onOptionSelected = { label ->
+                                    macroCameraIdLabels.firstOrNull { it.second == label }?.let {
+                                        viewModel.setPreferredMacroCameraId(it.first)
                                     }
                                 }
                             )
