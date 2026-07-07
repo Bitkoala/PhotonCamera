@@ -33,6 +33,16 @@ data class VendorCaptureSettings(
         return withOverride(key, enabled = true, value = value)
     }
 
+    fun toVirtualLensProfileId(): String? {
+        if (!isEnabled) return null
+        return values.entries
+            .sortedBy { it.key.ordinal }
+            .joinToString("-") { (key, value) ->
+                "${key.persistedName}_${formatProfileValue(key.normalizeValue(value))}"
+            }
+            .takeIf { it.isNotBlank() }
+    }
+
     internal fun toJsonObject(): JSONObject {
         return JSONObject().apply {
             VendorCaptureKey.entries.forEach { key ->
@@ -43,6 +53,14 @@ data class VendorCaptureSettings(
 
     companion object {
         val Empty = VendorCaptureSettings()
+
+        private fun formatProfileValue(value: Int): String {
+            return if (value < 0) {
+                "n${value.toString().drop(1)}"
+            } else {
+                value.toString()
+            }
+        }
 
         internal fun fromJsonObject(json: JSONObject): VendorCaptureSettings {
             val parsedValues = VendorCaptureKey.entries

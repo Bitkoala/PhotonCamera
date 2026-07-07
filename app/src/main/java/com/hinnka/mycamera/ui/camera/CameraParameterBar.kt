@@ -73,14 +73,10 @@ fun CameraParameterBar(
         )
         ParameterItem(
             label = "AWB",
-            value = when (state.awbMode) {
-                CameraMetadata.CONTROL_AWB_MODE_OFF -> "${state.awbTemperature}K"
-                CameraMetadata.CONTROL_AWB_MODE_AUTO -> "AUTO"
-                else -> "UNK"
-            },
+            value = formatWhiteBalanceValue(state),
             labelColor = yellow,
             isSelected = selectedParameter == CameraParameter.WHITE_BALANCE,
-            isEnabled = true,
+            isEnabled = state.canAdjustWhiteBalance || state.actualAwbTemperature != null,
             onClick = { onParameterClick(CameraParameter.WHITE_BALANCE) }
         )
     }
@@ -133,5 +129,13 @@ internal fun formatFocusDistance(value: Float): String {
         val meters = 1.0f / value
         if (meters >= 1.0f) String.format("%.1fm", meters)
         else String.format("%dcm", (meters * 100).toInt())
+    }
+}
+
+internal fun formatWhiteBalanceValue(state: CameraState): String {
+    return when (state.awbMode) {
+        CameraMetadata.CONTROL_AWB_MODE_OFF -> "${state.awbTemperature}K"
+        CameraMetadata.CONTROL_AWB_MODE_AUTO -> state.actualAwbTemperature?.let { "${it}K" } ?: "AUTO"
+        else -> state.actualAwbTemperature?.let { "${it}K" } ?: "UNK"
     }
 }

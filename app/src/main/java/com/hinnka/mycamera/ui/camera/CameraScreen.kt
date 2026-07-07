@@ -814,6 +814,13 @@ fun CameraScreen(
         }
 
         val parameterRuler = @Composable {
+            val whiteBalanceCurrentValue = if (
+                state.awbMode == android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO
+            ) {
+                state.actualAwbTemperature?.toFloat() ?: state.awbTemperature.toFloat()
+            } else {
+                state.awbTemperature.toFloat()
+            }
             ParameterRuler(
                 parameter = selectedParameter,
                 currentValue = when (selectedParameter) {
@@ -821,32 +828,38 @@ fun CameraScreen(
                     CameraParameter.SHUTTER_SPEED -> state.shutterSpeed.toFloat()
                     CameraParameter.ISO -> state.iso.toFloat()
                     CameraParameter.FOCUS -> state.focusDistance
-                    CameraParameter.WHITE_BALANCE -> state.awbTemperature.toFloat()
+                    CameraParameter.WHITE_BALANCE -> whiteBalanceCurrentValue
                 },
                 minValue = when (selectedParameter) {
                     CameraParameter.EXPOSURE_COMPENSATION -> state.getExposureCompensationRange().lower * state.getExposureCompensationStep()
                     CameraParameter.SHUTTER_SPEED -> state.getShutterSpeedRange().lower.toFloat()
                     CameraParameter.ISO -> state.getIsoRange().lower.toFloat()
                     CameraParameter.FOCUS -> 0f
-                    CameraParameter.WHITE_BALANCE -> 2000f
+                    CameraParameter.WHITE_BALANCE -> state.awbTemperatureMin.toFloat()
                 },
                 maxValue = when (selectedParameter) {
                     CameraParameter.EXPOSURE_COMPENSATION -> state.getExposureCompensationRange().upper * state.getExposureCompensationStep()
                     CameraParameter.SHUTTER_SPEED -> maxOf(state.getShutterSpeedRange().upper, 1_000_000_000L * 15).toFloat()
                     CameraParameter.ISO -> maxOf(state.getIsoRange().upper, 3200).toFloat()
                     CameraParameter.FOCUS -> state.minimumFocusDistance
-                    CameraParameter.WHITE_BALANCE -> 10000f
+                    CameraParameter.WHITE_BALANCE -> state.awbTemperatureMax.toFloat()
                 },
                 isAdjustable = when (selectedParameter) {
                     CameraParameter.EXPOSURE_COMPENSATION -> state.isAutoExposure
                     CameraParameter.SHUTTER_SPEED -> !state.isShutterSpeedAuto
                     CameraParameter.ISO -> !state.isIsoAuto
                     CameraParameter.FOCUS -> !state.isAutoFocus
-                    CameraParameter.WHITE_BALANCE -> state.awbMode != android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO
+                    CameraParameter.WHITE_BALANCE ->
+                        state.canAdjustWhiteBalance &&
+                                state.awbMode != android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO
                 },
                 showAutoButton = when (selectedParameter) {
                     CameraParameter.SHUTTER_SPEED, CameraParameter.ISO, CameraParameter.WHITE_BALANCE, CameraParameter.FOCUS -> true
                     else -> false
+                },
+                isAutoModeToggleEnabled = when (selectedParameter) {
+                    CameraParameter.WHITE_BALANCE -> state.canAdjustWhiteBalance
+                    else -> true
                 },
                 resetValue = selectedParameter.defaultResetValue(),
                 showHyperfocalButton = selectedParameter == CameraParameter.FOCUS && state.minimumFocusDistance > 0f,
@@ -869,10 +882,12 @@ fun CameraScreen(
                         CameraParameter.SHUTTER_SPEED -> viewModel.setShutterSpeedAuto(!state.isShutterSpeedAuto)
                         CameraParameter.ISO -> viewModel.setIsoAuto(!state.isIsoAuto)
                         CameraParameter.WHITE_BALANCE -> {
-                            if (state.awbMode == android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO) {
-                                viewModel.setAwbMode(android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_OFF)
-                            } else {
-                                viewModel.setAwbMode(android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO)
+                            if (state.canAdjustWhiteBalance) {
+                                if (state.awbMode == android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO) {
+                                    viewModel.setAwbMode(android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_OFF)
+                                } else {
+                                    viewModel.setAwbMode(android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO)
+                                }
                             }
                         }
 

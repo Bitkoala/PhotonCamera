@@ -267,6 +267,7 @@ fun SettingsScreen(
     val lensIdBlacklist by viewModel.lensIdBlacklist.collectAsState(initial = emptyList())
     val iszLensConfigs by viewModel.iszLensConfigs.collectAsState(initial = emptyList())
     val preferredMainCameraId by viewModel.preferredMainCameraId.collectAsState(initial = null)
+    val preferredMacroCameraId by viewModel.preferredMacroCameraId.collectAsState(initial = null)
     val enableLogicalMultiCameraDiscovery by viewModel.enableLogicalMultiCameraDiscovery.collectAsState(initial = false)
     val logicalCameraBindingWhitelist by viewModel.logicalCameraBindingWhitelist.collectAsState(initial = emptyList())
     val multiFrameCount by viewModel.multiFrameCount.collectAsState()
@@ -324,6 +325,7 @@ fun SettingsScreen(
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
     val rawWhiteLevelMode by viewModel.rawWhiteLevelMode.collectAsState()
+    val rawCustomWhiteLevel by viewModel.rawCustomWhiteLevel.collectAsState()
     val rawCfaCorrectionMode by viewModel.rawCfaCorrectionMode.collectAsState()
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
@@ -338,6 +340,7 @@ fun SettingsScreen(
     var isRawSliderAdjusting by remember { mutableStateOf(false) }
     var isSoftwareProcessingSliderAdjusting by remember { mutableStateOf(false) }
     var mainCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var macroCameraIdOptions by remember { mutableStateOf<List<String>>(emptyList()) }
     var rawExposureCompensationUi by remember { mutableStateOf(rawExposureCompensation) }
     var rawHighlightsAdjustmentUi by remember { mutableStateOf(rawHighlightsAdjustment) }
     var rawShadowsAdjustmentUi by remember { mutableStateOf(rawShadowsAdjustment) }
@@ -383,11 +386,17 @@ fun SettingsScreen(
     LaunchedEffect(
         customLensIds,
         lensIdBlacklist,
+        preferredMacroCameraId,
         enableLogicalMultiCameraDiscovery,
         logicalCameraBindingWhitelist
     ) {
         mainCameraIdOptions = runCatching {
             viewModel.discoverMainCameraIdOptions()
+        }.getOrElse {
+            emptyList()
+        }
+        macroCameraIdOptions = runCatching {
+            viewModel.discoverMacroCameraIdOptions()
         }.getOrElse {
             emptyList()
         }
@@ -997,6 +1006,39 @@ fun SettingsScreen(
                                 onOptionSelected = { label ->
                                     mainCameraIdLabels.firstOrNull { it.second == label }?.first?.let {
                                         viewModel.setPreferredMainCameraId(it)
+                                    }
+                                }
+                            )
+                        }
+
+                        if (macroCameraIdOptions.size > 1) {
+                            HorizontalDivider(
+                                color = Color.White.copy(alpha = 0.1f),
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            val macroCameraAutoLabel = stringResource(R.string.settings_macro_camera_id_auto)
+                            val selectedMacroCameraId = preferredMacroCameraId
+                                ?.takeIf { macroCameraIdOptions.contains(it) }
+                            val macroCameraIdLabels: List<Pair<String?, String>> =
+                                listOf(null to macroCameraAutoLabel) + macroCameraIdOptions.map { cameraId ->
+                                    cameraId to stringResource(R.string.settings_main_camera_id_option, cameraId)
+                                }
+                            val selectedMacroCameraLabel = macroCameraIdLabels
+                                .firstOrNull { it.first == selectedMacroCameraId }
+                                ?.second
+                                ?: macroCameraAutoLabel
+
+                            DropdownSettingItem(
+                                title = stringResource(R.string.settings_macro_camera_id),
+                                description = stringResource(R.string.settings_macro_camera_id_description),
+                                value = selectedMacroCameraLabel,
+                                options = macroCameraIdLabels.map { it.second },
+                                isLoading = false,
+                                onExpanded = {},
+                                onOptionSelected = { label ->
+                                    macroCameraIdLabels.firstOrNull { it.second == label }?.let {
+                                        viewModel.setPreferredMacroCameraId(it.first)
                                     }
                                 }
                             )
@@ -1837,11 +1879,24 @@ fun SettingsScreen(
                             RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
                             RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
                             RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
-                            RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor)
+                            RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor),
+                            RawWhiteLevelCorrection.MODE_CUSTOM to stringResource(R.string.settings_white_level_custom)
                         ),
                         currentLevel = rawWhiteLevelMode,
                         onLevelSelected = { viewModel.setRawWhiteLevelMode(it) }
                     )
+
+                    if (rawWhiteLevelMode == RawWhiteLevelCorrection.MODE_CUSTOM) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_white_level_custom),
+                            description = null,
+                            value = if (rawCustomWhiteLevel == 0f) "" else rawCustomWhiteLevel.toString(),
+                            onValueChange = {
+                                it.toFloatOrNull()?.let { value -> viewModel.setRawCustomWhiteLevel(value) }
+                            }
+                        )
+                    }
                 }
 
                 SettingsTab.PHANTOM -> {
@@ -3466,7 +3521,11 @@ private fun AddIszLensDialog(
     val selectedBaseCamera = baseLensCandidates.firstOrNull { it.cameraId == selectedBaseCameraId }
     val selectedBaseLabel = selectedBaseCamera?.let { iszBaseLensLabel(it) }.orEmpty()
     val baseLensLabels = baseLensCandidates.map { it.cameraId to iszBaseLensLabel(it) }
-    val virtualLensId = IszLensConfig.createVirtualCameraId(selectedBaseCameraId, selectedIszZoomRatio)
+    val virtualLensId = IszLensConfig.createVirtualCameraId(
+        selectedBaseCameraId,
+        selectedIszZoomRatio,
+        settings.toVirtualLensProfileId()
+    )
     val virtualLensName = selectedBaseCamera?.let {
         stringResource(
             R.string.settings_isz_virtual_lens_name,
@@ -3627,6 +3686,8 @@ private fun AddIszLensDialog(
                         val displayRatio = baseCamera?.let {
                             IszLensConfig.displayRatioLabel(it.displayIntrinsicZoomRatio * config.iszZoomRatio)
                         } ?: IszLensConfig.displayRatioLabel(config.iszZoomRatio)
+                        val vendorSettings = vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId)
+                        val vendorProfileSummary = vendorCaptureSettingsSummary(vendorSettings)
                         val lensKind = stringResource(
                             if (config.isMacro) {
                                 R.string.settings_isz_lens_kind_macro
@@ -3645,7 +3706,7 @@ private fun AddIszLensDialog(
                                 config.virtualCameraId,
                                 displayRatio,
                                 lensKind,
-                                vendorCaptureSettingsByLens.settingsFor(config.virtualCameraId).values.size,
+                                vendorProfileSummary,
                                 stringResource(
                                     R.string.settings_isz_raw_black_border_crop_summary,
                                     config.rawBlackBorderCrop.leftPx,
@@ -3765,6 +3826,23 @@ private fun iszBaseLensLabel(camera: CameraInfo): String {
         stringResource(R.string.settings_isz_lens_unknown_focal_length)
     }
     return stringResource(R.string.settings_isz_lens_label, prefix, camera.cameraId, focalLength)
+}
+
+@Composable
+private fun vendorCaptureSettingsSummary(settings: VendorCaptureSettings): String {
+    if (!settings.isEnabled) {
+        return stringResource(R.string.settings_isz_vendor_profile_none)
+    }
+
+    val parts = mutableListOf<String>()
+    for ((key, value) in settings.values.entries.sortedBy { it.key.ordinal }) {
+        parts += stringResource(
+            R.string.settings_isz_vendor_profile_entry,
+            key.displayName(),
+            key.normalizeValue(value)
+        )
+    }
+    return parts.joinToString(" / ")
 }
 
 @Composable

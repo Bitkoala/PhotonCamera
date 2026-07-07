@@ -7,6 +7,7 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.DynamicRangeProfiles
@@ -20,10 +21,14 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Range
+import android.util.Rational
 import android.util.Size
 import android.view.Surface
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import com.hinnka.mycamera.raw.ColorSpace as RawColorSpace
+import com.hinnka.mycamera.raw.DngSdkColorSpec
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -101,6 +106,11 @@ class Camera2Controller(private val context: Context) {
         private const val DEFAULT_HYPERFOCAL_APERTURE = 1.8f
         private const val HYPERFOCAL_COC_DIAGONAL_DIVISOR = 1500.0
         private const val NO_IMAGE_READER_FORMAT = -1
+        private const val AWB_TEMPERATURE_MIN = 2000
+        private const val AWB_TEMPERATURE_MAX = 8000
+        private val FORCED_VENDOR_SESSION_PARAMETER_KEYS = setOf(
+            VendorCaptureKey.VIVO_FORCE_SENSOR_MODE
+        )
     }
 
     private data class PhysicalOutputFailureKey(
@@ -118,6 +128,39 @@ class Camera2Controller(private val context: Context) {
         val distanceMeters: Float,
         val focusDistanceDiopters: Float
     )
+
+    private data class WhiteBalanceResultSnapshot(
+        val awbMode: Int,
+        val colorTemperature: Int?,
+        val colorTint: Int?,
+        val gains: RggbChannelVector?,
+        val transform: ColorSpaceTransform?
+    )
+
+    private data class ManualWhiteBalanceAnchor(
+        val controlPath: WhiteBalanceControlPath,
+        val baseTemperature: Int,
+        val colorTint: Int?,
+        val gains: RggbChannelVector?,
+        val transform: ColorSpaceTransform?
+    )
+
+    private data class NormalizedRgb(
+        val red: Float,
+        val green: Float,
+        val blue: Float
+    )
+
+    private data class InitialSessionParametersResult(
+        val applied: Boolean,
+        val usedVendorParameters: Boolean
+    )
+
+    private enum class WhiteBalanceControlPath {
+        CCT,
+        MATRIX,
+        UNAVAILABLE
+    }
 
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -139,6 +182,7 @@ class Camera2Controller(private val context: Context) {
     private var previewRequestBuilder: CaptureRequest.Builder? = null
     private var previewSessionGeneration: Long = 0L
     private val previewUpdateScheduled = AtomicBoolean(false)
+    private var pendingVendorSessionParameterRestart = false
 
     private var previewSurface: Surface? = null
     private var previewSurfaceTexture: SurfaceTexture? = null
@@ -183,6 +227,10 @@ class Camera2Controller(private val context: Context) {
     private var availableVideoStabilizationModes: IntArray = intArrayOf()
     private var availableOpticalStabilizationModes: IntArray = intArrayOf()
     private var availableLensShadingMapModes: IntArray = intArrayOf()
+    private var availableColorCorrectionModes: IntArray = intArrayOf()
+    private var awbColorTemperatureRange: Range<Int>? = null
+    private var lastWhiteBalanceResult: WhiteBalanceResultSnapshot? = null
+    private var manualWhiteBalanceAnchor: ManualWhiteBalanceAnchor? = null
     private var isRawSupported = false
     private var isP010Supported = false
     private var isHlg10Supported = false
@@ -529,7 +577,19 @@ class Camera2Controller(private val context: Context) {
                     || aeMode == CaptureResult.CONTROL_AE_MODE_ON_AUTO_FLASH
                     || aeMode == CaptureResult.CONTROL_AE_MODE_ON_ALWAYS_FLASH
             val exposureCompensation = result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION) ?: 0
-            val awbMode = result.get(CaptureResult.CONTROL_AWB_MODE) ?: CameraMetadata.CONTROL_AWB_MODE_AUTO
+            val awbMode = result.get(CaptureResult.CONTROL_AWB_MODE) ?: _state.value.awbMode
+            val whiteBalanceResult = readWhiteBalanceResult(result, awbMode)
+            lastWhiteBalanceResult = whiteBalanceResult
+            val actualAwbTemperature =
+                whiteBalanceResult.colorTemperature ?: whiteBalanceResult.gains?.let(::estimateKelvinFromRggbGains)
+            val actualAwbGains = whiteBalanceResult.gains?.toStateGains()
+            val awbRange = resolveAwbTemperatureRange()
+            val canAdjustWhiteBalance =
+                if (_state.value.awbMode == CameraMetadata.CONTROL_AWB_MODE_OFF) {
+                    manualWhiteBalanceAnchor != null
+                } else {
+                    canAdjustManualWhiteBalance(whiteBalanceResult)
+                }
             val aperture = result.get(CaptureResult.LENS_APERTURE)
             val focusDistance = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
 
@@ -540,6 +600,13 @@ class Camera2Controller(private val context: Context) {
                 shutterSpeed = if (isAutoExposure) actualExposureTimeNs
                     ?: _state.value.shutterSpeed else _state.value.shutterSpeed,
                 awbMode = awbMode,
+                actualAwbTemperature = actualAwbTemperature,
+                actualAwbTint = whiteBalanceResult.colorTint,
+                actualAwbGains = actualAwbGains,
+                canAdjustWhiteBalance = canAdjustWhiteBalance,
+                supportsCctWhiteBalance = supportsCctWhiteBalance(),
+                awbTemperatureMin = awbRange.lower,
+                awbTemperatureMax = awbRange.upper,
                 physicalAperture = aperture ?: _state.value.physicalAperture,
                 focusDistance = focusDistance
             )
@@ -814,6 +881,10 @@ class Camera2Controller(private val context: Context) {
         availableVideoStabilizationModes = intArrayOf()
         availableOpticalStabilizationModes = intArrayOf()
         availableLensShadingMapModes = intArrayOf()
+        availableColorCorrectionModes = intArrayOf()
+        awbColorTemperatureRange = null
+        lastWhiteBalanceResult = null
+        manualWhiteBalanceAnchor = null
         isRawSupported = false
         isP010Supported = false
         isHlg10Supported = false
@@ -856,12 +927,20 @@ class Camera2Controller(private val context: Context) {
             _state.value.copy(
                 isPreviewActive = false,
                 isCapturing = false,
+                actualAwbTemperature = null,
+                actualAwbTint = null,
+                actualAwbGains = null,
+                canAdjustWhiteBalance = false,
                 videoRecordingState = VideoRecordingState()
             )
         } else {
             _state.value.copy(
                 isPreviewActive = false,
-                isCapturing = false
+                isCapturing = false,
+                actualAwbTemperature = null,
+                actualAwbTint = null,
+                actualAwbGains = null,
+                canAdjustWhiteBalance = false
             )
         }
     }
@@ -1180,6 +1259,9 @@ class Camera2Controller(private val context: Context) {
                 availableLensShadingMapModes =
                     openCharacteristics.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_LENS_SHADING_MAP_MODES)
                         ?: intArrayOf()
+                availableColorCorrectionModes = loadAvailableColorCorrectionModes(openCharacteristics)
+                awbColorTemperatureRange = loadAwbColorTemperatureRange(openCharacteristics)
+                lastWhiteBalanceResult = null
                 isRawSupported = isRawOutputSupported(capabilityCharacteristics) &&
                         (outputPhysicalCameraId?.let {
                             !isPhysicalOutputProfileFailed(it, ImageFormat.RAW_SENSOR)
@@ -1222,7 +1304,10 @@ class Camera2Controller(private val context: Context) {
                             "ManualSensor: $isManualSensorSupported, ManualPost: $isManualPostProcessingSupported, " +
                             "RAW: $isRawSupported, P010: $isP010Supported, " +
                             "MaxRegions(AF/AE/AWB): $maxAfRegions/$maxAeRegions/$maxAwbRegions, " +
-                            "AF modes: ${availableAfModes.joinToString()}"
+                            "AF modes: ${availableAfModes.joinToString()}, " +
+                            "AWB modes: ${availableAwbModes.joinToString()}, " +
+                            "ColorCorrection modes: ${availableColorCorrectionModes.joinToString()}, " +
+                            "CCT range: ${awbColorTemperatureRange}"
                 )
 
                 val selectableNrModes = buildSelectableNoiseReductionModes(availableNoiseReductionModes)
@@ -1237,6 +1322,13 @@ class Camera2Controller(private val context: Context) {
                     isP010Supported = isP010Supported,
                     isHlg10Supported = isHlg10Supported,
                     availableNrModes = selectableNrModes,
+                    supportsCctWhiteBalance = supportsCctWhiteBalance(),
+                    canAdjustWhiteBalance = false,
+                    actualAwbTemperature = null,
+                    actualAwbTint = null,
+                    actualAwbGains = null,
+                    awbTemperatureMin = resolveAwbTemperatureRange().lower,
+                    awbTemperatureMax = resolveAwbTemperatureRange().upper,
                     currentPreviewSize = previewSize,
                     currentCaptureSize = if (captureMode == CaptureMode.VIDEO || captureMode == CaptureMode.QUICK_SHOT) {
                         previewSize
@@ -1587,6 +1679,7 @@ class Camera2Controller(private val context: Context) {
 
     private fun createPreviewSession(
         forceStandardSession: Boolean = false,
+        forceWithoutVendorSessionParameters: Boolean = false,
         openGeneration: Long = cameraOpenGeneration
     ) {
         if (openGeneration != cameraOpenGeneration) {
@@ -1598,11 +1691,16 @@ class Camera2Controller(private val context: Context) {
         val captureMode = _state.value.captureMode
         val reader = imageReader
         val sessionGeneration = ++previewSessionGeneration
+        pendingVendorSessionParameterRestart = false
+        val templateType = if (captureMode == CaptureMode.VIDEO) {
+            CameraDevice.TEMPLATE_RECORD
+        } else {
+            CameraDevice.TEMPLATE_PREVIEW
+        }
+        var vendorSessionParametersApplied = false
 
         try {
-            previewRequestBuilder = device.createCaptureRequest(
-                if (captureMode == CaptureMode.VIDEO) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW
-            ).apply {
+            previewRequestBuilder = device.createCaptureRequest(templateType).apply {
                 addTarget(surface)
 
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
@@ -1645,6 +1743,15 @@ class Camera2Controller(private val context: Context) {
                             }
                             PLog.e(TAG, "Video session configuration failed: useHlgCapture=$useHlgCapture")
                             safeCloseCaptureSession(session, "video configure failure")
+                            if (vendorSessionParametersApplied &&
+                                retryPreviewSessionWithoutVendorSessionParameters(
+                                    reason = "video configure failed",
+                                    forceStandardSession = forceStandardSession,
+                                    openGeneration = openGeneration
+                                )
+                            ) {
+                                return
+                            }
                             if (retryPreviewSessionWithoutPhysicalOutput("video configure failed", openGeneration)) {
                                 return
                             }
@@ -1658,7 +1765,12 @@ class Camera2Controller(private val context: Context) {
                         }
                     }
                 )
-                applyInitialSessionParameters(sessionConfig)
+                vendorSessionParametersApplied = applyInitialSessionParameters(
+                    sessionConfig = sessionConfig,
+                    device = device,
+                    templateType = templateType,
+                    includeVendorSessionParameters = !forceWithoutVendorSessionParameters
+                ).usedVendorParameters
                 device.createCaptureSession(sessionConfig)
                 return
             }
@@ -1710,6 +1822,15 @@ class Camera2Controller(private val context: Context) {
                                     "sessionColorSpace=${if (shouldUseP3ColorSpace()) "DISPLAY_P3" else "DEFAULT"}"
                         )
                         safeCloseCaptureSession(session, "photo configure failure")
+                        if (vendorSessionParametersApplied &&
+                            retryPreviewSessionWithoutVendorSessionParameters(
+                                reason = "photo configure failed",
+                                forceStandardSession = forceStandardSession,
+                                openGeneration = openGeneration
+                            )
+                        ) {
+                            return
+                        }
                         if (retryPreviewSessionWithoutPhysicalOutput("photo configure failed", openGeneration)) {
                             return
                         }
@@ -1728,18 +1849,57 @@ class Camera2Controller(private val context: Context) {
                     sessionConfig.setColorSpace(ColorSpace.Named.DISPLAY_P3)
                 }
             }
+            vendorSessionParametersApplied = applyInitialSessionParameters(
+                sessionConfig = sessionConfig,
+                device = device,
+                templateType = templateType,
+                includeVendorSessionParameters = !forceWithoutVendorSessionParameters
+            ).usedVendorParameters
             device.createCaptureSession(sessionConfig)
         } catch (e: IllegalStateException) {
             PLog.w(TAG, "Failed to create preview session", e)
+            if (vendorSessionParametersApplied &&
+                retryPreviewSessionWithoutVendorSessionParameters(
+                    reason = "create session illegal state: ${e.message}",
+                    forceStandardSession = forceStandardSession,
+                    openGeneration = openGeneration
+                )
+            ) {
+                return
+            }
             if (!retryPreviewSessionWithoutPhysicalOutput("create session illegal state: ${e.message}", openGeneration)) {
                 handlePreviewSessionFailure("create session illegal state", openGeneration, e)
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
+            if (vendorSessionParametersApplied &&
+                retryPreviewSessionWithoutVendorSessionParameters(
+                    reason = "create session exception: ${e.message}",
+                    forceStandardSession = forceStandardSession,
+                    openGeneration = openGeneration
+                )
+            ) {
+                return
+            }
             if (!retryPreviewSessionWithoutPhysicalOutput("create session exception: ${e.message}", openGeneration)) {
                 handlePreviewSessionFailure("create session exception", openGeneration, e)
             }
         }
+    }
+
+    private fun retryPreviewSessionWithoutVendorSessionParameters(
+        reason: String,
+        forceStandardSession: Boolean,
+        openGeneration: Long
+    ): Boolean {
+        if (openGeneration != cameraOpenGeneration) return false
+        PLog.w(TAG, "Retrying preview session without vendor session parameters: $reason")
+        createPreviewSession(
+            forceStandardSession = forceStandardSession,
+            forceWithoutVendorSessionParameters = true,
+            openGeneration = openGeneration
+        )
+        return true
     }
 
     private fun retryPreviewSessionWithoutPhysicalOutput(
@@ -1784,8 +1944,13 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun applyInitialSessionParameters(sessionConfig: SessionConfiguration) {
-        val builder = previewRequestBuilder ?: return
+    private fun applyInitialSessionParameters(
+        sessionConfig: SessionConfiguration,
+        device: CameraDevice,
+        templateType: Int,
+        includeVendorSessionParameters: Boolean
+    ): InitialSessionParametersResult {
+        val state = _state.value
         val sessionKeys = try {
             getActiveOpenCameraCharacteristics()?.availableSessionKeys
         } catch (e: Exception) {
@@ -1793,16 +1958,45 @@ class Camera2Controller(private val context: Context) {
             null
         }
 
-        val shouldSetSessionParameters =
+        val shouldApplyStandardSessionParameters =
             sessionKeys?.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE) == true ||
                 sessionKeys?.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE) == true
+        val vendorSessionValues = if (includeVendorSessionParameters) {
+            forcedVendorSessionParameterValues(state)
+        } else {
+            emptyMap()
+        }
 
-        if (!shouldSetSessionParameters) return
+        if (!shouldApplyStandardSessionParameters && vendorSessionValues.isEmpty()) {
+            return InitialSessionParametersResult(applied = false, usedVendorParameters = false)
+        }
 
         try {
+            val builder = device.createCaptureRequest(templateType)
+            if (shouldApplyStandardSessionParameters) {
+                applyStabilizationSettings(builder, state)
+            }
+            if (vendorSessionValues.isNotEmpty()) {
+                applyVendorCaptureSettings(
+                    builder = builder,
+                    lensId = state.currentCameraId,
+                    values = vendorSessionValues,
+                    target = "session"
+                )
+            }
             sessionConfig.setSessionParameters(builder.build())
+            PLog.d(
+                TAG,
+                "Initial session parameters applied: standard=$shouldApplyStandardSessionParameters, " +
+                        "vendorKeys=${vendorSessionValues.keys.map { it.requestKeyName }}"
+            )
+            return InitialSessionParametersResult(
+                applied = true,
+                usedVendorParameters = vendorSessionValues.isNotEmpty()
+            )
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to set initial session parameters", e)
+            return InitialSessionParametersResult(applied = false, usedVendorParameters = false)
         }
     }
 
@@ -2016,33 +2210,57 @@ class Camera2Controller(private val context: Context) {
         applyVendorCaptureSettings(builder, isCapture)
     }
 
+    private fun forcedVendorSessionParameterValues(state: CameraState): Map<VendorCaptureKey, Int> {
+        val lensId = state.currentCameraId
+        val settings = state.vendorCaptureSettingsByLens.settingsFor(lensId)
+        if (!settings.isEnabled) return emptyMap()
+
+        return settings.values.filterKeys { key ->
+            FORCED_VENDOR_SESSION_PARAMETER_KEYS.contains(key)
+        }
+    }
+
     private fun applyVendorCaptureSettings(builder: CaptureRequest.Builder, isCapture: Boolean) {
-//        if (!isCapture) return
         val state = _state.value
         val lensId = state.currentCameraId
         val settings = state.vendorCaptureSettingsByLens.settingsFor(lensId)
         if (!settings.isEnabled) return
 
-        settings.values.forEach { (key, value) ->
+        applyVendorCaptureSettings(
+            builder = builder,
+            lensId = lensId,
+            values = settings.values,
+            target = if (isCapture) "capture" else "preview"
+        )
+    }
+
+    private fun applyVendorCaptureSettings(
+        builder: CaptureRequest.Builder,
+        lensId: String,
+        values: Map<VendorCaptureKey, Int>,
+        target: String
+    ) {
+        values.forEach { (key, value) ->
+            val normalizedValue = key.normalizeValue(value)
             try {
                 when (key.valueType) {
                     VendorCaptureValueType.INT -> {
                         builder.set(
                             CaptureRequest.Key(key.requestKeyName, Int::class.java),
-                            value
+                            normalizedValue
                         )
                     }
 
                     VendorCaptureValueType.BYTE -> {
                         builder.set(
                             CaptureRequest.Key(key.requestKeyName, Byte::class.java),
-                            key.normalizeValue(value).toByte()
+                            normalizedValue.toByte()
                         )
                     }
                 }
-                PLog.d(TAG, "Applied vendor capture key for lens $lensId: ${key.requestKeyName}=${key.normalizeValue(value)}")
+                PLog.d(TAG, "Applied vendor $target key for lens $lensId: ${key.requestKeyName}=$normalizedValue")
             } catch (e: Exception) {
-                PLog.w(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
+                PLog.w(TAG, "Failed to apply vendor $target key for lens $lensId: ${key.requestKeyName}", e)
             }
         }
     }
@@ -2065,6 +2283,152 @@ class Camera2Controller(private val context: Context) {
             PLog.w(TAG, "Failed to query available capture request keys", e)
             emptySet()
         }
+    }
+
+    private fun loadAvailableColorCorrectionModes(characteristics: CameraCharacteristics): IntArray {
+        return if (Build.VERSION.SDK_INT >= 36) {
+            characteristics.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_MODES)
+                ?: intArrayOf(
+                    CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
+                    CameraMetadata.COLOR_CORRECTION_MODE_FAST,
+                    CameraMetadata.COLOR_CORRECTION_MODE_HIGH_QUALITY
+                )
+        } else {
+            intArrayOf(
+                CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
+                CameraMetadata.COLOR_CORRECTION_MODE_FAST,
+                CameraMetadata.COLOR_CORRECTION_MODE_HIGH_QUALITY
+            )
+        }
+    }
+
+    private fun loadAwbColorTemperatureRange(characteristics: CameraCharacteristics): Range<Int>? {
+        return if (Build.VERSION.SDK_INT >= 36) {
+            characteristics.get(CameraCharacteristics.COLOR_CORRECTION_COLOR_TEMPERATURE_RANGE)
+        } else {
+            null
+        }
+    }
+
+    private fun resolveAwbTemperatureRange(): Range<Int> {
+        return Range(AWB_TEMPERATURE_MIN, AWB_TEMPERATURE_MAX)
+    }
+
+    private fun coerceCctAwbTemperature(kelvin: Int): Int {
+        val advertisedRange = awbColorTemperatureRange ?: return kelvin
+        return kelvin.coerceIn(advertisedRange.lower, advertisedRange.upper)
+    }
+
+    private fun supportsCctWhiteBalance(): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return false
+        if (!availableColorCorrectionModes.contains(CameraMetadata.COLOR_CORRECTION_MODE_CCT)) return false
+        if (!availableAwbModes.contains(CameraMetadata.CONTROL_AWB_MODE_OFF)) return false
+        if (awbColorTemperatureRange == null) return false
+        return isCaptureRequestKeyAvailable(CaptureRequest.COLOR_CORRECTION_COLOR_TEMPERATURE.name) &&
+                isCaptureRequestKeyAvailable(CaptureRequest.COLOR_CORRECTION_COLOR_TINT.name)
+    }
+
+    private fun supportsManualMatrixWhiteBalance(): Boolean {
+        return isManualPostProcessingSupported &&
+                availableAwbModes.contains(CameraMetadata.CONTROL_AWB_MODE_OFF) &&
+                isCaptureRequestKeyAvailable(CaptureRequest.COLOR_CORRECTION_MODE.name) &&
+                isCaptureRequestKeyAvailable(CaptureRequest.COLOR_CORRECTION_GAINS.name) &&
+                isCaptureRequestKeyAvailable(CaptureRequest.COLOR_CORRECTION_TRANSFORM.name)
+    }
+
+    private fun canUseManualMatrixWhiteBalance(snapshot: WhiteBalanceResultSnapshot?): Boolean {
+        return supportsManualMatrixWhiteBalance() &&
+                snapshot?.gains != null &&
+                (hasColorMatrixWhiteBalanceTransformSupport() || snapshot.transform != null)
+    }
+
+    private fun hasColorMatrixWhiteBalanceTransformSupport(): Boolean {
+        val characteristics = resolveActiveWhiteBalanceCharacteristics() ?: return false
+        return characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1) != null ||
+                characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2) != null
+    }
+
+    private fun readWhiteBalanceResult(result: CaptureResult, awbMode: Int): WhiteBalanceResultSnapshot {
+        val cctTemperature = if (Build.VERSION.SDK_INT >= 36) {
+            result.get(CaptureResult.COLOR_CORRECTION_COLOR_TEMPERATURE)
+        } else {
+            null
+        }
+        val cctTint = if (Build.VERSION.SDK_INT >= 36) {
+            result.get(CaptureResult.COLOR_CORRECTION_COLOR_TINT)
+        } else {
+            null
+        }
+        return WhiteBalanceResultSnapshot(
+            awbMode = awbMode,
+            colorTemperature = cctTemperature,
+            colorTint = cctTint,
+            gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS),
+            transform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM)
+        )
+    }
+
+    private fun resolveWhiteBalanceControlPath(
+        snapshot: WhiteBalanceResultSnapshot? = lastWhiteBalanceResult
+    ): WhiteBalanceControlPath {
+        if (snapshot == null) return WhiteBalanceControlPath.UNAVAILABLE
+        if (canUseManualMatrixWhiteBalance(snapshot)) {
+            return WhiteBalanceControlPath.MATRIX
+        }
+        if (supportsCctWhiteBalance() &&
+            snapshot.colorTemperature != null &&
+            snapshot.colorTint != null
+        ) {
+            return WhiteBalanceControlPath.CCT
+        }
+        return WhiteBalanceControlPath.UNAVAILABLE
+    }
+
+    private fun canAdjustManualWhiteBalance(snapshot: WhiteBalanceResultSnapshot? = lastWhiteBalanceResult): Boolean {
+        return resolveWhiteBalanceControlPath(snapshot) != WhiteBalanceControlPath.UNAVAILABLE
+    }
+
+    private fun createManualWhiteBalanceAnchor(
+        snapshot: WhiteBalanceResultSnapshot?,
+        baseTemperature: Int
+    ): ManualWhiteBalanceAnchor? {
+        return when (resolveWhiteBalanceControlPath(snapshot)) {
+            WhiteBalanceControlPath.CCT -> {
+                val tint = snapshot?.colorTint ?: return null
+                ManualWhiteBalanceAnchor(
+                    controlPath = WhiteBalanceControlPath.CCT,
+                    baseTemperature = baseTemperature,
+                    colorTint = tint,
+                    gains = null,
+                    transform = null
+                )
+            }
+
+            WhiteBalanceControlPath.MATRIX -> {
+                val gains = snapshot?.gains ?: return null
+                val transform = buildColorMatrixWhiteBalanceTransform(gains)
+                    ?: snapshot.transform
+                    ?: return null
+                ManualWhiteBalanceAnchor(
+                    controlPath = WhiteBalanceControlPath.MATRIX,
+                    baseTemperature = baseTemperature,
+                    colorTint = null,
+                    gains = gains,
+                    transform = transform
+                )
+            }
+
+            WhiteBalanceControlPath.UNAVAILABLE -> null
+        }
+    }
+
+    private fun RggbChannelVector.toStateGains(): WhiteBalanceGains {
+        return WhiteBalanceGains(
+            red = red,
+            greenEven = greenEven,
+            greenOdd = greenOdd,
+            blue = blue
+        )
     }
 
     private fun setZslDisabledIfSupported(builder: CaptureRequest.Builder) {
@@ -2422,24 +2786,173 @@ class Camera2Controller(private val context: Context) {
         state: CameraState,
         isCapture: Boolean
     ) {
-        builder.set(CaptureRequest.CONTROL_AWB_MODE, state.awbMode)
-
-        if (state.awbMode == CameraMetadata.CONTROL_AWB_MODE_OFF && supportsManualWhiteBalance()) {
-            // 手动白平衡，应用当前色温
-            builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
-            val gains = kelvinToRggbGains(state.awbTemperature)
-            builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, gains)
-        } else {
-            // 自动白平衡：拍照优先高质量色彩校正，预览维持快速路径
-            if (isManualPostProcessingSupported) {
-                val colorCorrectionMode = if (isCapture && state.captureMode == CaptureMode.PHOTO) {
-                    CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY
-                } else {
-                    CaptureRequest.COLOR_CORRECTION_MODE_FAST
-                }
-                builder.set(CaptureRequest.COLOR_CORRECTION_MODE, colorCorrectionMode)
-            }
+        if (state.awbMode != CameraMetadata.CONTROL_AWB_MODE_OFF) {
+            applyAutoWhiteBalanceSettings(builder, state, isCapture)
+            return
         }
+
+        val anchor = manualWhiteBalanceAnchor
+        when (anchor?.controlPath ?: WhiteBalanceControlPath.UNAVAILABLE) {
+            WhiteBalanceControlPath.CCT -> applyCctWhiteBalanceSettings(builder, state, isCapture, anchor)
+            WhiteBalanceControlPath.MATRIX -> applyMatrixWhiteBalanceSettings(builder, state, isCapture, anchor)
+            WhiteBalanceControlPath.UNAVAILABLE -> applyAutoWhiteBalanceSettings(
+                builder = builder,
+                state = state.copy(awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO),
+                isCapture = isCapture
+            )
+        }
+    }
+
+    private fun applyAutoWhiteBalanceSettings(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        isCapture: Boolean
+    ) {
+        val requestedMode = state.awbMode
+        val awbMode = if (availableAwbModes.isEmpty() || requestedMode in availableAwbModes) {
+            requestedMode
+        } else {
+            CameraMetadata.CONTROL_AWB_MODE_AUTO
+        }
+        builder.set(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, false)
+
+        // 自动白平衡：拍照优先高质量色彩校正，预览维持快速路径
+        if (isManualPostProcessingSupported) {
+            val colorCorrectionMode = if (isCapture && state.captureMode == CaptureMode.PHOTO) {
+                CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY
+            } else {
+                CaptureRequest.COLOR_CORRECTION_MODE_FAST
+            }
+            builder.set(CaptureRequest.COLOR_CORRECTION_MODE, colorCorrectionMode)
+        }
+    }
+
+    private fun applyCctWhiteBalanceSettings(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        isCapture: Boolean,
+        anchor: ManualWhiteBalanceAnchor?
+    ) {
+        if (Build.VERSION.SDK_INT < 36 || anchor?.colorTint == null) {
+            applyAutoWhiteBalanceSettings(
+                builder = builder,
+                state = state.copy(awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO),
+                isCapture = isCapture
+            )
+            return
+        }
+        val range = resolveAwbTemperatureRange()
+        builder.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, false)
+        builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_CCT)
+        builder.set(
+            CaptureRequest.COLOR_CORRECTION_COLOR_TEMPERATURE,
+            coerceCctAwbTemperature(state.awbTemperature.coerceIn(range.lower, range.upper))
+        )
+        builder.set(CaptureRequest.COLOR_CORRECTION_COLOR_TINT, anchor.colorTint)
+    }
+
+    private fun applyMatrixWhiteBalanceSettings(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        isCapture: Boolean,
+        anchor: ManualWhiteBalanceAnchor?
+    ) {
+        val resolvedAnchor = anchor ?: return applyAutoWhiteBalanceSettings(
+            builder = builder,
+            state = state.copy(awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO),
+            isCapture = isCapture
+        )
+        val gains = resolvedAnchor.gains ?: return applyAutoWhiteBalanceSettings(
+            builder = builder,
+            state = state.copy(awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO),
+            isCapture = isCapture
+        )
+        val resolvedGains = resolveManualMatrixGains(state.awbTemperature, resolvedAnchor, gains)
+        val transform = buildColorMatrixWhiteBalanceTransform(resolvedGains)
+            ?: resolvedAnchor.transform
+            ?: return applyAutoWhiteBalanceSettings(
+                builder = builder,
+                state = state.copy(awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO),
+                isCapture = isCapture
+            )
+        builder.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, false)
+        builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+        builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, resolvedGains)
+        builder.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, transform)
+    }
+
+    private fun buildColorMatrixWhiteBalanceTransform(gains: RggbChannelVector): ColorSpaceTransform? {
+        val characteristics = resolveActiveWhiteBalanceCharacteristics() ?: return null
+        val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)?.let(::extractMatrix3x3)
+        val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)?.let(::extractMatrix3x3)
+        if (colorMatrix1 == null && colorMatrix2 == null) return null
+
+        val matrix = DngSdkColorSpec.computeCameraToWorkingMatrix(
+            colorMatrix1 = colorMatrix1,
+            colorMatrix2 = colorMatrix2,
+            forwardMatrix1 = null,
+            forwardMatrix2 = null,
+            calibrationIlluminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 0,
+            calibrationIlluminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
+                ?: 0,
+            whiteBalanceGains = floatArrayOf(gains.red, gains.greenEven, gains.greenOdd, gains.blue),
+            workingColorSpace = RawColorSpace.SRGB
+        ) ?: return null
+
+        return removeWhiteBalanceFromColorTransform(matrix, gains).toColorSpaceTransform()
+    }
+
+    private fun removeWhiteBalanceFromColorTransform(
+        rawCameraToSrgb: FloatArray,
+        gains: RggbChannelVector
+    ): FloatArray {
+        val redGain = gains.red.coerceAtLeast(1e-3f)
+        val greenGain = ((gains.greenEven + gains.greenOdd) * 0.5f).coerceAtLeast(1e-3f)
+        val blueGain = gains.blue.coerceAtLeast(1e-3f)
+        val result = rawCameraToSrgb.copyOf()
+
+        // Camera2 applies COLOR_CORRECTION_GAINS before COLOR_CORRECTION_TRANSFORM.
+        // DNG-style ColorMatrix math bakes CameraNeutral/WB into the matrix, so divide
+        // matrix columns by the gains to avoid applying white balance twice.
+        for (row in 0 until 3) {
+            result[row * 3] /= redGain
+            result[row * 3 + 1] /= greenGain
+            result[row * 3 + 2] /= blueGain
+        }
+        return result
+    }
+
+    private fun resolveActiveWhiteBalanceCharacteristics(): CameraCharacteristics? {
+        val candidateIds = buildList {
+            activeOutputPhysicalCameraId?.let(::add)
+            getCurrentOpenCameraId().takeIf { it.isNotEmpty() }?.let(::add)
+            _state.value.currentCameraId.takeIf { it.isNotEmpty() }?.let(::add)
+        }.distinct()
+
+        for (cameraId in candidateIds) {
+            getCameraCharacteristicsOrNull(cameraId, "white balance color matrix")?.let { return it }
+        }
+        return getActiveOpenCameraCharacteristics()
+    }
+
+    private fun extractMatrix3x3(transform: ColorSpaceTransform): FloatArray {
+        return FloatArray(9) { index ->
+            val row = index / 3
+            val col = index % 3
+            transform.getElement(col, row).toFloat()
+        }
+    }
+
+    private fun FloatArray.toColorSpaceTransform(): ColorSpaceTransform? {
+        if (size != 9 || any { !it.isFinite() }) return null
+        val rationals = Array(9) { index ->
+            val value = this[index].coerceIn(-1.5f, 3f)
+            Rational((value * 1_000_000f).roundToInt(), 1_000_000)
+        }
+        return ColorSpaceTransform(rationals)
     }
 
     /**
@@ -2829,8 +3342,50 @@ class Camera2Controller(private val context: Context) {
     }
 
     fun setVendorCaptureSettingsByLens(settingsByLens: VendorCaptureSettingsByLens) {
-        _state.value = _state.value.copy(vendorCaptureSettingsByLens = settingsByLens)
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                setVendorCaptureSettingsByLens(settingsByLens)
+            }
+            return
+        }
+
+        val previousState = _state.value
+        if (previousState.vendorCaptureSettingsByLens == settingsByLens) return
+
+        val previousVendorSessionValues = forcedVendorSessionParameterValues(previousState)
+        val updatedState = previousState.copy(vendorCaptureSettingsByLens = settingsByLens)
+        val updatedVendorSessionValues = forcedVendorSessionParameterValues(updatedState)
+
+        _state.value = updatedState
         PLog.d(TAG, "Vendor capture lens settings count: ${settingsByLens.settingsByLensId.size}")
+
+        val shouldRecreateSession =
+            previousVendorSessionValues != updatedVendorSessionValues &&
+                    cameraDevice != null &&
+                    previewSurface != null
+        if (shouldRecreateSession) {
+            if (_state.value.videoRecordingState.isRecording) {
+                pendingVendorSessionParameterRestart = true
+                PLog.w(
+                    TAG,
+                    "Vendor session parameter changed during recording; keeping active request until session restart"
+                )
+                return
+            }
+            PLog.d(
+                TAG,
+                "Recreating preview session for vendor session parameter change: " +
+                        "old=$previousVendorSessionValues, new=$updatedVendorSessionValues"
+            )
+            createPreviewSession(openGeneration = cameraOpenGeneration)
+            return
+        }
+
+        previewRequestBuilder?.apply {
+            applyBaseCameraSettings(this, isCapture = false)
+            updatePreview()
+        }
     }
 
     /**
@@ -3170,70 +3725,63 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
-     * 检查当前相机是否支持手动白平衡控制
-     *
-     * 只有 FULL 或 LEVEL_3 级别的设备才支持 COLOR_CORRECTION_GAINS
-     */
-    private fun supportsManualWhiteBalance(): Boolean {
-        val openCameraId = getCurrentOpenCameraId()
-        if (openCameraId.isEmpty()) return false
-
-        return try {
-            val characteristics = getCameraCharacteristicsCached(openCameraId)
-            val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
-
-            val isSupported =
-                isManualPostProcessingSupported && (hardwareLevel == CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL ||
-                        hardwareLevel == CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3)
-
-            PLog.d(
-                TAG,
-                "Hardware level: $hardwareLevel, ManualPost: $isManualPostProcessingSupported, Manual WB supported: $isSupported"
-            )
-            isSupported
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to check hardware level", e)
-            false
-        }
-    }
-
-    /**
-     * 获取当前相机支持的 AWB 模式列表
-     */
-    private fun getSupportedAwbModes(): IntArray {
-        val openCameraId = getCurrentOpenCameraId()
-        if (openCameraId.isEmpty()) return intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
-
-        return try {
-            val characteristics = getCameraCharacteristicsCached(openCameraId)
-            characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
-                ?: intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
-        } catch (e: Exception) {
-            intArrayOf(CameraMetadata.CONTROL_AWB_MODE_AUTO)
-        }
-    }
-
-    /**
      * 设置白平衡模式
      */
     fun setAwbMode(mode: Int) {
-        _state.value = _state.value.copy(awbMode = mode)
+        val normalizedMode = if (availableAwbModes.isEmpty() || mode in availableAwbModes) {
+            mode
+        } else {
+            CameraMetadata.CONTROL_AWB_MODE_AUTO
+        }
+
+        if (normalizedMode == CameraMetadata.CONTROL_AWB_MODE_OFF) {
+            val snapshot = lastWhiteBalanceResult
+            if (!canAdjustManualWhiteBalance(snapshot)) {
+                PLog.w(TAG, "Manual white balance ignored: current CCT or gains/transform result is unavailable")
+                _state.value = _state.value.copy(
+                    awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO,
+                    canAdjustWhiteBalance = false
+                )
+                previewRequestBuilder?.apply {
+                    applyWhiteBalanceSettings(this, _state.value, false)
+                    updatePreview()
+                }
+                return
+            }
+
+            val range = resolveAwbTemperatureRange()
+            val initialTemperature = (
+                    snapshot?.colorTemperature
+                        ?: _state.value.actualAwbTemperature
+                        ?: snapshot?.gains?.let(::estimateKelvinFromRggbGains)
+                        ?: _state.value.awbTemperature
+                    ).coerceIn(range.lower, range.upper)
+            val anchor = createManualWhiteBalanceAnchor(snapshot, initialTemperature)
+            if (anchor == null) {
+                PLog.w(TAG, "Manual white balance ignored: failed to freeze current white balance result")
+                _state.value = _state.value.copy(
+                    awbMode = CameraMetadata.CONTROL_AWB_MODE_AUTO,
+                    canAdjustWhiteBalance = false
+                )
+                previewRequestBuilder?.apply {
+                    applyWhiteBalanceSettings(this, _state.value, false)
+                    updatePreview()
+                }
+                return
+            }
+            manualWhiteBalanceAnchor = anchor
+            _state.value = _state.value.copy(
+                awbMode = CameraMetadata.CONTROL_AWB_MODE_OFF,
+                awbTemperature = initialTemperature,
+                canAdjustWhiteBalance = true
+            )
+        } else {
+            manualWhiteBalanceAnchor = null
+            _state.value = _state.value.copy(awbMode = normalizedMode)
+        }
 
         previewRequestBuilder?.apply {
-            set(CaptureRequest.CONTROL_AWB_MODE, mode)
-            if (mode == CameraMetadata.CONTROL_AWB_MODE_OFF && supportsManualWhiteBalance()) {
-                // 手动白平衡，应用当前色温
-                set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
-
-                val gains = kelvinToRggbGains(_state.value.awbTemperature)
-                set(CaptureRequest.COLOR_CORRECTION_GAINS, gains)
-                PLog.d(TAG, "Manual AWB enabled with temperature: ${_state.value.awbTemperature}K")
-            } else {
-                // 自动白平衡：尝试使用高质量色彩校正模式，如不支持则不设置（保持模式默认值）
-                if (isManualPostProcessingSupported) {
-                    set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_FAST)
-                }
-            }
+            applyWhiteBalanceSettings(this, _state.value, false)
             updatePreview()
         }
     }
@@ -3241,51 +3789,38 @@ class Camera2Controller(private val context: Context) {
     /**
      * 设置白平衡色温（Kelvin）
      *
-     * 对于支持 FULL 级别的设备: 使用 RggbChannelVector 精确控制
-     * 对于不支持的设备: 使用最接近的预设 AWB 模式
-     *
-     * 有效范围: 2000K (暖) - 10000K (冷)
+     * App 可调范围为 2000K - 8000K；CCT 下发时再按设备上报范围夹住。
+     * 没有当前真实 CCT 或 RGGB gains + color transform 时忽略手动调整。
      */
     fun setAwbTemperature(kelvin: Int) {
-        val clampedKelvin = kelvin.coerceIn(2000, 10000)
+        val range = resolveAwbTemperatureRange()
+        val clampedKelvin = kelvin.coerceIn(range.lower, range.upper)
+        val snapshot = lastWhiteBalanceResult
+        val anchor = manualWhiteBalanceAnchor ?: createManualWhiteBalanceAnchor(
+            snapshot = snapshot,
+            baseTemperature = snapshot?.colorTemperature
+                ?: _state.value.actualAwbTemperature
+                ?: snapshot?.gains?.let(::estimateKelvinFromRggbGains)
+                ?: clampedKelvin
+        )?.also { manualWhiteBalanceAnchor = it }
+        if (anchor == null) {
+            PLog.w(TAG, "Manual white balance temperature ignored: current CCT or gains/transform result is unavailable")
+            return
+        }
 
-        if (supportsManualWhiteBalance()) {
-            // 设备支持手动白平衡 - 使用精确的 RggbChannelVector
-            _state.value = _state.value.copy(
-                awbTemperature = clampedKelvin,
-                awbMode = CameraMetadata.CONTROL_AWB_MODE_OFF
+        _state.value = _state.value.copy(
+            awbTemperature = clampedKelvin,
+            awbMode = CameraMetadata.CONTROL_AWB_MODE_OFF,
+            canAdjustWhiteBalance = true
+        )
+
+        previewRequestBuilder?.apply {
+            applyWhiteBalanceSettings(this, _state.value, false)
+            PLog.d(
+                TAG,
+                "AWB temperature set to: ${clampedKelvin}K (${anchor.controlPath.name})"
             )
-
-            previewRequestBuilder?.apply {
-                set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
-                set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
-
-                val gains = kelvinToRggbGains(clampedKelvin)
-                set(CaptureRequest.COLOR_CORRECTION_GAINS, gains)
-                PLog.d(
-                    TAG,
-                    "AWB temperature set to: ${clampedKelvin}K (manual), gains: R=${gains.red}, G=${gains.greenEven}, B=${gains.blue}"
-                )
-                updatePreview()
-            }
-        } else {
-            // 设备不支持手动白平衡 - 使用预设 AWB 模式近似
-            val presetMode = kelvinToPresetAwbMode(clampedKelvin)
-
-            _state.value = _state.value.copy(
-                awbTemperature = clampedKelvin,
-                awbMode = presetMode
-            )
-
-            previewRequestBuilder?.apply {
-                set(CaptureRequest.CONTROL_AWB_MODE, presetMode)
-                set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_FAST)
-                PLog.d(
-                    TAG,
-                    "AWB temperature set to: ${clampedKelvin}K (preset mode: ${getAwbModeName(presetMode)})"
-                )
-                updatePreview()
-            }
+            updatePreview()
         }
     }
 
@@ -3432,77 +3967,85 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
-     * 将色温转换为最接近的预设 AWB 模式
-     *
-     * 预设模式对应的近似色温:
-     * - INCANDESCENT (白炽灯): ~2700K
-     * - WARM_FLUORESCENT (暖色荧光灯): ~3000K
-     * - FLUORESCENT (荧光灯): ~4000K
-     * - DAYLIGHT (日光): ~5500K
-     * - CLOUDY_DAYLIGHT (阴天): ~6500K
-     * - TWILIGHT (黄昏): ~7500K
-     * - SHADE (阴影): ~9000K
-     */
-    private fun kelvinToPresetAwbMode(kelvin: Int): Int {
-        val supportedModes = getSupportedAwbModes()
-
-        // 按色温从低到高排列的预设模式
-        val presetModes = listOf(
-            2700 to CameraMetadata.CONTROL_AWB_MODE_INCANDESCENT,
-            3000 to CameraMetadata.CONTROL_AWB_MODE_WARM_FLUORESCENT,
-            4000 to CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT,
-            5500 to CameraMetadata.CONTROL_AWB_MODE_DAYLIGHT,
-            6500 to CameraMetadata.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,
-            7500 to CameraMetadata.CONTROL_AWB_MODE_TWILIGHT,
-            9000 to CameraMetadata.CONTROL_AWB_MODE_SHADE
-        )
-
-        // 找到最接近的预设模式（且设备支持）
-        var closestMode = CameraMetadata.CONTROL_AWB_MODE_AUTO
-        var closestDistance = Int.MAX_VALUE
-
-        for ((presetKelvin, mode) in presetModes) {
-            if (mode in supportedModes) {
-                val distance = abs(kelvin - presetKelvin)
-                if (distance < closestDistance) {
-                    closestDistance = distance
-                    closestMode = mode
-                }
-            }
-        }
-
-        return closestMode
-    }
-
-    /**
-     * 获取 AWB 模式的可读名称（用于日志）
-     */
-    private fun getAwbModeName(mode: Int): String {
-        return when (mode) {
-            CameraMetadata.CONTROL_AWB_MODE_AUTO -> "AUTO"
-            CameraMetadata.CONTROL_AWB_MODE_INCANDESCENT -> "INCANDESCENT"
-            CameraMetadata.CONTROL_AWB_MODE_WARM_FLUORESCENT -> "WARM_FLUORESCENT"
-            CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT -> "FLUORESCENT"
-            CameraMetadata.CONTROL_AWB_MODE_DAYLIGHT -> "DAYLIGHT"
-            CameraMetadata.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT -> "CLOUDY_DAYLIGHT"
-            CameraMetadata.CONTROL_AWB_MODE_TWILIGHT -> "TWILIGHT"
-            CameraMetadata.CONTROL_AWB_MODE_SHADE -> "SHADE"
-            CameraMetadata.CONTROL_AWB_MODE_OFF -> "OFF"
-            else -> "UNKNOWN($mode)"
-        }
-    }
-
-    /**
      * 将色温(Kelvin)转换为 RggbChannelVector
      *
-     * 基于 Tanner Helland 算法 + Camera2 特定的增益系数
-     * 参考: https://stackoverflow.com/questions/35439159/camera2-api-set-custom-white-balance-temperature-color
+     * 先估算光源 RGB，再取倒数作为 RAW Bayer 通道补偿增益。
      *
-     * @param kelvin 色温值 (2000-10000K)
+     * @param kelvin 色温值
      * @return RggbChannelVector 白平衡增益
      */
     private fun kelvinToRggbGains(kelvin: Int): RggbChannelVector {
-        val temperature = kelvin / 100.0f
+        val illuminant = kelvinToNormalizedRgb(kelvin)
+        val redGain = 1f / illuminant.red.coerceAtLeast(1e-3f)
+        val greenGain = 1f / illuminant.green.coerceAtLeast(1e-3f)
+        val blueGain = 1f / illuminant.blue.coerceAtLeast(1e-3f)
+        val minGain = minOf(redGain, greenGain, blueGain).coerceAtLeast(1e-3f)
+
+        return RggbChannelVector(
+            (redGain / minGain).coerceIn(1f, 4f),
+            (greenGain / minGain).coerceIn(1f, 4f),
+            (greenGain / minGain).coerceIn(1f, 4f),
+            (blueGain / minGain).coerceIn(1f, 4f)
+        )
+    }
+
+    private fun resolveManualMatrixGains(
+        targetKelvin: Int,
+        anchor: ManualWhiteBalanceAnchor,
+        frozenGains: RggbChannelVector
+    ): RggbChannelVector {
+        if (abs(targetKelvin - anchor.baseTemperature) <= 25) {
+            return frozenGains
+        }
+
+        val baseGains = kelvinToRggbGains(anchor.baseTemperature)
+        val targetGains = kelvinToRggbGains(targetKelvin)
+        return RggbChannelVector(
+            scaleFrozenWhiteBalanceGain(frozenGains.red, targetGains.red, baseGains.red),
+            scaleFrozenWhiteBalanceGain(frozenGains.greenEven, targetGains.greenEven, baseGains.greenEven),
+            scaleFrozenWhiteBalanceGain(frozenGains.greenOdd, targetGains.greenOdd, baseGains.greenOdd),
+            scaleFrozenWhiteBalanceGain(frozenGains.blue, targetGains.blue, baseGains.blue)
+        )
+    }
+
+    private fun scaleFrozenWhiteBalanceGain(
+        frozenGain: Float,
+        targetGain: Float,
+        baseGain: Float
+    ): Float {
+        return (frozenGain * targetGain / baseGain.coerceAtLeast(1e-3f)).coerceAtLeast(1f)
+    }
+
+    private fun estimateKelvinFromRggbGains(gains: RggbChannelVector): Int {
+        val range = resolveAwbTemperatureRange()
+        val lower = range.lower.coerceAtLeast(1000)
+        val upper = range.upper.coerceAtLeast(lower)
+        val targetRed = gains.red.coerceAtLeast(1e-3f)
+        val targetGreen = ((gains.greenEven + gains.greenOdd) / 2f).coerceAtLeast(1e-3f)
+        val targetBlue = gains.blue.coerceAtLeast(1e-3f)
+        var bestKelvin = lower
+        var bestDistance = Double.MAX_VALUE
+
+        var kelvin = lower
+        while (kelvin <= upper) {
+            val candidate = kelvinToRggbGains(kelvin)
+            val candidateGreen = ((candidate.greenEven + candidate.greenOdd) / 2f).coerceAtLeast(1e-3f)
+            val distance =
+                abs(ln((candidate.red / targetRed).toDouble())) +
+                        abs(ln((candidateGreen / targetGreen).toDouble())) * 0.5 +
+                        abs(ln((candidate.blue / targetBlue).toDouble()))
+            if (distance < bestDistance) {
+                bestDistance = distance
+                bestKelvin = kelvin
+            }
+            kelvin += 50
+        }
+
+        return (bestKelvin / 50f).roundToInt() * 50
+    }
+
+    private fun kelvinToNormalizedRgb(kelvin: Int): NormalizedRgb {
+        val temperature = kelvin.coerceIn(1000, 40000) / 100.0f
 
         var red: Float
         var green: Float
@@ -3534,16 +4077,10 @@ class Camera2Controller(private val context: Context) {
             blue = blue.coerceIn(0f, 255f)
         }
 
-        PLog.d(TAG, "kelvinToRggbGains: ${kelvin}K -> RGB($red, $green, $blue)")
-
-        // Camera2 特定的增益计算：
-        // 红色和蓝色通道乘以2，绿色通道保持归一化
-        // 这是 StackOverflow 上验证过的正确算法
-        return RggbChannelVector(
-            (red / 255f) * 2f,
-            green / 255f,
-            green / 255f,
-            (blue / 255f) * 2f
+        return NormalizedRgb(
+            red = (red / 255f).coerceIn(0f, 1f),
+            green = (green / 255f).coerceIn(0f, 1f),
+            blue = (blue / 255f).coerceIn(0f, 1f)
         )
     }
 
@@ -4323,6 +4860,10 @@ class Camera2Controller(private val context: Context) {
             videoRecordingState = _state.value.videoRecordingState.copy(isRecording = false)
         )
         videoRecorder.stopRecording()
+        if (pendingVendorSessionParameterRestart && cameraDevice != null && previewSurface != null) {
+            PLog.d(TAG, "Restarting preview session after recording for pending vendor session parameter change")
+            createPreviewSession(openGeneration = cameraOpenGeneration)
+        }
     }
 
     private fun resolveVideoOrientationHintDegrees(): Int {
@@ -5055,7 +5596,8 @@ class Camera2Controller(private val context: Context) {
         // 从 CaptureResult 获取曝光信息
         val exposureTime = result?.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: _state.value.shutterSpeed
         val iso = result?.get(CaptureResult.SENSOR_SENSITIVITY) ?: _state.value.iso
-        val whiteBalance = result?.get(CaptureResult.CONTROL_AWB_MODE) ?: _state.value.awbTemperature
+        val awbModeForExif = result?.get(CaptureResult.CONTROL_AWB_MODE) ?: _state.value.awbMode
+        val whiteBalance = if (awbModeForExif == CameraMetadata.CONTROL_AWB_MODE_AUTO) 0 else 1
         val flashState = result?.get(CaptureResult.FLASH_STATE) ?: _state.value.flashMode
 
         // 如果有实时的光圈/焦距，使用实时值

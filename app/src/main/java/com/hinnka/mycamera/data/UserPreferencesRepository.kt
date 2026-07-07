@@ -113,6 +113,7 @@ data class UserPreferences(
     val rawBlackLevelModes: Map<String, String> = emptyMap(),
     val rawCustomBlackLevels: Map<String, Float> = emptyMap(),
     val rawWhiteLevelModes: Map<String, String> = emptyMap(),
+    val rawCustomWhiteLevels: Map<String, Float> = emptyMap(),
     val rawCfaCorrectionModes: Map<String, String> = emptyMap(),
     val exportDngWithRawExport: Boolean = false,
     val frameId: String? = null,
@@ -207,6 +208,7 @@ data class UserPreferences(
     val lensIdBlacklist: List<String> = emptyList(), // 主动探测黑名单镜头 ID，逗号分隔存储
     val iszLensConfigs: List<IszLensConfig> = emptyList(), // 用户新增的 ISZ 虚拟镜头
     val preferredMainCameraId: String? = null, // 用户选择的主摄 ID
+    val preferredMacroCameraId: String? = null, // 用户选择的微距镜头 ID
     val enableLogicalMultiCameraDiscovery: Boolean = false, // 是否自动探测逻辑多摄物理镜头绑定
     val logicalCameraBindingWhitelist: List<String> = emptyList(), // 强制启用的逻辑/物理镜头绑定，格式 logical/physical
     val hiddenFocalLengths: List<Float> = emptyList(), // 隐藏的焦段 (35mm等效)
@@ -308,6 +310,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BLACK_LEVEL_MODES_KEY = stringPreferencesKey("raw_black_level_modes")
         private val RAW_CUSTOM_BLACK_LEVELS_KEY = stringPreferencesKey("raw_custom_black_levels")
         private val RAW_WHITE_LEVEL_MODES_KEY = stringPreferencesKey("raw_white_level_modes")
+        private val RAW_CUSTOM_WHITE_LEVELS_KEY = stringPreferencesKey("raw_custom_white_levels")
         private val RAW_CFA_CORRECTION_MODES_KEY = stringPreferencesKey("raw_cfa_correction_modes")
         private val EXPORT_DNG_WITH_RAW_EXPORT_KEY = booleanPreferencesKey("export_dng_with_raw_export")
         private val PHANTOM_BASELINE_LUT_ID_KEY = stringPreferencesKey("phantom_baseline_lut_id")
@@ -413,6 +416,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val LENS_ID_BLACKLIST = stringPreferencesKey("lens_id_blacklist")
         private val ISZ_LENS_CONFIGS = stringPreferencesKey("isz_lens_configs")
         private val PREFERRED_MAIN_CAMERA_ID = stringPreferencesKey("preferred_main_camera_id")
+        private val PREFERRED_MACRO_CAMERA_ID = stringPreferencesKey("preferred_macro_camera_id")
         private val ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY = booleanPreferencesKey("enable_logical_multi_camera_discovery")
         private val LOGICAL_CAMERA_BINDING_WHITELIST = stringPreferencesKey("logical_camera_binding_whitelist")
         private val HIDDEN_FOCAL_LENGTHS = stringPreferencesKey("hidden_focal_lengths")
@@ -482,6 +486,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawBlackLevelModes = parseMapString(preferences[RAW_BLACK_LEVEL_MODES_KEY]),
                 rawCustomBlackLevels = parseMapFloat(preferences[RAW_CUSTOM_BLACK_LEVELS_KEY]),
                 rawWhiteLevelModes = parseMapString(preferences[RAW_WHITE_LEVEL_MODES_KEY]),
+                rawCustomWhiteLevels = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY]),
                 rawCfaCorrectionModes = parseMapString(preferences[RAW_CFA_CORRECTION_MODES_KEY]),
                 exportDngWithRawExport = preferences[EXPORT_DNG_WITH_RAW_EXPORT_KEY] ?: false,
                 phantomBaselineLutId = preferences[PHANTOM_BASELINE_LUT_ID_KEY],
@@ -615,6 +620,7 @@ class UserPreferencesRepository(private val context: Context) {
                 lensIdBlacklist = parseLensIds(preferences[LENS_ID_BLACKLIST]),
                 iszLensConfigs = IszLensConfig.deserializeList(preferences[ISZ_LENS_CONFIGS]),
                 preferredMainCameraId = preferences[PREFERRED_MAIN_CAMERA_ID]?.takeIf { it.isNotBlank() },
+                preferredMacroCameraId = preferences[PREFERRED_MACRO_CAMERA_ID]?.takeIf { it.isNotBlank() },
                 enableLogicalMultiCameraDiscovery = preferences[ENABLE_LOGICAL_MULTI_CAMERA_DISCOVERY] ?: false,
                 logicalCameraBindingWhitelist = parseLogicalCameraBindingWhitelist(
                     preferences[LOGICAL_CAMERA_BINDING_WHITELIST]
@@ -1075,6 +1081,15 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveRawCustomWhiteLevel(cameraId: String, value: Float) {
+        context.dataStore.edit { preferences ->
+            val current = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY])
+            val updated = current.toMutableMap()
+            updated[cameraId] = value
+            preferences[RAW_CUSTOM_WHITE_LEVELS_KEY] = serializeMapFloat(updated)
+        }
+    }
+
     suspend fun saveRawCfaCorrectionMode(cameraId: String, mode: String) {
         context.dataStore.edit { preferences ->
             val current = parseMapString(preferences[RAW_CFA_CORRECTION_MODES_KEY])
@@ -1444,6 +1459,17 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences.remove(PREFERRED_MAIN_CAMERA_ID)
             } else {
                 preferences[PREFERRED_MAIN_CAMERA_ID] = normalizedCameraId
+            }
+        }
+    }
+
+    suspend fun savePreferredMacroCameraId(cameraId: String?) {
+        context.dataStore.edit { preferences ->
+            val normalizedCameraId = cameraId?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedCameraId == null) {
+                preferences.remove(PREFERRED_MACRO_CAMERA_ID)
+            } else {
+                preferences[PREFERRED_MACRO_CAMERA_ID] = normalizedCameraId
             }
         }
     }

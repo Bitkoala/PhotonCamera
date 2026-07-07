@@ -59,8 +59,12 @@ object RawProcessor {
         return RawCfaCorrection.resolveCfaPattern(defaultCfaPattern, cfaCorrectionMode)
     }
 
-    fun resolveWhiteLevelForMode(defaultWhiteLevel: Float, whiteLevelMode: String?): Float {
-        return RawWhiteLevelCorrection.resolveWhiteLevel(defaultWhiteLevel, whiteLevelMode)
+    fun resolveWhiteLevelForMode(
+        defaultWhiteLevel: Float,
+        whiteLevelMode: String?,
+        customWhiteLevel: Float? = null
+    ): Float {
+        return RawWhiteLevelCorrection.resolveWhiteLevel(defaultWhiteLevel, whiteLevelMode, customWhiteLevel)
     }
 
     /**
@@ -147,6 +151,7 @@ object RawProcessor {
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
         whiteLevelMode: String? = null,
+        customWhiteLevel: Float? = null,
         cfaCorrectionMode: String? = null,
     ): Boolean {
         if (!isRawImage(image)) {
@@ -163,6 +168,7 @@ object RawProcessor {
             blackLevelMode = blackLevelMode,
             customBlackLevel = customBlackLevel,
             whiteLevelMode = whiteLevelMode,
+            customWhiteLevel = customWhiteLevel,
             cfaCorrectionMode = cfaCorrectionMode
         )
     }
@@ -177,6 +183,7 @@ object RawProcessor {
         blackLevelMode: String?,
         customBlackLevel: Float?,
         whiteLevelMode: String?,
+        customWhiteLevel: Float?,
         cfaCorrectionMode: String?,
     ): Boolean {
         if (image.format != ImageFormat.RAW_SENSOR) {
@@ -210,6 +217,7 @@ object RawProcessor {
             blackLevelMode = blackLevelMode,
             customBlackLevel = customBlackLevel,
             whiteLevelMode = whiteLevelMode,
+            customWhiteLevel = customWhiteLevel,
             cfaCorrectionMode = cfaCorrectionMode
         )
     }
@@ -261,6 +269,7 @@ object RawProcessor {
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
         whiteLevelMode: String? = null,
+        customWhiteLevel: Float? = null,
         cfaCorrectionMode: String? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
@@ -270,7 +279,7 @@ object RawProcessor {
         inputColStepSamples: Int? = null,
     ): Boolean {
         val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
-        val resolvedWhiteLevel = resolveWhiteLevelForMode(whiteLevel.toFloat(), whiteLevelMode).toInt()
+        val resolvedWhiteLevel = resolveWhiteLevelForMode(whiteLevel.toFloat(), whiteLevelMode, customWhiteLevel).toInt()
         val hasCfaOverride = RawCfaCorrection.isOverrideMode(cfaCorrectionMode)
         val hasWhiteLevelOverride = RawWhiteLevelCorrection.isOverrideMode(whiteLevelMode)
         val requiresCustomWriter = imageLayout != SuperResolutionDngWriter.ImageLayout.CFA ||
@@ -305,6 +314,7 @@ object RawProcessor {
                 blackLevelMode = blackLevelMode,
                 customBlackLevel = customBlackLevel,
                 whiteLevelMode = whiteLevelMode,
+                customWhiteLevel = customWhiteLevel,
                 baselineExposureEv = baselineExposureEv,
                 profileGainTableMap = profileGainTableMap,
                 imageLayout = imageLayout,

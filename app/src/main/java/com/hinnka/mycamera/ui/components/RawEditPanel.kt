@@ -90,6 +90,7 @@ fun RawEditPanel(
     rawBlackLevelMode: String = RawCfaCorrection.MODE_DEFAULT,
     rawCustomBlackLevel: Float = 0f,
     rawWhiteLevelMode: String = RawWhiteLevelCorrection.MODE_DEFAULT,
+    rawCustomWhiteLevel: Float = 0f,
     rawCfaCorrectionMode: String = RawCfaCorrection.MODE_DEFAULT,
     rawRenderingEngine: RawRenderingEngine,
     rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
@@ -108,6 +109,7 @@ fun RawEditPanel(
     onRawBlackLevelModeChange: (String) -> Unit = {},
     onRawCustomBlackLevelChange: (Float) -> Unit = {},
     onRawWhiteLevelModeChange: (String) -> Unit = {},
+    onRawCustomWhiteLevelChange: (Float) -> Unit = {},
     onRawCfaCorrectionModeChange: (String) -> Unit = {},
     onRawColorEngineChange: (RawRenderingEngine) -> Unit,
     onRawToneMappingParametersChange: (RawToneMappingParameters) -> Unit = {},
@@ -279,11 +281,19 @@ fun RawEditPanel(
                         RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
                         RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
                         RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
-                        RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor)
+                        RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor),
+                        RawWhiteLevelCorrection.MODE_CUSTOM to stringResource(R.string.settings_white_level_custom)
                     ),
                     currentLevel = rawWhiteLevelMode,
                     onLevelSelected = onRawWhiteLevelModeChange
                 )
+                if (rawWhiteLevelMode == RawWhiteLevelCorrection.MODE_CUSTOM) {
+                    RawNumberInputSetting(
+                        title = stringResource(R.string.settings_white_level_custom),
+                        value = rawCustomWhiteLevel,
+                        onValueChange = onRawCustomWhiteLevelChange
+                    )
+                }
                 RawChoiceSetting(
                     title = stringResource(R.string.settings_raw_cfa_correction),
                     description = stringResource(R.string.settings_raw_cfa_correction_description),

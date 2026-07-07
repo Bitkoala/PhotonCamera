@@ -29,7 +29,7 @@ const val TONEMAP_MODE_NATURAL_LIGHT = "NATURAL_LIGHT"
  * 保存 LUT、边框水印、编辑信息和拍摄参数，用于非破坏性编辑和边框水印渲染
  */
 data class MediaMetadata(
-    val version: Int = 23,
+    val version: Int = 24,
     val mediaType: MediaType = MediaType.IMAGE,
     // 编辑配置
     val lutId: String? = null,
@@ -117,6 +117,7 @@ data class MediaMetadata(
     val rawBlackLevelMode: String? = null,
     val rawCustomBlackLevel: Float? = null,
     val rawWhiteLevelMode: String? = null,
+    val rawCustomWhiteLevel: Float? = null,
     val rawCfaCorrectionMode: String? = null,
     val rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
     val applyEffectsToVideo: Boolean = false,
@@ -344,6 +345,7 @@ data class MediaMetadata(
                     rawBlackLevelMode = if (obj.isNull("rawBlackLevelMode")) null else obj.optString("rawBlackLevelMode"),
                     rawCustomBlackLevel = if (obj.isNull("rawCustomBlackLevel")) null else obj.optDouble("rawCustomBlackLevel").toFloat(),
                     rawWhiteLevelMode = if (obj.isNull("rawWhiteLevelMode")) null else obj.optString("rawWhiteLevelMode"),
+                    rawCustomWhiteLevel = if (obj.isNull("rawCustomWhiteLevel")) null else obj.optDouble("rawCustomWhiteLevel").toFloat(),
                     rawCfaCorrectionMode = if (obj.isNull("rawCfaCorrectionMode")) null else obj.optString("rawCfaCorrectionMode"),
                     cameraId = if (obj.isNull("cameraId")) null else obj.optString("cameraId"),
                     frameId = if (obj.isNull("frameId")) null else obj.optString("frameId"),

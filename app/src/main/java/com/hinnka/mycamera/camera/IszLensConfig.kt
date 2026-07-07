@@ -10,16 +10,20 @@ data class IszLensConfig(
     val baseCameraId: String,
     val iszZoomRatio: Float,
     val isMacro: Boolean = false,
-    val rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop()
+    val rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
+    val vendorCaptureProfileId: String? = null
 ) {
     val virtualCameraId: String
-        get() = createVirtualCameraId(baseCameraId, iszZoomRatio)
+        get() = createVirtualCameraId(baseCameraId, iszZoomRatio, vendorCaptureProfileId)
 
     fun toJsonObject(): JSONObject {
         return JSONObject().apply {
             put(KEY_BASE_CAMERA_ID, baseCameraId)
             put(KEY_ISZ_ZOOM_RATIO, iszZoomRatio)
             put(KEY_IS_MACRO, isMacro)
+            sanitizeVendorCaptureProfileId(vendorCaptureProfileId)?.let {
+                put(KEY_VENDOR_CAPTURE_PROFILE_ID, it)
+            }
             val sanitizedCrop = sanitizeRawBlackBorderCrop(rawBlackBorderCrop)
             put(KEY_RAW_BLACK_BORDER_CROP_LEFT_PX, sanitizedCrop.leftPx)
             put(KEY_RAW_BLACK_BORDER_CROP_TOP_PX, sanitizedCrop.topPx)
@@ -32,6 +36,7 @@ data class IszLensConfig(
         private const val KEY_BASE_CAMERA_ID = "base_camera_id"
         private const val KEY_ISZ_ZOOM_RATIO = "isz_zoom_ratio"
         private const val KEY_IS_MACRO = "is_macro"
+        private const val KEY_VENDOR_CAPTURE_PROFILE_ID = "vendor_capture_profile_id"
         private const val KEY_RAW_BLACK_BORDER_CROP_PX = "raw_black_border_crop_px"
         private const val KEY_RAW_BLACK_BORDER_CROP_LEFT_PX = "raw_black_border_crop_left_px"
         private const val KEY_RAW_BLACK_BORDER_CROP_TOP_PX = "raw_black_border_crop_top_px"
@@ -40,8 +45,14 @@ data class IszLensConfig(
         private const val MAX_RAW_BLACK_BORDER_CROP_PX = 4096
         private const val VIRTUAL_CAMERA_ID_PREFIX = "isz"
 
-        fun createVirtualCameraId(baseCameraId: String, iszZoomRatio: Float): String {
-            return "$VIRTUAL_CAMERA_ID_PREFIX:$baseCameraId:${formatRatioForId(iszZoomRatio)}"
+        fun createVirtualCameraId(
+            baseCameraId: String,
+            iszZoomRatio: Float,
+            vendorCaptureProfileId: String? = null
+        ): String {
+            val baseId = "$VIRTUAL_CAMERA_ID_PREFIX:$baseCameraId:${formatRatioForId(iszZoomRatio)}"
+            val profileId = sanitizeVendorCaptureProfileId(vendorCaptureProfileId) ?: return baseId
+            return "$baseId:$profileId"
         }
 
         fun deserializeList(value: String?): List<IszLensConfig> {
@@ -53,6 +64,9 @@ data class IszLensConfig(
                     val baseCameraId = obj.optString(KEY_BASE_CAMERA_ID).trim()
                     val iszZoomRatio = obj.optDouble(KEY_ISZ_ZOOM_RATIO, 0.0).toFloat()
                     val isMacro = obj.optBoolean(KEY_IS_MACRO, false)
+                    val vendorCaptureProfileId = sanitizeVendorCaptureProfileId(
+                        obj.optString(KEY_VENDOR_CAPTURE_PROFILE_ID, "")
+                    )
                     val legacyLeftCropPx = obj.optInt(KEY_RAW_BLACK_BORDER_CROP_PX, 0)
                     val rawBlackBorderCrop = sanitizeRawBlackBorderCrop(
                         RawBlackBorderCrop(
@@ -63,7 +77,15 @@ data class IszLensConfig(
                         )
                     )
                     if (baseCameraId.isNotEmpty() && iszZoomRatio >= 1f) {
-                        add(IszLensConfig(baseCameraId, iszZoomRatio, isMacro, rawBlackBorderCrop))
+                        add(
+                            IszLensConfig(
+                                baseCameraId = baseCameraId,
+                                iszZoomRatio = iszZoomRatio,
+                                isMacro = isMacro,
+                                rawBlackBorderCrop = rawBlackBorderCrop,
+                                vendorCaptureProfileId = vendorCaptureProfileId
+                            )
+                        )
                     }
                 }
             }.distinctBy { it.virtualCameraId }
@@ -89,6 +111,21 @@ data class IszLensConfig(
 
         private fun formatRatioForId(ratio: Float): String {
             return displayRatioLabel(ratio).dropLast(1)
+        }
+
+        fun sanitizeVendorCaptureProfileId(value: String?): String? {
+            val trimmed = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return trimmed
+                .map { char ->
+                    if (char.isLetterOrDigit() || char == '_' || char == '-' || char == '.') {
+                        char
+                    } else {
+                        '_'
+                    }
+                }
+                .joinToString(separator = "")
+                .take(160)
+                .takeIf { it.isNotBlank() }
         }
 
         fun sanitizeRawBlackBorderCropPx(value: Int): Int {

@@ -298,7 +298,9 @@
     <string name="settings_isz_lens_no_physical_lens">没有可用的后置物理镜头。</string>
     <string name="settings_isz_added_lenses">已新增的虚拟镜头</string>
     <string name="settings_isz_existing_lens_title">%1$s + ISZ %2$s</string>
-    <string name="settings_isz_existing_lens_description">%1$s · 显示 %2$s · %3$s · 厂商 Key %4$d · %5$s</string>
+    <string name="settings_isz_existing_lens_description">%1$s · 显示 %2$s · %3$s · %4$s · %5$s</string>
+    <string name="settings_isz_vendor_profile_none">无厂商 Key</string>
+    <string name="settings_isz_vendor_profile_entry">%1$s=%2$d</string>
     <string name="settings_isz_lens_kind_normal">普通</string>
     <string name="settings_isz_lens_kind_macro">微距</string>
     <string name="settings_isz_add_lens_confirm">新增镜头</string>
@@ -687,6 +689,9 @@
     <string name="settings_main_camera_id">主摄 ID</string>
     <string name="settings_main_camera_id_description">选择将哪个 1x 后置相机 ID 作为主摄。</string>
     <string name="settings_main_camera_id_option">相机 ID %1$s</string>
+    <string name="settings_macro_camera_id">微距镜头 ID</string>
+    <string name="settings_macro_camera_id_description">选择一个后置相机 ID 强制作为微距镜头。自动识别会保留当前相机发现逻辑。</string>
+    <string name="settings_macro_camera_id_auto">自动识别</string>
     <string name="settings_logical_multi_camera_discovery">逻辑多摄探测</string>
     <string name="settings_logical_multi_camera_discovery_description">探测逻辑多摄 ID 暴露的物理镜头。默认关闭以提高兼容性。</string>
     <string name="settings_logical_camera_binding_whitelist">逻辑/物理摄像头白名单</string>
@@ -786,6 +791,7 @@
     <string name="settings_white_level_raw12">RAW12</string>
     <string name="settings_white_level_raw14">RAW14</string>
     <string name="settings_white_level_raw_sensor">RAW Sensor(65535)</string>
+    <string name="settings_white_level_custom">自定义</string>
     <string name="settings_raw_cfa_correction">CFA 通道校正</string>
     <string name="settings_raw_cfa_correction_with_lens">CFA 通道校正（镜头 %1$s · %2$dmm）</string>
     <string name="settings_raw_cfa_correction_description">覆盖写入 DNG 的 RAW CFA 通道排列。针对镜头单独设置。</string>
@@ -991,4 +997,5 @@
     <string name="preset_restore_defaults_confirm">恢复默认预设将清除所有自定义覆盖，是否继续？</string>
     <string name="preset_custom_badge">自定义</string>
     <string name="preset_builtin_badge">内置</string>
+    <string name="gallery">相册</string>
 </resources>

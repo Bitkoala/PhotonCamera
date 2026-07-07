@@ -300,7 +300,9 @@
     <string name="settings_isz_lens_no_physical_lens">No usable rear physical lens is available.</string>
     <string name="settings_isz_added_lenses">Added ISZ/DCG Lenses</string>
     <string name="settings_isz_existing_lens_title">%1$s + ISZ %2$s</string>
-    <string name="settings_isz_existing_lens_description">%1$s · visible %2$s · %3$s · vendor keys %4$d · %5$s</string>
+    <string name="settings_isz_existing_lens_description">%1$s · visible %2$s · %3$s · %4$s · %5$s</string>
+    <string name="settings_isz_vendor_profile_none">no vendor key</string>
+    <string name="settings_isz_vendor_profile_entry">%1$s=%2$d</string>
     <string name="settings_isz_lens_kind_normal">normal</string>
     <string name="settings_isz_lens_kind_macro">macro</string>
     <string name="settings_isz_add_lens_confirm">Add Lens</string>
@@ -696,6 +698,9 @@
     <string name="settings_main_camera_id">Main Camera ID</string>
     <string name="settings_main_camera_id_description">Choose which 1x rear camera ID is used as the main camera.</string>
     <string name="settings_main_camera_id_option">Camera ID %1$s</string>
+    <string name="settings_macro_camera_id">Macro Camera ID</string>
+    <string name="settings_macro_camera_id_description">Choose a rear camera ID to force as the macro lens. Auto keeps the current camera discovery behavior.</string>
+    <string name="settings_macro_camera_id_auto">Auto</string>
     <string name="settings_logical_multi_camera_discovery">Logical Multi-Camera Discovery</string>
     <string name="settings_logical_multi_camera_discovery_description">Detect physical lenses exposed by logical multi-camera IDs. Off by default for compatibility.</string>
     <string name="settings_logical_camera_binding_whitelist">Logical/Physical Camera Whitelist</string>
@@ -770,6 +775,7 @@
     <string name="settings_white_level_raw12">RAW12</string>
     <string name="settings_white_level_raw14">RAW14</string>
     <string name="settings_white_level_raw_sensor">RAW Sensor(65535)</string>
+    <string name="settings_white_level_custom">Custom</string>
     <string name="settings_raw_cfa_correction">CFA Channel Correction</string>
     <string name="settings_raw_cfa_correction_with_lens">CFA Channel Correction (Lens %1$s · %2$dmm)</string>
     <string name="settings_raw_cfa_correction_description">Override the RAW CFA channel pattern written to DNG. Applied per camera lens.</string>
@@ -993,4 +999,5 @@
     <string name="preset_restore_defaults_confirm">Restoring default presets will clear all custom modifications. Do you want to continue?</string>
     <string name="preset_custom_badge">Custom</string>
     <string name="preset_builtin_badge">Built-in</string>
+    <string name="gallery">Gallery</string>
 </resources>

@@ -45,6 +45,7 @@ import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
 import com.hinnka.mycamera.utils.DngCfaPatternPatcher
+import com.hinnka.mycamera.utils.DngWhiteLevelPatcher
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import com.hinnka.mycamera.utils.RawProcessor
@@ -1824,6 +1825,7 @@ object GalleryManager {
                             blackLevelMode = metadata.rawBlackLevelMode,
                             customBlackLevel = metadata.rawCustomBlackLevel,
                             whiteLevelMode = metadata.rawWhiteLevelMode,
+                            customWhiteLevel = metadata.rawCustomWhiteLevel,
                             cfaCorrectionMode = metadata.rawCfaCorrectionMode
                         )
                     } catch (e: Throwable) {
@@ -1870,6 +1872,7 @@ object GalleryManager {
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                 rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
+                rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
                 sharpeningValue = rawSharpening,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
@@ -2651,7 +2654,8 @@ object GalleryManager {
             }
             val stackWhiteLevel = RawProcessor.resolveWhiteLevelForMode(
                 defaultWhiteLevel = rawMetadata.whiteLevel,
-                whiteLevelMode = metadata.rawWhiteLevelMode
+                whiteLevelMode = metadata.rawWhiteLevelMode,
+                customWhiteLevel = metadata.rawCustomWhiteLevel
             ).toInt()
             if (stackWhiteLevel != rawMetadata.whiteLevel.toInt()) {
                 PLog.d(TAG, "RAW stack white level override mode=${metadata.rawWhiteLevelMode} value=$stackWhiteLevel")
@@ -2747,6 +2751,7 @@ object GalleryManager {
                 rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                 rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                 rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
+                rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
                 sharpeningValue = rawSharpening,
                 denoiseValue = rawNoiseReduction,
                 chromaDenoiseValue = rawChromaNoiseReduction,
@@ -2950,7 +2955,8 @@ object GalleryManager {
             }
             val stackWhiteLevel = RawProcessor.resolveWhiteLevelForMode(
                 defaultWhiteLevel = rawMetadata.whiteLevel,
-                whiteLevelMode = metadata.rawWhiteLevelMode
+                whiteLevelMode = metadata.rawWhiteLevelMode,
+                customWhiteLevel = metadata.rawCustomWhiteLevel
             ).toInt()
             if (stackWhiteLevel != rawMetadata.whiteLevel.toInt()) {
                 PLog.d(TAG, "RAW HDR white level override mode=${metadata.rawWhiteLevelMode} value=$stackWhiteLevel")
@@ -3101,7 +3107,8 @@ object GalleryManager {
     private fun MediaMetadata.withNormalizedRawLevelCorrectionsCleared(source: String): MediaMetadata {
         val hasLevelOverride = rawBlackLevelMode != null ||
                 rawCustomBlackLevel != null ||
-                rawWhiteLevelMode != null
+                rawWhiteLevelMode != null ||
+                rawCustomWhiteLevel != null
         if (!hasLevelOverride) {
             return this
         }
@@ -3112,7 +3119,8 @@ object GalleryManager {
         return copy(
             rawBlackLevelMode = null,
             rawCustomBlackLevel = null,
-            rawWhiteLevelMode = null
+            rawWhiteLevelMode = null,
+            rawCustomWhiteLevel = null
         )
     }
 
@@ -3187,6 +3195,7 @@ object GalleryManager {
             rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
             rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
             rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
+            rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
             sharpeningValue = rawSharpening,
             denoiseValue = rawNoiseReduction,
             chromaDenoiseValue = rawChromaNoiseReduction,
@@ -3402,6 +3411,14 @@ object GalleryManager {
         if (patched) {
             PLog.d(TAG, "Applied DNG BlackLevel correction (${metadata.rawBlackLevelMode}) to ${dngFile.name}")
         }
+        val whitePatched = DngWhiteLevelPatcher.patchFromMode(
+            file = dngFile,
+            mode = metadata.rawWhiteLevelMode,
+            customWhiteLevel = metadata.rawCustomWhiteLevel
+        )
+        if (whitePatched) {
+            PLog.d(TAG, "Applied DNG WhiteLevel correction (${metadata.rawWhiteLevelMode}) to ${dngFile.name}")
+        }
         val cfaPatched = DngCfaPatternPatcher.patchFromMode(
             file = dngFile,
             mode = metadata.rawCfaCorrectionMode
@@ -3409,7 +3426,7 @@ object GalleryManager {
         if (cfaPatched) {
             PLog.d(TAG, "Applied DNG CFA correction (${metadata.rawCfaCorrectionMode}) to ${dngFile.name}")
         }
-        return patched || cfaPatched
+        return patched || whitePatched || cfaPatched
     }
 
 
@@ -4330,6 +4347,7 @@ object GalleryManager {
                         rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
                         rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
                         rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
+                        rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
                         sharpeningValue = RawSharpeningDefaults.CAPTURE_DEFAULT,
                         denoiseValue = rawNoiseReduction,
                         chromaDenoiseValue = rawChromaNoiseReduction,
@@ -4487,6 +4505,7 @@ object GalleryManager {
                     rawBlackLevelMode = updatedMetadata?.rawBlackLevelMode,
                     rawCustomBlackLevel = updatedMetadata?.rawCustomBlackLevel,
                     rawWhiteLevelMode = updatedMetadata?.rawWhiteLevelMode,
+                    rawCustomWhiteLevel = updatedMetadata?.rawCustomWhiteLevel,
                     sharpeningValue = updatedMetadata?.sharpening ?: RawSharpeningDefaults.CAPTURE_DEFAULT,
                     denoiseValue = rawNoiseReduction,
                     chromaDenoiseValue = rawChromaNoiseReduction,
