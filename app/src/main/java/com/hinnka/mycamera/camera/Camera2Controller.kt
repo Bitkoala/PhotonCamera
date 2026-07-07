@@ -108,6 +108,9 @@ class Camera2Controller(private val context: Context) {
         private const val NO_IMAGE_READER_FORMAT = -1
         private const val AWB_TEMPERATURE_MIN = 2000
         private const val AWB_TEMPERATURE_MAX = 8000
+        private val FORCED_VENDOR_SESSION_PARAMETER_KEYS = setOf(
+            VendorCaptureKey.VIVO_FORCE_SENSOR_MODE
+        )
     }
 
     private data class PhysicalOutputFailureKey(
@@ -148,6 +151,11 @@ class Camera2Controller(private val context: Context) {
         val blue: Float
     )
 
+    private data class InitialSessionParametersResult(
+        val applied: Boolean,
+        val usedVendorParameters: Boolean
+    )
+
     private enum class WhiteBalanceControlPath {
         CCT,
         MATRIX,
@@ -174,6 +182,7 @@ class Camera2Controller(private val context: Context) {
     private var previewRequestBuilder: CaptureRequest.Builder? = null
     private var previewSessionGeneration: Long = 0L
     private val previewUpdateScheduled = AtomicBoolean(false)
+    private var pendingVendorSessionParameterRestart = false
 
     private var previewSurface: Surface? = null
     private var previewSurfaceTexture: SurfaceTexture? = null
@@ -1670,6 +1679,7 @@ class Camera2Controller(private val context: Context) {
 
     private fun createPreviewSession(
         forceStandardSession: Boolean = false,
+        forceWithoutVendorSessionParameters: Boolean = false,
         openGeneration: Long = cameraOpenGeneration
     ) {
         if (openGeneration != cameraOpenGeneration) {
@@ -1681,11 +1691,16 @@ class Camera2Controller(private val context: Context) {
         val captureMode = _state.value.captureMode
         val reader = imageReader
         val sessionGeneration = ++previewSessionGeneration
+        pendingVendorSessionParameterRestart = false
+        val templateType = if (captureMode == CaptureMode.VIDEO) {
+            CameraDevice.TEMPLATE_RECORD
+        } else {
+            CameraDevice.TEMPLATE_PREVIEW
+        }
+        var vendorSessionParametersApplied = false
 
         try {
-            previewRequestBuilder = device.createCaptureRequest(
-                if (captureMode == CaptureMode.VIDEO) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW
-            ).apply {
+            previewRequestBuilder = device.createCaptureRequest(templateType).apply {
                 addTarget(surface)
 
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦、色调映射）
@@ -1728,6 +1743,15 @@ class Camera2Controller(private val context: Context) {
                             }
                             PLog.e(TAG, "Video session configuration failed: useHlgCapture=$useHlgCapture")
                             safeCloseCaptureSession(session, "video configure failure")
+                            if (vendorSessionParametersApplied &&
+                                retryPreviewSessionWithoutVendorSessionParameters(
+                                    reason = "video configure failed",
+                                    forceStandardSession = forceStandardSession,
+                                    openGeneration = openGeneration
+                                )
+                            ) {
+                                return
+                            }
                             if (retryPreviewSessionWithoutPhysicalOutput("video configure failed", openGeneration)) {
                                 return
                             }
@@ -1741,7 +1765,12 @@ class Camera2Controller(private val context: Context) {
                         }
                     }
                 )
-                applyInitialSessionParameters(sessionConfig)
+                vendorSessionParametersApplied = applyInitialSessionParameters(
+                    sessionConfig = sessionConfig,
+                    device = device,
+                    templateType = templateType,
+                    includeVendorSessionParameters = !forceWithoutVendorSessionParameters
+                ).usedVendorParameters
                 device.createCaptureSession(sessionConfig)
                 return
             }
@@ -1793,6 +1822,15 @@ class Camera2Controller(private val context: Context) {
                                     "sessionColorSpace=${if (shouldUseP3ColorSpace()) "DISPLAY_P3" else "DEFAULT"}"
                         )
                         safeCloseCaptureSession(session, "photo configure failure")
+                        if (vendorSessionParametersApplied &&
+                            retryPreviewSessionWithoutVendorSessionParameters(
+                                reason = "photo configure failed",
+                                forceStandardSession = forceStandardSession,
+                                openGeneration = openGeneration
+                            )
+                        ) {
+                            return
+                        }
                         if (retryPreviewSessionWithoutPhysicalOutput("photo configure failed", openGeneration)) {
                             return
                         }
@@ -1811,18 +1849,57 @@ class Camera2Controller(private val context: Context) {
                     sessionConfig.setColorSpace(ColorSpace.Named.DISPLAY_P3)
                 }
             }
+            vendorSessionParametersApplied = applyInitialSessionParameters(
+                sessionConfig = sessionConfig,
+                device = device,
+                templateType = templateType,
+                includeVendorSessionParameters = !forceWithoutVendorSessionParameters
+            ).usedVendorParameters
             device.createCaptureSession(sessionConfig)
         } catch (e: IllegalStateException) {
             PLog.w(TAG, "Failed to create preview session", e)
+            if (vendorSessionParametersApplied &&
+                retryPreviewSessionWithoutVendorSessionParameters(
+                    reason = "create session illegal state: ${e.message}",
+                    forceStandardSession = forceStandardSession,
+                    openGeneration = openGeneration
+                )
+            ) {
+                return
+            }
             if (!retryPreviewSessionWithoutPhysicalOutput("create session illegal state: ${e.message}", openGeneration)) {
                 handlePreviewSessionFailure("create session illegal state", openGeneration, e)
             }
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to create preview session", e)
+            if (vendorSessionParametersApplied &&
+                retryPreviewSessionWithoutVendorSessionParameters(
+                    reason = "create session exception: ${e.message}",
+                    forceStandardSession = forceStandardSession,
+                    openGeneration = openGeneration
+                )
+            ) {
+                return
+            }
             if (!retryPreviewSessionWithoutPhysicalOutput("create session exception: ${e.message}", openGeneration)) {
                 handlePreviewSessionFailure("create session exception", openGeneration, e)
             }
         }
+    }
+
+    private fun retryPreviewSessionWithoutVendorSessionParameters(
+        reason: String,
+        forceStandardSession: Boolean,
+        openGeneration: Long
+    ): Boolean {
+        if (openGeneration != cameraOpenGeneration) return false
+        PLog.w(TAG, "Retrying preview session without vendor session parameters: $reason")
+        createPreviewSession(
+            forceStandardSession = forceStandardSession,
+            forceWithoutVendorSessionParameters = true,
+            openGeneration = openGeneration
+        )
+        return true
     }
 
     private fun retryPreviewSessionWithoutPhysicalOutput(
@@ -1867,8 +1944,13 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun applyInitialSessionParameters(sessionConfig: SessionConfiguration) {
-        val builder = previewRequestBuilder ?: return
+    private fun applyInitialSessionParameters(
+        sessionConfig: SessionConfiguration,
+        device: CameraDevice,
+        templateType: Int,
+        includeVendorSessionParameters: Boolean
+    ): InitialSessionParametersResult {
+        val state = _state.value
         val sessionKeys = try {
             getActiveOpenCameraCharacteristics()?.availableSessionKeys
         } catch (e: Exception) {
@@ -1876,16 +1958,45 @@ class Camera2Controller(private val context: Context) {
             null
         }
 
-        val shouldSetSessionParameters =
+        val shouldApplyStandardSessionParameters =
             sessionKeys?.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE) == true ||
                 sessionKeys?.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE) == true
+        val vendorSessionValues = if (includeVendorSessionParameters) {
+            forcedVendorSessionParameterValues(state)
+        } else {
+            emptyMap()
+        }
 
-        if (!shouldSetSessionParameters) return
+        if (!shouldApplyStandardSessionParameters && vendorSessionValues.isEmpty()) {
+            return InitialSessionParametersResult(applied = false, usedVendorParameters = false)
+        }
 
         try {
+            val builder = device.createCaptureRequest(templateType)
+            if (shouldApplyStandardSessionParameters) {
+                applyStabilizationSettings(builder, state)
+            }
+            if (vendorSessionValues.isNotEmpty()) {
+                applyVendorCaptureSettings(
+                    builder = builder,
+                    lensId = state.currentCameraId,
+                    values = vendorSessionValues,
+                    target = "session"
+                )
+            }
             sessionConfig.setSessionParameters(builder.build())
+            PLog.d(
+                TAG,
+                "Initial session parameters applied: standard=$shouldApplyStandardSessionParameters, " +
+                        "vendorKeys=${vendorSessionValues.keys.map { it.requestKeyName }}"
+            )
+            return InitialSessionParametersResult(
+                applied = true,
+                usedVendorParameters = vendorSessionValues.isNotEmpty()
+            )
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to set initial session parameters", e)
+            return InitialSessionParametersResult(applied = false, usedVendorParameters = false)
         }
     }
 
@@ -2099,33 +2210,57 @@ class Camera2Controller(private val context: Context) {
         applyVendorCaptureSettings(builder, isCapture)
     }
 
+    private fun forcedVendorSessionParameterValues(state: CameraState): Map<VendorCaptureKey, Int> {
+        val lensId = state.currentCameraId
+        val settings = state.vendorCaptureSettingsByLens.settingsFor(lensId)
+        if (!settings.isEnabled) return emptyMap()
+
+        return settings.values.filterKeys { key ->
+            FORCED_VENDOR_SESSION_PARAMETER_KEYS.contains(key)
+        }
+    }
+
     private fun applyVendorCaptureSettings(builder: CaptureRequest.Builder, isCapture: Boolean) {
-//        if (!isCapture) return
         val state = _state.value
         val lensId = state.currentCameraId
         val settings = state.vendorCaptureSettingsByLens.settingsFor(lensId)
         if (!settings.isEnabled) return
 
-        settings.values.forEach { (key, value) ->
+        applyVendorCaptureSettings(
+            builder = builder,
+            lensId = lensId,
+            values = settings.values,
+            target = if (isCapture) "capture" else "preview"
+        )
+    }
+
+    private fun applyVendorCaptureSettings(
+        builder: CaptureRequest.Builder,
+        lensId: String,
+        values: Map<VendorCaptureKey, Int>,
+        target: String
+    ) {
+        values.forEach { (key, value) ->
+            val normalizedValue = key.normalizeValue(value)
             try {
                 when (key.valueType) {
                     VendorCaptureValueType.INT -> {
                         builder.set(
                             CaptureRequest.Key(key.requestKeyName, Int::class.java),
-                            value
+                            normalizedValue
                         )
                     }
 
                     VendorCaptureValueType.BYTE -> {
                         builder.set(
                             CaptureRequest.Key(key.requestKeyName, Byte::class.java),
-                            key.normalizeValue(value).toByte()
+                            normalizedValue.toByte()
                         )
                     }
                 }
-                PLog.d(TAG, "Applied vendor capture key for lens $lensId: ${key.requestKeyName}=${key.normalizeValue(value)}")
+                PLog.d(TAG, "Applied vendor $target key for lens $lensId: ${key.requestKeyName}=$normalizedValue")
             } catch (e: Exception) {
-                PLog.w(TAG, "Failed to apply vendor capture key for lens $lensId: ${key.requestKeyName}", e)
+                PLog.w(TAG, "Failed to apply vendor $target key for lens $lensId: ${key.requestKeyName}", e)
             }
         }
     }
@@ -3207,8 +3342,50 @@ class Camera2Controller(private val context: Context) {
     }
 
     fun setVendorCaptureSettingsByLens(settingsByLens: VendorCaptureSettingsByLens) {
-        _state.value = _state.value.copy(vendorCaptureSettingsByLens = settingsByLens)
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post {
+                setVendorCaptureSettingsByLens(settingsByLens)
+            }
+            return
+        }
+
+        val previousState = _state.value
+        if (previousState.vendorCaptureSettingsByLens == settingsByLens) return
+
+        val previousVendorSessionValues = forcedVendorSessionParameterValues(previousState)
+        val updatedState = previousState.copy(vendorCaptureSettingsByLens = settingsByLens)
+        val updatedVendorSessionValues = forcedVendorSessionParameterValues(updatedState)
+
+        _state.value = updatedState
         PLog.d(TAG, "Vendor capture lens settings count: ${settingsByLens.settingsByLensId.size}")
+
+        val shouldRecreateSession =
+            previousVendorSessionValues != updatedVendorSessionValues &&
+                    cameraDevice != null &&
+                    previewSurface != null
+        if (shouldRecreateSession) {
+            if (_state.value.videoRecordingState.isRecording) {
+                pendingVendorSessionParameterRestart = true
+                PLog.w(
+                    TAG,
+                    "Vendor session parameter changed during recording; keeping active request until session restart"
+                )
+                return
+            }
+            PLog.d(
+                TAG,
+                "Recreating preview session for vendor session parameter change: " +
+                        "old=$previousVendorSessionValues, new=$updatedVendorSessionValues"
+            )
+            createPreviewSession(openGeneration = cameraOpenGeneration)
+            return
+        }
+
+        previewRequestBuilder?.apply {
+            applyBaseCameraSettings(this, isCapture = false)
+            updatePreview()
+        }
     }
 
     /**
@@ -4683,6 +4860,10 @@ class Camera2Controller(private val context: Context) {
             videoRecordingState = _state.value.videoRecordingState.copy(isRecording = false)
         )
         videoRecorder.stopRecording()
+        if (pendingVendorSessionParameterRestart && cameraDevice != null && previewSurface != null) {
+            PLog.d(TAG, "Restarting preview session after recording for pending vendor session parameter change")
+            createPreviewSession(openGeneration = cameraOpenGeneration)
+        }
     }
 
     private fun resolveVideoOrientationHintDegrees(): Int {
