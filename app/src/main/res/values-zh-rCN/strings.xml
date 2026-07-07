@@ -991,4 +991,5 @@
     <string name="preset_restore_defaults_confirm">恢复默认预设将清除所有自定义覆盖，是否继续？</string>
     <string name="preset_custom_badge">自定义</string>
     <string name="preset_builtin_badge">内置</string>
+    <string name="gallery">相册</string>
 </resources>

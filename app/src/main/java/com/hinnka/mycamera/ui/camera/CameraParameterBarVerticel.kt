@@ -1,6 +1,5 @@
 package com.hinnka.mycamera.ui.camera
 
-import android.hardware.camera2.CameraMetadata
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -75,14 +74,10 @@ fun CameraParameterBarVerticel(
         )
         ParameterItem(
             label = "AWB",
-            value = when (state.awbMode) {
-                CameraMetadata.CONTROL_AWB_MODE_OFF -> "${state.awbTemperature}K"
-                CameraMetadata.CONTROL_AWB_MODE_AUTO -> "AUTO"
-                else -> "UNK"
-            },
+            value = formatWhiteBalanceValue(state),
             labelColor = yellow,
             isSelected = selectedParameter == CameraParameter.WHITE_BALANCE,
-            isEnabled = true,
+            isEnabled = state.canAdjustWhiteBalance || state.actualAwbTemperature != null,
             onClick = { onParameterClick(CameraParameter.WHITE_BALANCE) }
         )
     }

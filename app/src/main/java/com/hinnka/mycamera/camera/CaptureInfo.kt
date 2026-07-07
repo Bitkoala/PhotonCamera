@@ -25,7 +25,7 @@ data class CaptureInfo(
     val software: String = "PhotonCamera",
     
     // 拍摄参数
-    val whiteBalance: Int? = null,           // AWB 模式
+    val whiteBalance: Int? = null,           // EXIF 白平衡: 0=Auto, 1=Manual
     val flashState: Int? = null,             // 闪光灯状态
     val orientation: Int = 0,                // JPEG 方向 (0, 90, 180, 270)
     

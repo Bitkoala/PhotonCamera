@@ -291,7 +291,7 @@ fun GalleryScreen(
                             )
                         } else {
                             Text(
-                                text = stringResource(R.string.gallery_photon),
+                                text = stringResource(R.string.gallery),
                                 color = Color.White,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
