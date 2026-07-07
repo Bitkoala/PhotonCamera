@@ -296,7 +296,7 @@ class GlesRawStacker(
                 GlesGpuScheduler.waitForGpuCheckpoint(TAG, "hdr normal frame $frameIndex accumulation")
             }
 
-            computeHdrRecoveryMask()
+            computeHdrRecoveryMask(shortToReferenceExposureScale = shortAlignmentScale)
             GlesGpuScheduler.yieldToUiRenderer()
             normalizeOutput(
                 hdrMode = true,
@@ -931,8 +931,8 @@ class GlesRawStacker(
         currentAccumulatorTexture = outputAccumulator
     }
 
-    private fun computeHdrRecoveryMask() {
-        computeInitialHdrRecoveryMask()
+    private fun computeHdrRecoveryMask(shortToReferenceExposureScale: Float) {
+        computeInitialHdrRecoveryMask(shortToReferenceExposureScale)
         filterHdrRecoveryMask(
             program = hdrRecoveryDilateProgram,
             input = hdrRecoveryOrigMaskTexture,
@@ -947,15 +947,21 @@ class GlesRawStacker(
         )
     }
 
-    private fun computeInitialHdrRecoveryMask() {
+    private fun computeInitialHdrRecoveryMask(shortToReferenceExposureScale: Float) {
         bindFramebufferOutput(hdrRecoveryOrigMaskTexture, "computeHdrRecoveryMask initial")
         GLES30.glViewport(0, 0, planeWidth, planeHeight)
         GLES30.glUseProgram(hdrRecoveryMaskProgram)
         bindTexture(hdrRecoveryMaskProgram, "uAccumulator", 0, currentAccumulatorTexture)
         bindTexture(hdrRecoveryMaskProgram, "uReferenceRaw", 1, refRaw)
+        bindTexture(hdrRecoveryMaskProgram, "uShortRaw", 2, hdrShortRaw)
+        bindTexture(hdrRecoveryMaskProgram, "uShortGlobalAlignment", 3, hdrShortAlignmentTexture)
         setCommonUniforms(hdrRecoveryMaskProgram)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(hdrRecoveryMaskProgram, "uImageSize"), width, height)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(hdrRecoveryMaskProgram, "uPlaneSize"), planeWidth, planeHeight)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(hdrRecoveryMaskProgram, "uShortToReferenceExposureScale"),
+            shortToReferenceExposureScale,
+        )
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("computeHdrRecoveryMask initial")
     }
@@ -2286,11 +2292,14 @@ class GlesRawStacker(
             out vec4 fragColor;
             uniform sampler2D uAccumulator;
             uniform highp usampler2D uReferenceRaw;
+            uniform highp usampler2D uShortRaw;
+            uniform sampler2D uShortGlobalAlignment;
             uniform ivec2 uImageSize;
             uniform ivec2 uPlaneSize;
             uniform int uCfaPattern;
             uniform float uBlackLevel[4];
             uniform float uWhiteLevel;
+            uniform float uShortToReferenceExposureScale;
 
             ivec2 clampRaw(ivec2 p) {
                 return clamp(p, ivec2(0), uImageSize - ivec2(1));
@@ -2304,6 +2313,24 @@ class GlesRawStacker(
                 return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
             }
 
+            ivec2 shortAlignedPos(ivec2 p) {
+                ivec2 rawOffset = ivec2(round(texelFetch(uShortGlobalAlignment, ivec2(0), 0).rg)) * 2;
+                return clampRaw(p + rawOffset);
+            }
+
+            float shortSensorNorm(ivec2 p) {
+                p = clampRaw(p);
+                ivec2 shortPos = shortAlignedPos(p);
+                int bayerIndex = bayerIndexAt(uCfaPattern, p);
+                float raw = float(texelFetch(uShortRaw, shortPos, 0).r);
+                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
+            }
+
+            float shortReferenceNorm(ivec2 p) {
+                return clamp(shortSensorNorm(p) * uShortToReferenceExposureScale, 0.0, 1.0);
+            }
+
             float referenceBlockMax(ivec2 base) {
                 float m = 0.0;
                 for (int y = 0; y <= 1; ++y) {
@@ -2312,6 +2339,26 @@ class GlesRawStacker(
                     }
                 }
                 return m;
+            }
+
+            float shortReferenceBlockMax(ivec2 base) {
+                float m = 0.0;
+                for (int y = 0; y <= 1; ++y) {
+                    for (int x = 0; x <= 1; ++x) {
+                        m = max(m, shortReferenceNorm(base + ivec2(x, y)));
+                    }
+                }
+                return m;
+            }
+
+            float shortReferenceBlockMean(ivec2 base) {
+                float sum = 0.0;
+                for (int y = 0; y <= 1; ++y) {
+                    for (int x = 0; x <= 1; ++x) {
+                        sum += shortReferenceNorm(base + ivec2(x, y));
+                    }
+                }
+                return sum * 0.25;
             }
 
             float blockClipRatioMax(ivec2 base) {
@@ -2326,28 +2373,48 @@ class GlesRawStacker(
                 return m;
             }
 
-            float referenceAroundMax(ivec2 base) {
-                float m = 0.0;
+            float shortReferenceConsistency(ivec2 base) {
+                float residualSum = 0.0;
+                float count = 0.0;
                 for (int y = -1; y <= 2; ++y) {
                     for (int x = -1; x <= 2; ++x) {
-                        m = max(m, sensorNorm(uReferenceRaw, base + ivec2(x, y)));
+                        ivec2 p = base + ivec2(x, y);
+                        float reference = sensorNorm(uReferenceRaw, p);
+                        if (reference <= 0.035 || reference >= 0.860) {
+                            continue;
+                        }
+                        float shortReference = shortReferenceNorm(p);
+                        float residual = abs(shortReference - reference) / max(max(shortReference, reference), 0.08);
+                        residualSum += residual;
+                        count += 1.0;
                     }
                 }
-                return m;
+                float support = smoothstep(2.0, 8.0, count);
+                float averageResidual = residualSum / max(count, 1.0);
+                float consistency = 1.0 - smoothstep(0.26, 0.58, averageResidual);
+                return mix(1.0, consistency, support);
             }
 
             void main() {
-                const float saturationThreshold = 0.990;
                 ivec2 block = clamp(ivec2(gl_FragCoord.xy), ivec2(0), uPlaneSize - ivec2(1));
                 ivec2 base = block * 2;
                 float refMax = referenceBlockMax(base);
                 float clipRatio = blockClipRatioMax(base);
-                float aroundMax = referenceAroundMax(base);
+                float shortMax = shortReferenceBlockMax(base);
+                float shortMean = shortReferenceBlockMean(base);
+                float consistency = shortReferenceConsistency(base);
 
-                float saturatedAround = step(saturationThreshold, aroundMax);
-                float accumulatedClip = step(0.50, clipRatio) * step(0.900, refMax);
-                float sourceMask = max(saturatedAround, accumulatedClip);
-                float saturationPush = clamp((aroundMax - saturationThreshold) / (1.0 - saturationThreshold), 0.0, 1.0);
+                float saturatedCore = smoothstep(0.970, 0.995, refMax);
+                float accumulatedClip = smoothstep(0.35, 0.65, clipRatio) * smoothstep(0.880, 0.960, refMax);
+                float sourceMask = max(saturatedCore, accumulatedClip);
+
+                float shortPeakConfidence = smoothstep(0.46, 0.78, shortMax);
+                float shortMeanConfidence = smoothstep(0.16, 0.42, shortMean);
+                float shortSignalConfidence = shortPeakConfidence * (0.45 + 0.55 * shortMeanConfidence);
+                float recoveryConfidence = clamp(shortSignalConfidence * consistency, 0.0, 1.0);
+
+                sourceMask = clamp(sourceMask * recoveryConfidence, 0.0, 1.0);
+                float saturationPush = smoothstep(0.990, 0.999, refMax) * recoveryConfidence;
                 fragColor = vec4(sourceMask, saturationPush, 0.0, 1.0);
             }
         """.trimIndent()
@@ -2711,7 +2778,16 @@ class GlesRawStacker(
                     recoveryMix = clamp(recoveryMix, 0.0, 1.0);
                     fused = mix(reference, fused, normalConfidence);
                     if (recoveryMix > 0.0001) {
-                        fused = mix(fused, shortRecoveryNorm(p, bayerIndex), recoveryMix);
+                        float shortValue = shortRecoveryNorm(p, bayerIndex);
+                        float shortPresenceFloor = max(0.012, reference * 0.25);
+                        float shortPresenceWidth = max(0.035, reference * 0.45);
+                        float shortPresence = smoothstep(
+                            shortPresenceFloor,
+                            shortPresenceFloor + shortPresenceWidth,
+                            shortValue
+                        );
+                        recoveryMix *= shortPresence;
+                        fused = mix(fused, shortValue, recoveryMix);
                     }
                 }
 
