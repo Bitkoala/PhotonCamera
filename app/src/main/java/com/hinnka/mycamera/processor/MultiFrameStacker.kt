@@ -20,6 +20,7 @@ data class RawStackResult(
     val blackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
     val fusedBayerUsesNativeAllocator: Boolean = false,
     val profileGainTableMap: DngProfileGainTableMap? = null,
+    val diagnostics: RawStackDiagnostics? = null,
 )
 
 data class RawHdrStackFrame(
@@ -276,6 +277,7 @@ object MultiFrameStacker {
             colorCorrectionMatrix = colorCorrectionMatrix,
             pgtmStatsBounds = pgtmStatsBounds,
             tuning = tuning,
+            debugConfig = RawStackDebugConfig.CompactSummary,
         ).processHdr(
             shortFrame = GlesRawStacker.HdrInputFrame(shortFrame.image, shortFrame.exposureProduct),
             normalFrames = normalFrames.map { GlesRawStacker.HdrInputFrame(it.image, it.exposureProduct) },
@@ -333,6 +335,7 @@ object MultiFrameStacker {
                 lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
                 lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
                 tuning = tuning,
+                debugConfig = RawStackDebugConfig.CompactSummary,
             ).process(images)
         } else if (useGpuAcceleration && enableSuperResolution) {
             PLog.w(TAG, "GLES RAW stacker does not support SR; falling back to CPU RAW stacker")
