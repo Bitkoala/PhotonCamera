@@ -8,7 +8,7 @@ import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 @Database(
     entities = [GalleryMediaEntity::class],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 @androidx.room.TypeConverters(GalleryConverters::class)
@@ -163,6 +163,12 @@ abstract class GalleryDatabase : RoomDatabase() {
         private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 rebuildGalleryMediaWithoutLegacyGoogleToneMapFlag(db)
+            }
+        }
+
+        private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawCustomWhiteLevel REAL")
             }
         }
 
@@ -517,7 +523,8 @@ abstract class GalleryDatabase : RoomDatabase() {
                         MIGRATION_16_17,
                         MIGRATION_17_18,
                         MIGRATION_18_19,
-                        MIGRATION_19_20
+                        MIGRATION_19_20,
+                        MIGRATION_20_21
                     )
                     .fallbackToDestructiveMigrationOnDowngrade(false)
                     .fallbackToDestructiveMigration(false)

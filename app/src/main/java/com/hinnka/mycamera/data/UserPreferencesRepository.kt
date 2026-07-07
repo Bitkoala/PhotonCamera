@@ -113,6 +113,7 @@ data class UserPreferences(
     val rawBlackLevelModes: Map<String, String> = emptyMap(),
     val rawCustomBlackLevels: Map<String, Float> = emptyMap(),
     val rawWhiteLevelModes: Map<String, String> = emptyMap(),
+    val rawCustomWhiteLevels: Map<String, Float> = emptyMap(),
     val rawCfaCorrectionModes: Map<String, String> = emptyMap(),
     val exportDngWithRawExport: Boolean = false,
     val frameId: String? = null,
@@ -308,6 +309,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_BLACK_LEVEL_MODES_KEY = stringPreferencesKey("raw_black_level_modes")
         private val RAW_CUSTOM_BLACK_LEVELS_KEY = stringPreferencesKey("raw_custom_black_levels")
         private val RAW_WHITE_LEVEL_MODES_KEY = stringPreferencesKey("raw_white_level_modes")
+        private val RAW_CUSTOM_WHITE_LEVELS_KEY = stringPreferencesKey("raw_custom_white_levels")
         private val RAW_CFA_CORRECTION_MODES_KEY = stringPreferencesKey("raw_cfa_correction_modes")
         private val EXPORT_DNG_WITH_RAW_EXPORT_KEY = booleanPreferencesKey("export_dng_with_raw_export")
         private val PHANTOM_BASELINE_LUT_ID_KEY = stringPreferencesKey("phantom_baseline_lut_id")
@@ -482,6 +484,7 @@ class UserPreferencesRepository(private val context: Context) {
                 rawBlackLevelModes = parseMapString(preferences[RAW_BLACK_LEVEL_MODES_KEY]),
                 rawCustomBlackLevels = parseMapFloat(preferences[RAW_CUSTOM_BLACK_LEVELS_KEY]),
                 rawWhiteLevelModes = parseMapString(preferences[RAW_WHITE_LEVEL_MODES_KEY]),
+                rawCustomWhiteLevels = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY]),
                 rawCfaCorrectionModes = parseMapString(preferences[RAW_CFA_CORRECTION_MODES_KEY]),
                 exportDngWithRawExport = preferences[EXPORT_DNG_WITH_RAW_EXPORT_KEY] ?: false,
                 phantomBaselineLutId = preferences[PHANTOM_BASELINE_LUT_ID_KEY],
@@ -1072,6 +1075,15 @@ class UserPreferencesRepository(private val context: Context) {
             val updated = current.toMutableMap()
             updated[cameraId] = mode
             preferences[RAW_WHITE_LEVEL_MODES_KEY] = serializeMapString(updated)
+        }
+    }
+
+    suspend fun saveRawCustomWhiteLevel(cameraId: String, value: Float) {
+        context.dataStore.edit { preferences ->
+            val current = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY])
+            val updated = current.toMutableMap()
+            updated[cameraId] = value
+            preferences[RAW_CUSTOM_WHITE_LEVELS_KEY] = serializeMapFloat(updated)
         }
     }
 

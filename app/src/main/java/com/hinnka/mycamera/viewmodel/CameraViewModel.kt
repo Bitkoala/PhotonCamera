@@ -1153,6 +1153,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     ) { cameraId, prefs ->
         prefs.rawWhiteLevelModes[cameraId] ?: RawWhiteLevelCorrection.MODE_DEFAULT
     }.stateIn(viewModelScope, SharingStarted.Eagerly, RawWhiteLevelCorrection.MODE_DEFAULT)
+    val rawCustomWhiteLevel: StateFlow<Float> = combine(
+        state.map { it.currentCameraId }.distinctUntilChanged(),
+        userPreferencesRepository.userPreferences
+    ) { cameraId, prefs ->
+        prefs.rawCustomWhiteLevels[cameraId] ?: 0f
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
     val rawCfaCorrectionMode: StateFlow<String> = combine(
         state.map { it.currentCameraId }.distinctUntilChanged(),
         userPreferencesRepository.userPreferences
@@ -1900,6 +1906,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             userPreferencesRepository.saveRawWhiteLevelMode(state.value.currentCameraId, mode)
         }
     }
+    fun setRawCustomWhiteLevel(value: Float) {
+        viewModelScope.launch {
+            userPreferencesRepository.saveRawCustomWhiteLevel(state.value.currentCameraId, value)
+        }
+    }
     fun setRawCfaCorrectionMode(mode: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveRawCfaCorrectionMode(state.value.currentCameraId, mode)
@@ -2158,6 +2169,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
             rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+            rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
             rawBlackBorderCrop = currentRawBlackBorderCrop(),
@@ -4542,6 +4554,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+                rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawBlackBorderCrop = currentRawBlackBorderCrop(),
@@ -4711,6 +4724,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+                rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawBlackBorderCrop = currentRawBlackBorderCrop(),
@@ -4855,6 +4869,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                     rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                         ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+                    rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
                     rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                     cameraId = currentCameraId,
                     rawBlackBorderCrop = currentRawBlackBorderCrop(),
@@ -5038,6 +5053,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
                 rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                     ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+                rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
                 rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
                 cameraId = currentCameraId,
                 rawBlackBorderCrop = currentRawBlackBorderCrop(),
@@ -5583,6 +5599,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawCustomBlackLevel = userPrefs?.rawCustomBlackLevels?.get(currentCameraId) ?: 0f,
             rawWhiteLevelMode = userPrefs?.rawWhiteLevelModes?.get(currentCameraId)
                 ?: RawWhiteLevelCorrection.MODE_DEFAULT,
+            rawCustomWhiteLevel = userPrefs?.rawCustomWhiteLevels?.get(currentCameraId) ?: 0f,
             rawCfaCorrectionMode = userPrefs?.rawCfaCorrectionModes?.get(currentCameraId) ?: RawCfaCorrection.MODE_DEFAULT,
             cameraId = currentCameraId,
             rawBlackBorderCrop = currentRawBlackBorderCrop(),

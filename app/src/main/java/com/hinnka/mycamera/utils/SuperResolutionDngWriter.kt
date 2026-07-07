@@ -133,6 +133,7 @@ object SuperResolutionDngWriter {
         blackLevelMode: String? = null,
         customBlackLevel: Float? = null,
         whiteLevelMode: String? = null,
+        customWhiteLevel: Float? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
         imageLayout: ImageLayout = ImageLayout.CFA,
@@ -155,7 +156,8 @@ object SuperResolutionDngWriter {
             val hasBlackLevelOverride = blackLevelMode != null && !blackLevel.contentEquals(resolvedBlackLevel)
             val resolvedWhiteLevel = RawWhiteLevelCorrection.resolveWhiteLevel(
                 defaultWhiteLevel = whiteLevel.toFloat(),
-                mode = whiteLevelMode
+                mode = whiteLevelMode,
+                customWhiteLevel = customWhiteLevel
             ).toInt()
 
             val encodedBlackLevel = if (valueDomain == RawProcessor.RawBufferValueDomain.NORMALIZED_SENSOR_RANGE) {

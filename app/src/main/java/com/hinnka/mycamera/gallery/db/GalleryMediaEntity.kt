@@ -120,6 +120,7 @@ data class GalleryMediaEntity(
     val rawBlackLevelMode: String?,
     val rawCustomBlackLevel: Float?,
     val rawWhiteLevelMode: String?,
+    val rawCustomWhiteLevel: Float?,
     val rawCfaCorrectionMode: String?,
     val rawBlackBorderCropLeftPx: Int,
     val rawBlackBorderCropTopPx: Int,

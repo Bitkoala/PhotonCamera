@@ -324,6 +324,7 @@ fun SettingsScreen(
     val rawBlackLevelMode by viewModel.rawBlackLevelMode.collectAsState()
     val rawCustomBlackLevel by viewModel.rawCustomBlackLevel.collectAsState()
     val rawWhiteLevelMode by viewModel.rawWhiteLevelMode.collectAsState()
+    val rawCustomWhiteLevel by viewModel.rawCustomWhiteLevel.collectAsState()
     val rawCfaCorrectionMode by viewModel.rawCfaCorrectionMode.collectAsState()
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
@@ -1837,11 +1838,24 @@ fun SettingsScreen(
                             RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
                             RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
                             RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
-                            RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor)
+                            RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor),
+                            RawWhiteLevelCorrection.MODE_CUSTOM to stringResource(R.string.settings_white_level_custom)
                         ),
                         currentLevel = rawWhiteLevelMode,
                         onLevelSelected = { viewModel.setRawWhiteLevelMode(it) }
                     )
+
+                    if (rawWhiteLevelMode == RawWhiteLevelCorrection.MODE_CUSTOM) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextInputSettingItem(
+                            title = stringResource(R.string.settings_white_level_custom),
+                            description = null,
+                            value = if (rawCustomWhiteLevel == 0f) "" else rawCustomWhiteLevel.toString(),
+                            onValueChange = {
+                                it.toFloatOrNull()?.let { value -> viewModel.setRawCustomWhiteLevel(value) }
+                            }
+                        )
+                    }
                 }
 
                 SettingsTab.PHANTOM -> {

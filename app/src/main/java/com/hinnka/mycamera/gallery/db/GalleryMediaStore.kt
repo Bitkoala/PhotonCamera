@@ -294,6 +294,7 @@ object GalleryMediaStore {
             rawBlackLevelMode = metadata.rawBlackLevelMode,
             rawCustomBlackLevel = metadata.rawCustomBlackLevel,
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
+            rawCustomWhiteLevel = metadata.rawCustomWhiteLevel,
             rawCfaCorrectionMode = metadata.rawCfaCorrectionMode,
             rawBlackBorderCropLeftPx = metadata.rawBlackBorderCrop.leftPx,
             rawBlackBorderCropTopPx = metadata.rawBlackBorderCrop.topPx,
@@ -469,6 +470,7 @@ object GalleryMediaStore {
             rawBlackLevelMode = rawBlackLevelMode,
             rawCustomBlackLevel = rawCustomBlackLevel,
             rawWhiteLevelMode = rawWhiteLevelMode,
+            rawCustomWhiteLevel = rawCustomWhiteLevel,
             rawCfaCorrectionMode = rawCfaCorrectionMode,
             rawBlackBorderCrop = RawBlackBorderCrop(
                 leftPx = rawBlackBorderCropLeftPx,

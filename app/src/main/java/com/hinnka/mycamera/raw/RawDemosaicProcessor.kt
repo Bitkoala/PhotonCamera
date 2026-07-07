@@ -502,10 +502,15 @@ class RawDemosaicProcessor {
         return metadata.copy(blackLevel = resolvedBlackLevel)
     }
 
-    private fun applyWhiteLevelOverride(metadata: RawMetadata, mode: String?): RawMetadata {
+    private fun applyWhiteLevelOverride(
+        metadata: RawMetadata,
+        mode: String?,
+        customWhiteLevel: Float?
+    ): RawMetadata {
         val resolvedWhiteLevel = RawWhiteLevelCorrection.resolveWhiteLevel(
             defaultWhiteLevel = metadata.whiteLevel,
-            mode = mode
+            mode = mode,
+            customWhiteLevel = customWhiteLevel
         )
         if (metadata.whiteLevel == resolvedWhiteLevel) {
             return metadata
@@ -519,12 +524,14 @@ class RawDemosaicProcessor {
         rawBlackLevelMode: String?,
         rawCustomBlackLevel: Float?,
         rawWhiteLevelMode: String?,
+        rawCustomWhiteLevel: Float?,
         rawCfaCorrectionMode: String?
     ): RawMetadata {
         return applyCfaCorrectionOverride(
             metadata = applyWhiteLevelOverride(
                 metadata = applyBlackLevelOverride(metadata, rawBlackLevelMode, rawCustomBlackLevel),
-                mode = rawWhiteLevelMode
+                mode = rawWhiteLevelMode,
+                customWhiteLevel = rawCustomWhiteLevel
             ),
             mode = rawCfaCorrectionMode
         )
@@ -889,6 +896,7 @@ class RawDemosaicProcessor {
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
+        rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -929,6 +937,7 @@ class RawDemosaicProcessor {
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawWhiteLevelMode = rawWhiteLevelMode,
+                rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -1140,6 +1149,7 @@ class RawDemosaicProcessor {
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
+        rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -1180,6 +1190,7 @@ class RawDemosaicProcessor {
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawWhiteLevelMode = rawWhiteLevelMode,
+                rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -1229,6 +1240,7 @@ class RawDemosaicProcessor {
         rawBlackLevelMode: String? = null,
         rawCustomBlackLevel: Float? = null,
         rawWhiteLevelMode: String? = null,
+        rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -1297,6 +1309,7 @@ class RawDemosaicProcessor {
                 rawBlackLevelMode = rawBlackLevelMode,
                 rawCustomBlackLevel = rawCustomBlackLevel,
                 rawWhiteLevelMode = rawWhiteLevelMode,
+                rawCustomWhiteLevel = rawCustomWhiteLevel,
                 rawCfaCorrectionMode = rawCfaCorrectionMode
             ).copy(profileGainTableMap = profileGainTableMap ?: actualMetadata?.profileGainTableMap)
             profileGainTableMap?.let {

@@ -53,6 +53,7 @@ private fun MediaMetadata.thumbnailTransformCacheKey(): Int {
         rawBlackLevelMode = null,
         rawCustomBlackLevel = null,
         rawWhiteLevelMode = null,
+        rawCustomWhiteLevel = null,
         rawCfaCorrectionMode = null,
         cameraId = null,
         sourceUri = null,
