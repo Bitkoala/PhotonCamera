@@ -75,6 +75,30 @@ internal object DngProfileToneCurve {
         0.97638f, 0.99517f, 0.98425f, 0.99686f, 0.99213f, 0.99845f, 1f, 1f
     )
 
+    private val APPLE_PRO_RAW_FITTED_TONE_CURVE_ANCHORS = floatArrayOf(
+        0.00000000f, 0.000000000f,
+        0.00390625f, 0.000012401f,
+        0.00781250f, 0.000072635f,
+        0.01171875f, 0.000206685f,
+        0.01562500f, 0.000553325f,
+        0.01953125f, 0.001360578f,
+        0.02343750f, 0.002622200f,
+        0.02734375f, 0.004144829f,
+        0.03125000f, 0.005831674f,
+        0.04687500f, 0.013821328f,
+        0.06250000f, 0.023228984f,
+        0.09375000f, 0.045079457f,
+        0.12500000f, 0.069945026f,
+        0.17968750f, 0.118763626f,
+        0.25000000f, 0.188884780f,
+        0.37500000f, 0.327727005f,
+        0.50000000f, 0.479043320f,
+        0.62500000f, 0.636591673f,
+        0.75000000f, 0.779041231f,
+        0.87500000f, 0.896886647f,
+        1.00000000f, 1.000000000f
+    )
+
     fun googleHdrToneCurvePoints(): FloatArray {
         return FloatArray(GOOGLE_HDR_TONE_CURVE_Y.size * 2) { index ->
             val pointIndex = index / 2
@@ -96,6 +120,14 @@ internal object DngProfileToneCurve {
 
     fun oppoEmbeddedToneCurveLut(sampleCount: Int = 256): FloatArray {
         return DcpToneCurve(oppoEmbeddedToneCurvePoints()).toLut(sampleCount)
+    }
+
+    fun appleProRawFittedToneCurvePoints(): FloatArray {
+        return fittedToneCurvePoints(APPLE_PRO_RAW_FITTED_TONE_CURVE_ANCHORS)
+    }
+
+    fun appleProRawFittedToneCurveLut(sampleCount: Int = 256): FloatArray {
+        return DcpToneCurve(appleProRawFittedToneCurvePoints()).toLut(sampleCount)
     }
 
     fun isGoogleHdrToneCurve(toneCurve: DcpToneCurve?): Boolean {
@@ -134,5 +166,32 @@ internal object DngProfileToneCurve {
         return lut.indices.all { index ->
             kotlin.math.abs(lut[index] - oppoLut[index]) <= LUT_TOLERANCE
         }
+    }
+
+    private fun fittedToneCurvePoints(anchors: FloatArray, pointCount: Int = 257): FloatArray {
+        return FloatArray(pointCount * 2) { index ->
+            val pointIndex = index / 2
+            val x = pointIndex.toFloat() / (pointCount - 1).toFloat()
+            if ((index and 1) == 0) {
+                x
+            } else {
+                sampleAnchoredCurve(anchors, x)
+            }
+        }
+    }
+
+    private fun sampleAnchoredCurve(anchors: FloatArray, input: Float): Float {
+        val x = input.coerceIn(0f, 1f)
+        var segment = 0
+        val lastSegment = anchors.size / 2 - 2
+        while (segment < lastSegment && x > anchors[(segment + 1) * 2]) {
+            segment++
+        }
+        val x0 = anchors[segment * 2]
+        val y0 = anchors[segment * 2 + 1]
+        val x1 = anchors[(segment + 1) * 2]
+        val y1 = anchors[(segment + 1) * 2 + 1]
+        val t = if (x1 == x0) 0f else ((x - x0) / (x1 - x0)).coerceIn(0f, 1f)
+        return y0 + (y1 - y0) * t
     }
 }

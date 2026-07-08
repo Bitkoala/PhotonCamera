@@ -31,6 +31,7 @@ import com.hinnka.mycamera.raw.DcpInfo
 import com.hinnka.mycamera.raw.MeteringSystem
 import com.hinnka.mycamera.raw.RawCfaCorrection
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
+import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
@@ -438,21 +439,21 @@ private fun RawProfileToneMapSwitches(
     onParamsChange: (RawToneMappingParameters) -> Unit,
     onAdjustmentEnd: () -> Unit
 ) {
-    RawSwitchSettingItem(
-        title = stringResource(R.string.settings_raw_google_pixel_tone_map),
-        description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
-        checked = params.useGooglePixelToneMap,
-        onCheckedChange = { enabled ->
-            onParamsChange(params.withGooglePixelToneMap(enabled))
-            onAdjustmentEnd()
-        }
-    )
-    RawSwitchSettingItem(
-        title = stringResource(R.string.settings_raw_oppo_master_tone_map),
-        description = stringResource(R.string.settings_raw_oppo_master_tone_map_description),
-        checked = params.useOppoMasterToneMap,
-        onCheckedChange = { enabled ->
-            onParamsChange(params.withOppoMasterToneMap(enabled))
+    RawChoiceSetting(
+        title = stringResource(R.string.settings_raw_profile_tone_map),
+        description = stringResource(R.string.settings_raw_profile_tone_map_description),
+        levels = listOf(
+            RawProfileToneMapMode.Default.name to stringResource(R.string.settings_raw_profile_tone_map_default),
+            RawProfileToneMapMode.AppleProRaw.name to stringResource(R.string.settings_raw_profile_tone_map_apple_proraw),
+            RawProfileToneMapMode.OppoMaster.name to stringResource(R.string.settings_raw_profile_tone_map_oppo_master),
+            RawProfileToneMapMode.GooglePixel.name to stringResource(R.string.settings_raw_profile_tone_map_google_pixel),
+        ),
+        currentLevel = params.profileToneMapMode.name,
+        onLevelSelected = { selected ->
+            val mode = RawProfileToneMapMode.values()
+                .firstOrNull { it.name == selected }
+                ?: RawProfileToneMapMode.Default
+            onParamsChange(params.withProfileToneMapMode(mode))
             onAdjustmentEnd()
         }
     )

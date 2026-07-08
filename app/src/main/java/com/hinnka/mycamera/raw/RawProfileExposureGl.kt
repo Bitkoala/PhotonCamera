@@ -6,7 +6,7 @@ import kotlin.math.min
 import kotlin.math.pow
 
 object RawProfileExposureGl {
-    private const val DEFAULT_BLACK_RENDER_SHADOWS = 5f
+    const val DEFAULT_BLACK_RENDER_SHADOWS = 5f
     private const val DEFAULT_BLACK_RENDER_SHADOW_SCALE = 1f
     private const val DEFAULT_BLACK_RENDER_STAGE3_GAIN = 1f
 
@@ -47,6 +47,7 @@ object RawProfileExposureGl {
         dngBaselineExposure: Float = 0f,
         dcpBaselineExposureOffset: Float = 0f,
         defaultBlackRender: DcpDefaultBlackRender = DcpDefaultBlackRender.None,
+        blackRenderShadows: Float = DEFAULT_BLACK_RENDER_SHADOWS,
         shadowScale: Float = 1f,
         useRamp: Boolean
     ): Uniforms {
@@ -77,7 +78,7 @@ object RawProfileExposureGl {
             DEFAULT_BLACK_RENDER_SHADOW_SCALE
         }
         val black = when (defaultBlackRender) {
-            DcpDefaultBlackRender.Auto -> DEFAULT_BLACK_RENDER_SHADOWS *
+            DcpDefaultBlackRender.Auto -> blackRenderShadows.coerceAtLeast(0f) *
                 safeShadowScale *
                 DEFAULT_BLACK_RENDER_STAGE3_GAIN *
                 0.001f

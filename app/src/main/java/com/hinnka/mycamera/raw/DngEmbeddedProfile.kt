@@ -104,6 +104,12 @@ internal object DngEmbeddedProfile {
         return profileName?.contains("google", ignoreCase = true) == true
     }
 
+    fun isAppleProRawProfileName(profileName: String?): Boolean {
+        if (profileName.isNullOrBlank()) return false
+        return profileName.contains("apple", ignoreCase = true) ||
+            profileName.contains("proraw", ignoreCase = true)
+    }
+
     private fun decodeProfile(
         raf: RandomAccessFile,
         ifd: Map<Int, TiffEntry>,

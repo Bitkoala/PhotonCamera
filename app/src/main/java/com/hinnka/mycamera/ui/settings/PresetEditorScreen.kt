@@ -31,6 +31,7 @@ import com.hinnka.mycamera.model.EffectParams
 import com.hinnka.mycamera.ui.components.ColorRecipePanel
 import com.hinnka.mycamera.ui.components.LutSelectorWithRecipeAction
 import com.hinnka.mycamera.ui.components.CurveChannel
+import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.ui.components.EffectsBottomSheet
@@ -107,6 +108,7 @@ fun PresetEditorScreen(
     }
     var rawGooglePixelToneMap by remember { mutableStateOf(sourcePreset?.rawGooglePixelToneMap ?: false) }
     var rawOppoMasterToneMap by remember { mutableStateOf(sourcePreset?.rawOppoMasterToneMap ?: false) }
+    var rawAppleProRawToneMap by remember { mutableStateOf(sourcePreset?.rawAppleProRawToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
@@ -146,6 +148,7 @@ fun PresetEditorScreen(
             rawRenderingEngine = rawRenderingEngine.name,
             rawGooglePixelToneMap = rawGooglePixelToneMap,
             rawOppoMasterToneMap = rawOppoMasterToneMap,
+            rawAppleProRawToneMap = rawAppleProRawToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
             rawDROMode = rawDROMode,
@@ -439,23 +442,33 @@ fun PresetEditorScreen(
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
 
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_raw_google_pixel_tone_map),
-                            description = stringResource(R.string.settings_raw_google_pixel_tone_map_description),
-                            checked = rawGooglePixelToneMap,
-                            onCheckedChange = { enabled ->
-                                rawGooglePixelToneMap = enabled
-                                if (enabled) rawOppoMasterToneMap = false
-                            }
+                        val toneMapLabels = mapOf(
+                            RawProfileToneMapMode.Default to stringResource(R.string.settings_raw_profile_tone_map_default),
+                            RawProfileToneMapMode.AppleProRaw to stringResource(R.string.settings_raw_profile_tone_map_apple_proraw),
+                            RawProfileToneMapMode.OppoMaster to stringResource(R.string.settings_raw_profile_tone_map_oppo_master),
+                            RawProfileToneMapMode.GooglePixel to stringResource(R.string.settings_raw_profile_tone_map_google_pixel),
                         )
-
-                        SwitchSettingItem(
-                            title = stringResource(R.string.settings_raw_oppo_master_tone_map),
-                            description = stringResource(R.string.settings_raw_oppo_master_tone_map_description),
-                            checked = rawOppoMasterToneMap,
-                            onCheckedChange = { enabled ->
-                                rawOppoMasterToneMap = enabled
-                                if (enabled) rawGooglePixelToneMap = false
+                        val selectedToneMapMode = when {
+                            rawAppleProRawToneMap -> RawProfileToneMapMode.AppleProRaw
+                            rawOppoMasterToneMap -> RawProfileToneMapMode.OppoMaster
+                            rawGooglePixelToneMap -> RawProfileToneMapMode.GooglePixel
+                            else -> RawProfileToneMapMode.Default
+                        }
+                        DropdownSettingItem(
+                            title = stringResource(R.string.settings_raw_profile_tone_map),
+                            description = stringResource(R.string.settings_raw_profile_tone_map_description),
+                            value = toneMapLabels[selectedToneMapMode].orEmpty(),
+                            options = RawProfileToneMapMode.values().mapNotNull { toneMapLabels[it] },
+                            isLoading = false,
+                            onExpanded = {},
+                            onOptionSelected = { selectedLabel ->
+                                val selectedMode = toneMapLabels.entries
+                                    .firstOrNull { it.value == selectedLabel }
+                                    ?.key
+                                    ?: RawProfileToneMapMode.Default
+                                rawGooglePixelToneMap = selectedMode == RawProfileToneMapMode.GooglePixel
+                                rawOppoMasterToneMap = selectedMode == RawProfileToneMapMode.OppoMaster
+                                rawAppleProRawToneMap = selectedMode == RawProfileToneMapMode.AppleProRaw
                             }
                         )
 
