@@ -50,6 +50,8 @@ class GlesRawStacker(
         val accepted: Boolean,
         val transform: RawStackPerspectiveTransform,
         val reason: String,
+        val srTransform: RawStackPerspectiveTransform,
+        val srTransformSource: String,
         val srWeight: Float,
         val srSeedWeight: Float,
         val srConsistencyWeight: Float,
@@ -211,6 +213,7 @@ class GlesRawStacker(
     private var outputTexture = 0
     private var lensShadingTexture = 0
     private var currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+    private var currentRegistrationSrTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
     private var currentRegistrationSrWeight = 1.0f
     private var registrationEstimateCount = 0
     private var registrationConfidenceSum = 0f
@@ -223,6 +226,7 @@ class GlesRawStacker(
     private var registrationGlobalMarginMin = Float.POSITIVE_INFINITY
     private var registrationGlobalCoverageSum = 0f
     private val acceptedRegistrationTranslations = ArrayList<RegistrationTranslation>()
+    private val acceptedSrRegistrationTranslations = ArrayList<RegistrationTranslation>()
     private var superResolutionDetailFrameCount = 0
     private var superResolutionDetailWeightSum = 0f
     private var superResolutionDetailWeightMax = 0f
@@ -272,8 +276,10 @@ class GlesRawStacker(
             buildPyramid(refPyramid)
             computeStructureTensor()
             currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+            currentRegistrationSrTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
             currentRegistrationSrWeight = 1.0f
             acceptedRegistrationTranslations.clear()
+            acceptedSrRegistrationTranslations.clear()
             resetSuperResolutionDecisionStats()
             clearAccumulator()
             if (superResolutionEnabled) {
@@ -441,8 +447,10 @@ class GlesRawStacker(
             computeStructureTensor()
             clearAccumulator()
             currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+            currentRegistrationSrTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
             currentRegistrationSrWeight = 1.0f
             acceptedRegistrationTranslations.clear()
+            acceptedSrRegistrationTranslations.clear()
             accumulateFrame(
                 rawTexture = refRaw,
                 isReference = true,
@@ -1251,6 +1259,7 @@ class GlesRawStacker(
         val seedTranslation = registrationSeedTranslation(seedShiftPlane)
         val acceptance = resolveRegistrationAcceptance(estimate, seedTranslation)
         currentRegistrationTransform = acceptance.transform
+        currentRegistrationSrTransform = acceptance.srTransform
         currentRegistrationSrWeight = acceptance.srWeight
         if (hwmfDebug.collectMetrics) {
             recordRegistrationGlobalEstimate(globalEstimate)
@@ -1269,6 +1278,7 @@ class GlesRawStacker(
                     "seedDist=${candidateTranslation.seedDistance(seedTranslation).formatPx()} " +
                     "consDist=${registrationConsistencyDistance(candidateTranslation).formatPx()} " +
                     "srWeight=${currentRegistrationSrWeight.formatWeight()} " +
+                    "srSource=${acceptance.srTransformSource} " +
                     "srSeed=${acceptance.srSeedWeight.formatWeight()} " +
                     "srCons=${acceptance.srConsistencyWeight.formatWeight()} " +
                     "flowSamples=${flowEstimate.usedSampleCount}/${flowEstimate.sampleCount} " +
@@ -1278,6 +1288,9 @@ class GlesRawStacker(
         }
         if (accepted) {
             recordAcceptedRegistrationTranslation(currentRegistrationTransform)
+            if (currentRegistrationSrWeight > 0.0f) {
+                recordAcceptedSrRegistrationTranslation(currentRegistrationSrTransform)
+            }
         }
         return accepted
     }
@@ -1287,11 +1300,38 @@ class GlesRawStacker(
         seedTranslation: RegistrationTranslation?,
     ): RegistrationAcceptance {
         if (!estimate.forceIdentity) {
-            val srGate = registrationSrGate(estimate, seedTranslation)
+            val candidateSrGate = registrationSrGate(estimate, seedTranslation)
+            val seedSrGate = registrationSeedSrGate(estimate, seedTranslation)
+            val seedSrTransform = seedTranslation?.let { registrationTransformFromTranslation(it, estimate.transform) }
+            val useSeedForSr = seedSrGate != null &&
+                seedSrTransform != null &&
+                seedSrGate.weight > candidateSrGate.weight + 0.05f
+            val srGate = if (useSeedForSr) seedSrGate else candidateSrGate
             return RegistrationAcceptance(
                 accepted = true,
                 transform = estimate.transform,
                 reason = "strict",
+                srTransform = if (useSeedForSr) seedSrTransform else estimate.transform,
+                srTransformSource = if (useSeedForSr) "SEED_TRANSLATION" else "CANDIDATE",
+                srWeight = srGate.weight,
+                srSeedWeight = srGate.seedWeight,
+                srConsistencyWeight = srGate.consistencyWeight,
+            )
+        }
+        val seedFallbackReason = seedFallbackRegistrationAcceptanceReason(estimate, seedTranslation)
+        if (seedFallbackReason != null && seedTranslation != null) {
+            val seedTransform = registrationTransformFromTranslation(
+                translation = seedTranslation,
+                template = estimate.transform,
+                rawConfidence = registrationSetup.confidenceConfig.forceIdentityThreshold,
+            )
+            val srGate = registrationSeedFallbackSrGate(seedTranslation)
+            return RegistrationAcceptance(
+                accepted = true,
+                transform = seedTransform,
+                reason = seedFallbackReason,
+                srTransform = seedTransform,
+                srTransformSource = "SEED_FALLBACK",
                 srWeight = srGate.weight,
                 srSeedWeight = srGate.seedWeight,
                 srConsistencyWeight = srGate.consistencyWeight,
@@ -1303,6 +1343,8 @@ class GlesRawStacker(
                 accepted = true,
                 transform = estimate.candidateTransform.copy(forceIdentity = false),
                 reason = nrBaseReason,
+                srTransform = estimate.candidateTransform.copy(forceIdentity = false),
+                srTransformSource = "NR_BASE",
                 srWeight = 0.0f,
                 srSeedWeight = 0.0f,
                 srConsistencyWeight = 0.0f,
@@ -1312,6 +1354,8 @@ class GlesRawStacker(
             accepted = false,
             transform = estimate.transform,
             reason = "reject",
+            srTransform = estimate.transform,
+            srTransformSource = "REJECT",
             srWeight = 0.0f,
             srSeedWeight = 0.0f,
             srConsistencyWeight = 0.0f,
@@ -1358,13 +1402,68 @@ class GlesRawStacker(
         return null
     }
 
+    private fun seedFallbackRegistrationAcceptanceReason(
+        estimate: RawStackRegistrationEstimate,
+        seedTranslation: RegistrationTranslation?,
+    ): String? {
+        if (tuning.mode != RawStackMode.MFNR && tuning.mode != RawStackMode.MFSR) return null
+        val seed = seedTranslation ?: return null
+        if (!estimate.globalBestScore.isFinite() ||
+            estimate.globalBestScore > hwmfBlend.denoiseSeedFallbackRegistrationScoreMax
+        ) {
+            return null
+        }
+        if (!estimate.globalCoverage.isFinite() ||
+            estimate.globalCoverage < hwmfBlend.denoiseSeedFallbackRegistrationCoverageMin
+        ) {
+            return null
+        }
+        if (seed.magnitude > hwmfBlend.denoiseSeedFallbackRegistrationTranslationMaxPx) return null
+        val median = acceptedRegistrationMedianTranslation()
+        if (median != null &&
+            seed.distanceTo(median) > hwmfBlend.denoiseSeedFallbackRegistrationDeltaMaxPx
+        ) {
+            return null
+        }
+        return "nr-base-denoise-seed-flow"
+    }
+
     private fun registrationSrGate(
         estimate: RawStackRegistrationEstimate,
         seedTranslation: RegistrationTranslation?,
     ): RegistrationSrGate {
         if (!superResolutionEnabled || estimate.forceIdentity) return RegistrationSrGate.Zero
-        if (estimate.source != RawStackRegistrationSource.IMAGE_TRANSLATION) return RegistrationSrGate.Zero
         val translation = registrationTranslation(estimate.candidateTransform) ?: return RegistrationSrGate.Zero
+        val confidenceWeight = smoothStep(
+            hwmfSr.registrationConfidenceStart.toFloat(),
+            hwmfSr.registrationConfidenceFull.toFloat(),
+            estimate.confidence.toFloat(),
+        )
+        val sourceWeight = when (estimate.source) {
+            RawStackRegistrationSource.IMAGE_TRANSLATION -> imageTranslationSrWeight(estimate)
+            RawStackRegistrationSource.FLOW_AFFINE -> flowAffineSrWeight(estimate)
+        }
+        val seedWeight = registrationSrSeedWeight(translation, seedTranslation)
+        val consistencyWeight = registrationSrConsistencyWeight(translation)
+        return RegistrationSrGate(
+            weight = (
+                confidenceWeight *
+                    sourceWeight *
+                    seedWeight *
+                    consistencyWeight
+                ).coerceIn(0.0f, 1.0f),
+            seedWeight = seedWeight,
+            consistencyWeight = consistencyWeight,
+        )
+    }
+
+    private fun registrationSeedSrGate(
+        estimate: RawStackRegistrationEstimate,
+        seedTranslation: RegistrationTranslation?,
+    ): RegistrationSrGate? {
+        if (!superResolutionEnabled || estimate.forceIdentity) return null
+        if (estimate.source != RawStackRegistrationSource.IMAGE_TRANSLATION) return null
+        val seed = seedTranslation ?: return null
         val confidenceWeight = smoothStep(
             hwmfSr.registrationConfidenceStart.toFloat(),
             hwmfSr.registrationConfidenceFull.toFloat(),
@@ -1380,17 +1479,62 @@ class GlesRawStacker(
             hwmfSr.registrationCoverageFull,
             estimate.globalCoverage,
         )
-        val seedWeight = registrationSrSeedWeight(translation, seedTranslation)
-        val consistencyWeight = registrationSrConsistencyWeight(translation)
+        val consistencyWeight = registrationSrConsistencyWeight(seed)
         return RegistrationSrGate(
             weight = (
                 confidenceWeight *
                     marginWeight *
                     coverageWeight *
-                    seedWeight *
                     consistencyWeight
                 ).coerceIn(0.0f, 1.0f),
-            seedWeight = seedWeight,
+            seedWeight = 1.0f,
+            consistencyWeight = consistencyWeight,
+        )
+    }
+
+    private fun imageTranslationSrWeight(estimate: RawStackRegistrationEstimate): Float {
+        val marginWeight = smoothStep(
+            hwmfSr.registrationMarginStart,
+            hwmfSr.registrationMarginFull,
+            estimate.globalScoreMargin,
+        )
+        val coverageWeight = smoothStep(
+            hwmfSr.registrationCoverageStart,
+            hwmfSr.registrationCoverageFull,
+            estimate.globalCoverage,
+        )
+        return (marginWeight * coverageWeight).coerceIn(0.0f, 1.0f)
+    }
+
+    private fun flowAffineSrWeight(estimate: RawStackRegistrationEstimate): Float {
+        val inlierWeight = smoothStep(
+            hwmfSr.registrationAffineInlierStart,
+            hwmfSr.registrationAffineInlierFull,
+            estimate.inlierRatio,
+        )
+        val residualWeight = 1.0f - smoothStep(
+            hwmfSr.registrationAffineResidualStartPx,
+            hwmfSr.registrationAffineResidualEndPx,
+            estimate.residualP90Px,
+        )
+        return (inlierWeight * residualWeight).coerceIn(0.0f, 1.0f)
+    }
+
+    private fun registrationSeedFallbackSrGate(seed: RegistrationTranslation): RegistrationSrGate {
+        val consistencyWeight = registrationSrConsistencyWeight(seed)
+        val motionWeight = 1.0f - smoothStep(
+            hwmfBlend.denoiseSeedFallbackRegistrationTranslationMaxPx * 0.75f,
+            hwmfBlend.denoiseSeedFallbackRegistrationTranslationMaxPx,
+            seed.magnitude,
+        )
+        val weight = (
+            hwmfSr.registrationSeedFallbackWeight *
+                consistencyWeight *
+                motionWeight
+            ).coerceIn(0.0f, 1.0f)
+        return RegistrationSrGate(
+            weight = weight,
+            seedWeight = 1.0f,
             consistencyWeight = consistencyWeight,
         )
     }
@@ -1409,7 +1553,7 @@ class GlesRawStacker(
     }
 
     private fun registrationSrConsistencyWeight(translation: RegistrationTranslation): Float {
-        val distance = registrationConsistencyDistance(translation)
+        val distance = registrationSrConsistencyDistance(translation)
         if (!distance.isFinite()) return 1.0f
         return 1.0f - smoothStep(
             hwmfSr.registrationConsistencyDistanceStartPx,
@@ -1505,6 +1649,11 @@ class GlesRawStacker(
         acceptedRegistrationTranslations += translation
     }
 
+    private fun recordAcceptedSrRegistrationTranslation(transform: RawStackPerspectiveTransform) {
+        val translation = registrationTranslation(transform) ?: return
+        acceptedSrRegistrationTranslations += translation
+    }
+
     private fun acceptedRegistrationMedianTranslation(): RegistrationTranslation? {
         val minAccepted = hwmfBlend.denoiseConsistentRegistrationMinAccepted.coerceAtLeast(1)
         if (acceptedRegistrationTranslations.size < minAccepted) return null
@@ -1516,9 +1665,26 @@ class GlesRawStacker(
         )
     }
 
+    private fun acceptedSrRegistrationMedianTranslation(): RegistrationTranslation? {
+        val minAccepted = hwmfBlend.denoiseConsistentRegistrationMinAccepted.coerceAtLeast(1)
+        if (acceptedSrRegistrationTranslations.size < minAccepted) return null
+        val xs = acceptedSrRegistrationTranslations.map { it.dx }.sorted()
+        val ys = acceptedSrRegistrationTranslations.map { it.dy }.sorted()
+        return RegistrationTranslation(
+            dx = medianOfSorted(xs),
+            dy = medianOfSorted(ys),
+        )
+    }
+
     private fun registrationConsistencyDistance(translation: RegistrationTranslation?): Float {
         if (translation == null) return Float.NaN
         val median = acceptedRegistrationMedianTranslation() ?: return Float.NaN
+        return translation.distanceTo(median)
+    }
+
+    private fun registrationSrConsistencyDistance(translation: RegistrationTranslation?): Float {
+        if (translation == null) return Float.NaN
+        val median = acceptedSrRegistrationMedianTranslation() ?: return Float.NaN
         return translation.distanceTo(median)
     }
 
@@ -1536,6 +1702,27 @@ class GlesRawStacker(
         val ty = matrix.getOrElse(5) { Float.NaN }
         if (!tx.isFinite() || !ty.isFinite()) return null
         return RegistrationTranslation(tx, ty)
+    }
+
+    private fun registrationTransformFromTranslation(
+        translation: RegistrationTranslation,
+        template: RawStackPerspectiveTransform,
+        rawConfidence: Int = template.rawConfidence,
+    ): RawStackPerspectiveTransform {
+        return RawStackPerspectiveTransform.fromSingleMatrix(
+            stage = template.stage,
+            transformDefinedOnWidth = template.transformDefinedOnWidth,
+            transformDefinedOnHeight = template.transformDefinedOnHeight,
+            geometryColumns = template.geometryColumns,
+            geometryRows = template.geometryRows,
+            rowMajorMatrix = floatArrayOf(
+                1.0f, 0.0f, translation.dx,
+                0.0f, 1.0f, translation.dy,
+                0.0f, 0.0f, 1.0f,
+            ),
+            rawConfidence = rawConfidence,
+            confidenceConfig = registrationSetup.confidenceConfig,
+        )
     }
 
     private fun medianOfSorted(values: List<Float>): Float {
@@ -1994,7 +2181,7 @@ class GlesRawStacker(
             transform = if (isReference) {
                 registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
             } else {
-                currentRegistrationTransform
+                currentRegistrationSrTransform
             },
         )
         setBlendAccumulatorUniforms(accumulateSuperResolutionProgram)
@@ -3866,7 +4053,6 @@ class GlesRawStacker(
             #version 310 es
             precision highp float;
             precision highp int;
-            precision highp uint;
             layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uReference;
             uniform sampler2D uCurrent;
@@ -5577,7 +5763,6 @@ class GlesRawStacker(
             #version 310 es
             precision highp float;
             precision highp int;
-            precision highp uint;
             layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uFlowGrid;
             uniform sampler2D uRobustness;
@@ -5811,7 +5996,6 @@ class GlesRawStacker(
         private val DIAGNOSTIC_FINAL_COMPUTE_SHADER = """
             #version 310 es
             $RAW_COMMON
-            precision highp uint;
             layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uAccumulator;
             uniform sampler2D uPostfilterAccumulator;
