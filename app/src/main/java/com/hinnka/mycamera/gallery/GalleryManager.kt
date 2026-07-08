@@ -4255,6 +4255,7 @@ object GalleryManager {
         computationalAperture: Float? = null,
         photoId: String? = null,
         videoUri: Uri? = null,
+        deferRawPreview: Boolean = false,
     ): String? {
         return withContext(Dispatchers.IO) {
             try {
@@ -4334,73 +4335,81 @@ object GalleryManager {
                         }
                     }
 
-                    // 3. 处理 RAW 以生成 JPEG 预览
                     var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapDefaults(dngFile)
-                    val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, 0f)
-                    val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, 0f)
-                    val processedBitmap = RawDemosaicProcessor.getInstance().process(
-                        context,
-                        dngFile.absolutePath, null, null, 0,
-                        rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
-                        rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
-                        rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
-                        rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
-                        rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
-                        rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
-                        rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
-                        applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(context, updatedMetadata),
-                        rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
-                        rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
-                        rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
-                        rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
-                        sharpeningValue = RawSharpeningDefaults.CAPTURE_DEFAULT,
-                        denoiseValue = rawNoiseReduction,
-                        chromaDenoiseValue = rawChromaNoiseReduction,
-                        rawDcpId = updatedMetadata.rawDcpId,
-                        rawRenderingEngine = updatedMetadata.rawRenderingEngine,
-                        rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
-                        rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
-                        rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
-                        spectralFilmStock = updatedMetadata.spectralFilmStock,
-                        spectralFilmPrint = updatedMetadata.spectralFilmPrint,
-                        spectralFilmTuning = SpectralFilmTuning(
-                            cDensityGain = updatedMetadata.spectralFilmCDensityGain,
-                            mDensityGain = updatedMetadata.spectralFilmMDensityGain,
-                            yDensityGain = updatedMetadata.spectralFilmYDensityGain
-                        ),
-                        onMetadata = { raw ->
-                            updatedMetadata = updatedMetadata.merge(raw)
-                        },
-                        onRawAutoAdjustments = { adjustments ->
-                            updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                    if (deferRawPreview) {
+                        val metadataSaved = saveMetadata(context, photoId, updatedMetadata)
+                        if (!metadataSaved) {
+                            photoDir.deleteRecursively()
+                            return@withContext null
                         }
-                    )
-
-                    if (processedBitmap != null) {
-                        // 保存为 original.jpg
-                        FileOutputStream(photoFile).use { out ->
-                            processedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                        }
-
-                        // 生成缩略图
-                        generateThumbnail(processedBitmap, thumbnailFile)
-
-                        // 更新元数据
-                        updatedMetadata = updatedMetadata.copy(
-                            width = processedBitmap.width,
-                            height = processedBitmap.height,
-                            rotation = 0
+                    } else {
+                        // 3. 处理 RAW 以生成 JPEG 预览
+                        val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, 0f)
+                        val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, 0f)
+                        val processedBitmap = RawDemosaicProcessor.getInstance().process(
+                            context,
+                            dngFile.absolutePath, null, null, 0,
+                            rawExposureCompensation = updatedMetadata.rawExposureCompensation ?: 0f,
+                            rawAutoExposure = resolveRawAutoExposure(context, updatedMetadata),
+                            rawHighlightsAdjustment = updatedMetadata.rawHighlightsAdjustment ?: 0f,
+                            rawShadowsAdjustment = updatedMetadata.rawShadowsAdjustment ?: 0f,
+                            rawBlackPointCorrection = updatedMetadata.rawBlackPointCorrection ?: 0f,
+                            rawWhitePointCorrection = updatedMetadata.rawWhitePointCorrection ?: 0f,
+                            rawAutoWhiteBalanceEstimate = resolveRawAutoWhiteBalanceEstimate(context, updatedMetadata),
+                            applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(context, updatedMetadata),
+                            rawBlackLevelMode = updatedMetadata.rawBlackLevelMode,
+                            rawCustomBlackLevel = updatedMetadata.rawCustomBlackLevel,
+                            rawWhiteLevelMode = updatedMetadata.rawWhiteLevelMode,
+                            rawCustomWhiteLevel = updatedMetadata.rawCustomWhiteLevel,
+                            sharpeningValue = RawSharpeningDefaults.CAPTURE_DEFAULT,
+                            denoiseValue = rawNoiseReduction,
+                            chromaDenoiseValue = rawChromaNoiseReduction,
+                            rawDcpId = updatedMetadata.rawDcpId,
+                            rawRenderingEngine = updatedMetadata.rawRenderingEngine,
+                            rawToneMappingParameters = updatedMetadata.rawToneMappingParameters,
+                            rawCfaCorrectionMode = updatedMetadata.rawCfaCorrectionMode,
+                            rawBlackBorderCrop = updatedMetadata.rawBlackBorderCrop,
+                            spectralFilmStock = updatedMetadata.spectralFilmStock,
+                            spectralFilmPrint = updatedMetadata.spectralFilmPrint,
+                            spectralFilmTuning = SpectralFilmTuning(
+                                cDensityGain = updatedMetadata.spectralFilmCDensityGain,
+                                mDensityGain = updatedMetadata.spectralFilmMDensityGain,
+                                yDensityGain = updatedMetadata.spectralFilmYDensityGain
+                            ),
+                            onMetadata = { raw ->
+                                updatedMetadata = updatedMetadata.merge(raw)
+                            },
+                            onRawAutoAdjustments = { adjustments ->
+                                updatedMetadata = updatedMetadata.withRawAutoAdjustments(adjustments)
+                            }
                         )
-                        saveMetadata(context, photoId, updatedMetadata)
+
+                        if (processedBitmap != null) {
+                            // 保存为 original.jpg
+                            FileOutputStream(photoFile).use { out ->
+                                processedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                            }
+
+                            // 生成缩略图
+                            generateThumbnail(processedBitmap, thumbnailFile)
+
+                            // 更新元数据
+                            updatedMetadata = updatedMetadata.copy(
+                                width = processedBitmap.width,
+                                height = processedBitmap.height,
+                                rotation = 0
+                            )
+                            saveMetadata(context, photoId, updatedMetadata)
 //                        if (updatedMetadata.computationalAperture != null) {
 //                            generateBokehPhoto(context, photoId, updatedMetadata, processedBitmap)
 //                        }
 
-                        processedBitmap.recycle()
-                    } else {
-                        // 降级：如果 RAW 处理失败，尝试直接解码（某些 DNG 包含内置预览图）
-                        // 传递元数据确保旋转信息被正确处理
-                        tempImportJpeg(uri, context, metadata, photoFile, thumbnailFile)
+                            processedBitmap.recycle()
+                        } else {
+                            // 降级：如果 RAW 处理失败，尝试直接解码（某些 DNG 包含内置预览图）
+                            // 传递元数据确保旋转信息被正确处理
+                            tempImportJpeg(uri, context, metadata, photoFile, thumbnailFile)
+                        }
                     }
                 } else {
                     // --- 常规 JPEG 处理逻辑 ---
@@ -4454,15 +4463,17 @@ object GalleryManager {
                     }
                 }
 
-                val importedMetadata = loadMetadata(context, photoId) ?: metadata
-                queueDetailHdrCacheBuild(
-                    context = context,
-                    photoId = photoId,
-                    metadata = importedMetadata,
-                    sharpening = importedMetadata.sharpening ?: 0f,
-                    noiseReduction = importedMetadata.noiseReduction ?: 0f,
-                    chromaNoiseReduction = importedMetadata.chromaNoiseReduction ?: 0f
-                )
+                if (!(isRaw && deferRawPreview)) {
+                    val importedMetadata = loadMetadata(context, photoId) ?: metadata
+                    queueDetailHdrCacheBuild(
+                        context = context,
+                        photoId = photoId,
+                        metadata = importedMetadata,
+                        sharpening = importedMetadata.sharpening ?: 0f,
+                        noiseReduction = importedMetadata.noiseReduction ?: 0f,
+                        chromaNoiseReduction = importedMetadata.chromaNoiseReduction ?: 0f
+                    )
+                }
 
                 PLog.d(TAG, "Photo imported: $photoId (isRaw: $isRaw)")
                 photoId

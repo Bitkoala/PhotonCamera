@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -107,8 +108,10 @@ import com.hinnka.mycamera.ui.components.ColorRecipePanel
 import com.hinnka.mycamera.ui.components.CurveChannel
 import com.hinnka.mycamera.ui.components.EffectsPanel
 import com.hinnka.mycamera.ui.components.LutSelectorWithRecipeAction
+import com.hinnka.mycamera.ui.icons.AppIcons
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -126,7 +129,6 @@ import kotlin.io.inputStream
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.use
-import com.hinnka.mycamera.ui.icons.AppIcons
 
 class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryOwner {
 
@@ -134,6 +136,24 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         const val TAG = "GhostService"
         const val MIN_IMPORT_SIZE = 1024 * 1024L
         const val MIN_PHANTOM_SHORT_SIDE = 1080
+        const val PHANTOM_PROCESS_DELAY_MS = 200L
+        const val RAW_PROCESS_DELAY_MS = 1200L
+        const val MIN_FINAL_RAW_SIZE = 8 * 1024 * 1024L
+        const val RAW_JPEG_PAIR_WAIT_MS = 1200L
+        const val RAW_JPEG_PAIR_WINDOW_MS = 3000L
+        const val PHANTOM_EXPORT_PREFIX = "PhotonCamera_"
+        val RAW_FILE_EXTENSIONS = setOf(
+            ".dng",
+            ".rw2",
+            ".arw",
+            ".cr3",
+            ".cr2",
+            ".nef",
+            ".orf",
+            ".raf",
+            ".pef",
+            ".srw"
+        )
     }
 
     private data class ImageResolution(
@@ -150,6 +170,8 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         val photoId: String,
         val thumbnail: Bitmap? = null,
         val size: Long,
+        val sourceWidth: Int = 0,
+        val sourceHeight: Int = 0,
         val newUri: Uri? = null,
         val newName: String = "",
         val newSize: Long = 0L
@@ -176,7 +198,9 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
     private val userPreferencesRepository = UserPreferencesRepository(context)
 
     private val processPhotoTaskMap = mutableMapOf<String, Job>()
-    private val activePhotoProcessPaths = mutableSetOf<String>()
+    private val pendingJpegProcessPathsByPairKey = mutableMapOf<String, String>()
+    private val recentRawPairDetections = mutableMapOf<String, Long>()
+    private val activePhotoProcessJobs = mutableMapOf<String, Job>()
 
     private var processingInfo: ProcessingInfo? by mutableStateOf(null)
     private var expanded by mutableStateOf(false)
@@ -201,6 +225,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 MediaStore.MediaColumns.RELATIVE_PATH,
                 MediaStore.MediaColumns.WIDTH,
                 MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.MIME_TYPE,
             )
 
             try {
@@ -217,6 +242,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
                     val widthIndex = cursor.getColumnIndex(MediaStore.MediaColumns.WIDTH)
                     val heightIndex = cursor.getColumnIndex(MediaStore.MediaColumns.HEIGHT)
+                    val mimeTypeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
 
                     val name = if (nameIndex != -1) cursor.getString(nameIndex) else "Unknown"
                     val isPending = if (pendingIndex != -1) cursor.getInt(pendingIndex) else 0
@@ -228,6 +254,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         if (relativePathIndex != -1) cursor.getString(relativePathIndex) else ""
                     val width = if (widthIndex != -1) cursor.getInt(widthIndex) else 0
                     val height = if (heightIndex != -1) cursor.getInt(heightIndex) else 0
+                    val mimeType = if (mimeTypeIndex != -1) cursor.getString(mimeTypeIndex) else null
 
                     if (isPending != 0) return
                     if (isTrashed != 0) return
@@ -244,20 +271,60 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                         val dir = File(Environment.getExternalStorageDirectory(), relativePath)
                         File(dir, name).absolutePath
                     }
-                    PLog.d(
-                        TAG,
-                        "Content changed detected: ${uri.lastPathSegment} $name size=$size resolution=${width}x${height}"
-                    )
-                    if (activePhotoProcessPaths.contains(path)) {
-                        PLog.d(TAG, "Ignore change for $path because phantom export is already running")
+                    val rawJpegPairKey = buildRawJpegPairKey(relativePath, name)
+                    val isRawCandidate = isRawMedia(name, mimeType)
+                    val isJpegCandidate = isJpegMedia(name, mimeType)
+                    val detectedAtMs = SystemClock.elapsedRealtime()
+                    pruneRecentRawPairDetections(detectedAtMs)
+                    if (isRawCandidate && size < MIN_FINAL_RAW_SIZE) {
+                        PLog.d(TAG, "Ignore provisional RAW $path because size $size < $MIN_FINAL_RAW_SIZE")
                         return
                     }
+                    if (isRawCandidate && rawJpegPairKey != null) {
+                        recentRawPairDetections[rawJpegPairKey] = detectedAtMs
+                        cancelPendingJpegForRawPair(rawJpegPairKey, path)
+                    } else if (isJpegCandidate &&
+                        rawJpegPairKey != null &&
+                        hasRecentRawPairDetection(rawJpegPairKey, detectedAtMs)
+                    ) {
+                        PLog.d(TAG, "Ignore JPG $path because RAW pair was detected recently")
+                        return
+                    }
+                    PLog.d(
+                        TAG,
+                        "Content changed detected: ${uri.lastPathSegment} $name size=$size resolution=${width}x${height} mime=$mimeType"
+                    )
+                    val activeJob = activePhotoProcessJobs[path]
+                    if (activeJob != null) {
+                        if (!isRawCandidate) {
+                            PLog.d(TAG, "Ignore change for $path because phantom export is already running")
+                            return
+                        }
+                        PLog.d(TAG, "Cancel active RAW phantom export for $path because a newer RAW update arrived")
+                        activeJob.cancel()
+                    }
                     processPhotoTaskMap[path]?.cancel()
-                    processPhotoTaskMap[path] = lifecycleScope.launch {
+                    if (isJpegCandidate && rawJpegPairKey != null) {
+                        pendingJpegProcessPathsByPairKey[rawJpegPairKey] = path
+                    }
+                    val task = lifecycleScope.launch(start = CoroutineStart.LAZY) {
                         var exportStarted = false
                         try {
-                            delay(200L)
+                            val processDelayMs = resolvePhantomProcessDelayMs(
+                                isRawCandidate = isRawCandidate,
+                                isJpegCandidate = isJpegCandidate,
+                                rawJpegPairKey = rawJpegPairKey,
+                                size = size
+                            )
+                            delay(processDelayMs)
                             if (!isActive) return@launch
+                            if (isJpegCandidate &&
+                                rawJpegPairKey != null &&
+                                hasRecentRawPairDetection(rawJpegPairKey, SystemClock.elapsedRealtime())
+                            ) {
+                                PLog.d(TAG, "Ignore JPG $path because RAW pair won the priority window")
+                                return@launch
+                            }
 
                             val resolution = withContext(Dispatchers.IO) {
                                 resolveImageResolution(uri, width, height)
@@ -277,6 +344,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                 && info.relativePath == relativePath
                                 && info.name == name
                                 && info.size >= size
+                                && info.hasSameSourceResolution(resolution)
                             ) {
                                 PLog.d(TAG, "Ignore change for $path as it matches current state (size $size)")
                                 return@launch
@@ -285,25 +353,88 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                                 && info.relativePath == relativePath
                                 && info.newName == name
                                 && info.newSize >= size
+                                && info.hasSameSourceResolution(resolution)
                             ) {
                                 PLog.d(TAG, "Ignore change for $path as it matches current state (size $size)")
                                 return@launch
                             }
 
-                            activePhotoProcessPaths += path
+                            coroutineContext[Job]?.let { currentJob ->
+                                activePhotoProcessJobs[path] = currentJob
+                            }
                             exportStarted = true
-                            photoProcessTask(uri, name, size, relativePath)
+                            photoProcessTask(
+                                uri = uri,
+                                name = name,
+                                size = size,
+                                relativePath = relativePath,
+                                mimeType = mimeType,
+                                sourceWidth = resolution?.width ?: width,
+                                sourceHeight = resolution?.height ?: height
+                            )
                         } finally {
                             if (exportStarted) {
-                                activePhotoProcessPaths -= path
+                                if (activePhotoProcessJobs[path] === coroutineContext[Job]) {
+                                    activePhotoProcessJobs.remove(path)
+                                }
                             }
-                            processPhotoTaskMap.remove(path)
+                            if (isJpegCandidate && rawJpegPairKey != null) {
+                                pendingJpegProcessPathsByPairKey.remove(rawJpegPairKey, path)
+                            }
+                            if (processPhotoTaskMap[path] === coroutineContext[Job]) {
+                                processPhotoTaskMap.remove(path)
+                            }
                         }
                     }
+                    processPhotoTaskMap[path] = task
+                    task.start()
                 }
             } catch (e: Exception) {
                 PLog.e(TAG, "Error querying content: $uri", e)
             }
+        }
+    }
+
+    private fun buildRawJpegPairKey(relativePath: String, fileName: String): String? {
+        val baseName = fileName.substringBefore('.').trim()
+        if (baseName.isEmpty()) return null
+        return "${relativePath.trimEnd('/').lowercase()}/${baseName.lowercase()}"
+    }
+
+    private fun ProcessingInfo.hasSameSourceResolution(resolution: ImageResolution?): Boolean {
+        resolution ?: return true
+        if (sourceWidth <= 0 || sourceHeight <= 0) return true
+        return sourceWidth == resolution.width && sourceHeight == resolution.height
+    }
+
+    private fun resolvePhantomProcessDelayMs(
+        isRawCandidate: Boolean,
+        isJpegCandidate: Boolean,
+        rawJpegPairKey: String?,
+        size: Long
+    ): Long {
+        return when {
+            isJpegCandidate && rawJpegPairKey != null -> RAW_JPEG_PAIR_WAIT_MS
+            isRawCandidate -> RAW_PROCESS_DELAY_MS
+            else -> PHANTOM_PROCESS_DELAY_MS
+        }
+    }
+
+    private fun cancelPendingJpegForRawPair(pairKey: String, rawPath: String) {
+        val jpegPath = pendingJpegProcessPathsByPairKey.remove(pairKey) ?: return
+        if (jpegPath == rawPath) return
+        processPhotoTaskMap[jpegPath]?.cancel()
+        PLog.d(TAG, "Cancel pending JPG $jpegPath because RAW pair was detected")
+    }
+
+    private fun hasRecentRawPairDetection(pairKey: String, nowMs: Long): Boolean {
+        val rawDetectedAtMs = recentRawPairDetections[pairKey] ?: return false
+        return nowMs - rawDetectedAtMs <= RAW_JPEG_PAIR_WINDOW_MS
+    }
+
+    private fun pruneRecentRawPairDetections(nowMs: Long) {
+        recentRawPairDetections.entries.removeAll { (_, detectedAtMs) ->
+            nowMs - detectedAtMs > RAW_JPEG_PAIR_WINDOW_MS
         }
     }
 
@@ -446,7 +577,10 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         uri: Uri,
         name: String,
         size: Long,
-        relativePath: String
+        relativePath: String,
+        mimeType: String?,
+        sourceWidth: Int,
+        sourceHeight: Int
     ) = withContext(Dispatchers.IO) {
         var shouldNotifyGallery = false
         val userPreferencesRepository =
@@ -459,8 +593,16 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         val saveAsNew = preferences?.phantomSaveAsNew ?: false
         val computationalAperture = preferences?.defaultVirtualAperture?.let { if (it > 0f) it else null }
         val existingPhotoId = if (processingInfo?.uri == uri) processingInfo?.photoId else null
+        val isRawSource = isRawMedia(name, mimeType)
         val photoId =
-            GalleryManager.importPhoto(context, uri, lutId, computationalAperture, existingPhotoId) ?: run {
+            GalleryManager.importPhoto(
+                context,
+                uri,
+                lutId,
+                computationalAperture,
+                existingPhotoId,
+                deferRawPreview = isRawSource
+            ) ?: run {
                 return@withContext
         }
         val phantomBaselineLutId = preferences?.phantomBaselineLutId
@@ -500,16 +642,29 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         } ?: return@withContext
         if (!isActive) return@withContext
 
-        if (uri != processingInfo?.uri) {
-            if (name != processingInfo?.name || relativePath != processingInfo?.relativePath) {
-                processingInfo = ProcessingInfo(
-                    uri = uri,
-                    photoId = photoId,
-                    name = name,
-                    size = size,
-                    relativePath = relativePath,
-                )
-            }
+        val currentProcessingInfo = processingInfo
+        if (currentProcessingInfo != null && currentProcessingInfo.uri == uri) {
+            processingInfo = currentProcessingInfo.copy(
+                photoId = photoId,
+                name = name,
+                size = size,
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
+                relativePath = relativePath,
+            )
+        } else if (currentProcessingInfo == null ||
+            name != currentProcessingInfo.name ||
+            relativePath != currentProcessingInfo.relativePath
+        ) {
+            processingInfo = ProcessingInfo(
+                uri = uri,
+                photoId = photoId,
+                name = name,
+                size = size,
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
+                relativePath = relativePath,
+            )
         }
 
         val tempExportFile = File(context.cacheDir, "temp_export_${System.nanoTime()}.jpg")
@@ -519,9 +674,12 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 context, photoId, updatedMetadata,
                 0f, 0f, 0f
             ) ?: return@withContext
+            if (!isActive) return@withContext
 
             val videoFile = GalleryManager.getVideoFile(context, photoId)
             val photoFile = GalleryManager.getPhotoFile(context, photoId)
+            val saveRawAsNew = shouldSaveRawPhantomExportAsNew(photoId, updatedMetadata.mimeType, name)
+            val shouldSaveAsNew = saveAsNew || saveRawAsNew
 
             val exportedWidth = processedBitmap.width
             val exportedHeight = processedBitmap.height
@@ -537,38 +695,22 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     imageHeight = exportedHeight
                 )
             )
+            if (!isActive) return@withContext
 
             var newSize = 0L
             var newName = name
 
-            val writeUri = if (saveAsNew) {
+            val writeUri = if (shouldSaveAsNew) {
                 val lutName =
                     updatedMetadata.lutId?.let { ContentRepository.getInstance(context).lutManager.getLutInfo(it)?.getName() }
-                var withSuffix = ""
-                lutName?.let {
-                    withSuffix += ".$lutName"
-                }
-
-                newName = "PhotonCamera_" + name.replace(".jpg", "$withSuffix.jpg")
+                newName = buildPhantomExportName(name, lutName)
 
                 processingInfo = processingInfo?.copy(
                     newName = newName,
                     newSize = newSize
                 )
 
-                if (processingInfo?.newUri != null) {
-                    processingInfo!!.newUri!!
-                } else {
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-                    }
-                    context.contentResolver.insert(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        contentValues
-                    ) ?: uri
-                }
+                createPhantomExportUri(uri, relativePath, newName) ?: return@withContext
             } else {
                 uri
             }
@@ -675,6 +817,70 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             GalleryManager.notifyPhotoLibraryChanged()
         }
         delay(200L)
+    }
+
+    private fun shouldSaveRawPhantomExportAsNew(
+        photoId: String,
+        mimeType: String?,
+        sourceName: String
+    ): Boolean {
+        val dngFile = GalleryManager.getDngFile(context, photoId)
+        return (dngFile.exists() && dngFile.length() > 0L) ||
+            isRawMimeType(mimeType) ||
+            isRawFileName(sourceName)
+    }
+
+    private fun isRawMimeType(mimeType: String?): Boolean {
+        return mimeType?.contains("raw", ignoreCase = true) == true ||
+            mimeType?.contains("dng", ignoreCase = true) == true
+    }
+
+    private fun isRawMedia(fileName: String, mimeType: String?): Boolean {
+        return isRawMimeType(mimeType) || isRawFileName(fileName)
+    }
+
+    private fun isRawFileName(fileName: String): Boolean {
+        val lowerName = fileName.lowercase()
+        return RAW_FILE_EXTENSIONS.any { lowerName.endsWith(it) }
+    }
+
+    private fun isJpegMedia(fileName: String, mimeType: String?): Boolean {
+        return mimeType.equals("image/jpeg", ignoreCase = true) ||
+            mimeType.equals("image/jpg", ignoreCase = true) ||
+            fileName.endsWith(".jpg", ignoreCase = true) ||
+            fileName.endsWith(".jpeg", ignoreCase = true)
+    }
+
+    private fun buildPhantomExportName(sourceName: String, lutName: String?): String {
+        val baseName = sourceName.substringBeforeLast('.', sourceName)
+        val lutSuffix = lutName?.takeIf { it.isNotBlank() }?.let { ".$it" } ?: ""
+        return "$PHANTOM_EXPORT_PREFIX$baseName$lutSuffix.jpg"
+    }
+
+    private fun createPhantomExportUri(
+        sourceUri: Uri,
+        relativePath: String,
+        displayName: String
+    ): Uri? {
+        processingInfo
+            ?.takeIf { it.uri == sourceUri }
+            ?.newUri
+            ?.takeIf { it != sourceUri }
+            ?.let { return it }
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+        }
+        return context.contentResolver.insert(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            contentValues
+        ).also { newUri ->
+            if (newUri == null) {
+                PLog.e(TAG, "Failed to create Phantom export URI for $displayName")
+            }
+        }
     }
 
     private fun createOverlayThumbnail(source: Bitmap): Bitmap? {
