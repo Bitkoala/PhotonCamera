@@ -46,6 +46,58 @@ class GlesRawStacker(
         val allocMs: Long,
         val mode: String,
     )
+    private data class RegistrationAcceptance(
+        val accepted: Boolean,
+        val transform: RawStackPerspectiveTransform,
+        val reason: String,
+        val srWeight: Float,
+        val srSeedWeight: Float,
+        val srConsistencyWeight: Float,
+    )
+    private data class RegistrationSrGate(
+        val weight: Float,
+        val seedWeight: Float,
+        val consistencyWeight: Float,
+    ) {
+        companion object {
+            val Zero = RegistrationSrGate(
+                weight = 0.0f,
+                seedWeight = 0.0f,
+                consistencyWeight = 0.0f,
+            )
+        }
+    }
+    private data class SuperResolutionOutputDecision(
+        val mode: String,
+        val fallbackReason: String?,
+        val detailFrameCount: Int,
+        val detailWeightSum: Float,
+    ) {
+        val forceBaseUpscale: Boolean
+            get() = fallbackReason != null
+
+        companion object {
+            val Disabled = SuperResolutionOutputDecision(
+                mode = "n/a",
+                fallbackReason = null,
+                detailFrameCount = 0,
+                detailWeightSum = Float.NaN,
+            )
+        }
+    }
+    private data class RegistrationTranslation(
+        val dx: Float,
+        val dy: Float,
+    ) {
+        val magnitude: Float
+            get() = kotlin.math.sqrt(dx * dx + dy * dy)
+
+        fun distanceTo(other: RegistrationTranslation): Float {
+            val ddx = dx - other.dx
+            val ddy = dy - other.dy
+            return kotlin.math.sqrt(ddx * ddx + ddy * ddy)
+        }
+    }
 
     data class HdrInputFrame(
         val image: SafeImage,
@@ -92,7 +144,10 @@ class GlesRawStacker(
     }
     private val outputWidth = scaledRawDimension(width, superResolutionScale)
     private val outputHeight = scaledRawDimension(height, superResolutionScale)
-    private val pyramidLevels = hwmfPrefilter.pyramidLevels.coerceAtLeast(1)
+    private val pyramidLevels = max(
+        hwmfPrefilter.pyramidLevels.coerceAtLeast(1),
+        registrationSetup.requiredPyramidLevels(),
+    )
     private val alignLevel = hwmfPrefilter.alignLevel.coerceAtLeast(0)
     private val flowGridSpacing = hwmfPrefilter.flowGridSpacing.coerceAtLeast(1)
     private val lkRefinePasses = hwmfBlend.lkRefinePasses.coerceAtLeast(0)
@@ -150,9 +205,13 @@ class GlesRawStacker(
     private var accumulatorScratchTexture = 0
     private var currentAccumulatorTexture = 0
     private var superResolutionAccumulatorTexture = 0
+    private var superResolutionAccumulatorScratchTexture = 0
+    private var currentSuperResolutionAccumulatorTexture = 0
+    private var superResolutionBaseTexture = 0
     private var outputTexture = 0
     private var lensShadingTexture = 0
     private var currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+    private var currentRegistrationSrWeight = 1.0f
     private var registrationEstimateCount = 0
     private var registrationConfidenceSum = 0f
     private var registrationConfidenceMin = Int.MAX_VALUE
@@ -163,6 +222,10 @@ class GlesRawStacker(
     private var registrationGlobalScoreCount = 0
     private var registrationGlobalMarginMin = Float.POSITIVE_INFINITY
     private var registrationGlobalCoverageSum = 0f
+    private val acceptedRegistrationTranslations = ArrayList<RegistrationTranslation>()
+    private var superResolutionDetailFrameCount = 0
+    private var superResolutionDetailWeightSum = 0f
+    private var superResolutionDetailWeightMax = 0f
 
     fun process(images: List<SafeImage>): RawStackResult? {
         if (images.isEmpty() || width <= 0 || height <= 0) return null
@@ -196,7 +259,8 @@ class GlesRawStacker(
                 TAG,
                 "HWMF RAW stack mode=${tuning.mode} frames=${images.size} " +
                     "out=${outputWidth}x$outputHeight srScale=${superResolutionScale.formatScale()} " +
-                    "${registrationSummary.compactSummary()} " +
+                    "${registrationSummary.compactSummary()} regProxy=REG_OUT " +
+                    "regCtx=${registrationSetup.referenceContextSummary()} " +
                     "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
                     "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
             )
@@ -209,11 +273,15 @@ class GlesRawStacker(
             buildPyramid(refPyramid)
             computeStructureTensor()
             currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+            currentRegistrationSrWeight = 1.0f
+            acceptedRegistrationTranslations.clear()
+            resetSuperResolutionDecisionStats()
+            clearAccumulator()
             if (superResolutionEnabled) {
                 clearSuperResolutionAccumulator()
+                accumulateFrame(refRaw, isReference = true)
                 accumulateSuperResolutionFrame(refRaw, isReference = true)
             } else {
-                clearAccumulator()
                 accumulateFrame(refRaw, isReference = true)
             }
             GlesGpuScheduler.yieldToUiRenderer()
@@ -236,7 +304,11 @@ class GlesRawStacker(
                     continue
                 }
                 if (superResolutionEnabled) {
-                    accumulateSuperResolutionFrame(curRaw, isReference = false)
+                    accumulateFrame(curRaw, isReference = false)
+                    if (currentRegistrationSrWeight > 0.0f) {
+                        recordSuperResolutionDetailFrame(currentRegistrationSrWeight)
+                        accumulateSuperResolutionFrame(curRaw, isReference = false)
+                    }
                 } else {
                     accumulateFrame(curRaw, isReference = false)
                 }
@@ -245,8 +317,13 @@ class GlesRawStacker(
                 GlesGpuScheduler.yieldToUiRenderer()
             }
 
+            val superResolutionDecision = if (superResolutionEnabled) {
+                decideSuperResolutionOutput(alignedFrameCount)
+            } else {
+                SuperResolutionOutputDecision.Disabled
+            }
             if (superResolutionEnabled) {
-                normalizeSuperResolutionOutput()
+                normalizeSuperResolutionOutput(superResolutionDecision)
             } else {
                 normalizeOutput()
             }
@@ -257,6 +334,7 @@ class GlesRawStacker(
                 frameCount = images.size,
                 alignedFrameCount = alignedFrameCount,
                 elapsedMs = System.currentTimeMillis() - startTime,
+                superResolutionDecision = superResolutionDecision,
             )
             returned = true
             PLog.i(
@@ -325,7 +403,8 @@ class GlesRawStacker(
             PLog.d(
                 TAG,
                 "HWMF RAW HDR stack mode=${tuning.mode} normalFrames=${normalFrames.size} " +
-                    "${registrationSummary.compactSummary()} " +
+                    "${registrationSummary.compactSummary()} regProxy=REG_OUT " +
+                    "regCtx=${registrationSetup.referenceContextSummary()} " +
                     "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
                     "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
             )
@@ -359,6 +438,8 @@ class GlesRawStacker(
             computeStructureTensor()
             clearAccumulator()
             currentRegistrationTransform = registrationSetup.identityTransform(RawStackRegistrationStage.BLEND)
+            currentRegistrationSrWeight = 1.0f
+            acceptedRegistrationTranslations.clear()
             accumulateFrame(
                 rawTexture = refRaw,
                 isReference = true,
@@ -575,11 +656,19 @@ class GlesRawStacker(
         }
         if (superResolutionEnabled) {
             val accumulatorBytes = outputWidth.toLong() * outputHeight.toLong() * 8L
+            val accumulatorTotalBytes = accumulatorBytes * 2L
+            val baseAccumulatorBytes = width.toLong() * height.toLong() * 8L
+            val baseAccumulatorTotalBytes = baseAccumulatorBytes * 2L
+            val baseOutputBytes = width.toLong() * height.toLong() * 2L
             val outputBytes = outputWidth.toLong() * outputHeight.toLong() * 2L
             PLog.d(
                 TAG,
                 "HWMF MFSR resources out=${outputWidth}x$outputHeight maxTex=$maxSize " +
-                    "srAccumulator=${accumulatorBytes.mibString()} output=${outputBytes.mibString()}",
+                    "srAccumulator=${accumulatorBytes.mibString()}x2 " +
+                    "srAccumulatorTotal=${accumulatorTotalBytes.mibString()} " +
+                    "baseAccumulator=${baseAccumulatorBytes.mibString()}x2 " +
+                    "baseAccumulatorTotal=${baseAccumulatorTotalBytes.mibString()} " +
+                    "baseOutput=${baseOutputBytes.mibString()} output=${outputBytes.mibString()}",
             )
         }
     }
@@ -621,6 +710,9 @@ class GlesRawStacker(
         hdrRecoveryOrigMaskTexture = createTexture2D(planeWidth, planeHeight, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
         hdrRecoveryMaskTexture = createTexture2D(planeWidth, planeHeight, GLES30.GL_R16F, GLES30.GL_NEAREST)
         hdrRecoveryScratchTexture = createTexture2D(planeWidth, planeHeight, GLES30.GL_R16F, GLES30.GL_NEAREST)
+        accumulatorTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
+        accumulatorScratchTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
+        currentAccumulatorTexture = accumulatorTexture
         if (superResolutionEnabled) {
             superResolutionAccumulatorTexture = createTexture2D(
                 outputWidth,
@@ -628,11 +720,14 @@ class GlesRawStacker(
                 GLES30.GL_RGBA16F,
                 GLES30.GL_NEAREST,
             )
-            currentAccumulatorTexture = superResolutionAccumulatorTexture
-        } else {
-            accumulatorTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
-            accumulatorScratchTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
-            currentAccumulatorTexture = accumulatorTexture
+            superResolutionAccumulatorScratchTexture = createTexture2D(
+                outputWidth,
+                outputHeight,
+                GLES30.GL_RGBA16F,
+                GLES30.GL_NEAREST,
+            )
+            currentSuperResolutionAccumulatorTexture = superResolutionAccumulatorTexture
+            superResolutionBaseTexture = createTexture2D(width, height, GLES30.GL_RG8, GLES30.GL_NEAREST)
         }
         outputTexture = createTexture2D(outputWidth, outputHeight, GLES30.GL_RG8, GLES30.GL_NEAREST)
         lensShadingTexture = createLensShadingTexture()
@@ -1144,22 +1239,302 @@ class GlesRawStacker(
             )
         }
         val estimate = selectRegistrationEstimate(globalEstimate, flowEstimate)
-        currentRegistrationTransform = estimate.transform
+        val seedTranslation = registrationSeedTranslation(seedShiftPlane)
+        val acceptance = resolveRegistrationAcceptance(estimate, seedTranslation)
+        currentRegistrationTransform = acceptance.transform
+        currentRegistrationSrWeight = acceptance.srWeight
         recordRegistrationGlobalEstimate(globalEstimate)
-        recordRegistrationEstimate(estimate)
-        val accepted = !estimate.forceIdentity
+        recordRegistrationEstimate(estimate, currentRegistrationTransform)
+        val accepted = acceptance.accepted
         if (hwmfDebug.logCompactSummary) {
+            val candidateTranslation = registrationTranslation(estimate.candidateTransform)
             PLog.d(
                 TAG,
                 "HWMF registration frame=$frameIndex source=${estimate.source} conf=${estimate.confidence} " +
-                    "forceIdentity=${estimate.forceIdentity} accepted=$accepted global=${globalEstimate.globalSummaryOrEmpty()} " +
+                    "forceIdentity=${estimate.forceIdentity} accepted=$accepted accept=${acceptance.reason} " +
+                    "global=${globalEstimate.globalSummaryOrEmpty()} " +
                     "seed=${seedShiftPlane.vectorSummary()} " +
+                    "candidate=${candidateTranslation.translationSummary()} " +
+                    "seedDist=${candidateTranslation.seedDistance(seedTranslation).formatPx()} " +
+                    "consDist=${registrationConsistencyDistance(candidateTranslation).formatPx()} " +
+                    "srWeight=${currentRegistrationSrWeight.formatWeight()} " +
+                    "srSeed=${acceptance.srSeedWeight.formatWeight()} " +
+                    "srCons=${acceptance.srConsistencyWeight.formatWeight()} " +
                     "flowSamples=${flowEstimate.usedSampleCount}/${flowEstimate.sampleCount} " +
                     "inlier=${estimate.inlierRatio.percentString()} resP90=${estimate.residualP90Px.formatPx()} " +
-                    "matrix=${estimate.transform.matrixAt(0).matrixSummary()}"
+                    "matrix=${currentRegistrationTransform.matrixAt(0).matrixSummary()}"
             )
         }
+        if (accepted) {
+            recordAcceptedRegistrationTranslation(currentRegistrationTransform)
+        }
         return accepted
+    }
+
+    private fun resolveRegistrationAcceptance(
+        estimate: RawStackRegistrationEstimate,
+        seedTranslation: RegistrationTranslation?,
+    ): RegistrationAcceptance {
+        if (!estimate.forceIdentity) {
+            val srGate = registrationSrGate(estimate, seedTranslation)
+            return RegistrationAcceptance(
+                accepted = true,
+                transform = estimate.transform,
+                reason = "strict",
+                srWeight = srGate.weight,
+                srSeedWeight = srGate.seedWeight,
+                srConsistencyWeight = srGate.consistencyWeight,
+            )
+        }
+        val nrBaseReason = nrBaseRegistrationAcceptanceReason(estimate, seedTranslation)
+        if (nrBaseReason != null) {
+            return RegistrationAcceptance(
+                accepted = true,
+                transform = estimate.candidateTransform.copy(forceIdentity = false),
+                reason = nrBaseReason,
+                srWeight = 0.0f,
+                srSeedWeight = 0.0f,
+                srConsistencyWeight = 0.0f,
+            )
+        }
+        return RegistrationAcceptance(
+            accepted = false,
+            transform = estimate.transform,
+            reason = "reject",
+            srWeight = 0.0f,
+            srSeedWeight = 0.0f,
+            srConsistencyWeight = 0.0f,
+        )
+    }
+
+    private fun nrBaseRegistrationAcceptanceReason(
+        estimate: RawStackRegistrationEstimate,
+        seedTranslation: RegistrationTranslation?,
+    ): String? {
+        if (tuning.mode != RawStackMode.MFNR && tuning.mode != RawStackMode.MFSR) return null
+        if (estimate.source != RawStackRegistrationSource.IMAGE_TRANSLATION) return null
+        val hasRelaxedConfidence = estimate.confidence >= hwmfBlend.denoiseRelaxedRegistrationConfidenceMin
+        val hasSeedConfidence = estimate.confidence >= hwmfBlend.denoiseSeedRegistrationConfidenceMin
+        val hasConsistentConfidence = estimate.confidence >= hwmfBlend.denoiseConsistentRegistrationConfidenceMin
+        if (!hasRelaxedConfidence && !hasSeedConfidence && !hasConsistentConfidence) return null
+        if (!estimate.globalCoverage.isFinite() ||
+            estimate.globalCoverage < hwmfBlend.denoiseRelaxedRegistrationCoverageMin
+        ) {
+            return null
+        }
+        if (!estimate.globalBestScore.isFinite() ||
+            estimate.globalBestScore > hwmfBlend.denoiseRelaxedRegistrationScoreMax
+        ) {
+            return null
+        }
+        val translation = registrationTranslation(estimate.candidateTransform) ?: return null
+        if (translation.magnitude > hwmfBlend.denoiseRelaxedRegistrationTranslationMaxPx) return null
+        if (hasSeedConfidence && isSeedConsistentNrBaseRegistration(estimate, translation, seedTranslation)) {
+            return "nr-base-denoise-seed"
+        }
+        if (hasSeedConfidence && isTightSeedNrBaseRegistration(estimate, translation, seedTranslation)) {
+            return "nr-base-denoise-seed-tight"
+        }
+        if (hasRelaxedConfidence && isRelaxedNrBaseRegistration(estimate, translation, seedTranslation)) {
+            return "nr-base-denoise"
+        }
+        if (hasRelaxedConfidence && isStaticNrBaseRegistration(estimate, translation, seedTranslation)) {
+            return "nr-base-denoise-static"
+        }
+        if (hasConsistentConfidence && isBurstConsistentNrBaseRegistration(estimate, translation)) {
+            return "nr-base-denoise-consistent"
+        }
+        return null
+    }
+
+    private fun registrationSrGate(
+        estimate: RawStackRegistrationEstimate,
+        seedTranslation: RegistrationTranslation?,
+    ): RegistrationSrGate {
+        if (!superResolutionEnabled || estimate.forceIdentity) return RegistrationSrGate.Zero
+        if (estimate.source != RawStackRegistrationSource.IMAGE_TRANSLATION) return RegistrationSrGate.Zero
+        val translation = registrationTranslation(estimate.candidateTransform) ?: return RegistrationSrGate.Zero
+        val confidenceWeight = smoothStep(
+            hwmfSr.registrationConfidenceStart.toFloat(),
+            hwmfSr.registrationConfidenceFull.toFloat(),
+            estimate.confidence.toFloat(),
+        )
+        val marginWeight = smoothStep(
+            hwmfSr.registrationMarginStart,
+            hwmfSr.registrationMarginFull,
+            estimate.globalScoreMargin,
+        )
+        val coverageWeight = smoothStep(
+            hwmfSr.registrationCoverageStart,
+            hwmfSr.registrationCoverageFull,
+            estimate.globalCoverage,
+        )
+        val seedWeight = registrationSrSeedWeight(translation, seedTranslation)
+        val consistencyWeight = registrationSrConsistencyWeight(translation)
+        return RegistrationSrGate(
+            weight = (
+                confidenceWeight *
+                    marginWeight *
+                    coverageWeight *
+                    seedWeight *
+                    consistencyWeight
+                ).coerceIn(0.0f, 1.0f),
+            seedWeight = seedWeight,
+            consistencyWeight = consistencyWeight,
+        )
+    }
+
+    private fun registrationSrSeedWeight(
+        translation: RegistrationTranslation,
+        seedTranslation: RegistrationTranslation?,
+    ): Float {
+        val seed = seedTranslation ?: return 1.0f
+        val distance = translation.distanceTo(seed)
+        return 1.0f - smoothStep(
+            hwmfSr.registrationSeedDistanceStartPx,
+            hwmfSr.registrationSeedDistanceEndPx,
+            distance,
+        )
+    }
+
+    private fun registrationSrConsistencyWeight(translation: RegistrationTranslation): Float {
+        val distance = registrationConsistencyDistance(translation)
+        if (!distance.isFinite()) return 1.0f
+        return 1.0f - smoothStep(
+            hwmfSr.registrationConsistencyDistanceStartPx,
+            hwmfSr.registrationConsistencyDistanceEndPx,
+            distance,
+        )
+    }
+
+    private fun smoothStep(edge0: Float, edge1: Float, value: Float): Float {
+        if (!edge0.isFinite() || !edge1.isFinite() || !value.isFinite()) return 0.0f
+        val lo = minOf(edge0, edge1)
+        val hi = max(edge0, edge1)
+        if (hi <= lo) return if (value >= hi) 1.0f else 0.0f
+        val t = ((value - lo) / (hi - lo)).coerceIn(0.0f, 1.0f)
+        return t * t * (3.0f - 2.0f * t)
+    }
+
+    private fun isSeedConsistentNrBaseRegistration(
+        estimate: RawStackRegistrationEstimate,
+        translation: RegistrationTranslation,
+        seedTranslation: RegistrationTranslation?,
+    ): Boolean {
+        if (!estimate.globalScoreMargin.isFinite() ||
+            estimate.globalScoreMargin < hwmfBlend.denoiseSeedRegistrationMarginMin
+        ) {
+            return false
+        }
+        val seed = seedTranslation ?: return false
+        return translation.distanceTo(seed) <= hwmfBlend.denoiseSeedRegistrationDeltaMaxPx
+    }
+
+    private fun isTightSeedNrBaseRegistration(
+        estimate: RawStackRegistrationEstimate,
+        translation: RegistrationTranslation,
+        seedTranslation: RegistrationTranslation?,
+    ): Boolean {
+        if (!estimate.globalScoreMargin.isFinite() ||
+            estimate.globalScoreMargin < hwmfBlend.denoiseSeedTightRegistrationMarginMin
+        ) {
+            return false
+        }
+        val seed = seedTranslation ?: return false
+        return translation.distanceTo(seed) <= hwmfBlend.denoiseSeedTightRegistrationDeltaMaxPx &&
+            translation.magnitude <= hwmfBlend.denoiseSeedTightRegistrationTranslationMaxPx
+    }
+
+    private fun isRelaxedNrBaseRegistration(
+        estimate: RawStackRegistrationEstimate,
+        translation: RegistrationTranslation,
+        seedTranslation: RegistrationTranslation?,
+    ): Boolean {
+        if (!estimate.globalScoreMargin.isFinite() ||
+            estimate.globalScoreMargin < hwmfBlend.denoiseRelaxedRegistrationMarginMin
+        ) {
+            return false
+        }
+        val seed = seedTranslation ?: return true
+        return translation.distanceTo(seed) <= hwmfBlend.denoiseSeedRegistrationDeltaMaxPx
+    }
+
+    private fun isStaticNrBaseRegistration(
+        estimate: RawStackRegistrationEstimate,
+        translation: RegistrationTranslation,
+        seedTranslation: RegistrationTranslation?,
+    ): Boolean {
+        if (!estimate.globalScoreMargin.isFinite() ||
+            estimate.globalScoreMargin < hwmfBlend.denoiseStaticRegistrationMarginMin
+        ) {
+            return false
+        }
+        val seed = seedTranslation
+        if (seed != null && translation.distanceTo(seed) > hwmfBlend.denoiseSeedRegistrationDeltaMaxPx) {
+            return false
+        }
+        return translation.magnitude <= hwmfBlend.denoiseStaticRegistrationTranslationMaxPx
+    }
+
+    private fun isBurstConsistentNrBaseRegistration(
+        estimate: RawStackRegistrationEstimate,
+        translation: RegistrationTranslation,
+    ): Boolean {
+        if (!estimate.globalScoreMargin.isFinite() ||
+            estimate.globalScoreMargin < hwmfBlend.denoiseConsistentRegistrationMarginMin
+        ) {
+            return false
+        }
+        val median = acceptedRegistrationMedianTranslation() ?: return false
+        return translation.distanceTo(median) <= hwmfBlend.denoiseConsistentRegistrationDeltaMaxPx
+    }
+
+    private fun recordAcceptedRegistrationTranslation(transform: RawStackPerspectiveTransform) {
+        val translation = registrationTranslation(transform) ?: return
+        acceptedRegistrationTranslations += translation
+    }
+
+    private fun acceptedRegistrationMedianTranslation(): RegistrationTranslation? {
+        val minAccepted = hwmfBlend.denoiseConsistentRegistrationMinAccepted.coerceAtLeast(1)
+        if (acceptedRegistrationTranslations.size < minAccepted) return null
+        val xs = acceptedRegistrationTranslations.map { it.dx }.sorted()
+        val ys = acceptedRegistrationTranslations.map { it.dy }.sorted()
+        return RegistrationTranslation(
+            dx = medianOfSorted(xs),
+            dy = medianOfSorted(ys),
+        )
+    }
+
+    private fun registrationConsistencyDistance(translation: RegistrationTranslation?): Float {
+        if (translation == null) return Float.NaN
+        val median = acceptedRegistrationMedianTranslation() ?: return Float.NaN
+        return translation.distanceTo(median)
+    }
+
+    private fun registrationSeedTranslation(seedShiftPlane: FloatArray): RegistrationTranslation? {
+        if (seedShiftPlane.size < 2) return null
+        val dx = seedShiftPlane[0] * 2.0f
+        val dy = seedShiftPlane[1] * 2.0f
+        if (!dx.isFinite() || !dy.isFinite()) return null
+        return RegistrationTranslation(dx, dy)
+    }
+
+    private fun registrationTranslation(transform: RawStackPerspectiveTransform): RegistrationTranslation? {
+        val matrix = transform.matrixAt(0)
+        val tx = matrix.getOrElse(2) { Float.NaN }
+        val ty = matrix.getOrElse(5) { Float.NaN }
+        if (!tx.isFinite() || !ty.isFinite()) return null
+        return RegistrationTranslation(tx, ty)
+    }
+
+    private fun medianOfSorted(values: List<Float>): Float {
+        if (values.isEmpty()) return Float.NaN
+        val middle = values.size / 2
+        return if ((values.size and 1) == 0) {
+            (values[middle - 1] + values[middle]) * 0.5f
+        } else {
+            values[middle]
+        }
     }
 
     private fun selectRegistrationEstimate(
@@ -1410,11 +1785,14 @@ class GlesRawStacker(
         return max(1, max(gridWidth, gridHeight) / 128)
     }
 
-    private fun recordRegistrationEstimate(estimate: RawStackRegistrationEstimate) {
+    private fun recordRegistrationEstimate(
+        estimate: RawStackRegistrationEstimate,
+        effectiveTransform: RawStackPerspectiveTransform,
+    ) {
         registrationEstimateCount += 1
         registrationConfidenceSum += estimate.confidence.toFloat()
         registrationConfidenceMin = minOf(registrationConfidenceMin, estimate.confidence)
-        if (estimate.forceIdentity) {
+        if (effectiveTransform.forceIdentity) {
             registrationForceIdentityCount += 1
         }
         registrationInlierRatioSum += estimate.inlierRatio.takeIf { it.isFinite() } ?: 0f
@@ -1483,7 +1861,7 @@ class GlesRawStacker(
         GLES31.glDispatchCompute(groupCount(outputWidth), groupCount(outputHeight), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
         checkGlError("clearSuperResolutionAccumulator")
-        currentAccumulatorTexture = superResolutionAccumulatorTexture
+        currentSuperResolutionAccumulatorTexture = superResolutionAccumulatorTexture
     }
 
     private fun accumulateFrame(
@@ -1537,6 +1915,11 @@ class GlesRawStacker(
         rawTexture: Int,
         isReference: Boolean,
     ) {
+        val outputAccumulator = if (currentSuperResolutionAccumulatorTexture == superResolutionAccumulatorTexture) {
+            superResolutionAccumulatorScratchTexture
+        } else {
+            superResolutionAccumulatorTexture
+        }
         GLES31.glUseProgram(accumulateSuperResolutionProgram)
         bindTexture(accumulateSuperResolutionProgram, "uInputRaw", 0, rawTexture)
         bindTexture(accumulateSuperResolutionProgram, "uFlowGrid", 1, flowTexture)
@@ -1544,7 +1927,8 @@ class GlesRawStacker(
         bindTexture(accumulateSuperResolutionProgram, "uTileMask", 3, tileMaskTexture)
         bindTexture(accumulateSuperResolutionProgram, "uKernel", 4, kernelTexture)
         bindTexture(accumulateSuperResolutionProgram, "uLensShadingMap", 5, lensShadingTexture)
-        bindImage(0, superResolutionAccumulatorTexture, GLES31.GL_READ_WRITE, GLES30.GL_RGBA16F)
+        bindTexture(accumulateSuperResolutionProgram, "uAccumulatorInput", 6, currentSuperResolutionAccumulatorTexture)
+        bindImage(0, outputAccumulator, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
         setCommonUniforms(accumulateSuperResolutionProgram)
         GLES31.glUniform2i(
             GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uImageSize"),
@@ -1590,6 +1974,10 @@ class GlesRawStacker(
             GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uSrSplatRadius"),
             hwmfSr.splatRadius.coerceAtLeast(0.25f),
         )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uRegistrationSrWeight"),
+            if (isReference) 1.0f else currentRegistrationSrWeight.coerceIn(0.0f, 1.0f),
+        )
         setRegistrationUniforms(
             program = accumulateSuperResolutionProgram,
             transform = if (isReference) {
@@ -1602,7 +1990,7 @@ class GlesRawStacker(
         GLES31.glDispatchCompute(groupCount(outputWidth), groupCount(outputHeight), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
         checkGlError("accumulateSuperResolutionFrame")
-        currentAccumulatorTexture = superResolutionAccumulatorTexture
+        currentSuperResolutionAccumulatorTexture = outputAccumulator
     }
 
     private fun computeHdrRecoveryMask(shortToReferenceExposureScale: Float) {
@@ -1650,13 +2038,62 @@ class GlesRawStacker(
         finishFramebufferPass(label)
     }
 
+    private fun resetSuperResolutionDecisionStats() {
+        superResolutionDetailFrameCount = 0
+        superResolutionDetailWeightSum = 0f
+        superResolutionDetailWeightMax = 0f
+    }
+
+    private fun recordSuperResolutionDetailFrame(weight: Float) {
+        val clampedWeight = weight.coerceIn(0f, 1f)
+        if (clampedWeight <= 0f) return
+        superResolutionDetailFrameCount += 1
+        superResolutionDetailWeightSum += clampedWeight
+        superResolutionDetailWeightMax = max(superResolutionDetailWeightMax, clampedWeight)
+    }
+
+    private fun decideSuperResolutionOutput(alignedFrameCount: Int): SuperResolutionOutputDecision {
+        val reasons = ArrayList<String>(3)
+        if (alignedFrameCount < hwmfSr.fallbackMinAlignedFrames.coerceAtLeast(0)) {
+            reasons += "aligned-low"
+        }
+        if (superResolutionDetailFrameCount < hwmfSr.fallbackMinDetailFrames.coerceAtLeast(0)) {
+            reasons += "sr-detail-low"
+        }
+        if (superResolutionDetailWeightSum < hwmfSr.fallbackMinDetailWeightSum.coerceAtLeast(0f)) {
+            reasons += "sr-weight-low"
+        }
+        val fallbackReason = reasons.takeIf { it.isNotEmpty() }?.joinToString("+")
+        val mode = if (fallbackReason == null) "SUPER_RESOLUTION" else "BASE_UPSCALE"
+        val message = "HWMF MFSR output effective=$mode " +
+            "reason=${fallbackReason ?: "ok"} aligned=$alignedFrameCount " +
+            "srFrames=$superResolutionDetailFrameCount " +
+            "srWeightSum=${superResolutionDetailWeightSum.formatWeight()} " +
+            "srWeightMax=${superResolutionDetailWeightMax.formatWeight()}"
+        if (fallbackReason == null) {
+            PLog.d(TAG, message)
+        } else {
+            PLog.i(TAG, message)
+        }
+        return SuperResolutionOutputDecision(
+            mode = mode,
+            fallbackReason = fallbackReason,
+            detailFrameCount = superResolutionDetailFrameCount,
+            detailWeightSum = superResolutionDetailWeightSum,
+        )
+    }
+
     private fun normalizeOutput(
         hdrMode: Boolean = false,
         referenceExposureScale: Float = 1.0f,
         shortExposureScale: Float = 1.0f,
+        targetTexture: Int = outputTexture,
+        targetWidth: Int = width,
+        targetHeight: Int = height,
+        label: String = "normalizeOutput",
     ) {
-        bindFramebufferOutput(outputTexture, "normalizeOutput")
-        GLES30.glViewport(0, 0, width, height)
+        bindFramebufferOutput(targetTexture, label)
+        GLES30.glViewport(0, 0, targetWidth, targetHeight)
         GLES30.glUseProgram(normalizeProgram)
         bindTexture(normalizeProgram, "uAccumulator", 0, currentAccumulatorTexture)
         bindTexture(normalizeProgram, "uReferenceRaw", 1, refRaw)
@@ -1676,16 +2113,23 @@ class GlesRawStacker(
         GLES31.glUniform1f(GLES31.glGetUniformLocation(normalizeProgram, "uShortExposureScale"), shortExposureScale)
         setPostfilterUniforms(normalizeProgram)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-        finishFramebufferPass("normalizeOutput")
+        finishFramebufferPass(label)
     }
 
-    private fun normalizeSuperResolutionOutput() {
+    private fun normalizeSuperResolutionOutput(decision: SuperResolutionOutputDecision) {
+        normalizeOutput(
+            targetTexture = superResolutionBaseTexture,
+            targetWidth = width,
+            targetHeight = height,
+            label = "normalizeSuperResolutionBase",
+        )
         bindFramebufferOutput(outputTexture, "normalizeSuperResolutionOutput")
         GLES30.glViewport(0, 0, outputWidth, outputHeight)
         GLES30.glUseProgram(normalizeSuperResolutionProgram)
-        bindTexture(normalizeSuperResolutionProgram, "uAccumulator", 0, superResolutionAccumulatorTexture)
-        bindTexture(normalizeSuperResolutionProgram, "uReferenceRaw", 1, refRaw)
-        bindTexture(normalizeSuperResolutionProgram, "uLensShadingMap", 2, lensShadingTexture)
+        bindTexture(normalizeSuperResolutionProgram, "uSrAccumulator", 0, currentSuperResolutionAccumulatorTexture)
+        bindTexture(normalizeSuperResolutionProgram, "uBasePackedRaw", 1, superResolutionBaseTexture)
+        bindTexture(normalizeSuperResolutionProgram, "uReferenceRaw", 2, refRaw)
+        bindTexture(normalizeSuperResolutionProgram, "uLensShadingMap", 3, lensShadingTexture)
         setCommonUniforms(normalizeSuperResolutionProgram)
         GLES31.glUniform2i(
             GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uImageSize"),
@@ -1701,6 +2145,10 @@ class GlesRawStacker(
             GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uOutputScale"),
             superResolutionScale,
         )
+        GLES31.glUniform1i(
+            GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uForceBaseUpscale"),
+            if (decision.forceBaseUpscale) 1 else 0,
+        )
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uMinEffectiveWeight"),
             hwmfSr.minEffectiveWeight.coerceAtLeast(0f),
@@ -1709,6 +2157,15 @@ class GlesRawStacker(
             GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uDetailRestoreStrength"),
             hwmfSr.detailRestoreStrength.coerceIn(0f, 1f),
         )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uSrDetailLowLightSuppression"),
+            hwmfSr.detailLowLightSuppression.coerceIn(0f, 1f),
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(normalizeSuperResolutionProgram, "uSrDetailLscSuppression"),
+            hwmfSr.detailLscSuppression.coerceIn(0f, 1f),
+        )
+        setPostfilterUniforms(normalizeSuperResolutionProgram)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass("normalizeSuperResolutionOutput")
     }
@@ -1794,11 +2251,23 @@ class GlesRawStacker(
         frameCount: Int,
         alignedFrameCount: Int,
         elapsedMs: Long,
+        superResolutionDecision: SuperResolutionOutputDecision = SuperResolutionOutputDecision.Disabled,
     ): RawStackDiagnostics? {
+        val diagnosticAccumulatorTexture = if (superResolutionEnabled) {
+            currentSuperResolutionAccumulatorTexture
+        } else {
+            currentAccumulatorTexture
+        }
+        val diagnosticAccumulatorWidth = if (superResolutionEnabled) outputWidth else width
+        val diagnosticAccumulatorHeight = if (superResolutionEnabled) outputHeight else height
+        val diagnosticOutputScale = if (superResolutionEnabled) superResolutionScale else 1.0f
         val finalRecorded = runDiagnosticStep("final") {
             GLES31.glUseProgram(diagnosticFinalProgram)
-            bindTexture(diagnosticFinalProgram, "uAccumulator", 0, currentAccumulatorTexture)
+            bindTexture(diagnosticFinalProgram, "uAccumulator", 0, diagnosticAccumulatorTexture)
             bindTexture(diagnosticFinalProgram, "uLensShadingMap", 1, lensShadingTexture)
+            bindTexture(diagnosticFinalProgram, "uPostfilterAccumulator", 2, currentAccumulatorTexture)
+            setCommonUniforms(diagnosticFinalProgram)
+            setPostfilterUniforms(diagnosticFinalProgram)
             GLES31.glBindBufferBase(
                 GLES31.GL_SHADER_STORAGE_BUFFER,
                 DIAGNOSTIC_BUFFER_BINDING,
@@ -1807,17 +2276,21 @@ class GlesRawStacker(
             setDiagnosticSampleUniforms(diagnosticFinalProgram)
             GLES31.glUniform2i(
                 GLES31.glGetUniformLocation(diagnosticFinalProgram, "uAccumulatorSize"),
-                outputWidth,
-                outputHeight,
+                diagnosticAccumulatorWidth,
+                diagnosticAccumulatorHeight,
             )
             GLES31.glUniform1f(
                 GLES31.glGetUniformLocation(diagnosticFinalProgram, "uOutputScale"),
-                superResolutionScale,
+                diagnosticOutputScale,
             )
             GLES31.glUniform1i(GLES31.glGetUniformLocation(diagnosticFinalProgram, "uCfaPattern"), cfaPattern)
             GLES31.glUniform1f(
                 GLES31.glGetUniformLocation(diagnosticFinalProgram, "uWeightHistogramRange"),
                 diagnosticWeightHistogramRange(frameCount),
+            )
+            GLES31.glUniform1f(
+                GLES31.glGetUniformLocation(diagnosticFinalProgram, "uPostResidualHistogramRange"),
+                diagnosticPostResidualHistogramRange(),
             )
             GLES31.glUniform1f(
                 GLES31.glGetUniformLocation(diagnosticFinalProgram, "uLensShadingEdgeFraction"),
@@ -1837,6 +2310,7 @@ class GlesRawStacker(
             frameCount = frameCount,
             alignedFrameCount = alignedFrameCount,
             elapsedMs = elapsedMs,
+            superResolutionDecision = superResolutionDecision,
         )
         if (hwmfDebug.logCompactSummary) {
             PLog.i(TAG, diagnostics.compactSummary())
@@ -1906,6 +2380,7 @@ class GlesRawStacker(
         frameCount: Int,
         alignedFrameCount: Int,
         elapsedMs: Long,
+        superResolutionDecision: SuperResolutionOutputDecision,
     ): RawStackDiagnostics {
         val flowCount = uintStat(stats, DIAGNOSTIC_FLOW_COUNT_INDEX)
         val robustCount = uintStat(stats, DIAGNOSTIC_ROBUST_COUNT_INDEX)
@@ -1925,6 +2400,10 @@ class GlesRawStacker(
             sampleStep = hwmfDebug.sampleStep,
             registration = registrationSummary,
             registrationQuality = registrationQualitySummary(),
+            superResolutionOutputMode = superResolutionDecision.mode.takeIf { it != "n/a" },
+            superResolutionFallbackReason = superResolutionDecision.fallbackReason,
+            superResolutionDetailFrameCount = superResolutionDecision.detailFrameCount,
+            superResolutionDetailWeightSum = superResolutionDecision.detailWeightSum,
             flowMagnitudePx = metricDistribution(
                 stats = stats,
                 count = flowCount,
@@ -1987,6 +2466,60 @@ class GlesRawStacker(
                 quantization = DIAGNOSTIC_WEIGHT_QUANTIZATION,
                 histOffset = DIAGNOSTIC_WEIGHT_HIST_OFFSET,
                 histRange = diagnosticWeightHistogramRange(frameCount),
+            ),
+            postfilterResidual = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_RESIDUAL_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_RESIDUAL_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_RESIDUAL_MAX_INDEX,
+                quantization = DIAGNOSTIC_POST_RESIDUAL_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_RESIDUAL_HIST_OFFSET,
+                histRange = diagnosticPostResidualHistogramRange(),
+            ),
+            postfilterSmooth = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_SMOOTH_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_SMOOTH_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_SMOOTH_MAX_INDEX,
+                quantization = DIAGNOSTIC_UNIT_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_SMOOTH_HIST_OFFSET,
+                histRange = 1.0f,
+            ),
+            postfilterEffectiveSmooth = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_MAX_INDEX,
+                quantization = DIAGNOSTIC_UNIT_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_HIST_OFFSET,
+                histRange = 1.0f,
+            ),
+            postfilterWienerGain = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_WIENER_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_WIENER_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_WIENER_MAX_INDEX,
+                quantization = DIAGNOSTIC_UNIT_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_WIENER_HIST_OFFSET,
+                histRange = 1.0f,
+            ),
+            postfilterLscBoost = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_LSC_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_LSC_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_LSC_MAX_INDEX,
+                quantization = DIAGNOSTIC_UNIT_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_LSC_HIST_OFFSET,
+                histRange = 1.0f,
+            ),
+            postfilterLowWeightBoost = metricDistribution(
+                stats = stats,
+                count = uintStat(stats, DIAGNOSTIC_POST_LOW_WEIGHT_COUNT_INDEX),
+                sumIndex = DIAGNOSTIC_POST_LOW_WEIGHT_SUM_INDEX,
+                maxIndex = DIAGNOSTIC_POST_LOW_WEIGHT_MAX_INDEX,
+                quantization = DIAGNOSTIC_UNIT_QUANTIZATION,
+                histOffset = DIAGNOSTIC_POST_LOW_WEIGHT_HIST_OFFSET,
+                histRange = 1.0f,
             ),
             rejectedTileRatio = ratioStat(
                 numerator = uintStat(stats, DIAGNOSTIC_TILE_REJECT_COUNT_INDEX),
@@ -2122,6 +2655,10 @@ class GlesRawStacker(
         return max(4.0f, hwmfDebug.srReadyFlowRangeThresholdPx * 4.0f)
     }
 
+    private fun diagnosticPostResidualHistogramRange(): Float {
+        return 12.0f
+    }
+
     private fun Float.percentString(): String {
         return if (isFinite()) {
             java.lang.String.format(java.util.Locale.US, "%.1f%%", this * 100f)
@@ -2141,6 +2678,14 @@ class GlesRawStacker(
     private fun Float.formatScale(): String {
         return if (isFinite()) {
             java.lang.String.format(java.util.Locale.US, "%.2f", this)
+        } else {
+            "n/a"
+        }
+    }
+
+    private fun Float.formatWeight(): String {
+        return if (isFinite()) {
+            java.lang.String.format(java.util.Locale.US, "%.3f", this)
         } else {
             "n/a"
         }
@@ -2176,6 +2721,22 @@ class GlesRawStacker(
             java.lang.String.format(java.util.Locale.US, "[%.2f %.2f]px", this[0], this[1])
         } else {
             "n/a"
+        }
+    }
+
+    private fun RegistrationTranslation?.translationSummary(): String {
+        return if (this != null && dx.isFinite() && dy.isFinite()) {
+            java.lang.String.format(java.util.Locale.US, "[%.2f %.2f]px", dx, dy)
+        } else {
+            "n/a"
+        }
+    }
+
+    private fun RegistrationTranslation?.seedDistance(seed: RegistrationTranslation?): Float {
+        return if (this != null && seed != null) {
+            distanceTo(seed)
+        } else {
+            Float.NaN
         }
     }
 
@@ -2378,6 +2939,44 @@ class GlesRawStacker(
             hwmfBlend.lscNoiseGainMax.coerceAtLeast(1.0f)
         )
         GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uWienerBaseWeight"), hwmfBlend.wienerBaseWeight)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uDenoiseSignalLow"), hwmfBlend.denoiseSignalLow)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uDenoiseSignalHigh"), hwmfBlend.denoiseSignalHigh)
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseLscGainStart"),
+            hwmfBlend.denoiseLscGainStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseLscGainEnd"),
+            hwmfBlend.denoiseLscGainEnd
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseStaticRobustStart"),
+            hwmfBlend.denoiseStaticRobustStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseStaticRobustEnd"),
+            hwmfBlend.denoiseStaticRobustEnd
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseStaticTileStart"),
+            hwmfBlend.denoiseStaticTileStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseStaticTileEnd"),
+            hwmfBlend.denoiseStaticTileEnd
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseNonReferenceWeightBoost"),
+            hwmfBlend.denoiseNonReferenceWeightBoost
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseNonReferenceWeightFloor"),
+            hwmfBlend.denoiseNonReferenceWeightFloor
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uDenoiseReferenceDarkWeightScale"),
+            hwmfBlend.denoiseReferenceDarkWeightScale
+        )
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(program, "uHighlightSuppressionStrength"),
             hwmfBlend.highlightSuppressionStrength
@@ -2430,6 +3029,66 @@ class GlesRawStacker(
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(program, "uLscNoiseGainMax"),
             hwmfPostfilter.lscNoiseGainMax.coerceAtLeast(1.0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uPostfilterNoiseFloor"),
+            hwmfPostfilter.noiseFloorVariance.coerceAtLeast(0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowLightSignalLow"),
+            hwmfPostfilter.lowLightSignalLow
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowLightSignalHigh"),
+            hwmfPostfilter.lowLightSignalHigh
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowLightSmoothBoost"),
+            hwmfPostfilter.lowLightSmoothBoost
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLscSmoothGainStart"),
+            hwmfPostfilter.lscSmoothGainStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLscSmoothGainEnd"),
+            hwmfPostfilter.lscSmoothGainEnd
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLscSmoothBoost"),
+            hwmfPostfilter.lscSmoothBoost
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowWeightStart"),
+            hwmfPostfilter.lowWeightStart
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowWeightEnd"),
+            hwmfPostfilter.lowWeightEnd
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uLowWeightSmoothBoost"),
+            hwmfPostfilter.lowWeightSmoothBoost
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uResidualNoiseWeight"),
+            hwmfPostfilter.residualNoiseWeight.coerceAtLeast(0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uResidualNoiseLowScale"),
+            hwmfPostfilter.residualNoiseLowScale.coerceAtLeast(0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uResidualNoiseHighScale"),
+            hwmfPostfilter.residualNoiseHighScale.coerceAtLeast(hwmfPostfilter.residualNoiseLowScale)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uResidualSmoothBoost"),
+            hwmfPostfilter.residualSmoothBoost.coerceAtLeast(0f)
+        )
+        GLES31.glUniform1f(
+            GLES31.glGetUniformLocation(program, "uMaxSmoothStrength"),
+            hwmfPostfilter.maxSmoothStrength.coerceIn(0f, 1f)
         )
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(program, "uHdrRecoverySmoothSuppression"),
@@ -2679,7 +3338,25 @@ class GlesRawStacker(
         private const val DIAGNOSTIC_HIGH_CONFIDENCE_COUNT_INDEX = 28
         private const val DIAGNOSTIC_SR_ALIGNMENT_READY_COUNT_INDEX = 29
         private const val DIAGNOSTIC_SR_DETAIL_READY_COUNT_INDEX = 30
-        private const val DIAGNOSTIC_HIST_OFFSET = 40
+        private const val DIAGNOSTIC_POST_RESIDUAL_COUNT_INDEX = 31
+        private const val DIAGNOSTIC_POST_RESIDUAL_SUM_INDEX = 32
+        private const val DIAGNOSTIC_POST_RESIDUAL_MAX_INDEX = 33
+        private const val DIAGNOSTIC_POST_SMOOTH_COUNT_INDEX = 34
+        private const val DIAGNOSTIC_POST_SMOOTH_SUM_INDEX = 35
+        private const val DIAGNOSTIC_POST_SMOOTH_MAX_INDEX = 36
+        private const val DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_COUNT_INDEX = 37
+        private const val DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_SUM_INDEX = 38
+        private const val DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_MAX_INDEX = 39
+        private const val DIAGNOSTIC_POST_WIENER_COUNT_INDEX = 40
+        private const val DIAGNOSTIC_POST_WIENER_SUM_INDEX = 41
+        private const val DIAGNOSTIC_POST_WIENER_MAX_INDEX = 42
+        private const val DIAGNOSTIC_POST_LSC_COUNT_INDEX = 43
+        private const val DIAGNOSTIC_POST_LSC_SUM_INDEX = 44
+        private const val DIAGNOSTIC_POST_LSC_MAX_INDEX = 45
+        private const val DIAGNOSTIC_POST_LOW_WEIGHT_COUNT_INDEX = 46
+        private const val DIAGNOSTIC_POST_LOW_WEIGHT_SUM_INDEX = 47
+        private const val DIAGNOSTIC_POST_LOW_WEIGHT_MAX_INDEX = 48
+        private const val DIAGNOSTIC_HIST_OFFSET = 56
         private const val DIAGNOSTIC_FLOW_HIST_OFFSET = DIAGNOSTIC_HIST_OFFSET
         private const val DIAGNOSTIC_ROBUST_HIST_OFFSET = DIAGNOSTIC_FLOW_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
         private const val DIAGNOSTIC_TILE_HIST_OFFSET = DIAGNOSTIC_ROBUST_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
@@ -2687,13 +3364,20 @@ class GlesRawStacker(
         private const val DIAGNOSTIC_RESIDUAL_HIST_OFFSET = DIAGNOSTIC_WEIGHT_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
         private const val DIAGNOSTIC_NOISE_RESIDUAL_HIST_OFFSET = DIAGNOSTIC_RESIDUAL_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
         private const val DIAGNOSTIC_FLOW_RANGE_HIST_OFFSET = DIAGNOSTIC_NOISE_RESIDUAL_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
-        private const val DIAGNOSTIC_UINT_COUNT = DIAGNOSTIC_FLOW_RANGE_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_RESIDUAL_HIST_OFFSET = DIAGNOSTIC_FLOW_RANGE_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_SMOOTH_HIST_OFFSET = DIAGNOSTIC_POST_RESIDUAL_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_HIST_OFFSET = DIAGNOSTIC_POST_SMOOTH_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_WIENER_HIST_OFFSET = DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_LSC_HIST_OFFSET = DIAGNOSTIC_POST_WIENER_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_POST_LOW_WEIGHT_HIST_OFFSET = DIAGNOSTIC_POST_LSC_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
+        private const val DIAGNOSTIC_UINT_COUNT = DIAGNOSTIC_POST_LOW_WEIGHT_HIST_OFFSET + DIAGNOSTIC_HIST_BINS
         private const val DIAGNOSTIC_UNIT_QUANTIZATION = 1000f
         private const val DIAGNOSTIC_FLOW_QUANTIZATION = 10f
         private const val DIAGNOSTIC_WEIGHT_QUANTIZATION = 100f
         private const val DIAGNOSTIC_LSC_QUANTIZATION = 1000f
         private const val DIAGNOSTIC_RESIDUAL_QUANTIZATION = 10000f
         private const val DIAGNOSTIC_NOISE_RESIDUAL_QUANTIZATION = 100f
+        private const val DIAGNOSTIC_POST_RESIDUAL_QUANTIZATION = 100f
 
         private val FULLSCREEN_VERTEX_SHADER = """
             #version 300 es
@@ -3694,6 +4378,17 @@ class GlesRawStacker(
             uniform float uPrecisionReferenceSignal;
             uniform float uLscNoiseGainMax;
             uniform float uWienerBaseWeight;
+            uniform float uDenoiseSignalLow;
+            uniform float uDenoiseSignalHigh;
+            uniform float uDenoiseLscGainStart;
+            uniform float uDenoiseLscGainEnd;
+            uniform float uDenoiseStaticRobustStart;
+            uniform float uDenoiseStaticRobustEnd;
+            uniform float uDenoiseStaticTileStart;
+            uniform float uDenoiseStaticTileEnd;
+            uniform float uDenoiseNonReferenceWeightBoost;
+            uniform float uDenoiseNonReferenceWeightFloor;
+            uniform float uDenoiseReferenceDarkWeightScale;
             uniform float uHighlightSuppressionStrength;
             uniform float uHighlightSuppressionStart;
             uniform float uHighlightSuppressionEnd;
@@ -3878,6 +4573,34 @@ class GlesRawStacker(
                 return clamp(referenceVariance / variance, 0.05, 4.0);
             }
 
+            float denoiseNeed(float correctedSignalNorm, float lscGainForNoise) {
+                float dark = 1.0 - smoothstep(
+                    min(uDenoiseSignalLow, uDenoiseSignalHigh),
+                    max(uDenoiseSignalLow, uDenoiseSignalHigh),
+                    correctedSignalNorm
+                );
+                float lsc = smoothstep(
+                    min(uDenoiseLscGainStart, uDenoiseLscGainEnd),
+                    max(uDenoiseLscGainStart, uDenoiseLscGainEnd),
+                    lscGainForNoise
+                );
+                return clamp(max(dark, dark * 0.45 + lsc * 0.55), 0.0, 1.0);
+            }
+
+            float denoiseStaticConfidence(float local, float robust) {
+                float tileConfidence = smoothstep(
+                    min(uDenoiseStaticTileStart, uDenoiseStaticTileEnd),
+                    max(uDenoiseStaticTileStart, uDenoiseStaticTileEnd),
+                    local
+                );
+                float robustConfidence = smoothstep(
+                    min(uDenoiseStaticRobustStart, uDenoiseStaticRobustEnd),
+                    max(uDenoiseStaticRobustStart, uDenoiseStaticRobustEnd),
+                    robust
+                );
+                return clamp(tileConfidence * robustConfidence, 0.0, 1.0);
+            }
+
             void main() {
                 ivec2 p = ivec2(gl_GlobalInvocationID.xy);
                 if (p.x >= uImageSize.x || p.y >= uImageSize.y) return;
@@ -3896,6 +4619,7 @@ class GlesRawStacker(
                 float value = 0.0;
                 float robust = 1.0;
                 float local = 1.0;
+                float alignmentRobust = 1.0;
                 float clipAlpha = 0.0;
                 float sourceLscNoiseGain = 1.0;
                 if (uIsReference != 0) {
@@ -3912,7 +4636,8 @@ class GlesRawStacker(
                         imageStore(uAccumulatorOutput, p, prev);
                         return;
                     }
-                    robust = mapAt(uRobustness, planePos);
+                    alignmentRobust = mapAt(uRobustness, planePos);
+                    robust = alignmentRobust;
                     local = tileMaskAt(planePos);
                     float base = local * max(robust, uRobustnessFloorFactor * local);
                     if (base <= uMinBlendBaseWeight) {
@@ -3952,8 +4677,18 @@ class GlesRawStacker(
                 float wiener = (outputValue * outputValue) / (outputValue * outputValue + outputVariance + 1e-6);
                 float precisionWeight = sensorPrecisionWeight(sourceValue, bayerIndex, sourceLscNoiseGain);
                 float weight = precisionWeight * (uWienerBaseWeight + wiener);
+                float denoiseAmount = denoiseNeed(sourceValue, sourceLscNoiseGain);
                 if (uIsReference == 0) {
+                    float staticConfidence = denoiseStaticConfidence(local, alignmentRobust) * (1.0 - clipAlpha);
+                    float denoiseBoost = denoiseAmount * staticConfidence;
                     weight *= uFrameWeight * robust;
+                    weight *= mix(1.0, max(uDenoiseNonReferenceWeightBoost, 1.0), denoiseBoost);
+                    weight = max(
+                        weight,
+                        precisionWeight * max(uDenoiseNonReferenceWeightFloor, 0.0) * denoiseBoost
+                    );
+                } else if (uHdrMode == 0) {
+                    weight *= mix(1.0, clamp(uDenoiseReferenceDarkWeightScale, 0.05, 1.0), denoiseAmount);
                 }
                 if (uHdrMode != 0) {
                     weight *= 1.0 - 0.90 * clipAlpha;
@@ -3986,7 +4721,8 @@ class GlesRawStacker(
             uniform sampler2D uTileMask;
             uniform sampler2D uKernel;
             uniform sampler2D uLensShadingMap;
-            layout(rgba16f, binding = 0) uniform highp image2D uAccumulator;
+            uniform sampler2D uAccumulatorInput;
+            layout(rgba16f, binding = 0) writeonly uniform highp image2D uAccumulatorOutput;
             uniform ivec2 uImageSize;
             uniform ivec2 uOutputSize;
             uniform ivec2 uPlaneSize;
@@ -4004,6 +4740,7 @@ class GlesRawStacker(
             uniform float uOutputScale;
             uniform float uSrMinEffectiveWeight;
             uniform float uSrSplatRadius;
+            uniform float uRegistrationSrWeight;
             uniform float uMinBlendBaseWeight;
             uniform float uRobustnessFloorFactor;
             uniform float uPrecisionReferenceSignal;
@@ -4178,7 +4915,7 @@ class GlesRawStacker(
                 ivec2 p = ivec2(gl_GlobalInvocationID.xy);
                 if (p.x >= uOutputSize.x || p.y >= uOutputSize.y) return;
 
-                vec4 prev = imageLoad(uAccumulator, p);
+                vec4 prev = texelFetch(uAccumulatorInput, p, 0);
                 int bayerIndex = bayerIndexAt(uCfaPattern, p);
                 int period = cfaPeriod(uCfaPattern);
                 ivec2 phaseOffset = ivec2(p.x % period, p.y % period);
@@ -4189,18 +4926,22 @@ class GlesRawStacker(
                 float base = 1.0;
                 vec2 sourceRaw = refRaw;
                 if (uIsReference == 0) {
+                    if (uRegistrationSrWeight <= 0.0) {
+                        imageStore(uAccumulatorOutput, p, prev);
+                        return;
+                    }
                     sourceRaw = registrationSourceRaw(refRaw);
                     if (sourceRaw.x < -0.5 || sourceRaw.y < -0.5 ||
                         sourceRaw.x > float(uImageSize.x) - 0.5 ||
                         sourceRaw.y > float(uImageSize.y) - 0.5) {
-                        imageStore(uAccumulator, p, prev);
+                        imageStore(uAccumulatorOutput, p, prev);
                         return;
                     }
                     float local = tileMaskAt(planePos);
                     robust = mapAt(uRobustness, planePos);
                     base = local * max(robust, uRobustnessFloorFactor * local);
                     if (base <= max(uMinBlendBaseWeight, uSrMinEffectiveWeight * 0.25)) {
-                        imageStore(uAccumulator, p, prev);
+                        imageStore(uAccumulatorOutput, p, prev);
                         return;
                     }
                 }
@@ -4233,10 +4974,10 @@ class GlesRawStacker(
                 float precisionWeight = sensorPrecisionWeight(value, bayerIndex, sourceLscNoiseGain);
                 float weight = precisionWeight * (uWienerBaseWeight + wiener);
                 if (uIsReference == 0) {
-                    weight *= uFrameWeight * robust;
+                    weight *= uFrameWeight * robust * clamp(uRegistrationSrWeight, 0.0, 1.0);
                 }
                 if (weight <= 0.0) {
-                    imageStore(uAccumulator, p, prev);
+                    imageStore(uAccumulatorOutput, p, prev);
                     return;
                 }
 
@@ -4244,9 +4985,9 @@ class GlesRawStacker(
                     value * weight,
                     weight,
                     value * value * weight,
-                    weight * clamp(robust, 0.0, 1.0)
+                    uIsReference != 0 ? 0.0 : weight * clamp(robust, 0.0, 1.0)
                 );
-                imageStore(uAccumulator, p, next);
+                imageStore(uAccumulatorOutput, p, next);
             }
         """.trimIndent()
 
@@ -4255,7 +4996,8 @@ class GlesRawStacker(
             $RAW_COMMON
             in vec2 vTexCoord;
             out vec4 fragColor;
-            uniform sampler2D uAccumulator;
+            uniform sampler2D uSrAccumulator;
+            uniform sampler2D uBasePackedRaw;
             uniform highp usampler2D uReferenceRaw;
             uniform sampler2D uLensShadingMap;
             uniform ivec2 uImageSize;
@@ -4268,8 +5010,16 @@ class GlesRawStacker(
             uniform float uNoiseAlphaByChannel[4];
             uniform float uNoiseBetaByChannel[4];
             uniform float uOutputScale;
+            uniform int uForceBaseUpscale;
             uniform float uMinEffectiveWeight;
             uniform float uDetailRestoreStrength;
+            uniform float uLscNoiseGainMax;
+            uniform float uLowLightSignalLow;
+            uniform float uLowLightSignalHigh;
+            uniform float uLscSmoothGainStart;
+            uniform float uLscSmoothGainEnd;
+            uniform float uSrDetailLowLightSuppression;
+            uniform float uSrDetailLscSuppression;
 
             vec2 referenceRawPos(ivec2 outputPos) {
                 return (vec2(outputPos) + vec2(0.5)) / max(uOutputScale, 1.0) - vec2(0.5);
@@ -4285,11 +5035,23 @@ class GlesRawStacker(
                 return gains.a;
             }
 
+            float lscNoiseGain(ivec2 samplePos) {
+                return clamp(lscGain(samplePos), 1e-3, max(uLscNoiseGainMax, 1.0));
+            }
+
             float rawNormAt(ivec2 samplePos, int bayerIndex) {
                 samplePos = clamp(samplePos, ivec2(0), uImageSize - ivec2(1));
                 float raw = float(texelFetch(uReferenceRaw, samplePos, 0).r);
                 float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
                 return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(samplePos) / range, 0.0, 1.0);
+            }
+
+            float basePackedNormAt(ivec2 samplePos) {
+                samplePos = clamp(samplePos, ivec2(0), uImageSize - ivec2(1));
+                vec2 rg = texelFetch(uBasePackedRaw, samplePos, 0).rg;
+                float lo = floor(rg.r * 255.0 + 0.5);
+                float hi = floor(rg.g * 255.0 + 0.5);
+                return clamp((lo + hi * 256.0) / 65535.0, 0.0, 1.0);
             }
 
             ivec2 maxLatticeForPhase(ivec2 phaseOffset, int period) {
@@ -4299,6 +5061,11 @@ class GlesRawStacker(
             float fetchSamePhase(ivec2 lattice, ivec2 phaseOffset, int period, int bayerIndex) {
                 lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
                 return rawNormAt(phaseOffset + lattice * period, bayerIndex);
+            }
+
+            float fetchBaseSamePhase(ivec2 lattice, ivec2 phaseOffset, int period) {
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return basePackedNormAt(phaseOffset + lattice * period);
             }
 
             float sampleSamePhase(vec2 rawPos, ivec2 phaseOffset, int period, int bayerIndex) {
@@ -4319,8 +5086,53 @@ class GlesRawStacker(
                 return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
             }
 
+            float sampleBaseSamePhase(vec2 rawPos, ivec2 phaseOffset, int period) {
+                ivec2 maxLattice = maxLatticeForPhase(phaseOffset, period);
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                vec2 pos = clamp(
+                    (rawPos - phase) / float(period),
+                    vec2(0.0),
+                    vec2(float(maxLattice.x), float(maxLattice.y))
+                );
+                ivec2 p0 = ivec2(floor(pos));
+                ivec2 p1 = min(p0 + ivec2(1), maxLattice);
+                vec2 f = pos - vec2(p0);
+                float v00 = fetchBaseSamePhase(p0, phaseOffset, period);
+                float v10 = fetchBaseSamePhase(ivec2(p1.x, p0.y), phaseOffset, period);
+                float v01 = fetchBaseSamePhase(ivec2(p0.x, p1.y), phaseOffset, period);
+                float v11 = fetchBaseSamePhase(p1, phaseOffset, period);
+                return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+            }
+
+            ivec2 nearestSamePhase(vec2 rawPos, ivec2 phaseOffset, int period) {
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                ivec2 lattice = ivec2(round((rawPos - phase) / float(period)));
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return phaseOffset + lattice * period;
+            }
+
             float referenceOutputNorm(ivec2 outputPos, int bayerIndex, int period, ivec2 phaseOffset) {
                 return sampleSamePhase(referenceRawPos(outputPos), phaseOffset, period, bayerIndex);
+            }
+
+            float baseOutputNorm(ivec2 outputPos, int period, ivec2 phaseOffset) {
+                return sampleBaseSamePhase(referenceRawPos(outputPos), phaseOffset, period);
+            }
+
+            float lowLightAmount(float signal) {
+                return 1.0 - smoothstep(
+                    min(uLowLightSignalLow, uLowLightSignalHigh),
+                    max(uLowLightSignalLow, uLowLightSignalHigh),
+                    signal
+                );
+            }
+
+            float lscSmoothAmount(float lscGainForNoise) {
+                return smoothstep(
+                    min(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    max(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    lscGainForNoise
+                );
             }
 
             void main() {
@@ -4328,21 +5140,35 @@ class GlesRawStacker(
                 int bayerIndex = bayerIndexAt(uCfaPattern, p);
                 int period = cfaPeriod(uCfaPattern);
                 ivec2 phaseOffset = ivec2(p.x % period, p.y % period);
-                vec4 a = texelFetch(uAccumulator, p, 0);
+                vec4 a = texelFetch(uSrAccumulator, p, 0);
+                float base = baseOutputNorm(p, period, phaseOffset);
+                if (uForceBaseUpscale != 0) {
+                    uint raw = uint(floor(clamp(base, 0.0, 1.0) * 65535.0 + 0.5));
+                    uint lo = raw & 255u;
+                    uint hi = (raw >> 8) & 255u;
+                    fragColor = vec4(float(lo) / 255.0, float(hi) / 255.0, 0.0, 1.0);
+                    return;
+                }
                 float reference = referenceOutputNorm(p, bayerIndex, period, phaseOffset);
-                float fused = a.g > 1e-5 ? clamp(a.r / max(a.g, 1e-5), 0.0, 1.0) : reference;
+                float sr = a.g > 1e-5 ? clamp(a.r / max(a.g, 1e-5), 0.0, 1.0) : base;
+                float detailSupport = max(a.a, 0.0);
                 float confidence = smoothstep(
                     max(uMinEffectiveWeight, 0.02),
                     max(uMinEffectiveWeight * 3.0, 0.35),
-                    a.g
+                    detailSupport
                 );
-                fused = mix(reference, fused, confidence);
-
-                float detail = reference - 0.5 * (
-                    referenceOutputNorm(clamp(p + ivec2(period, 0), ivec2(0), uOutputSize - ivec2(1)), bayerIndex, period, phaseOffset) +
-                    referenceOutputNorm(clamp(p - ivec2(period, 0), ivec2(0), uOutputSize - ivec2(1)), bayerIndex, period, phaseOffset)
+                vec2 rawPos = referenceRawPos(p);
+                ivec2 rawSample = nearestSamePhase(rawPos, phaseOffset, period);
+                float lowLight = lowLightAmount(max(base, reference));
+                float lsc = lscSmoothAmount(lscNoiseGain(rawSample));
+                float detailDenoise = 1.0 - clamp(
+                    uSrDetailLowLightSuppression * lowLight +
+                    uSrDetailLscSuppression * lsc,
+                    0.0,
+                    0.95
                 );
-                fused = clamp(fused + detail * uDetailRestoreStrength * (1.0 - confidence) * 0.25, 0.0, 1.0);
+                float detailWeight = confidence * detailDenoise * clamp(uDetailRestoreStrength, 0.0, 1.0);
+                float fused = clamp(base + (sr - base) * detailWeight, 0.0, 1.0);
 
                 uint raw = uint(floor(fused * 65535.0 + 0.5));
                 uint lo = raw & 255u;
@@ -4974,15 +5800,43 @@ class GlesRawStacker(
             precision highp uint;
             layout(local_size_x = 16, local_size_y = 16) in;
             uniform sampler2D uAccumulator;
+            uniform sampler2D uPostfilterAccumulator;
             uniform sampler2D uLensShadingMap;
             uniform ivec2 uImageSize;
             uniform ivec2 uAccumulatorSize;
             uniform ivec2 uSampleGridSize;
             uniform int uSampleStep;
             uniform int uCfaPattern;
+            uniform float uNoiseAlphaByChannel[4];
+            uniform float uNoiseBetaByChannel[4];
             uniform float uOutputScale;
             uniform float uWeightHistogramRange;
+            uniform float uPostResidualHistogramRange;
             uniform float uLensShadingEdgeFraction;
+            uniform float uFinalSmoothStrength;
+            uniform float uFlatVarianceStart;
+            uniform float uFlatVarianceEnd;
+            uniform float uDetailKeepNoiseLowScale;
+            uniform float uDetailKeepNoiseHighScale;
+            uniform float uDetailKeepOffsetLow;
+            uniform float uDetailKeepOffsetHigh;
+            uniform float uDetailKeepSuppression;
+            uniform float uLscNoiseGainMax;
+            uniform float uPostfilterNoiseFloor;
+            uniform float uLowLightSignalLow;
+            uniform float uLowLightSignalHigh;
+            uniform float uLowLightSmoothBoost;
+            uniform float uLscSmoothGainStart;
+            uniform float uLscSmoothGainEnd;
+            uniform float uLscSmoothBoost;
+            uniform float uLowWeightStart;
+            uniform float uLowWeightEnd;
+            uniform float uLowWeightSmoothBoost;
+            uniform float uResidualNoiseWeight;
+            uniform float uResidualNoiseLowScale;
+            uniform float uResidualNoiseHighScale;
+            uniform float uResidualSmoothBoost;
+            uniform float uMaxSmoothStrength;
             layout(std430, binding = $DIAGNOSTIC_BUFFER_BINDING) buffer RawStackDiagnosticStats {
                 uint stats[];
             };
@@ -4996,7 +5850,33 @@ class GlesRawStacker(
             const int LSC_MAX_INDEX = $DIAGNOSTIC_LSC_MAX_INDEX;
             const int LSC_EDGE_COUNT_INDEX = $DIAGNOSTIC_LSC_EDGE_COUNT_INDEX;
             const int LSC_EDGE_SUM_INDEX = $DIAGNOSTIC_LSC_EDGE_SUM_INDEX;
+            const int POST_RESIDUAL_COUNT_INDEX = $DIAGNOSTIC_POST_RESIDUAL_COUNT_INDEX;
+            const int POST_RESIDUAL_SUM_INDEX = $DIAGNOSTIC_POST_RESIDUAL_SUM_INDEX;
+            const int POST_RESIDUAL_MAX_INDEX = $DIAGNOSTIC_POST_RESIDUAL_MAX_INDEX;
+            const int POST_SMOOTH_COUNT_INDEX = $DIAGNOSTIC_POST_SMOOTH_COUNT_INDEX;
+            const int POST_SMOOTH_SUM_INDEX = $DIAGNOSTIC_POST_SMOOTH_SUM_INDEX;
+            const int POST_SMOOTH_MAX_INDEX = $DIAGNOSTIC_POST_SMOOTH_MAX_INDEX;
+            const int POST_EFFECTIVE_SMOOTH_COUNT_INDEX = $DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_COUNT_INDEX;
+            const int POST_EFFECTIVE_SMOOTH_SUM_INDEX = $DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_SUM_INDEX;
+            const int POST_EFFECTIVE_SMOOTH_MAX_INDEX = $DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_MAX_INDEX;
+            const int POST_WIENER_COUNT_INDEX = $DIAGNOSTIC_POST_WIENER_COUNT_INDEX;
+            const int POST_WIENER_SUM_INDEX = $DIAGNOSTIC_POST_WIENER_SUM_INDEX;
+            const int POST_WIENER_MAX_INDEX = $DIAGNOSTIC_POST_WIENER_MAX_INDEX;
+            const int POST_LSC_COUNT_INDEX = $DIAGNOSTIC_POST_LSC_COUNT_INDEX;
+            const int POST_LSC_SUM_INDEX = $DIAGNOSTIC_POST_LSC_SUM_INDEX;
+            const int POST_LSC_MAX_INDEX = $DIAGNOSTIC_POST_LSC_MAX_INDEX;
+            const int POST_LOW_WEIGHT_COUNT_INDEX = $DIAGNOSTIC_POST_LOW_WEIGHT_COUNT_INDEX;
+            const int POST_LOW_WEIGHT_SUM_INDEX = $DIAGNOSTIC_POST_LOW_WEIGHT_SUM_INDEX;
+            const int POST_LOW_WEIGHT_MAX_INDEX = $DIAGNOSTIC_POST_LOW_WEIGHT_MAX_INDEX;
             const int WEIGHT_HIST_OFFSET = $DIAGNOSTIC_WEIGHT_HIST_OFFSET;
+            const int POST_RESIDUAL_HIST_OFFSET = $DIAGNOSTIC_POST_RESIDUAL_HIST_OFFSET;
+            const int POST_SMOOTH_HIST_OFFSET = $DIAGNOSTIC_POST_SMOOTH_HIST_OFFSET;
+            const int POST_EFFECTIVE_SMOOTH_HIST_OFFSET = $DIAGNOSTIC_POST_EFFECTIVE_SMOOTH_HIST_OFFSET;
+            const int POST_WIENER_HIST_OFFSET = $DIAGNOSTIC_POST_WIENER_HIST_OFFSET;
+            const int POST_LSC_HIST_OFFSET = $DIAGNOSTIC_POST_LSC_HIST_OFFSET;
+            const int POST_LOW_WEIGHT_HIST_OFFSET = $DIAGNOSTIC_POST_LOW_WEIGHT_HIST_OFFSET;
+            const float UNIT_Q = ${DIAGNOSTIC_UNIT_QUANTIZATION};
+            const float POST_RESIDUAL_Q = ${DIAGNOSTIC_POST_RESIDUAL_QUANTIZATION};
             const float WEIGHT_Q = ${DIAGNOSTIC_WEIGHT_QUANTIZATION};
             const float LSC_Q = ${DIAGNOSTIC_LSC_QUANTIZATION};
 
@@ -5032,6 +5912,100 @@ class GlesRawStacker(
                 return clamp(ivec2(round(mapped)), ivec2(0), uAccumulatorSize - ivec2(1));
             }
 
+            float lscNoiseGain(ivec2 samplePos) {
+                return clamp(lscGain(samplePos), 1e-3, max(uLscNoiseGainMax, 1.0));
+            }
+
+            float noiseVarianceForChannel(float correctedSignalNorm, int bayerIndex, float lscGainForNoise) {
+                float channelAlpha = uNoiseAlphaByChannel[bayerIndex];
+                float channelBeta = uNoiseBetaByChannel[bayerIndex];
+                float gain = clamp(lscGainForNoise, 1e-3, max(uLscNoiseGainMax, 1.0));
+                float floorVariance = max(uPostfilterNoiseFloor, 0.0) * gain * gain;
+                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return floorVariance;
+                float modelVariance =
+                    channelAlpha * clamp(correctedSignalNorm, 0.0, 1.0) * gain +
+                    channelBeta * gain * gain;
+                return max(modelVariance, floorVariance);
+            }
+
+            float postFusedAt(ivec2 p, float fallback) {
+                p = clamp(p, ivec2(0), uImageSize - ivec2(1));
+                vec4 a = texelFetch(uPostfilterAccumulator, p, 0);
+                if (a.g <= 1e-5) return fallback;
+                return clamp(a.r / max(a.g, 1e-5), 0.0, 1.0);
+            }
+
+            float lowLightAmount(float signal) {
+                return 1.0 - smoothstep(
+                    min(uLowLightSignalLow, uLowLightSignalHigh),
+                    max(uLowLightSignalLow, uLowLightSignalHigh),
+                    signal
+                );
+            }
+
+            float lscSmoothAmount(float lscGainForNoise) {
+                return smoothstep(
+                    min(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    max(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    lscGainForNoise
+                );
+            }
+
+            float lowWeightAmount(float accumulatorWeight) {
+                return 1.0 - smoothstep(
+                    min(uLowWeightStart, uLowWeightEnd),
+                    max(uLowWeightStart, uLowWeightEnd),
+                    accumulatorWeight
+                );
+            }
+
+            float accumulatorResidualNoise(vec4 accumulator, float fused) {
+                if (accumulator.g <= 1e-5) return 0.0;
+                float sampleMean2 = max(accumulator.b / max(accumulator.g, 1e-5), 0.0);
+                float temporalVariance = max(sampleMean2 - fused * fused, 0.0);
+                return temporalVariance / max(accumulator.g, 1.0);
+            }
+
+            float residualNoiseSigmaRatio(float residualNoise, float modelNoise) {
+                return sqrt(max(residualNoise, 0.0) / max(modelNoise, 1e-10));
+            }
+
+            float residualNoiseAmount(float residualSigmaRatio) {
+                float low = max(uResidualNoiseLowScale, 0.0);
+                float high = max(uResidualNoiseHighScale, uResidualNoiseLowScale + 1e-4);
+                return smoothstep(low, high, residualSigmaRatio);
+            }
+
+            float finalSmoothAmount(
+                float variance,
+                float noise,
+                float detailDeviation,
+                float signal,
+                float lscGainForNoise,
+                float accumulatorWeight,
+                float residualAmount
+            ) {
+                float flatness = 1.0 - smoothstep(uFlatVarianceStart, uFlatVarianceEnd, variance);
+                float noiseStd = sqrt(max(noise, 1e-10));
+                float detailKeep = smoothstep(
+                    uDetailKeepNoiseLowScale * noiseStd + uDetailKeepOffsetLow,
+                    uDetailKeepNoiseHighScale * noiseStd + uDetailKeepOffsetHigh,
+                    detailDeviation
+                );
+                float base = uFinalSmoothStrength * flatness * (1.0 - uDetailKeepSuppression * detailKeep);
+                float lowLight = lowLightAmount(signal);
+                float lsc = lscSmoothAmount(lscGainForNoise);
+                float lowWeight = lowWeightAmount(accumulatorWeight);
+                float residualNeed = residualAmount * max(max(lowLight, lsc), lowWeight);
+                float boost =
+                    1.0 +
+                    uLowLightSmoothBoost * lowLight +
+                    uLscSmoothBoost * lsc +
+                    uLowWeightSmoothBoost * lowWeight * max(lowLight, lsc) +
+                    uResidualSmoothBoost * residualNeed;
+                return min(max(uMaxSmoothStrength, 0.0), base * boost);
+            }
+
             void main() {
                 ivec2 sampleIndex = ivec2(gl_GlobalInvocationID.xy);
                 if (sampleIndex.x >= uSampleGridSize.x || sampleIndex.y >= uSampleGridSize.y) return;
@@ -5051,6 +6025,94 @@ class GlesRawStacker(
                     atomicAdd(stats[LSC_EDGE_COUNT_INDEX], 1u);
                     atomicAdd(stats[LSC_EDGE_SUM_INDEX], quant(gain, LSC_Q));
                 }
+
+                vec4 post = texelFetch(uPostfilterAccumulator, raw, 0);
+                if (post.g <= 1e-5) return;
+
+                float fused = clamp(post.r / max(post.g, 1e-5), 0.0, 1.0);
+                float mean = 0.0;
+                float mean2 = 0.0;
+                float count = 0.0;
+                int period = cfaPeriod(uCfaPattern);
+                for (int y = -2; y <= 2; ++y) {
+                    for (int x = -2; x <= 2; ++x) {
+                        ivec2 q = raw + ivec2(x * period, y * period);
+                        if (q.x >= 0 && q.y >= 0 && q.x < uImageSize.x && q.y < uImageSize.y) {
+                            float v = postFusedAt(q, fused);
+                            mean += v;
+                            mean2 += v * v;
+                            count += 1.0;
+                        }
+                    }
+                }
+                mean /= max(count, 1.0);
+                mean2 /= max(count, 1.0);
+
+                int bayerIndex = bayerIndexAt(uCfaPattern, raw);
+                float variance = max(mean2 - mean * mean, 0.0);
+                float sampleLscNoiseGain = lscNoiseGain(raw);
+                float modelNoise = noiseVarianceForChannel(fused, bayerIndex, sampleLscNoiseGain) / max(post.g, 1.0);
+                float residualNoise = accumulatorResidualNoise(post, fused) * max(uResidualNoiseWeight, 0.0);
+                float residualSigmaRatio = residualNoiseSigmaRatio(residualNoise, modelNoise);
+                float residualAmount = residualNoiseAmount(residualSigmaRatio);
+                float residualNoiseForStructure = min(
+                    residualNoise,
+                    modelNoise * max(uResidualNoiseHighScale * uResidualNoiseHighScale, 1.0)
+                );
+                float noise = max(modelNoise, residualNoiseForStructure);
+                float structureVariance = max(variance - noise, 0.0);
+                float wienerGain = structureVariance / max(variance, 1e-6);
+                float detailDeviation = max(abs(fused - mean) - sqrt(max(noise, 1e-10)), 0.0);
+                float postSmoothAmount = finalSmoothAmount(
+                    structureVariance,
+                    noise,
+                    detailDeviation,
+                    fused,
+                    sampleLscNoiseGain,
+                    post.g,
+                    residualAmount
+                );
+                float residualMetric = clamp(residualSigmaRatio, 0.0, uPostResidualHistogramRange);
+                atomicAdd(stats[POST_RESIDUAL_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_RESIDUAL_SUM_INDEX], quant(residualMetric, POST_RESIDUAL_Q));
+                atomicMax(stats[POST_RESIDUAL_MAX_INDEX], quant(residualMetric, POST_RESIDUAL_Q));
+                atomicAdd(
+                    stats[POST_RESIDUAL_HIST_OFFSET + histBin(residualMetric, uPostResidualHistogramRange)],
+                    1u
+                );
+
+                float smoothMetric = clamp(postSmoothAmount, 0.0, 1.0);
+                atomicAdd(stats[POST_SMOOTH_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_SMOOTH_SUM_INDEX], quant(smoothMetric, UNIT_Q));
+                atomicMax(stats[POST_SMOOTH_MAX_INDEX], quant(smoothMetric, UNIT_Q));
+                atomicAdd(stats[POST_SMOOTH_HIST_OFFSET + histBin(smoothMetric, 1.0)], 1u);
+
+                float effectiveSmoothMetric = clamp(postSmoothAmount * (1.0 - wienerGain), 0.0, 1.0);
+                atomicAdd(stats[POST_EFFECTIVE_SMOOTH_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_EFFECTIVE_SMOOTH_SUM_INDEX], quant(effectiveSmoothMetric, UNIT_Q));
+                atomicMax(stats[POST_EFFECTIVE_SMOOTH_MAX_INDEX], quant(effectiveSmoothMetric, UNIT_Q));
+                atomicAdd(
+                    stats[POST_EFFECTIVE_SMOOTH_HIST_OFFSET + histBin(effectiveSmoothMetric, 1.0)],
+                    1u
+                );
+
+                float wienerMetric = clamp(wienerGain, 0.0, 1.0);
+                atomicAdd(stats[POST_WIENER_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_WIENER_SUM_INDEX], quant(wienerMetric, UNIT_Q));
+                atomicMax(stats[POST_WIENER_MAX_INDEX], quant(wienerMetric, UNIT_Q));
+                atomicAdd(stats[POST_WIENER_HIST_OFFSET + histBin(wienerMetric, 1.0)], 1u);
+
+                float lscMetric = clamp(lscSmoothAmount(sampleLscNoiseGain), 0.0, 1.0);
+                atomicAdd(stats[POST_LSC_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_LSC_SUM_INDEX], quant(lscMetric, UNIT_Q));
+                atomicMax(stats[POST_LSC_MAX_INDEX], quant(lscMetric, UNIT_Q));
+                atomicAdd(stats[POST_LSC_HIST_OFFSET + histBin(lscMetric, 1.0)], 1u);
+
+                float lowWeightMetric = clamp(lowWeightAmount(post.g), 0.0, 1.0);
+                atomicAdd(stats[POST_LOW_WEIGHT_COUNT_INDEX], 1u);
+                atomicAdd(stats[POST_LOW_WEIGHT_SUM_INDEX], quant(lowWeightMetric, UNIT_Q));
+                atomicMax(stats[POST_LOW_WEIGHT_MAX_INDEX], quant(lowWeightMetric, UNIT_Q));
+                atomicAdd(stats[POST_LOW_WEIGHT_HIST_OFFSET + histBin(lowWeightMetric, 1.0)], 1u);
             }
         """.trimIndent()
 
@@ -5087,6 +6149,21 @@ class GlesRawStacker(
             uniform float uDetailKeepOffsetHigh;
             uniform float uDetailKeepSuppression;
             uniform float uLscNoiseGainMax;
+            uniform float uPostfilterNoiseFloor;
+            uniform float uLowLightSignalLow;
+            uniform float uLowLightSignalHigh;
+            uniform float uLowLightSmoothBoost;
+            uniform float uLscSmoothGainStart;
+            uniform float uLscSmoothGainEnd;
+            uniform float uLscSmoothBoost;
+            uniform float uLowWeightStart;
+            uniform float uLowWeightEnd;
+            uniform float uLowWeightSmoothBoost;
+            uniform float uResidualNoiseWeight;
+            uniform float uResidualNoiseLowScale;
+            uniform float uResidualNoiseHighScale;
+            uniform float uResidualSmoothBoost;
+            uniform float uMaxSmoothStrength;
             uniform float uHdrRecoverySmoothSuppression;
 
             float lscGain(ivec2 samplePos) {
@@ -5106,13 +6183,13 @@ class GlesRawStacker(
             float noiseVarianceForChannel(float correctedSignalNorm, int bayerIndex, float lscGainForNoise) {
                 float channelAlpha = uNoiseAlphaByChannel[bayerIndex];
                 float channelBeta = uNoiseBetaByChannel[bayerIndex];
-                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return 0.0;
                 float gain = clamp(lscGainForNoise, 1e-3, max(uLscNoiseGainMax, 1.0));
-                return max(
+                float floorVariance = max(uPostfilterNoiseFloor, 0.0) * gain * gain;
+                if (channelAlpha <= 0.0 && channelBeta <= 0.0) return floorVariance;
+                float modelVariance =
                     channelAlpha * clamp(correctedSignalNorm, 0.0, 1.0) * gain +
-                    channelBeta * gain * gain,
-                    0.0
-                );
+                    channelBeta * gain * gain;
+                return max(modelVariance, floorVariance);
             }
 
             float referenceNorm(ivec2 p, int bayerIndex) {
@@ -5169,7 +6246,56 @@ class GlesRawStacker(
                 return clamp(a.r / max(a.g, 1e-5), 0.0, 1.0);
             }
 
-            float finalSmoothAmount(float variance, float noise, float detailDeviation) {
+            float lowLightAmount(float signal) {
+                return 1.0 - smoothstep(
+                    min(uLowLightSignalLow, uLowLightSignalHigh),
+                    max(uLowLightSignalLow, uLowLightSignalHigh),
+                    signal
+                );
+            }
+
+            float lscSmoothAmount(float lscGainForNoise) {
+                return smoothstep(
+                    min(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    max(uLscSmoothGainStart, uLscSmoothGainEnd),
+                    lscGainForNoise
+                );
+            }
+
+            float lowWeightAmount(float accumulatorWeight) {
+                return 1.0 - smoothstep(
+                    min(uLowWeightStart, uLowWeightEnd),
+                    max(uLowWeightStart, uLowWeightEnd),
+                    accumulatorWeight
+                );
+            }
+
+            float accumulatorResidualNoise(vec4 accumulator, float fused) {
+                if (accumulator.g <= 1e-5) return 0.0;
+                float sampleMean2 = max(accumulator.b / max(accumulator.g, 1e-5), 0.0);
+                float temporalVariance = max(sampleMean2 - fused * fused, 0.0);
+                return temporalVariance / max(accumulator.g, 1.0);
+            }
+
+            float residualNoiseSigmaRatio(float residualNoise, float modelNoise) {
+                return sqrt(max(residualNoise, 0.0) / max(modelNoise, 1e-10));
+            }
+
+            float residualNoiseAmount(float residualSigmaRatio) {
+                float low = max(uResidualNoiseLowScale, 0.0);
+                float high = max(uResidualNoiseHighScale, uResidualNoiseLowScale + 1e-4);
+                return smoothstep(low, high, residualSigmaRatio);
+            }
+
+            float finalSmoothAmount(
+                float variance,
+                float noise,
+                float detailDeviation,
+                float signal,
+                float lscGainForNoise,
+                float accumulatorWeight,
+                float residualAmount
+            ) {
                 float flatness = 1.0 - smoothstep(uFlatVarianceStart, uFlatVarianceEnd, variance);
                 float noiseStd = sqrt(max(noise, 1e-10));
                 float detailKeep = smoothstep(
@@ -5177,7 +6303,20 @@ class GlesRawStacker(
                     uDetailKeepNoiseHighScale * noiseStd + uDetailKeepOffsetHigh,
                     detailDeviation
                 );
-                return uFinalSmoothStrength * flatness * (1.0 - uDetailKeepSuppression * detailKeep);
+                float base = uFinalSmoothStrength * flatness * (1.0 - uDetailKeepSuppression * detailKeep);
+                if (uHdrMode != 0) return base;
+
+                float lowLight = lowLightAmount(signal);
+                float lsc = lscSmoothAmount(lscGainForNoise);
+                float lowWeight = lowWeightAmount(accumulatorWeight);
+                float residualNeed = residualAmount * max(max(lowLight, lsc), lowWeight);
+                float boost =
+                    1.0 +
+                    uLowLightSmoothBoost * lowLight +
+                    uLscSmoothBoost * lsc +
+                    uLowWeightSmoothBoost * lowWeight * max(lowLight, lsc) +
+                    uResidualSmoothBoost * residualNeed;
+                return min(max(uMaxSmoothStrength, 0.0), base * boost);
             }
 
             void main() {
@@ -5242,10 +6381,28 @@ class GlesRawStacker(
                 mean /= max(count, 1.0);
                 mean2 /= max(count, 1.0);
                 float variance = max(mean2 - mean * mean, 0.0);
-                float noise = noiseVarianceForChannel(fused, bayerIndex, lscNoiseGain(p)) / max(a.g, 1.0);
-                float wienerGain = max(variance - noise, 0.0) / max(variance, 1e-6);
-                float detailDeviation = abs(fused - mean);
-                float smoothAmount = finalSmoothAmount(variance, noise, detailDeviation);
+                float sampleLscNoiseGain = lscNoiseGain(p);
+                float modelNoise = noiseVarianceForChannel(fused, bayerIndex, sampleLscNoiseGain) / max(a.g, 1.0);
+                float residualNoise = accumulatorResidualNoise(a, fused) * max(uResidualNoiseWeight, 0.0);
+                float residualSigmaRatio = residualNoiseSigmaRatio(residualNoise, modelNoise);
+                float residualAmount = residualNoiseAmount(residualSigmaRatio);
+                float residualNoiseForStructure = min(
+                    residualNoise,
+                    modelNoise * max(uResidualNoiseHighScale * uResidualNoiseHighScale, 1.0)
+                );
+                float noise = max(modelNoise, residualNoiseForStructure);
+                float structureVariance = max(variance - noise, 0.0);
+                float wienerGain = structureVariance / max(variance, 1e-6);
+                float detailDeviation = max(abs(fused - mean) - sqrt(max(noise, 1e-10)), 0.0);
+                float smoothAmount = finalSmoothAmount(
+                    structureVariance,
+                    noise,
+                    detailDeviation,
+                    max(fused, reference),
+                    sampleLscNoiseGain,
+                    a.g,
+                    residualAmount
+                );
                 if (uHdrMode != 0) {
                     smoothAmount *= 1.0 - uHdrRecoverySmoothSuppression * recoveryMix;
                 }

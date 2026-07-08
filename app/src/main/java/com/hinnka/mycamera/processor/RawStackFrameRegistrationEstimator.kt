@@ -37,6 +37,7 @@ data class RawStackGlobalRegistrationCandidate(
 
 data class RawStackRegistrationEstimate(
     val transform: RawStackPerspectiveTransform,
+    val candidateTransform: RawStackPerspectiveTransform = transform,
     val sampleCount: Int,
     val usedSampleCount: Int,
     val inlierRatio: Float,
@@ -123,6 +124,7 @@ object RawStackFrameRegistrationEstimator {
         }
         return RawStackRegistrationEstimate(
             transform = transform,
+            candidateTransform = fittedTransform,
             sampleCount = sortedCandidates.size,
             usedSampleCount = 1,
             inlierRatio = best.coverage.coerceIn(0f, 1f),
@@ -213,6 +215,7 @@ object RawStackFrameRegistrationEstimator {
         }
         return RawStackRegistrationEstimate(
             transform = transform,
+            candidateTransform = fittedTransform,
             sampleCount = samples.size,
             usedSampleCount = usedCount,
             inlierRatio = inlierRatio,

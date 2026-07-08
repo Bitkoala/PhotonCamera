@@ -558,19 +558,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         if (update.useRaw?.value == true) {
             desiredUseMultipleExposure = false
-            desiredUseMFSR = false
         }
         if (update.useMFNR?.value == true) {
             desiredUseMultipleExposure = false
             desiredUseMFSR = false
         }
         if (update.useMFSR?.value == true) {
-            if (desiredUseRaw) {
-                desiredUseMFSR = false
-            } else {
-                desiredUseMultipleExposure = false
-                desiredUseMFNR = false
-            }
+            desiredUseMultipleExposure = false
+            desiredUseMFNR = false
         }
         if (update.useMultipleExposure?.value == true) {
             desiredUseRaw = false
@@ -671,7 +666,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 lutId = update.lutId?.let { PreferenceUpdateValue(it.value) },
                 effects = update.effects?.let { PreferenceUpdateValue(it.value) },
                 aspectRatio = update.aspectRatio?.let { PreferenceUpdateValue(it.value.name) },
-                useRaw = update.useRaw?.let { PreferenceUpdateValue(desiredUseRaw) },
+                useRaw = if (update.useRaw != null || desiredUseRaw != prefs.useRaw) {
+                    PreferenceUpdateValue(desiredUseRaw)
+                } else {
+                    null
+                },
                 useMFNR = if (update.useMFNR != null || desiredUseMFNR != prefs.useMFNR) {
                     PreferenceUpdateValue(desiredUseMFNR)
                 } else {

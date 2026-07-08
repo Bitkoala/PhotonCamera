@@ -534,13 +534,7 @@ fun CameraScreen(
         var targetUseMFNR = preset?.useMFNR ?: false
         var targetUseMFSR = preset?.useMFSR ?: false
 
-        if (targetUseRaw) {
-            targetUseMFSR = false
-        }
         if (targetUseMFNR) {
-            targetUseMFSR = false
-        }
-        if (targetUseMFSR && targetUseRaw) {
             targetUseMFSR = false
         }
 
@@ -1512,9 +1506,9 @@ fun CameraScreen(
             onMFNRToggle = {
                 viewModel.setUseMFNR(it)
             },
-            useHdrComposition = useHdrComposition,
-            onHdrCompositionToggle = {
-                viewModel.setUseHdrComposition(it)
+            useMFSR = useMFSR,
+            onMFSRToggle = {
+                viewModel.setUseMFSR(it)
             },
             useMultipleExposure = useMultipleExposure,
             onMultipleExposureToggle = { viewModel.setUseMultipleExposure(it) },

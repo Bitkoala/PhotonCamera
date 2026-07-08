@@ -38,12 +38,15 @@ class RawStackFrameRegistrationEstimatorTest {
             ),
         )
         val matrix = estimate.transform.matrixAt(0)
+        val candidateMatrix = estimate.candidateTransform.matrixAt(0)
 
         assertTrue(estimate.forceIdentity)
         assertEquals(RawStackRegistrationSource.IMAGE_TRANSLATION, estimate.source)
         assertTrue(estimate.confidence < setup.confidenceConfig.forceIdentityThreshold)
         assertEquals(0f, matrix[2], 0f)
         assertEquals(0f, matrix[5], 0f)
+        assertEquals(8f, candidateMatrix[2], 0.0001f)
+        assertEquals(-4f, candidateMatrix[5], 0.0001f)
     }
 
     @Test

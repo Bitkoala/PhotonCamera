@@ -184,6 +184,37 @@ data class RawStackRegistrationSetup(
             forceIdentityThreshold = confidenceConfig.forceIdentityThreshold,
         )
     }
+
+    fun requiredPyramidLevels(): Int {
+        return if (ds64Enabled) {
+            REGISTRATION_CONTEXT_LEVELS.first { it.name == "DS64" }.pyramidLevel + 1
+        } else {
+            REGISTRATION_CONTEXT_LEVELS.first { it.name == "DS16" }.pyramidLevel + 1
+        }
+    }
+
+    fun referenceContextSummary(): String {
+        val levels = if (ds64Enabled) {
+            REGISTRATION_CONTEXT_LEVELS
+        } else {
+            REGISTRATION_CONTEXT_LEVELS.filterNot { it.name == "DS64" }
+        }
+        return levels.joinToString("/") { it.name }
+    }
+
+    companion object {
+        private data class RegistrationContextLevel(
+            val name: String,
+            val pyramidLevel: Int,
+        )
+
+        private val REGISTRATION_CONTEXT_LEVELS = listOf(
+            RegistrationContextLevel("FULL", 0),
+            RegistrationContextLevel("DS4", 2),
+            RegistrationContextLevel("DS16", 4),
+            RegistrationContextLevel("DS64", 6),
+        )
+    }
 }
 
 data class RawStackRegistrationSummary(

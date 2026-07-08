@@ -34,6 +34,10 @@ data class RawStackDiagnostics(
     val sampleStep: Int,
     val registration: RawStackRegistrationSummary? = null,
     val registrationQuality: RawStackRegistrationQualitySummary? = null,
+    val superResolutionOutputMode: String? = null,
+    val superResolutionFallbackReason: String? = null,
+    val superResolutionDetailFrameCount: Int = 0,
+    val superResolutionDetailWeightSum: Float = Float.NaN,
     val flowMagnitudePx: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val alignmentResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val noiseNormalizedResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
@@ -41,6 +45,12 @@ data class RawStackDiagnostics(
     val robustness: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val tileMask: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val accumulatorWeight: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterSmooth: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterEffectiveSmooth: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterWienerGain: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterLscBoost: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val postfilterLowWeightBoost: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val rejectedTileRatio: Float = Float.NaN,
     val flowOutlierRatio: Float = Float.NaN,
     val highConfidenceTileRatio: Float = Float.NaN,
@@ -53,10 +63,15 @@ data class RawStackDiagnostics(
     fun compactSummary(): String {
         val registrationSummary = registration?.compactSummary()?.let { "$it " }.orEmpty()
         val registrationQualitySummary = registrationQuality?.compactSummary()?.let { "$it " }.orEmpty()
+        val superResolutionSummary = superResolutionOutputMode?.let { mode ->
+            "srOut=$mode srReason=${superResolutionFallbackReason ?: "ok"} " +
+                "srFrames=$superResolutionDetailFrameCount srWeight=${superResolutionDetailWeightSum.fmt()} "
+        }.orEmpty()
         return "HWMF diag mode=$mode frames=$frameCount aligned=$alignedFrameCount " +
             "size=${width}x$height step=$sampleStep " +
             registrationSummary +
             registrationQualitySummary +
+            superResolutionSummary +
             "flowMean=${flowMagnitudePx.mean.fmt()} flowP90=${flowMagnitudePx.p90.fmt()} " +
             "flowMax=${flowMagnitudePx.max.fmt()} flowOut=${flowOutlierRatio.percent()} " +
             "resP90=${alignmentResidual.p90.fmt()} resN90=${noiseNormalizedResidual.p90.fmt()} " +
@@ -66,6 +81,11 @@ data class RawStackDiagnostics(
             "hiConf=${highConfidenceTileRatio.percent()} srAlign=${srAlignmentReadyRatio.percent()} " +
             "srDetail=${srDetailReadyRatio.percent()} " +
             "weightMean=${accumulatorWeight.mean.fmt()} weightP10=${accumulatorWeight.p10.fmt()} " +
+            "postResP50=${postfilterResidual.p50.fmt()} postResP90=${postfilterResidual.p90.fmt()} " +
+            "postSmoothMean=${postfilterSmooth.mean.fmt()} postSmoothP90=${postfilterSmooth.p90.fmt()} " +
+            "postEffMean=${postfilterEffectiveSmooth.mean.fmt()} postEffP90=${postfilterEffectiveSmooth.p90.fmt()} " +
+            "postWienerP50=${postfilterWienerGain.p50.fmt()} " +
+            "postLsc=${postfilterLscBoost.mean.fmt()} postLowW=${postfilterLowWeightBoost.mean.fmt()} " +
             "lscMean=${lensShadingMeanGain.fmt()} lscEdge=${lensShadingEdgeMeanGain.fmt()} " +
             "elapsed=${elapsedMs}ms"
     }

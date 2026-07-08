@@ -257,7 +257,7 @@ fun SettingsScreen(
     val vendorCaptureSettingsByLens by viewModel.vendorCaptureSettingsByLens.collectAsState()
     val useRaw by viewModel.useRaw.collectAsState(initial = false)
     val exportDngWithRawExport by viewModel.exportDngWithRawExport.collectAsState(initial = true)
-    val useSuperResolution by viewModel.useMFSR.collectAsState(initial = false)
+    val useHdrComposition by viewModel.useHdrComposition.collectAsState(initial = false)
     // 软件处理参数
     val sharpening by viewModel.sharpening.collectAsState(initial = 0f)
     val noiseReduction by viewModel.noiseReduction.collectAsState(initial = 0f)
@@ -1501,6 +1501,17 @@ fun SettingsScreen(
 
                     // 多帧与曝光
                     SettingsSection(title = stringResource(R.string.settings_section_multiframe_exposure)) {
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_use_hdr_composition),
+                            checked = useHdrComposition,
+                            onCheckedChange = { viewModel.setUseHdrComposition(it) }
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
                         SliderSettingItem(
                             title = stringResource(R.string.settings_multi_frame_count),
                             description = stringResource(R.string.settings_multi_frame_count_description),

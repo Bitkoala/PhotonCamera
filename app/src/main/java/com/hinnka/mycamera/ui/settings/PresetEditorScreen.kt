@@ -281,6 +281,22 @@ fun PresetEditorScreen(
                     checked = useMFNR,
                     onCheckedChange = {
                         useMFNR = it
+                        if (it) {
+                            useMFSR = false
+                        }
+                    }
+                )
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 8.dp))
+
+                SwitchSettingItem(
+                    title = stringResource(R.string.settings_use_super_resolution),
+                    checked = useMFSR,
+                    onCheckedChange = {
+                        useMFSR = it
+                        if (it) {
+                            useMFNR = false
+                        }
                     }
                 )
 

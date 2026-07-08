@@ -113,8 +113,8 @@ fun CameraTopSheet(
     onMoreSettingsClick: () -> Unit,
     useMFNR: Boolean,
     onMFNRToggle: (Boolean) -> Unit,
-    useHdrComposition: Boolean,
-    onHdrCompositionToggle: (Boolean) -> Unit,
+    useMFSR: Boolean,
+    onMFSRToggle: (Boolean) -> Unit,
     useMultipleExposure: Boolean,
     onMultipleExposureToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
@@ -220,9 +220,9 @@ fun CameraTopSheet(
                     )
 
                     QuickSettingToggle(
-                        title = stringResource(R.string.settings_use_hdr_composition),
-                        checked = useHdrComposition,
-                        onCheckedChange = onHdrCompositionToggle,
+                        title = stringResource(R.string.settings_use_super_resolution),
+                        checked = useMFSR,
+                        onCheckedChange = onMFSRToggle,
                         modifier = Modifier.weight(1f)
                     )
 
