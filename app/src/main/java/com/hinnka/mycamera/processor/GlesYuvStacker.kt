@@ -190,11 +190,11 @@ class GlesYuvStacker(
             ensureGles31()
             initPrograms()
             initResources()
-            PLog.d(
-                TAG,
-                "GLES stack format=${formatName(inputFormat)} internal=${if (highPrecisionInput) "R16F/RG16F" else "R8/RG8"} " +
+            RawStackRuntimeDebug.d(TAG) {
+                "GLES stack format=${formatName(inputFormat)} " +
+                    "internal=${if (highPrecisionInput) "R16F/RG16F" else "R8/RG8"} " +
                     "flowGrid=${FLOW_GRID_SPACING}px grid=${gridWidth}x${gridHeight}"
-            )
+            }
 
             if (!uploadImagePlanes(images.first(), refY, refCbCr, refYStaging, refCbCrStaging, "reference")) {
                 return null
@@ -225,7 +225,9 @@ class GlesYuvStacker(
             normalizeOutput()
             GlesGpuScheduler.yieldToUiRenderer()
             val bitmap = readOutputBitmap() ?: return null
-            PLog.i(TAG, "GLES YUV stacking completed in ${System.currentTimeMillis() - startTime}ms")
+            RawStackRuntimeDebug.i(TAG) {
+                "GLES YUV stacking completed in ${System.currentTimeMillis() - startTime}ms"
+            }
             return bitmap
         } catch (e: Exception) {
             PLog.e(TAG, "GLES YUV stacking failed", e)
@@ -546,10 +548,10 @@ class GlesYuvStacker(
             return false
         }
         if (label == "reference") {
-            PLog.d(
-                TAG,
-                "GLES plane upload yRow=${planes[0].rowStride} cbRow=${planes[1].rowStride} cbPixel=${planes[1].pixelStride} chroma=${chromaWidth}x${chromaHeight}"
-            )
+            RawStackRuntimeDebug.d(TAG) {
+                "GLES plane upload yRow=${planes[0].rowStride} cbRow=${planes[1].rowStride} " +
+                    "cbPixel=${planes[1].pixelStride} chroma=${chromaWidth}x${chromaHeight}"
+            }
         }
 
         return if (highPrecisionInput) {

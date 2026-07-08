@@ -1,5 +1,7 @@
 package com.hinnka.mycamera.processor
 
+import com.hinnka.mycamera.BuildConfig
+
 data class RawStackDebugConfig(
     val collectMetrics: Boolean = false,
     val logCompactSummary: Boolean = false,
@@ -17,6 +19,7 @@ data class RawStackDebugConfig(
         get() = collectMetrics || logCompactSummary
 
     fun normalized(): RawStackDebugConfig {
+        if (!BuildConfig.DEBUG) return Disabled
         return copy(
             collectMetrics = needsMetrics,
             sampleStep = sampleStep.coerceAtLeast(1),
@@ -37,5 +40,9 @@ data class RawStackDebugConfig(
             collectMetrics = true,
             logCompactSummary = true,
         )
+
+        fun forCurrentBuild(): RawStackDebugConfig {
+            return if (BuildConfig.DEBUG) CompactSummary else Disabled
+        }
     }
 }

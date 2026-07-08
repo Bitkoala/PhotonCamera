@@ -95,10 +95,9 @@ object MultiFrameStacker {
                 images.forEach { it.close() }
                 return null
             }
-            PLog.i(
-                TAG,
+            RawStackRuntimeDebug.i(TAG) {
                 "Starting GLES streaming stacking process for ${images.size} frames ($width x $height)"
-            )
+            }
             val glesBitmap = GlesYuvStacker(
                 width = width,
                 height = height,
@@ -118,10 +117,9 @@ object MultiFrameStacker {
         }
 
         // Fallback or legacy path
-        PLog.i(
-            TAG,
+        RawStackRuntimeDebug.i(TAG) {
             "Starting legacy stacking process for ${images.size} frames ($width x $height). SR=$enableSuperResolution"
-        )
+        }
         val stackerPtr = createStackerNative(width, height, enableSuperResolution)
         if (stackerPtr == 0L) return null
 
@@ -160,7 +158,9 @@ object MultiFrameStacker {
                 aspectRatio?.heightRatio ?: height
             )
 
-            PLog.i(TAG, "Legacy stacking completed in ${System.currentTimeMillis() - startTime}ms")
+            RawStackRuntimeDebug.i(TAG) {
+                "Legacy stacking completed in ${System.currentTimeMillis() - startTime}ms"
+            }
             return previewBitmap
         } finally {
             releaseStackerNative(stackerPtr)
@@ -244,15 +244,14 @@ object MultiFrameStacker {
         }
         val width = shortFrame.image.width
         val height = shortFrame.image.height
-        PLog.d(
-            TAG,
+        RawStackRuntimeDebug.d(TAG) {
             "Starting RAW HDR stacking for short+${normalFrames.size} normal frames. " +
                 "Pattern=$cfaPattern GPU=$useGpuAcceleration BL=${masterBlackLevel.joinToString()} WL=$whiteLevel"
-        )
+        }
         if (!useGpuAcceleration) {
             PLog.w(TAG, "RAW HDR denoise stack requires GLES; GPU acceleration setting is ignored")
         }
-        PLog.i(TAG, "Using GLES RAW HDR stacker")
+        RawStackRuntimeDebug.i(TAG) { "Using GLES RAW HDR stacker" }
         val tuning = RawStackTuningResolver.resolve(
             mode = RawStackMode.HDR_MFNR,
             frameCount = normalFrames.size + 1,
@@ -277,7 +276,7 @@ object MultiFrameStacker {
             colorCorrectionMatrix = colorCorrectionMatrix,
             pgtmStatsBounds = pgtmStatsBounds,
             tuning = tuning,
-            debugConfig = RawStackDebugConfig.CompactSummary,
+            debugConfig = RawStackRuntimeDebug.debugConfig,
         ).processHdr(
             shortFrame = GlesRawStacker.HdrInputFrame(shortFrame.image, shortFrame.exposureProduct),
             normalFrames = normalFrames.map { GlesRawStacker.HdrInputFrame(it.image, it.exposureProduct) },
@@ -304,16 +303,17 @@ object MultiFrameStacker {
         val width = images[0].width
         val height = images[0].height
 
-        PLog.d(
-            TAG,
-            "Starting RAW stacking for ${images.size} frames. Pattern=$cfaPattern SR=$enableSuperResolution scale=$superResolutionScale GPU=$useGpuAcceleration BL=${masterBlackLevel.joinToString()} WL=$whiteLevel"
-        )
+        RawStackRuntimeDebug.d(TAG) {
+            "Starting RAW stacking for ${images.size} frames. Pattern=$cfaPattern " +
+                "SR=$enableSuperResolution scale=$superResolutionScale GPU=$useGpuAcceleration " +
+                "BL=${masterBlackLevel.joinToString()} WL=$whiteLevel"
+        }
         val outputScale = if (enableSuperResolution) superResolutionScale.coerceIn(1.0f, 2.0f) else 1.0f
         val useNativeSuperResolution = outputScale > 1.0f
 
         if (useGpuAcceleration) {
             val mode = if (enableSuperResolution) RawStackMode.MFSR else RawStackMode.MFNR
-            PLog.i(TAG, "Using GLES RAW stacker mode=$mode")
+            RawStackRuntimeDebug.i(TAG) { "Using GLES RAW stacker mode=$mode" }
             val stackLensShading = validLensShadingOrNull(
                 lensShading = lensShading,
                 width = lensShadingWidth,
@@ -337,11 +337,11 @@ object MultiFrameStacker {
                 lensShadingWidth = if (stackLensShading != null) lensShadingWidth else 0,
                 lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
                 tuning = tuning,
-                debugConfig = RawStackDebugConfig.CompactSummary,
+                debugConfig = RawStackRuntimeDebug.debugConfig,
             ).process(images)
         }
 
-        PLog.i(TAG, "Using CPU RAW stacker")
+        RawStackRuntimeDebug.i(TAG) { "Using CPU RAW stacker" }
         val stackerPtr = createRawStackerNative(width, height, useNativeSuperResolution)
         if (stackerPtr == 0L) {
             PLog.e(TAG, "Failed to create CPU raw stacker")
@@ -373,7 +373,7 @@ object MultiFrameStacker {
             processRawStackWithBufferNative(stackerPtr, cpuFusedBayerBuffer)
 
             cpuFusedBayerBuffer.rewind()
-            PLog.i(TAG, "CPU RAW stacking completed successfully")
+            RawStackRuntimeDebug.i(TAG) { "CPU RAW stacking completed successfully" }
             returnsCpuFusedBayer = true
             return RawStackResult(
                 fusedBayerBuffer = cpuFusedBayerBuffer,

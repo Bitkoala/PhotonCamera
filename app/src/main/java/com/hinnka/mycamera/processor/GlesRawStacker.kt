@@ -255,15 +255,14 @@ class GlesRawStacker(
             initPrograms()
             initResources()
             applyRawRenderState()
-            PLog.d(
-                TAG,
+            RawStackRuntimeDebug.d(TAG) {
                 "HWMF RAW stack mode=${tuning.mode} frames=${images.size} " +
                     "out=${outputWidth}x$outputHeight srScale=${superResolutionScale.formatScale()} " +
                     "${registrationSummary.compactSummary()} regProxy=REG_OUT " +
                     "regCtx=${registrationSetup.referenceContextSummary()} " +
                     "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
                     "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
-            )
+            }
             images[0].use {
                 uploadRawTexture(it, refRaw, "reference")
             }
@@ -312,7 +311,9 @@ class GlesRawStacker(
                 } else {
                     accumulateFrame(curRaw, isReference = false)
                 }
-                recordAlignmentDiagnostics()
+                if (hwmfDebug.collectMetrics) {
+                    recordAlignmentDiagnostics()
+                }
                 alignedFrameCount += 1
                 GlesGpuScheduler.yieldToUiRenderer()
             }
@@ -330,19 +331,22 @@ class GlesRawStacker(
             GlesGpuScheduler.yieldToUiRenderer()
             val readTiming = readOutput(outputBuffer)
             outputBuffer.rewind()
-            val diagnostics = collectFinalDiagnostics(
-                frameCount = images.size,
-                alignedFrameCount = alignedFrameCount,
-                elapsedMs = System.currentTimeMillis() - startTime,
-                superResolutionDecision = superResolutionDecision,
-            )
+            val diagnostics = if (hwmfDebug.collectMetrics) {
+                collectFinalDiagnostics(
+                    frameCount = images.size,
+                    alignedFrameCount = alignedFrameCount,
+                    elapsedMs = System.currentTimeMillis() - startTime,
+                    superResolutionDecision = superResolutionDecision,
+                )
+            } else {
+                null
+            }
             returned = true
-            PLog.i(
-                TAG,
+            RawStackRuntimeDebug.i(TAG) {
                 "GLES RAW stacking completed in ${System.currentTimeMillis() - startTime}ms " +
                     "readback=${readTiming.elapsedMs}ms glRead=${readTiming.glReadMs}ms " +
                     "copy=${readTiming.copyMs}ms alloc=${readTiming.allocMs}ms mode=${readTiming.mode}"
-            )
+            }
             RawStackResult(
                 fusedBayerBuffer = outputBuffer,
                 width = outputWidth,
@@ -400,14 +404,13 @@ class GlesRawStacker(
             initHdrPrograms()
             initResources()
             applyRawRenderState()
-            PLog.d(
-                TAG,
+            RawStackRuntimeDebug.d(TAG) {
                 "HWMF RAW HDR stack mode=${tuning.mode} normalFrames=${normalFrames.size} " +
                     "${registrationSummary.compactSummary()} regProxy=REG_OUT " +
                     "regCtx=${registrationSetup.referenceContextSummary()} " +
                     "prefilterLevels=$pyramidLevels flowGrid=$flowGridSpacing " +
                     "blendLk=$lkRefinePasses blendSmooth=$flowSmoothPasses"
-            )
+            }
 
             val shortExposureProduct = validExposureProduct(shortFrame.exposureProduct)
             val referenceExposureProduct = validExposureProduct(normalFrames.first().exposureProduct)
@@ -475,7 +478,9 @@ class GlesRawStacker(
                     exposureScale = outputScale,
                     hdrMode = true,
                 )
-                recordAlignmentDiagnostics()
+                if (hwmfDebug.collectMetrics) {
+                    recordAlignmentDiagnostics()
+                }
                 alignedFrameCount += 1
                 GlesGpuScheduler.waitForGpuCheckpoint(TAG, "hdr normal frame $frameIndex accumulation")
             }
@@ -491,18 +496,21 @@ class GlesRawStacker(
             val readTiming = readOutput(outputBuffer)
             outputBuffer.rewind()
             val profileGainTableMap = computeHdrProfileGainTableMap(rawHdrBaselineExposureEv)
-            val diagnostics = collectFinalDiagnostics(
-                frameCount = normalFrames.size + 1,
-                alignedFrameCount = alignedFrameCount,
-                elapsedMs = System.currentTimeMillis() - startTime,
-            )
+            val diagnostics = if (hwmfDebug.collectMetrics) {
+                collectFinalDiagnostics(
+                    frameCount = normalFrames.size + 1,
+                    alignedFrameCount = alignedFrameCount,
+                    elapsedMs = System.currentTimeMillis() - startTime,
+                )
+            } else {
+                null
+            }
             returned = true
-            PLog.i(
-                TAG,
+            RawStackRuntimeDebug.i(TAG) {
                 "GLES RAW HDR stacking completed in ${System.currentTimeMillis() - startTime}ms " +
                     "readback=${readTiming.elapsedMs}ms glRead=${readTiming.glReadMs}ms " +
                     "copy=${readTiming.copyMs}ms alloc=${readTiming.allocMs}ms mode=${readTiming.mode}"
-            )
+            }
             RawStackResult(
                 fusedBayerBuffer = outputBuffer,
                 width = width,
@@ -654,22 +662,21 @@ class GlesRawStacker(
                 "RAW ${tuning.mode} output ${outputWidth}x$outputHeight exceeds GL_MAX_TEXTURE_SIZE=$maxSize",
             )
         }
-        if (superResolutionEnabled) {
+        if (superResolutionEnabled && RawStackRuntimeDebug.enabled) {
             val accumulatorBytes = outputWidth.toLong() * outputHeight.toLong() * 8L
             val accumulatorTotalBytes = accumulatorBytes * 2L
             val baseAccumulatorBytes = width.toLong() * height.toLong() * 8L
             val baseAccumulatorTotalBytes = baseAccumulatorBytes * 2L
             val baseOutputBytes = width.toLong() * height.toLong() * 2L
             val outputBytes = outputWidth.toLong() * outputHeight.toLong() * 2L
-            PLog.d(
-                TAG,
+            RawStackRuntimeDebug.d(TAG) {
                 "HWMF MFSR resources out=${outputWidth}x$outputHeight maxTex=$maxSize " +
                     "srAccumulator=${accumulatorBytes.mibString()}x2 " +
                     "srAccumulatorTotal=${accumulatorTotalBytes.mibString()} " +
                     "baseAccumulator=${baseAccumulatorBytes.mibString()}x2 " +
                     "baseAccumulatorTotal=${baseAccumulatorTotalBytes.mibString()} " +
-                    "baseOutput=${baseOutputBytes.mibString()} output=${outputBytes.mibString()}",
-            )
+                    "baseOutput=${baseOutputBytes.mibString()} output=${outputBytes.mibString()}"
+            }
         }
     }
 
@@ -844,7 +851,9 @@ class GlesRawStacker(
         val pgtmGridHeight = grid.getOrElse(1) { 0 }
         if (pgtmGridWidth <= 0 || pgtmGridHeight <= 0) return null
         if (!pgtmStatsBounds.isFullImage()) {
-            PLog.d(TAG, "GPU HDR PGTM stats bounds: source=${width}x$height bounds=$pgtmStatsBounds")
+            RawStackRuntimeDebug.d(TAG) {
+                "GPU HDR PGTM stats bounds: source=${width}x$height bounds=$pgtmStatsBounds"
+            }
         }
 
         val cellCount = pgtmGridWidth * pgtmGridHeight
@@ -1243,8 +1252,10 @@ class GlesRawStacker(
         val acceptance = resolveRegistrationAcceptance(estimate, seedTranslation)
         currentRegistrationTransform = acceptance.transform
         currentRegistrationSrWeight = acceptance.srWeight
-        recordRegistrationGlobalEstimate(globalEstimate)
-        recordRegistrationEstimate(estimate, currentRegistrationTransform)
+        if (hwmfDebug.collectMetrics) {
+            recordRegistrationGlobalEstimate(globalEstimate)
+            recordRegistrationEstimate(estimate, currentRegistrationTransform)
+        }
         val accepted = acceptance.accepted
         if (hwmfDebug.logCompactSummary) {
             val candidateTranslation = registrationTranslation(estimate.candidateTransform)
@@ -2065,15 +2076,17 @@ class GlesRawStacker(
         }
         val fallbackReason = reasons.takeIf { it.isNotEmpty() }?.joinToString("+")
         val mode = if (fallbackReason == null) "SUPER_RESOLUTION" else "BASE_UPSCALE"
-        val message = "HWMF MFSR output effective=$mode " +
-            "reason=${fallbackReason ?: "ok"} aligned=$alignedFrameCount " +
-            "srFrames=$superResolutionDetailFrameCount " +
-            "srWeightSum=${superResolutionDetailWeightSum.formatWeight()} " +
-            "srWeightMax=${superResolutionDetailWeightMax.formatWeight()}"
-        if (fallbackReason == null) {
-            PLog.d(TAG, message)
-        } else {
-            PLog.i(TAG, message)
+        if (RawStackRuntimeDebug.enabled) {
+            val message = "HWMF MFSR output effective=$mode " +
+                "reason=${fallbackReason ?: "ok"} aligned=$alignedFrameCount " +
+                "srFrames=$superResolutionDetailFrameCount " +
+                "srWeightSum=${superResolutionDetailWeightSum.formatWeight()} " +
+                "srWeightMax=${superResolutionDetailWeightMax.formatWeight()}"
+            if (fallbackReason == null) {
+                RawStackRuntimeDebug.d(TAG) { message }
+            } else {
+                RawStackRuntimeDebug.i(TAG) { message }
+            }
         }
         return SuperResolutionOutputDecision(
             mode = mode,
@@ -2253,6 +2266,7 @@ class GlesRawStacker(
         elapsedMs: Long,
         superResolutionDecision: SuperResolutionOutputDecision = SuperResolutionOutputDecision.Disabled,
     ): RawStackDiagnostics? {
+        if (!hwmfDebug.collectMetrics) return null
         val diagnosticAccumulatorTexture = if (superResolutionEnabled) {
             currentSuperResolutionAccumulatorTexture
         } else {
