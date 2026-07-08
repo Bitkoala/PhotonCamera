@@ -85,18 +85,13 @@ object MultiFrameStacker {
 
         val inputFormat = images[0].format
         if (useGpuAcceleration) {
-            if (enableSuperResolution) {
-                PLog.w(TAG, "GLES streaming stacker does not support SR yet; GPU fallback disabled")
-                images.forEach { it.close() }
-                return null
-            }
             if (!GlesYuvStacker.supportsImageFormat(inputFormat)) {
                 PLog.w(TAG, "GLES streaming stacker does not support image format=$inputFormat; GPU fallback disabled")
                 images.forEach { it.close() }
                 return null
             }
             RawStackRuntimeDebug.i(TAG) {
-                "Starting GLES streaming stacking process for ${images.size} frames ($width x $height)"
+                "Starting GLES streaming stacking process for ${images.size} frames ($width x $height). SR=$enableSuperResolution"
             }
             val glesBitmap = GlesYuvStacker(
                 width = width,
@@ -106,6 +101,7 @@ object MultiFrameStacker {
                 rotation = rotation,
                 colorSpace = colorSpace,
                 inputFormat = inputFormat,
+                enableSuperResolution = enableSuperResolution,
             ).process(images)
             if (glesBitmap != null) {
                 images.forEach { it.close() }
