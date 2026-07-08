@@ -6,7 +6,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private const val DefaultItemSize = 32f
-private const val DefaultSpacing = 8f
+private const val DefaultSpacing = 4f
 private const val SeparatorThickness = 1f
 
 internal data class ZoomRulerAdaptiveMetrics(
@@ -61,14 +61,9 @@ internal fun calculateZoomRulerAdaptiveMetrics(
     )
 
     if (defaultItemsNoSpacingLength <= availableSpace.value) {
-        val spacing = if (gapCount == 0) {
-            0f
-        } else {
-            ((availableSpace.value - defaultItemsNoSpacingLength) / gapCount).coerceIn(0f, DefaultSpacing)
-        }
         return buildZoomRulerAdaptiveMetrics(
             itemSize = DefaultItemSize,
-            spacing = spacing,
+            spacing = 0f,
             itemCount = safeItemCount,
             separatorCount = safeSeparatorCount,
             gapCount = gapCount
@@ -102,13 +97,7 @@ private fun buildZoomRulerAdaptiveMetrics(
     separatorCount: Int,
     gapCount: Int
 ): ZoomRulerAdaptiveMetrics {
-    val itemScale = (itemSize / DefaultItemSize).coerceIn(0.3f, 1f)
-    val pitchScale = if (gapCount == 0) {
-        itemScale
-    } else {
-        ((itemSize + spacing) / (DefaultItemSize + DefaultSpacing)).coerceIn(0.3f, 1f)
-    }
-    val scale = minOf(itemScale, pitchScale)
+    val scale = (itemSize / DefaultItemSize).coerceIn(0.3f, 1f)
     return ZoomRulerAdaptiveMetrics(
         itemSize = itemSize.dp,
         spacing = spacing.dp,
@@ -119,8 +108,8 @@ private fun buildZoomRulerAdaptiveMetrics(
             separatorCount = separatorCount,
             gapCount = gapCount
         ).dp,
-        selectedFontSize = (13f * scale).coerceIn(8f, 13f).sp,
-        normalFontSize = (10f * scale).coerceIn(7f, 10f).sp,
+        selectedFontSize = (13f * scale).coerceIn(5f, 13f).sp,
+        normalFontSize = (10f * scale).coerceIn(5f, 10f).sp,
         selectedIconSize = (16f * scale).coerceIn(6f, 16f).dp,
         normalIconSize = (14f * scale).coerceIn(6f, 14f).dp,
         separatorLength = (12f * scale).coerceIn(4f, 12f).dp

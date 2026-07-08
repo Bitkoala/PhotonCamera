@@ -567,6 +567,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             desiredUseMultipleExposure = false
             desiredUseMFNR = false
         }
+        if (update.useHdrComposition?.value == true) {
+            desiredUseMFSR = false
+        }
+        if (desiredUseMFSR && desiredUseHdrComposition) {
+            if (update.useMFSR?.value == true && update.useHdrComposition?.value != true) {
+                desiredUseHdrComposition = false
+            } else {
+                desiredUseMFSR = false
+            }
+        }
         if (update.useMultipleExposure?.value == true) {
             desiredUseRaw = false
             desiredUseMFNR = false

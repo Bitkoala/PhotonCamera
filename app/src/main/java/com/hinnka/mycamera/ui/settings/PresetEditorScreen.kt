@@ -94,7 +94,9 @@ fun PresetEditorScreen(
     var useRaw by remember { mutableStateOf(sourcePreset?.useRaw ?: false) }
     var useMFNR by remember { mutableStateOf(sourcePreset?.useMFNR ?: false) }
     var useHdrComposition by remember { mutableStateOf(sourcePreset?.useHdrComposition ?: true) }
-    var useMFSR by remember { mutableStateOf(sourcePreset?.useMFSR ?: false) }
+    var useMFSR by remember {
+        mutableStateOf(sourcePreset?.let { it.useMFSR && !it.useMFNR && !it.useHdrComposition } ?: false)
+    }
     var frameId by remember { mutableStateOf(sourcePreset?.frameId) }
 
     // Quick RAW 参数
@@ -137,7 +139,7 @@ fun PresetEditorScreen(
             useRaw = useRaw,
             useMFNR = useMFNR,
             useHdrComposition = useHdrComposition,
-            useMFSR = useMFSR,
+            useMFSR = useMFSR && !useMFNR && !useHdrComposition,
             frameId = frameId,
             rawDcpId = rawDcpId,
             rawDcpIdsByLens = rawDcpIdsByLens,
@@ -296,6 +298,7 @@ fun PresetEditorScreen(
                         useMFSR = it
                         if (it) {
                             useMFNR = false
+                            useHdrComposition = false
                         }
                     }
                 )
@@ -307,6 +310,9 @@ fun PresetEditorScreen(
                     checked = useHdrComposition,
                     onCheckedChange = {
                         useHdrComposition = it
+                        if (it) {
+                            useMFSR = false
+                        }
                     }
                 )
 

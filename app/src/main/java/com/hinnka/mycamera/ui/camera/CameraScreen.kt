@@ -1494,6 +1494,10 @@ fun CameraScreen(
                 activePanel = ActivePanel.NONE
                 onFrameManagementClick()
             },
+            onPresetManageClick = {
+                activePanel = ActivePanel.NONE
+                onPresetManagementClick()
+            },
             onToolboxClick = {
                 activePanel = ActivePanel.NONE
                 onToolboxClick()
@@ -1510,9 +1514,13 @@ fun CameraScreen(
             onMFSRToggle = {
                 viewModel.setUseMFSR(it)
             },
+            useHdrComposition = useHdrComposition,
+            onHdrCompositionToggle = {
+                viewModel.setUseHdrComposition(it)
+            },
             useMultipleExposure = useMultipleExposure,
             onMultipleExposureToggle = { viewModel.setUseMultipleExposure(it) },
-            modifier = Modifier.padding(top = topSafePadding)
+            contentTopPadding = CameraTopBarBaseTopPadding + topSafePadding
         )
 
         AnimatedVisibility(

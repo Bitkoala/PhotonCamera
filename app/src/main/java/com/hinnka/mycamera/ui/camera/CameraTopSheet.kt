@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
@@ -46,6 +48,8 @@ private enum class VideoSettingPanel {
     CODEC,
     MICROPHONE
 }
+
+private val CameraTopSheetContentTopPadding = 32.dp
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -109,19 +113,29 @@ fun CameraTopSheet(
     onMeteringModeChange: (MeteringMode) -> Unit,
     onFilterManageClick: () -> Unit,
     onFrameManageClick: () -> Unit,
+    onPresetManageClick: () -> Unit,
     onToolboxClick: () -> Unit,
     onMoreSettingsClick: () -> Unit,
     useMFNR: Boolean,
     onMFNRToggle: (Boolean) -> Unit,
     useMFSR: Boolean,
     onMFSRToggle: (Boolean) -> Unit,
+    useHdrComposition: Boolean,
+    onHdrCompositionToggle: (Boolean) -> Unit,
     useMultipleExposure: Boolean,
     onMultipleExposureToggle: (Boolean) -> Unit,
+    contentTopPadding: Dp = CameraTopSheetContentTopPadding,
     modifier: Modifier = Modifier
 ) {
     var expandedVideoPanel by rememberSaveable { mutableStateOf<VideoSettingPanel?>(null) }
     var showRawSheet by rememberSaveable { mutableStateOf(false) }
     var showNaturalLightWarning by rememberSaveable { mutableStateOf(false) }
+    var showContentManagementOptions by rememberSaveable { mutableStateOf(false) }
+
+    fun handleContentManagementAction(action: () -> Unit) {
+        showContentManagementOptions = false
+        action()
+    }
 
     fun handleNaturalLightToggle(enabled: Boolean) {
         if (enabled && !useNaturalLight && !naturalLightWarningShown) {
@@ -129,6 +143,10 @@ fun CameraTopSheet(
         } else {
             onNaturalLightToggle(enabled)
         }
+    }
+
+    LaunchedEffect(visible, captureMode) {
+        showContentManagementOptions = false
     }
 
     if (showNaturalLightWarning) {
@@ -172,7 +190,7 @@ fun CameraTopSheet(
                 .verticalScroll(rememberScrollState())
                 .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
                 .background(Color.Black.copy(alpha = 0.8f))
-                .padding(top = 32.dp, bottom = 0.dp, start = 24.dp, end = 24.dp)
+                .padding(top = contentTopPadding, bottom = 0.dp, start = 24.dp, end = 24.dp)
                 .autoRotate()
         ) {
             if (captureMode == CaptureMode.PHOTO) {
@@ -226,22 +244,12 @@ fun CameraTopSheet(
                         modifier = Modifier.weight(1f)
                     )
 
-                    if (isRawSupported) {
-                        QuickSettingButton2(
-                            title = stringResource(R.string.baseline_target_raw),
-                            checked = useRaw,
-                            onClick = { showRawSheet = true },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    if (!isRawSupported) {
-                        NaturalLightQuickSetting(
-                            checked = useNaturalLight,
-                            onCheckedChange = ::handleNaturalLightToggle,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    QuickSettingToggle(
+                        title = stringResource(R.string.settings_use_hdr_composition),
+                        checked = useHdrComposition,
+                        onCheckedChange = onHdrCompositionToggle,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -251,6 +259,19 @@ fun CameraTopSheet(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (isRawSupported) {
+                        QuickSettingButton2(
+                            title = stringResource(R.string.baseline_target_raw),
+                            checked = useRaw,
+                            onClick = { showRawSheet = true },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        NaturalLightQuickSetting(
+                            checked = useNaturalLight,
+                            onCheckedChange = ::handleNaturalLightToggle,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
                         NaturalLightQuickSetting(
                             checked = useNaturalLight,
                             onCheckedChange = ::handleNaturalLightToggle,
@@ -265,15 +286,10 @@ fun CameraTopSheet(
                         modifier = Modifier.weight(1f)
                     )
 
-                    MeteringModeQuickSetting(
-                        meteringMode = meteringMode,
-                        onMeteringModeChange = onMeteringModeChange,
-                        modifier = Modifier.weight(1f)
-                    )
-
                     if (!isRawSupported) {
-                        ToolboxQuickSetting(
-                            onToolboxClick = onToolboxClick,
+                        MeteringModeQuickSetting(
+                            meteringMode = meteringMode,
+                            onMeteringModeChange = onMeteringModeChange,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -286,23 +302,20 @@ fun CameraTopSheet(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (isRawSupported) {
-                        ToolboxQuickSetting(
-                            onToolboxClick = onToolboxClick,
+                        MeteringModeQuickSetting(
+                            meteringMode = meteringMode,
+                            onMeteringModeChange = onMeteringModeChange,
                             modifier = Modifier.weight(1f)
                         )
                     }
 
-                    QuickSettingButton(
-                        title = stringResource(R.string.settings_filter_management),
-                        icon = AppIcons.AutoAwesome,
-                        onClick = onFilterManageClick,
+                    ToolboxQuickSetting(
+                        onToolboxClick = onToolboxClick,
                         modifier = Modifier.weight(1f)
                     )
 
-                    QuickSettingButton(
-                        title = stringResource(R.string.settings_frame_management),
-                        icon = AppIcons.BorderBottom,
-                        onClick = onFrameManageClick,
+                    ContentManagementQuickSetting(
+                        onClick = { showContentManagementOptions = !showContentManagementOptions },
                         modifier = Modifier.weight(1f)
                     )
 
@@ -310,6 +323,19 @@ fun CameraTopSheet(
                         Spacer(modifier = Modifier.weight(1f).height(40.dp))
                     }
                 }
+
+                ContentManagementOptionsPanel(
+                    visible = showContentManagementOptions,
+                    onFilterManageClick = {
+                        handleContentManagementAction(onFilterManageClick)
+                    },
+                    onFrameManageClick = {
+                        handleContentManagementAction(onFrameManageClick)
+                    },
+                    onPresetManageClick = {
+                        handleContentManagementAction(onPresetManageClick)
+                    }
+                )
             } else if (captureMode == CaptureMode.VIDEO) {
                 SectionLabel(title = stringResource(R.string.video_aspect_chip))
                 Row(
@@ -526,24 +552,23 @@ fun CameraTopSheet(
             if (captureMode != CaptureMode.PHOTO) {
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    QuickSettingButton(
-                        title = stringResource(R.string.settings_filter_management),
-                        icon = AppIcons.AutoAwesome,
-                        onClick = onFilterManageClick,
-                        modifier = Modifier.weight(1f)
-                    )
+                ContentManagementQuickSetting(
+                    onClick = { showContentManagementOptions = !showContentManagementOptions },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
-                    QuickSettingButton(
-                        title = stringResource(R.string.settings_frame_management),
-                        icon = AppIcons.BorderBottom,
-                        onClick = onFrameManageClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                ContentManagementOptionsPanel(
+                    visible = showContentManagementOptions,
+                    onFilterManageClick = {
+                        handleContentManagementAction(onFilterManageClick)
+                    },
+                    onFrameManageClick = {
+                        handleContentManagementAction(onFrameManageClick)
+                    },
+                    onPresetManageClick = {
+                        handleContentManagementAction(onPresetManageClick)
+                    }
+                )
             }
 
             Spacer(Modifier.weight(1f))
@@ -920,6 +945,60 @@ private fun ToolboxQuickSetting(
 }
 
 @Composable
+private fun ContentManagementQuickSetting(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    QuickSettingButton(
+        title = stringResource(R.string.settings_section_management),
+        icon = AppIcons.Tune,
+        onClick = onClick,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun ContentManagementOptionsPanel(
+    visible: Boolean,
+    onFilterManageClick: () -> Unit,
+    onFrameManageClick: () -> Unit,
+    onPresetManageClick: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut()
+    ) {
+        Column {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickSettingButton(
+                    title = stringResource(R.string.settings_filter_management),
+                    icon = AppIcons.AutoAwesome,
+                    onClick = onFilterManageClick,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickSettingButton(
+                    title = stringResource(R.string.settings_frame_management),
+                    icon = AppIcons.BorderBottom,
+                    onClick = onFrameManageClick,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickSettingButton(
+                    title = stringResource(R.string.settings_preset_management),
+                    icon = AppIcons.Bookmark,
+                    onClick = onPresetManageClick,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun QuickSettingValue(
     title: String,
     value: String,
@@ -979,7 +1058,10 @@ fun QuickSettingButton(
                 text = title,
                 color = Color.White,
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
             Icon(
                 imageVector = icon,
