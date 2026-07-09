@@ -108,7 +108,6 @@ fun PresetEditorScreen(
     }
     var rawGooglePixelToneMap by remember { mutableStateOf(sourcePreset?.rawGooglePixelToneMap ?: false) }
     var rawOppoMasterToneMap by remember { mutableStateOf(sourcePreset?.rawOppoMasterToneMap ?: false) }
-    var rawAppleProRawToneMap by remember { mutableStateOf(sourcePreset?.rawAppleProRawToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
@@ -148,7 +147,6 @@ fun PresetEditorScreen(
             rawRenderingEngine = rawRenderingEngine.name,
             rawGooglePixelToneMap = rawGooglePixelToneMap,
             rawOppoMasterToneMap = rawOppoMasterToneMap,
-            rawAppleProRawToneMap = rawAppleProRawToneMap,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
             rawDROMode = rawDROMode,
@@ -444,12 +442,10 @@ fun PresetEditorScreen(
 
                         val toneMapLabels = mapOf(
                             RawProfileToneMapMode.Default to stringResource(R.string.settings_raw_profile_tone_map_default),
-                            RawProfileToneMapMode.AppleProRaw to stringResource(R.string.settings_raw_profile_tone_map_apple_proraw),
                             RawProfileToneMapMode.OppoMaster to stringResource(R.string.settings_raw_profile_tone_map_oppo_master),
                             RawProfileToneMapMode.GooglePixel to stringResource(R.string.settings_raw_profile_tone_map_google_pixel),
                         )
                         val selectedToneMapMode = when {
-                            rawAppleProRawToneMap -> RawProfileToneMapMode.AppleProRaw
                             rawOppoMasterToneMap -> RawProfileToneMapMode.OppoMaster
                             rawGooglePixelToneMap -> RawProfileToneMapMode.GooglePixel
                             else -> RawProfileToneMapMode.Default
@@ -468,7 +464,6 @@ fun PresetEditorScreen(
                                     ?: RawProfileToneMapMode.Default
                                 rawGooglePixelToneMap = selectedMode == RawProfileToneMapMode.GooglePixel
                                 rawOppoMasterToneMap = selectedMode == RawProfileToneMapMode.OppoMaster
-                                rawAppleProRawToneMap = selectedMode == RawProfileToneMapMode.AppleProRaw
                             }
                         )
 

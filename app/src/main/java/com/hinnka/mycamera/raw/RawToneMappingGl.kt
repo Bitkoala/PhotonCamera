@@ -11,10 +11,6 @@ object RawToneMappingGl {
         DngProfileToneCurve.oppoEmbeddedToneCurveLut()
     }
 
-    private val APPLE_PRO_RAW_ADOBE_CURVE by lazy {
-        DngProfileToneCurve.appleProRawFittedToneCurveLut()
-    }
-
     data class FilmicToneCurveUniforms(
         val blackRelativeExposure: Float,
         val whiteRelativeExposure: Float,
@@ -34,7 +30,6 @@ object RawToneMappingGl {
         val normalized = params.normalized()
         return when (normalized.profileToneMapMode) {
             RawProfileToneMapMode.OppoMaster -> OPPO_MASTER_ADOBE_CURVE
-            RawProfileToneMapMode.AppleProRaw -> APPLE_PRO_RAW_ADOBE_CURVE
             else -> ACR3Curve.samples()
         }
     }

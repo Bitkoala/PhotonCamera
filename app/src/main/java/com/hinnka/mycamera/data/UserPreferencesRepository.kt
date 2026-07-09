@@ -296,7 +296,6 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_FILMIC_WHITE_RELATIVE_EXPOSURE_KEY = floatPreferencesKey("raw_filmic_white_relative_exposure")
         private val RAW_GOOGLE_PIXEL_TONE_MAP_KEY = booleanPreferencesKey("raw_google_pixel_tone_map")
         private val RAW_OPPO_MASTER_TONE_MAP_KEY = booleanPreferencesKey("raw_oppo_master_tone_map")
-        private val RAW_APPLE_PRO_RAW_TONE_MAP_KEY = booleanPreferencesKey("raw_apple_pro_raw_tone_map")
         private val RAW_NLM_NOISE_FACTOR_KEY = floatPreferencesKey("raw_nlm_noise_factor")
         private val RAW_EXPOSURE_COMPENSATION_KEY = floatPreferencesKey("raw_exposure_compensation")
         private val RAW_AUTO_EXPOSURE_KEY = booleanPreferencesKey("raw_auto_exposure")
@@ -471,8 +470,7 @@ class UserPreferencesRepository(private val context: Context) {
                     filmicWhiteRelativeExposure = preferences[RAW_FILMIC_WHITE_RELATIVE_EXPOSURE_KEY]
                         ?: RawToneMappingParameters.FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT,
                     useGooglePixelToneMap = preferences[RAW_GOOGLE_PIXEL_TONE_MAP_KEY] ?: false,
-                    useOppoMasterToneMap = preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] ?: false,
-                    useAppleProRawToneMap = preferences[RAW_APPLE_PRO_RAW_TONE_MAP_KEY] ?: false
+                    useOppoMasterToneMap = preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] ?: false
                 ).normalized(),
                 rawNlmNoiseFactor = preferences[RAW_NLM_NOISE_FACTOR_KEY] ?: 0f,
                 rawExposureCompensation = preferences[RAW_EXPOSURE_COMPENSATION_KEY] ?: 0f,
@@ -974,7 +972,6 @@ class UserPreferencesRepository(private val context: Context) {
             preferences[RAW_FILMIC_WHITE_RELATIVE_EXPOSURE_KEY] = normalized.filmicWhiteRelativeExposure
             preferences[RAW_GOOGLE_PIXEL_TONE_MAP_KEY] = normalized.useGooglePixelToneMap
             preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] = normalized.useOppoMasterToneMap
-            preferences[RAW_APPLE_PRO_RAW_TONE_MAP_KEY] = normalized.useAppleProRawToneMap
         }
     }
 
@@ -2028,7 +2025,6 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences[RAW_FILMIC_WHITE_RELATIVE_EXPOSURE_KEY] = normalized.filmicWhiteRelativeExposure
                 preferences[RAW_GOOGLE_PIXEL_TONE_MAP_KEY] = normalized.useGooglePixelToneMap
                 preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] = normalized.useOppoMasterToneMap
-                preferences[RAW_APPLE_PRO_RAW_TONE_MAP_KEY] = normalized.useAppleProRawToneMap
             }
             update.rawSpectralFilmStock?.let {
                 if (it.value != null) {

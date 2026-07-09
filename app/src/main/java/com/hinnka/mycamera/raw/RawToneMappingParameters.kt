@@ -8,12 +8,10 @@ data class RawToneMappingParameters(
     val filmicBlackRelativeExposure: Float = FILMIC_BLACK_RELATIVE_EXPOSURE_DEFAULT,
     val filmicWhiteRelativeExposure: Float = FILMIC_WHITE_RELATIVE_EXPOSURE_DEFAULT,
     val useGooglePixelToneMap: Boolean = false,
-    val useOppoMasterToneMap: Boolean = false,
-    val useAppleProRawToneMap: Boolean = false
+    val useOppoMasterToneMap: Boolean = false
 ) {
     val profileToneMapMode: RawProfileToneMapMode
         get() = when {
-            useAppleProRawToneMap -> RawProfileToneMapMode.AppleProRaw
             useOppoMasterToneMap -> RawProfileToneMapMode.OppoMaster
             useGooglePixelToneMap -> RawProfileToneMapMode.GooglePixel
             else -> RawProfileToneMapMode.Default
@@ -36,9 +34,8 @@ data class RawToneMappingParameters(
             FILMIC_WHITE_RELATIVE_EXPOSURE_MIN,
             FILMIC_WHITE_RELATIVE_EXPOSURE_MAX
         )
-        val appleTone = useAppleProRawToneMap
-        val oppoTone = useOppoMasterToneMap && !appleTone
-        val googleTone = useGooglePixelToneMap && !oppoTone && !appleTone
+        val oppoTone = useOppoMasterToneMap
+        val googleTone = useGooglePixelToneMap && !oppoTone
         return copy(
             agxBlackRelativeExposure = minOf(blackAgx, whiteAgx - MIN_DYNAMIC_RANGE_EV),
             agxWhiteRelativeExposure = maxOf(whiteAgx, blackAgx + MIN_DYNAMIC_RANGE_EV),
@@ -47,40 +44,28 @@ data class RawToneMappingParameters(
             filmicBlackRelativeExposure = minOf(blackFilmic, whiteFilmic - MIN_DYNAMIC_RANGE_EV),
             filmicWhiteRelativeExposure = maxOf(whiteFilmic, blackFilmic + MIN_DYNAMIC_RANGE_EV),
             useGooglePixelToneMap = googleTone,
-            useOppoMasterToneMap = oppoTone,
-            useAppleProRawToneMap = appleTone
+            useOppoMasterToneMap = oppoTone
         )
     }
 
     fun withGooglePixelToneMap(enabled: Boolean): RawToneMappingParameters {
         return copy(
             useGooglePixelToneMap = enabled,
-            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap,
-            useAppleProRawToneMap = if (enabled) false else useAppleProRawToneMap
+            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap
         ).normalized()
     }
 
     fun withOppoMasterToneMap(enabled: Boolean): RawToneMappingParameters {
         return copy(
             useOppoMasterToneMap = enabled,
-            useGooglePixelToneMap = if (enabled) false else useGooglePixelToneMap,
-            useAppleProRawToneMap = if (enabled) false else useAppleProRawToneMap
-        ).normalized()
-    }
-
-    fun withAppleProRawToneMap(enabled: Boolean): RawToneMappingParameters {
-        return copy(
-            useAppleProRawToneMap = enabled,
-            useGooglePixelToneMap = if (enabled) false else useGooglePixelToneMap,
-            useOppoMasterToneMap = if (enabled) false else useOppoMasterToneMap
+            useGooglePixelToneMap = if (enabled) false else useGooglePixelToneMap
         ).normalized()
     }
 
     fun withProfileToneMapMode(mode: RawProfileToneMapMode): RawToneMappingParameters {
         return copy(
             useGooglePixelToneMap = mode == RawProfileToneMapMode.GooglePixel,
-            useOppoMasterToneMap = mode == RawProfileToneMapMode.OppoMaster,
-            useAppleProRawToneMap = mode == RawProfileToneMapMode.AppleProRaw
+            useOppoMasterToneMap = mode == RawProfileToneMapMode.OppoMaster
         ).normalized()
     }
 
@@ -113,7 +98,6 @@ data class RawToneMappingParameters(
 
 enum class RawProfileToneMapMode {
     Default,
-    AppleProRaw,
     OppoMaster,
     GooglePixel,
 }

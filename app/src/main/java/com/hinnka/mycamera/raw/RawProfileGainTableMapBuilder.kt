@@ -21,7 +21,6 @@ internal object RawProfileGainTableMapBuilder {
         metadata: RawMetadata,
         samplesPerPixel: Int = 1,
         statsBounds: Rect? = null,
-        toneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     ): DngProfileGainTableMap? {
         val stats = buildPackedCellStats(
             rawData = rawData,
@@ -30,27 +29,16 @@ internal object RawProfileGainTableMapBuilder {
             rowStride = rowStride,
             metadata = metadata,
             samplesPerPixel = samplesPerPixel,
-            statsBounds = statsBounds,
-            toneMapMode = toneMapMode
+            statsBounds = statsBounds
         ) ?: return null
         val diagnosticBand = DngPgtmDiagnostic.activeBandForSource(TAG)
-        return when (toneMapMode) {
-            RawProfileToneMapMode.AppleProRaw -> DngAppleProRawProfileGainTableGenerator.forCellStats(
-                width = width,
-                height = height,
-                baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure),
-                packedCellStats = stats,
-                diagnosticBand = diagnosticBand
-            )
-
-            else -> DngHdrProfileGainTableGenerator.forCellStats(
-                width = width,
-                height = height,
-                baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure),
-                packedCellStats = stats,
-                diagnosticBand = diagnosticBand
-            )
-        }
+        return DngHdrProfileGainTableGenerator.forCellStats(
+            width = width,
+            height = height,
+            baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure),
+            packedCellStats = stats,
+            diagnosticBand = diagnosticBand
+        )
     }
 
     private fun buildPackedCellStats(
@@ -61,7 +49,6 @@ internal object RawProfileGainTableMapBuilder {
         metadata: RawMetadata,
         samplesPerPixel: Int,
         statsBounds: Rect?,
-        toneMapMode: RawProfileToneMapMode,
     ): FloatArray? {
         if (width <= 0 || height <= 0 || metadata.whiteLevel <= 0f) return null
         val sampleCountPerPixel = samplesPerPixel.coerceAtLeast(1)
@@ -131,8 +118,7 @@ internal object RawProfileGainTableMapBuilder {
                             baseX = x,
                             baseY = y,
                             baselineGain = baselineGain,
-                            samplesPerPixel = sampleCountPerPixel,
-                            toneMapMode = toneMapMode
+                            samplesPerPixel = sampleCountPerPixel
                         )
                         inputSamples[sampleCount] = inputValue
                         val clampedInput = inputValue.coerceIn(0f, 1f)
@@ -195,7 +181,6 @@ internal object RawProfileGainTableMapBuilder {
         baseY: Int,
         baselineGain: Float,
         samplesPerPixel: Int,
-        toneMapMode: RawProfileToneMapMode,
     ): Float {
         if (samplesPerPixel >= 3) {
             return linearRgbPgtmInputAt(
@@ -207,8 +192,7 @@ internal object RawProfileGainTableMapBuilder {
                 x = baseX,
                 y = baseY,
                 baselineGain = baselineGain,
-                samplesPerPixel = samplesPerPixel,
-                toneMapMode = toneMapMode
+                samplesPerPixel = samplesPerPixel
             )
         }
         var r = 0f
@@ -245,7 +229,6 @@ internal object RawProfileGainTableMapBuilder {
         val green = if (gc > 0f) g / gc else fallback
         val blue = if (bc > 0f) b / bc else fallback
         return sceneInputFromLinearRgb(
-            toneMapMode = toneMapMode,
             red = red,
             green = green,
             blue = blue,
@@ -264,7 +247,6 @@ internal object RawProfileGainTableMapBuilder {
         y: Int,
         baselineGain: Float,
         samplesPerPixel: Int,
-        toneMapMode: RawProfileToneMapMode,
     ): Float {
         val clampedX = x.coerceIn(0, width - 1)
         val clampedY = y.coerceIn(0, height - 1)
@@ -273,7 +255,6 @@ internal object RawProfileGainTableMapBuilder {
         val green = normalizedLinearRgbAt(rawData, pixelOffset + 2, metadata, 1)
         val blue = normalizedLinearRgbAt(rawData, pixelOffset + 4, metadata, 2)
         return sceneInputFromLinearRgb(
-            toneMapMode = toneMapMode,
             red = red,
             green = green,
             blue = blue,
@@ -283,30 +264,19 @@ internal object RawProfileGainTableMapBuilder {
     }
 
     private fun sceneInputFromLinearRgb(
-        toneMapMode: RawProfileToneMapMode,
         red: Float,
         green: Float,
         blue: Float,
         baselineGain: Float,
         colorCorrectionMatrix: FloatArray?,
     ): Float {
-        return when (toneMapMode) {
-            RawProfileToneMapMode.AppleProRaw -> DngAppleProRawProfileGainTableGenerator.sceneInputFromLinearRgb(
-                red = red,
-                green = green,
-                blue = blue,
-                baselineGain = baselineGain,
-                colorCorrectionMatrix = colorCorrectionMatrix
-            )
-
-            else -> DngHdrProfileGainTableGenerator.sceneInputFromLinearRgb(
-                red = red,
-                green = green,
-                blue = blue,
-                baselineGain = baselineGain,
-                colorCorrectionMatrix = colorCorrectionMatrix
-            )
-        }
+        return DngHdrProfileGainTableGenerator.sceneInputFromLinearRgb(
+            red = red,
+            green = green,
+            blue = blue,
+            baselineGain = baselineGain,
+            colorCorrectionMatrix = colorCorrectionMatrix
+        )
     }
 
     private fun normalizedLinearRgbAt(
