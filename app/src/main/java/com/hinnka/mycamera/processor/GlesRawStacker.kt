@@ -5405,18 +5405,62 @@ class GlesRawStacker(
                 return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
             }
 
-            ivec2 shortAlignedPos(ivec2 p) {
-                ivec2 rawOffset = ivec2(round(texelFetch(uShortGlobalAlignment, ivec2(0), 0).rg)) * 2;
-                return clampRaw(p + rawOffset);
+            vec2 shortAlignedRawPos(ivec2 p) {
+                vec2 rawOffset = texelFetch(uShortGlobalAlignment, ivec2(0), 0).rg * 2.0;
+                vec2 rawPos = vec2(float(p.x), float(p.y)) + rawOffset;
+                vec2 maxRawPos = vec2(float(uImageSize.x - 1), float(uImageSize.y - 1));
+                return clamp(rawPos, vec2(0.0), maxRawPos);
+            }
+
+            ivec2 cfaPhaseOffset(int cfaPattern, ivec2 p) {
+                int period = cfaPeriod(cfaPattern);
+                return ivec2(p.x % period, p.y % period);
+            }
+
+            ivec2 maxLatticeForPhase(ivec2 phaseOffset, int period) {
+                return max((uImageSize - ivec2(1) - phaseOffset) / ivec2(period), ivec2(0));
+            }
+
+            float shortRawNormAt(ivec2 samplePos, int bayerIndex) {
+                samplePos = clampRaw(samplePos);
+                float raw = float(texelFetch(uShortRaw, samplePos, 0).r);
+                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
+            }
+
+            float fetchShortSamePhase(ivec2 lattice, ivec2 phaseOffset, int period, int bayerIndex) {
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return shortRawNormAt(phaseOffset + lattice * period, bayerIndex);
+            }
+
+            float sampleShortSamePhase(vec2 rawPos, ivec2 phaseOffset, int period, int bayerIndex) {
+                ivec2 maxLattice = maxLatticeForPhase(phaseOffset, period);
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                vec2 pos = clamp(
+                    (rawPos - phase) / float(period),
+                    vec2(0.0),
+                    vec2(float(maxLattice.x), float(maxLattice.y))
+                );
+                ivec2 p0 = ivec2(floor(pos));
+                ivec2 p1 = min(p0 + ivec2(1), maxLattice);
+                vec2 f = pos - vec2(p0);
+                float v00 = fetchShortSamePhase(p0, phaseOffset, period, bayerIndex);
+                float v10 = fetchShortSamePhase(ivec2(p1.x, p0.y), phaseOffset, period, bayerIndex);
+                float v01 = fetchShortSamePhase(ivec2(p0.x, p1.y), phaseOffset, period, bayerIndex);
+                float v11 = fetchShortSamePhase(p1, phaseOffset, period, bayerIndex);
+                return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
             }
 
             float shortSensorNorm(ivec2 p) {
                 p = clampRaw(p);
-                ivec2 shortPos = shortAlignedPos(p);
                 int bayerIndex = bayerIndexAt(uCfaPattern, p);
-                float raw = float(texelFetch(uShortRaw, shortPos, 0).r);
-                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
-                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
+                int period = cfaPeriod(uCfaPattern);
+                return sampleShortSamePhase(
+                    shortAlignedRawPos(p),
+                    cfaPhaseOffset(uCfaPattern, p),
+                    period,
+                    bayerIndex
+                );
             }
 
             float shortReferenceNorm(ivec2 p) {
@@ -6409,16 +6453,61 @@ class GlesRawStacker(
                 return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) / range, 0.0, 1.0);
             }
 
-            ivec2 shortAlignedPos(ivec2 p) {
-                ivec2 rawOffset = ivec2(round(texelFetch(uShortGlobalAlignment, ivec2(0), 0).rg)) * 2;
-                return clamp(p + rawOffset, ivec2(0), uImageSize - ivec2(1));
+            vec2 shortAlignedRawPos(ivec2 p) {
+                vec2 rawOffset = texelFetch(uShortGlobalAlignment, ivec2(0), 0).rg * 2.0;
+                vec2 rawPos = vec2(float(p.x), float(p.y)) + rawOffset;
+                vec2 maxRawPos = vec2(float(uImageSize.x - 1), float(uImageSize.y - 1));
+                return clamp(rawPos, vec2(0.0), maxRawPos);
+            }
+
+            ivec2 cfaPhaseOffset(int cfaPattern, ivec2 p) {
+                int period = cfaPeriod(cfaPattern);
+                return ivec2(p.x % period, p.y % period);
+            }
+
+            ivec2 maxLatticeForPhase(ivec2 phaseOffset, int period) {
+                return max((uImageSize - ivec2(1) - phaseOffset) / ivec2(period), ivec2(0));
+            }
+
+            float shortRawNormAt(ivec2 samplePos, int bayerIndex) {
+                samplePos = clamp(samplePos, ivec2(0), uImageSize - ivec2(1));
+                float raw = float(texelFetch(uShortRaw, samplePos, 0).r);
+                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
+                return clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(samplePos) / range, 0.0, 1.0);
+            }
+
+            float fetchShortSamePhase(ivec2 lattice, ivec2 phaseOffset, int period, int bayerIndex) {
+                lattice = clamp(lattice, ivec2(0), maxLatticeForPhase(phaseOffset, period));
+                return shortRawNormAt(phaseOffset + lattice * period, bayerIndex);
+            }
+
+            float sampleShortSamePhase(vec2 rawPos, ivec2 phaseOffset, int period, int bayerIndex) {
+                ivec2 maxLattice = maxLatticeForPhase(phaseOffset, period);
+                vec2 phase = vec2(float(phaseOffset.x), float(phaseOffset.y));
+                vec2 pos = clamp(
+                    (rawPos - phase) / float(period),
+                    vec2(0.0),
+                    vec2(float(maxLattice.x), float(maxLattice.y))
+                );
+                ivec2 p0 = ivec2(floor(pos));
+                ivec2 p1 = min(p0 + ivec2(1), maxLattice);
+                vec2 f = pos - vec2(p0);
+                float v00 = fetchShortSamePhase(p0, phaseOffset, period, bayerIndex);
+                float v10 = fetchShortSamePhase(ivec2(p1.x, p0.y), phaseOffset, period, bayerIndex);
+                float v01 = fetchShortSamePhase(ivec2(p0.x, p1.y), phaseOffset, period, bayerIndex);
+                float v11 = fetchShortSamePhase(p1, phaseOffset, period, bayerIndex);
+                return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
             }
 
             float shortRecoveryNorm(ivec2 p, int bayerIndex) {
-                p = shortAlignedPos(p);
-                float raw = float(texelFetch(uShortRaw, p, 0).r);
-                float range = max(uWhiteLevel - uBlackLevel[bayerIndex], 1.0);
-                float norm = clamp(max(raw - uBlackLevel[bayerIndex], 0.0) * lscGain(p) / range, 0.0, 1.0);
+                p = clamp(p, ivec2(0), uImageSize - ivec2(1));
+                int period = cfaPeriod(uCfaPattern);
+                float norm = sampleShortSamePhase(
+                    shortAlignedRawPos(p),
+                    cfaPhaseOffset(uCfaPattern, p),
+                    period,
+                    bayerIndex
+                );
                 return clamp(norm * uShortExposureScale, 0.0, 1.0);
             }
 
