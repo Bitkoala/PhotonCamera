@@ -1737,6 +1737,62 @@ static Matrix3x3 computeXYZD50ToGamut(float xr, float yr, float xg, float yg,
   return gamutToXYZD50.invert();
 }
 
+// LibRaw's rgb_cam maps white-balanced native camera RGB into linear sRGB
+// (D65). It is not a DNG ColorMatrix: passing it through the DNG color-spec
+// path applies the wrong PCS/white-point assumptions to proprietary RAWs.
+static bool computeLibRawCameraToXyzD50(const LibRaw &rawProcessor,
+                                        const float wb[4],
+                                        Matrix3x3 &cameraToXyzD50) {
+  Matrix3x3 cameraToSrgb;
+  Matrix3x3 xyzToCamera;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      cameraToSrgb.m[row * 3 + col] =
+          rawProcessor.imgdata.color.rgb_cam[row][col];
+      xyzToCamera.m[row * 3 + col] =
+          rawProcessor.imgdata.color.cam_xyz[row][col];
+    }
+  }
+  if (!hasMatrixSignal(cameraToSrgb) || !hasMatrixSignal(xyzToCamera)) {
+    return false;
+  }
+
+  const float red = wb[0] > 0.0f && std::isfinite(wb[0]) ? wb[0] : 1.0f;
+  const float greenEven =
+      wb[1] > 0.0f && std::isfinite(wb[1]) ? wb[1] : 1.0f;
+  const float greenOdd =
+      wb[3] > 0.0f && std::isfinite(wb[3]) ? wb[3] : greenEven;
+  const float blue = wb[2] > 0.0f && std::isfinite(wb[2]) ? wb[2] : 1.0f;
+  const Matrix3x3 wbMatrix =
+      diagonalMatrix3x3({red, (greenEven + greenOdd) * 0.5f, blue});
+
+  Matrix3x3 srgbToXyzD65;
+  const float srgbToXyzD65Values[9] = {
+      0.4124564f, 0.3575761f, 0.1804375f,
+      0.2126729f, 0.7151522f, 0.0721750f,
+      0.0193339f, 0.1191920f, 0.9503041f,
+  };
+  memcpy(srgbToXyzD65.m, srgbToXyzD65Values, sizeof(srgbToXyzD65Values));
+
+  Matrix3x3 d65ToD50;
+  const float d65ToD50Values[9] = {
+      1.0478112f,  0.0228866f, -0.0501270f,
+      0.0295424f,  0.9904844f, -0.0170491f,
+      -0.0092345f, 0.0150436f, 0.7521316f,
+  };
+  memcpy(d65ToD50.m, d65ToD50Values, sizeof(d65ToD50Values));
+
+  cameraToXyzD50 = d65ToD50.multiply(srgbToXyzD65)
+                       .multiply(cameraToSrgb)
+                       .multiply(wbMatrix);
+  for (float value : cameraToXyzD50.m) {
+    if (!std::isfinite(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static unsigned char mapCfaPatternToLibRaw(int cfaPattern) {
   switch (cfaPattern) {
   case 0:
@@ -2959,6 +3015,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   const bool useLinearRawRgb =
       !hasBayerRaw && (hasLinearRawColor3 || hasLinearRawColor4 || hasLinearRawImage);
   const jint samplesPerPixel = useLinearRawRgb ? 3 : 1;
+  const bool isDngInput = RawProcessor.imgdata.idata.dng_version != 0;
 
   DngRawTagInfo dngRawTagInfo;
   parseDngRawTagInfo(path, dngRawTagInfo);
@@ -3145,7 +3202,10 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     }
     selectedWb[i] = val > 0.0f && std::isfinite(val) ? val : 1.0f;
   }
-  if (selectedWb[3] <= 0.0f || !std::isfinite(selectedWb[3])) {
+  // LibRaw leaves cam_mul[3] at zero for ordinary three-color Bayer RAW.
+  // Preserve the second green as Gr; checking selectedWb here is too late
+  // because its invalid source value was already replaced with 1.0 above.
+  if (!(cameraWb[3] > 0.0f && std::isfinite(cameraWb[3]))) {
     selectedWb[3] = selectedWb[1];
   }
   const char *selectedWbSource = hasCameraWb ? "cam_mul" : "unity";
@@ -3381,6 +3441,11 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   if (hasSdkMatrix) {
     LOGI("Using DNG color spec path: whiteXY=%f,%f", sdkWhiteXy[0],
          sdkWhiteXy[1]);
+  } else if (!isDngInput &&
+             computeLibRawCameraToXyzD50(RawProcessor, wb, camToXYZ)) {
+    hasSdkMatrix = true;
+    LOGI("Using LibRaw rgb_cam path for non-DNG RAW: dngVersion=%u",
+         RawProcessor.imgdata.idata.dng_version);
   } else {
     Matrix3x3 identity = Matrix3x3::identity();
     std::array<float, 3> unityAnalog = {1.0f, 1.0f, 1.0f};

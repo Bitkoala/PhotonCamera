@@ -116,6 +116,22 @@ data class DngProfileGainTableMap(
         private const val MAX_GAMMA = 8.0f
         private const val MIN_GAIN_VALUE = 0.000244140625f
         private const val MAX_GAIN_VALUE = 4096.0f
+
+        /**
+         * DNG uses classic TIFF's byte-order marker and magic 42. Formats such
+         * as Panasonic RW2 use a different TIFF-derived magic and must not be
+         * sent through DNG-only metadata readers.
+         */
+        fun hasClassicTiffHeader(file: File): Boolean {
+            if (!file.exists() || file.length() < 8L) return false
+            return runCatching {
+                RandomAccessFile(file, "r").use { raf ->
+                    val byteOrder = readTiffByteOrder(raf) ?: return@use false
+                    raf.readUnsignedShort(byteOrder) == TIFF_CLASSIC_MAGIC
+                }
+            }.getOrDefault(false)
+        }
+
         fun readFrom(file: File): DngProfileGainTableMap? {
             if (!file.exists() || file.length() < 16L) return null
             return runCatching {

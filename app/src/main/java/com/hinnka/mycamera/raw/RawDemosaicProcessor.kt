@@ -1277,10 +1277,16 @@ class RawDemosaicProcessor {
         var embeddedDngRenderPlan: DcpRenderPlan? = null
 
         if (dngFile != null) {
-            val profileGainTableMap = DngPgtmDiagnostic.applyToEmbeddedMap(
-                DngProfileGainTableMap.readFrom(dngFile),
-                "DNG render"
-            )
+            val hasClassicTiffHeader = DngProfileGainTableMap.hasClassicTiffHeader(dngFile)
+            val profileGainTableMap = if (hasClassicTiffHeader) {
+                DngPgtmDiagnostic.applyToEmbeddedMap(
+                    DngProfileGainTableMap.readFrom(dngFile),
+                    "DNG render"
+                )
+            } else {
+                PLog.d(TAG, "Skipping DNG-only metadata for non-classic-TIFF RAW: ${dngFile.name}")
+                null
+            }
             val dngRawData = processDngNative(
                 dngFile.absolutePath,
                 profileWorkingColorSpace.xr, profileWorkingColorSpace.yr,
@@ -1324,11 +1330,15 @@ class RawDemosaicProcessor {
                 )
             }
             actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
-            embeddedDngRenderPlan = DngEmbeddedProfile.resolveRenderPlan(
-                file = dngFile,
-                metadata = actualMetadata,
-                workingColorSpace = profileWorkingColorSpace
-            )
+            embeddedDngRenderPlan = if (hasClassicTiffHeader) {
+                DngEmbeddedProfile.resolveRenderPlan(
+                    file = dngFile,
+                    metadata = actualMetadata,
+                    workingColorSpace = profileWorkingColorSpace
+                )
+            } else {
+                null
+            }
             onMetadata?.invoke(actualMetadata)
         }
 
