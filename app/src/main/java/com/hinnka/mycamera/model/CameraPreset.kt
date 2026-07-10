@@ -27,6 +27,7 @@ data class CameraPreset(
     val rawRenderingEngine: String = RawRenderingEngine.AdobeCurve.name,
     val rawGooglePixelToneMap: Boolean = false,
     val rawOppoMasterToneMap: Boolean = false,
+    val rawPhotonPgtmToneMap: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
     val rawDROMode: String = "OFF",
@@ -73,8 +74,9 @@ data class CameraPreset(
             .withoutLegacyHdf()
             .copy(
                 rawDcpIdsByLens = normalizeRawDcpIdsByLens(rawDcpIdsByLens),
-                rawGooglePixelToneMap = rawGooglePixelToneMap && !rawOppoMasterToneMap,
-                rawOppoMasterToneMap = rawOppoMasterToneMap
+                rawGooglePixelToneMap = rawGooglePixelToneMap && !rawOppoMasterToneMap && !rawPhotonPgtmToneMap,
+                rawOppoMasterToneMap = rawOppoMasterToneMap,
+                rawPhotonPgtmToneMap = rawPhotonPgtmToneMap && !rawOppoMasterToneMap
             )
     }
 

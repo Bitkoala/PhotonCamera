@@ -56,6 +56,7 @@ internal object CameraPresetJsonCodec {
             ),
             rawGooglePixelToneMap = obj.boolean("rawGooglePixelToneMap", false),
             rawOppoMasterToneMap = obj.boolean("rawOppoMasterToneMap", false),
+            rawPhotonPgtmToneMap = obj.boolean("rawPhotonPgtmToneMap", false),
             rawSpectralFilmStock = obj.stringOrNull("rawSpectralFilmStock"),
             rawSpectralFilmPrint = obj.stringOrNull("rawSpectralFilmPrint"),
             rawDROMode = parseDroMode(obj.stringOrNull("rawDROMode")),

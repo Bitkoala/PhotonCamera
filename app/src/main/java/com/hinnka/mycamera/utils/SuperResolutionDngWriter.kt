@@ -93,6 +93,7 @@ object SuperResolutionDngWriter {
     private const val TAG_DEFAULT_CROP_SIZE = 50720
     private const val TAG_COLOR_MATRIX_1 = 50721
     private const val TAG_COLOR_MATRIX_2 = 50722
+    private const val TAG_PROFILE_NAME = 50936
     private const val TAG_PROFILE_TONE_CURVE = 50940
     private const val TAG_AS_SHOT_NEUTRAL = 50728
     private const val TAG_BASELINE_EXPOSURE = 50730
@@ -136,6 +137,8 @@ object SuperResolutionDngWriter {
         customWhiteLevel: Float? = null,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
+        profileName: String? = null,
+        profileToneCurve: FloatArray? = null,
         imageLayout: ImageLayout = ImageLayout.CFA,
         compression: Compression = Compression.UNCOMPRESSED,
         inputRowStepSamples: Int? = null,
@@ -230,6 +233,8 @@ object SuperResolutionDngWriter {
                 imageByteCount = imageByteCount,
                 baselineExposureEv = baselineExposureEv,
                 profileGainTableMap = profileGainTableMap?.takeIf { it.isValid },
+                profileName = profileName,
+                profileToneCurve = profileToneCurve,
                 imageLayout = imageLayout,
                 compression = compression,
                 valueDomain = valueDomain,
@@ -269,6 +274,8 @@ object SuperResolutionDngWriter {
         imageByteCount: Long,
         baselineExposureEv: Float,
         profileGainTableMap: DngProfileGainTableMap?,
+        profileName: String?,
+        profileToneCurve: FloatArray?,
         imageLayout: ImageLayout,
         compression: Compression,
         valueDomain: RawProcessor.RawBufferValueDomain,
@@ -386,7 +393,10 @@ object SuperResolutionDngWriter {
             }
             add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(baselineExposureEv.toDouble())))
             if (profileGainTableMap != null) {
-                add(floatArray(TAG_PROFILE_TONE_CURVE, DngProfileToneCurve.googleHdrToneCurvePoints()))
+                add(ascii(TAG_PROFILE_NAME, profileName?.takeIf { it.isNotBlank() }
+                    ?: DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME))
+                add(floatArray(TAG_PROFILE_TONE_CURVE, profileToneCurve?.takeIf { it.size >= 4 }
+                    ?: DngProfileToneCurve.googleHdrToneCurvePoints()))
             }
             add(short(TAG_CALIBRATION_ILLUMINANT_1, illuminant1))
             if (illuminant2 != null && colorMatrix2 != null) {

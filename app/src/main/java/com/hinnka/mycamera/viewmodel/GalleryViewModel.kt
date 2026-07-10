@@ -2201,7 +2201,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             PLog.d(
                 TAG,
                 "persist RAW edit metadata: ${mediaData.id}, dro=$droMode, noise=$noiseReduction, " +
-                    "chromaNoise=$chromaNoiseReduction, googlePixelToneMap=${rawToneMappingParameters.useGooglePixelToneMap}"
+                    "chromaNoise=$chromaNoiseReduction, profileToneMap=${rawToneMappingParameters.profileToneMapMode}"
             )
             val updated = GalleryManager.updateMetadata(context, mediaData.id) { current ->
                 current.copy(
@@ -2270,7 +2270,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     ) {
         val previous = editRawToneMappingParameters.value.normalized()
         val updated = value.normalized()
-        val shouldEnableHdrGainmap = !previous.useGooglePixelToneMap && updated.useGooglePixelToneMap
+        val shouldEnableHdrGainmap =
+            previous.profileToneMapMode != updated.profileToneMapMode &&
+                (updated.useGooglePixelToneMap || updated.usePhotonPgtmToneMap)
         editRawToneMappingParameters.value = updated
         persistRawEditMetadata(
             mediaData = mediaData,

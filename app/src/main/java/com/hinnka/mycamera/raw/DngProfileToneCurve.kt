@@ -1,8 +1,13 @@
 package com.hinnka.mycamera.raw
 
 internal object DngProfileToneCurve {
+    const val GOOGLE_HDR_PROFILE_NAME = "Google Pixel HDR Tone Map"
+    const val PHOTON_PGTM_PROFILE_NAME = "Photon PGTM"
+
     private const val POINT_TOLERANCE = 2e-4f
     private const val LUT_TOLERANCE = 2e-3f
+
+    private val LINEAR_TONE_CURVE_POINTS = floatArrayOf(0f, 0f, 1f, 1f)
 
     private val GOOGLE_HDR_TONE_CURVE_Y = floatArrayOf(
         0f, 0.000817775668f, 0.00170822139f, 0.00267076469f, 0.0037048338f, 0.00480985641f, 0.00598525954f, 0.00723047229f,
@@ -75,6 +80,31 @@ internal object DngProfileToneCurve {
         0.97638f, 0.99517f, 0.98425f, 0.99686f, 0.99213f, 0.99845f, 1f, 1f
     )
 
+    // Fixed neutral base curve. Scene-dependent contrast and exposure belong to PGTM.
+    private val PHOTON_PGTM_TONE_CURVE_POINTS = floatArrayOf(
+        0.00000000f, 0.000000000f,
+        0.00390625f, 0.000012401f,
+        0.00781250f, 0.000072635f,
+        0.01171875f, 0.000206685f,
+        0.01562500f, 0.000553325f,
+        0.01953125f, 0.001360578f,
+        0.02343750f, 0.002622200f,
+        0.02734375f, 0.004144829f,
+        0.03125000f, 0.005831674f,
+        0.04687500f, 0.013821328f,
+        0.06250000f, 0.023228984f,
+        0.09375000f, 0.045079457f,
+        0.12500000f, 0.069945026f,
+        0.17968750f, 0.118763626f,
+        0.25000000f, 0.188884780f,
+        0.37500000f, 0.327727005f,
+        0.50000000f, 0.479043320f,
+        0.62500000f, 0.636591673f,
+        0.75000000f, 0.779041231f,
+        0.87500000f, 0.896886647f,
+        1.00000000f, 1.000000000f
+    )
+
     fun googleHdrToneCurvePoints(): FloatArray {
         return FloatArray(GOOGLE_HDR_TONE_CURVE_Y.size * 2) { index ->
             val pointIndex = index / 2
@@ -88,6 +118,22 @@ internal object DngProfileToneCurve {
 
     fun googleHdrToneCurveLut(sampleCount: Int = 256): FloatArray {
         return DcpToneCurve(googleHdrToneCurvePoints()).toLut(sampleCount)
+    }
+
+    fun linearToneCurvePoints(): FloatArray {
+        return LINEAR_TONE_CURVE_POINTS.copyOf()
+    }
+
+    fun linearToneCurveLut(sampleCount: Int = 256): FloatArray {
+        return DcpToneCurve(linearToneCurvePoints()).toLut(sampleCount)
+    }
+
+    fun photonPgtmToneCurvePoints(): FloatArray {
+        return PHOTON_PGTM_TONE_CURVE_POINTS.copyOf()
+    }
+
+    fun photonPgtmToneCurveLut(sampleCount: Int = 256): FloatArray {
+        return DcpToneCurve(photonPgtmToneCurvePoints()).toLut(sampleCount)
     }
 
     fun oppoEmbeddedToneCurvePoints(): FloatArray {
@@ -120,6 +166,28 @@ internal object DngProfileToneCurve {
         return isOppoEmbeddedToneCurveLut(toneCurve.toLut())
     }
 
+    fun isLinearToneCurve(toneCurve: DcpToneCurve?): Boolean {
+        if (toneCurve?.isValid != true) return false
+        val linearPoints = LINEAR_TONE_CURVE_POINTS
+        if (toneCurve.points.size == linearPoints.size) {
+            return toneCurve.points.indices.all { index ->
+                kotlin.math.abs(toneCurve.points[index] - linearPoints[index]) <= POINT_TOLERANCE
+            }
+        }
+        return isLinearToneCurveLut(toneCurve.toLut())
+    }
+
+    fun isPhotonPgtmToneCurve(toneCurve: DcpToneCurve?): Boolean {
+        if (toneCurve?.isValid != true) return false
+        val photonPoints = photonPgtmToneCurvePoints()
+        if (toneCurve.points.size == photonPoints.size) {
+            return toneCurve.points.indices.all { index ->
+                kotlin.math.abs(toneCurve.points[index] - photonPoints[index]) <= POINT_TOLERANCE
+            }
+        }
+        return isPhotonPgtmToneCurveLut(toneCurve.toLut())
+    }
+
     fun isGoogleHdrToneCurveLut(lut: FloatArray?): Boolean {
         if (lut == null || lut.isEmpty()) return false
         val googleLut = googleHdrToneCurveLut(lut.size)
@@ -133,6 +201,22 @@ internal object DngProfileToneCurve {
         val oppoLut = oppoEmbeddedToneCurveLut(lut.size)
         return lut.indices.all { index ->
             kotlin.math.abs(lut[index] - oppoLut[index]) <= LUT_TOLERANCE
+        }
+    }
+
+    fun isLinearToneCurveLut(lut: FloatArray?): Boolean {
+        if (lut == null || lut.isEmpty()) return false
+        val linearLut = linearToneCurveLut(lut.size)
+        return lut.indices.all { index ->
+            kotlin.math.abs(lut[index] - linearLut[index]) <= LUT_TOLERANCE
+        }
+    }
+
+    fun isPhotonPgtmToneCurveLut(lut: FloatArray?): Boolean {
+        if (lut == null || lut.isEmpty()) return false
+        val photonLut = photonPgtmToneCurveLut(lut.size)
+        return lut.indices.all { index ->
+            kotlin.math.abs(lut[index] - photonLut[index]) <= LUT_TOLERANCE
         }
     }
 

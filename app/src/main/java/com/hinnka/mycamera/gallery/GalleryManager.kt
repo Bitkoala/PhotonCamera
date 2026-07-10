@@ -38,9 +38,11 @@ import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
+import com.hinnka.mycamera.raw.DngProfileToneCurve
 import com.hinnka.mycamera.raw.RawDefaultCropOverride
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawMetadata
+import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
@@ -3015,6 +3017,7 @@ object GalleryManager {
                     applyLensShadingCorrection = resolveRawLensShadingCorrectionEnabled(context, metadata),
                     colorCorrectionMatrix = rawMetadata.colorCorrectionMatrix,
                     pgtmStatsBounds = rawHdrPgtmStatsBounds,
+                    profileToneMapMode = rawHdrPgtmModeForMetadata(metadata),
                 )
                 closeImagesNow(images)
 
@@ -3061,6 +3064,7 @@ object GalleryManager {
                         exportDngWithRawExport = exportDngWithRawExport,
                         baselineExposureEv = rawHdrBaselineExposureEv,
                         profileGainTableMap = rawHdrProfileGainTableMap,
+                        profileToneMapMode = rawHdrPgtmModeForMetadata(stackedMetadata),
                     )
                 } finally {
                     stackResult.fusedBayerBuffer = null
@@ -3329,6 +3333,7 @@ object GalleryManager {
         exportDngWithRawExport: Boolean,
         baselineExposureEv: Float = 0f,
         profileGainTableMap: DngProfileGainTableMap? = null,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
         imageLayout: SuperResolutionDngWriter.ImageLayout = SuperResolutionDngWriter.ImageLayout.CFA,
         compression: SuperResolutionDngWriter.Compression = SuperResolutionDngWriter.Compression.UNCOMPRESSED,
         inputRowStepSamples: Int? = null,
@@ -3360,6 +3365,8 @@ object GalleryManager {
                     cfaCorrectionMode = metadata.rawCfaCorrectionMode,
                     baselineExposureEv = baselineExposureEv,
                     profileGainTableMap = profileGainTableMap,
+                    profileName = profileNameForPgtmMode(profileToneMapMode),
+                    profileToneCurve = profileToneCurveForPgtmMode(profileToneMapMode),
                     imageLayout = imageLayout,
                     compression = compression,
                     inputRowStepSamples = inputRowStepSamples,
@@ -3507,6 +3514,27 @@ object GalleryManager {
                 PLog.e(TAG, "Unsupported image format: $format")
                 return@withContext null
             }
+        }
+    }
+
+    private fun rawHdrPgtmModeForMetadata(metadata: MediaMetadata): RawProfileToneMapMode {
+        return when (metadata.rawToneMappingParameters.normalized().profileToneMapMode) {
+            RawProfileToneMapMode.PhotonPgtm -> RawProfileToneMapMode.PhotonPgtm
+            else -> RawProfileToneMapMode.GooglePixel
+        }
+    }
+
+    private fun profileNameForPgtmMode(mode: RawProfileToneMapMode): String {
+        return when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            else -> DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME
+        }
+    }
+
+    private fun profileToneCurveForPgtmMode(mode: RawProfileToneMapMode): FloatArray {
+        return when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurvePoints()
+            else -> DngProfileToneCurve.googleHdrToneCurvePoints()
         }
     }
 
@@ -4219,10 +4247,24 @@ object GalleryManager {
         dngFile: File
     ): MediaMetadata {
         val hasProfileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)?.isValid == true
-        if (!hasProfileGainTableMap || !DngEmbeddedProfile.hasGoogleToneMapProfile(dngFile)) return this
-        val toneMappingParameters = rawToneMappingParameters.withGooglePixelToneMap(true)
+        if (!hasProfileGainTableMap) return this
+        val toneMappingParameters = when {
+            DngEmbeddedProfile.hasPhotonPgtmProfile(dngFile) -> {
+                rawToneMappingParameters.withPhotonPgtmToneMap(true)
+            }
+
+            DngEmbeddedProfile.hasGoogleToneMapProfile(dngFile) -> {
+                rawToneMappingParameters.withGooglePixelToneMap(true)
+            }
+
+            else -> return this
+        }
         if (toneMappingParameters == rawToneMappingParameters && manualHdrEffectEnabled) return this
-        PLog.d(TAG, "DNG contains PGTM + Google ProfileToneCurve; enabling Pixel-style tone map and HDR gainmap for this photo")
+        PLog.d(
+            TAG,
+            "DNG contains PGTM + ${toneMappingParameters.profileToneMapMode} ProfileToneCurve; " +
+                "enabling profile tone map and HDR gainmap for this photo"
+        )
         return copy(
             rawToneMappingParameters = toneMappingParameters,
             manualHdrEffectEnabled = true

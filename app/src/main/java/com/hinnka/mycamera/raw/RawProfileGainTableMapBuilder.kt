@@ -21,6 +21,7 @@ internal object RawProfileGainTableMapBuilder {
         metadata: RawMetadata,
         samplesPerPixel: Int = 1,
         statsBounds: Rect? = null,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     ): DngProfileGainTableMap? {
         val stats = buildPackedCellStats(
             rawData = rawData,
@@ -32,13 +33,27 @@ internal object RawProfileGainTableMapBuilder {
             statsBounds = statsBounds
         ) ?: return null
         val diagnosticBand = DngPgtmDiagnostic.activeBandForSource(TAG)
-        return DngHdrProfileGainTableGenerator.forCellStats(
-            width = width,
-            height = height,
-            baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure),
-            packedCellStats = stats,
-            diagnosticBand = diagnosticBand
-        )
+        val baselineExposureEv = DngBaselineExposure.sanitize(metadata.baselineExposure)
+        return when (profileToneMapMode) {
+            RawProfileToneMapMode.GooglePixel -> DngHdrProfileGainTableGenerator.forCellStats(
+                width = width,
+                height = height,
+                baselineExposureEv = baselineExposureEv,
+                packedCellStats = stats,
+                diagnosticBand = diagnosticBand
+            )
+
+            RawProfileToneMapMode.PhotonPgtm -> DngPhotonProfileGainTableGenerator.forCellStats(
+                width = width,
+                height = height,
+                baselineExposureEv = baselineExposureEv,
+                packedCellStats = stats,
+                diagnosticBand = diagnosticBand
+            )
+
+            RawProfileToneMapMode.Default,
+            RawProfileToneMapMode.OppoMaster -> null
+        }
     }
 
     private fun buildPackedCellStats(

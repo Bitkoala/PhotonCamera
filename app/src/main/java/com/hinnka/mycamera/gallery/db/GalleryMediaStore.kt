@@ -237,6 +237,7 @@ object GalleryMediaStore {
             rawFilmicWhiteRelativeExposure = metadata.rawToneMappingParameters.filmicWhiteRelativeExposure,
             rawGooglePixelToneMap = metadata.rawToneMappingParameters.useGooglePixelToneMap,
             rawOppoMasterToneMap = metadata.rawToneMappingParameters.useOppoMasterToneMap,
+            rawPhotonPgtmToneMap = metadata.rawToneMappingParameters.usePhotonPgtmToneMap,
             rawAppleProRawToneMap = false,
             frameId = metadata.frameId,
             width = metadata.width,
@@ -418,7 +419,8 @@ object GalleryMediaStore {
                 filmicBlackRelativeExposure = rawFilmicBlackRelativeExposure,
                 filmicWhiteRelativeExposure = rawFilmicWhiteRelativeExposure,
                 useGooglePixelToneMap = rawGooglePixelToneMap,
-                useOppoMasterToneMap = rawOppoMasterToneMap
+                useOppoMasterToneMap = rawOppoMasterToneMap,
+                usePhotonPgtmToneMap = rawPhotonPgtmToneMap
             ).normalized(),
             frameId = frameId,
             width = width,

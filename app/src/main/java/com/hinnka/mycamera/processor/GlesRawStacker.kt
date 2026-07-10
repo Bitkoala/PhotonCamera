@@ -11,7 +11,9 @@ import android.opengl.GLES30
 import android.opengl.GLES31
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.raw.DngHdrProfileGainTableGenerator
+import com.hinnka.mycamera.raw.DngPhotonProfileGainTableGenerator
 import com.hinnka.mycamera.raw.DngPgtmDiagnostic
+import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
@@ -35,6 +37,7 @@ class GlesRawStacker(
     private val lensShadingHeight: Int,
     colorCorrectionMatrix: FloatArray? = null,
     pgtmStatsBounds: Rect? = null,
+    private val profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     private val tuning: RawStackTuningProfile = RawStackTuningResolver.resolve(RawStackMode.MFNR),
     debugConfig: RawStackDebugConfig = RawStackDebugConfig.Disabled,
 ) {
@@ -527,6 +530,11 @@ class GlesRawStacker(
                 blackLevel = normalizedBlackLevel.copyOf(),
                 fusedBayerUsesNativeAllocator = true,
                 profileGainTableMap = profileGainTableMap,
+                profileToneMapMode = if (profileGainTableMap != null) {
+                    profileToneMapMode
+                } else {
+                    RawProfileToneMapMode.Default
+                },
                 diagnostics = diagnostics,
             )
         } catch (e: Exception) {
@@ -854,6 +862,11 @@ class GlesRawStacker(
         if (!baselineExposureEv.isFinite() || baselineExposureEv <= 0.05f || pgtmStatsProgram == 0) {
             return null
         }
+        if (profileToneMapMode != RawProfileToneMapMode.GooglePixel &&
+            profileToneMapMode != RawProfileToneMapMode.PhotonPgtm
+        ) {
+            return null
+        }
         val grid = DngHdrProfileGainTableGenerator.gridSizeFor(width, height)
         val pgtmGridWidth = grid.getOrElse(0) { 0 }
         val pgtmGridHeight = grid.getOrElse(1) { 0 }
@@ -924,13 +937,24 @@ class GlesRawStacker(
             } finally {
                 GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
             }
-            DngHdrProfileGainTableGenerator.forCellStats(
-                width = width,
-                height = height,
-                baselineExposureEv = baselineExposureEv,
-                packedCellStats = stats,
-                diagnosticBand = DngPgtmDiagnostic.activeBandForSource("$TAG GPU stacker")
-            )
+            val diagnosticBand = DngPgtmDiagnostic.activeBandForSource("$TAG GPU stacker")
+            when (profileToneMapMode) {
+                RawProfileToneMapMode.PhotonPgtm -> DngPhotonProfileGainTableGenerator.forCellStats(
+                    width = width,
+                    height = height,
+                    baselineExposureEv = baselineExposureEv,
+                    packedCellStats = stats,
+                    diagnosticBand = diagnosticBand
+                )
+
+                else -> DngHdrProfileGainTableGenerator.forCellStats(
+                    width = width,
+                    height = height,
+                    baselineExposureEv = baselineExposureEv,
+                    packedCellStats = stats,
+                    diagnosticBand = diagnosticBand
+                )
+            }
         } catch (e: Exception) {
             PLog.w(TAG, "Failed to compute GPU HDR PGTM stats", e)
             null

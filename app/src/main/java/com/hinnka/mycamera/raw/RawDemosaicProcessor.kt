@@ -1410,35 +1410,59 @@ class RawDemosaicProcessor {
             thumbnail = capturePreviewThumbnail
         )
         val embeddedDngProfileName = embeddedDngRenderPlan?.profileName
-        val embeddedGoogleToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
-            ?.takeIf {
-                DngProfileToneCurve.isGoogleHdrToneCurveLut(it) ||
-                    DngEmbeddedProfile.isGoogleProfileName(embeddedDngProfileName)
+        val embeddedProfileToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
+        val embeddedProfileToneMapMode = when {
+            embeddedProfileToneCurveLut != null &&
+                (DngProfileToneCurve.isGoogleHdrToneCurveLut(embeddedProfileToneCurveLut) ||
+                    DngEmbeddedProfile.isGoogleProfileName(embeddedDngProfileName)) -> {
+                RawProfileToneMapMode.GooglePixel
             }
+
+            embeddedProfileToneCurveLut != null &&
+                DngProfileToneCurve.isPhotonPgtmToneCurveLut(embeddedProfileToneCurveLut) &&
+                DngEmbeddedProfile.isPhotonPgtmProfileName(embeddedDngProfileName) -> {
+                RawProfileToneMapMode.PhotonPgtm
+            }
+
+            else -> RawProfileToneMapMode.Default
+        }
         val embeddedProfileGainTableMap = actualMetadata.profileGainTableMap?.takeIf { it.isValid }
-        val embeddedDngHdrToneMapAvailable = embeddedGoogleToneCurveLut != null &&
+        val embeddedDngHdrToneMapAvailable = embeddedProfileToneMapMode != RawProfileToneMapMode.Default &&
             embeddedProfileGainTableMap != null
         val inactiveEmbeddedProfileGainTableMapAvailable = embeddedProfileGainTableMap != null &&
             !embeddedDngHdrToneMapAvailable
         val normalizedToneMappingParameters = rawToneMappingParameters.normalized()
         val googlePixelToneMapRequested = useAdobeProfilePipeline &&
             normalizedToneMappingParameters.useGooglePixelToneMap
+        val photonPgtmToneMapRequested = useAdobeProfilePipeline &&
+            normalizedToneMappingParameters.usePhotonPgtmToneMap
         val oppoMasterToneMapRequested = useAdobeProfilePipeline &&
             normalizedToneMappingParameters.useOppoMasterToneMap
+        val requestedProfileToneMapMode = when {
+            googlePixelToneMapRequested -> RawProfileToneMapMode.GooglePixel
+            photonPgtmToneMapRequested -> RawProfileToneMapMode.PhotonPgtm
+            else -> RawProfileToneMapMode.Default
+        }
+        val profileGainToneMapRequested = requestedProfileToneMapMode == RawProfileToneMapMode.GooglePixel ||
+            requestedProfileToneMapMode == RawProfileToneMapMode.PhotonPgtm
         val embeddedDngHdrToneMapDisabledByUser = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
             !oppoMasterToneMapRequested &&
-            !googlePixelToneMapRequested
+            requestedProfileToneMapMode == RawProfileToneMapMode.Default
         val embeddedDngHdrToneMapDisabledByOppo = embeddedDngHdrToneMapAvailable &&
             oppoMasterToneMapRequested
+        val embeddedDngHdrToneMapModeMismatch = embeddedDngHdrToneMapAvailable &&
+            profileGainToneMapRequested &&
+            requestedProfileToneMapMode != embeddedProfileToneMapMode
         if (embeddedDngHdrToneMapAvailable) {
             PLog.d(
                 TAG,
                 "Embedded DNG PGTM/ProfileToneCurve available: " +
+                    "mode=$embeddedProfileToneMapMode " +
                     "tag=${embeddedProfileGainTableMap.sourceTag} " +
                     "grid=${embeddedProfileGainTableMap.mapPointsH}x" +
                     "${embeddedProfileGainTableMap.mapPointsV}x${embeddedProfileGainTableMap.mapPointsN} " +
-                    "googleTone=${normalizedToneMappingParameters.useGooglePixelToneMap}"
+                    "requested=${normalizedToneMappingParameters.profileToneMapMode}"
             )
         }
         val embeddedDngHdrToneMapOverriddenByDcp = embeddedDngHdrToneMapAvailable &&
@@ -1447,14 +1471,15 @@ class RawDemosaicProcessor {
             resolvedDcpRenderPlan?.toneCurveLut != null
         val embeddedDngHdrToneMapRenderable = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
-            googlePixelToneMapRequested &&
+            requestedProfileToneMapMode == embeddedProfileToneMapMode &&
             !embeddedDngHdrToneMapOverriddenByDcp &&
             !embeddedDngHdrToneMapDisabledByUser &&
             !embeddedDngHdrToneMapDisabledByOppo
         if (embeddedDngHdrToneMapAvailable && !embeddedDngHdrToneMapRenderable) {
             val reason = when {
-                embeddedDngHdrToneMapDisabledByUser -> "Pixel-style tone map disabled for this photo"
+                embeddedDngHdrToneMapDisabledByUser -> "profile tone map disabled for this photo"
                 embeddedDngHdrToneMapDisabledByOppo -> "OPPO master tone map requested"
+                embeddedDngHdrToneMapModeMismatch -> "requested profile tone map $requestedProfileToneMapMode"
                 !useAdobeProfilePipeline -> "color engine $colorEngine does not use Adobe/DNG profile tone map"
                 embeddedDngHdrToneMapOverriddenByDcp -> "selected DCP has tone curve: ${resolvedDcpRenderPlan.profileName}"
                 else -> "current render pipeline does not use embedded DNG HDR tone map"
@@ -1472,24 +1497,24 @@ class RawDemosaicProcessor {
                 "Embedded DNG ProfileGainTableMap ignored: profile=$embeddedDngProfileName"
             )
         }
-        val requestedGeneratedPixelToneMap = googlePixelToneMapRequested &&
-            !embeddedDngHdrToneMapAvailable
-        val generatedPixelToneMapOverriddenByDcp = requestedGeneratedPixelToneMap &&
+        val requestedGeneratedProfileGainToneMap = profileGainToneMapRequested &&
+            (!embeddedDngHdrToneMapAvailable || embeddedProfileToneMapMode != requestedProfileToneMapMode)
+        val generatedProfileGainToneMapOverriddenByDcp = requestedGeneratedProfileGainToneMap &&
             hasDcpSelection &&
             resolvedDcpRenderPlan?.toneCurveLut != null
-        val generatePixelToneMap = requestedGeneratedPixelToneMap &&
-            !generatedPixelToneMapOverriddenByDcp
-        if (generatedPixelToneMapOverriddenByDcp) {
+        val generateProfileGainToneMap = requestedGeneratedProfileGainToneMap &&
+            !generatedProfileGainToneMapOverriddenByDcp
+        if (generatedProfileGainToneMapOverriddenByDcp) {
             PLog.d(
                 TAG,
-                "Generated Pixel-style PGTM/ProfileToneCurve not rendered because selected DCP has tone curve: " +
+                "Generated $requestedProfileToneMapMode PGTM/ProfileToneCurve not rendered because selected DCP has tone curve: " +
                     "profile=${resolvedDcpRenderPlan.profileName}"
             )
         }
         if (embeddedDngHdrToneMapRenderable) {
-            PLog.d(TAG, "Using embedded Pixel-style DNG PGTM/ProfileToneCurve")
+            PLog.d(TAG, "Using embedded $embeddedProfileToneMapMode DNG PGTM/ProfileToneCurve")
         }
-        if (generatePixelToneMap) {
+        if (generateProfileGainToneMap) {
             val generatedProfileGainTableMap = RawProfileGainTableMapBuilder.build(
                 rawData = actualRawData,
                 width = actualWidth,
@@ -1497,26 +1522,28 @@ class RawDemosaicProcessor {
                 rowStride = actualRowStride,
                 metadata = actualMetadata,
                 samplesPerPixel = actualSamplesPerPixel,
-                statsBounds = outputSourceBounds
+                statsBounds = outputSourceBounds,
+                profileToneMapMode = requestedProfileToneMapMode
             )
             if (generatedProfileGainTableMap?.isValid == true) {
                 actualMetadata = actualMetadata.copy(profileGainTableMap = generatedProfileGainTableMap)
                 PLog.d(
                     TAG,
-                    "Generated Google Pixel tone map PGTM for RAW: " +
+                    "Generated $requestedProfileToneMapMode PGTM for RAW: " +
                         "grid=${generatedProfileGainTableMap.mapPointsH}x" +
                         "${generatedProfileGainTableMap.mapPointsV}x" +
                         "${generatedProfileGainTableMap.mapPointsN}"
                 )
                 DngPgtmDebugRewriter.rewriteGeneratedPgtmOnRawRefreshIfEnabled(
                     dngFile = dngFile,
-                    profileGainTableMap = generatedProfileGainTableMap
+                    profileGainTableMap = generatedProfileGainTableMap,
+                    profileToneMapMode = requestedProfileToneMapMode
                 )
             } else {
-                PLog.w(TAG, "Google Pixel tone map requested but PGTM stats generation failed")
+                PLog.w(TAG, "$requestedProfileToneMapMode requested but PGTM stats generation failed")
             }
         }
-        val googlePixelToneMapActive = (embeddedDngHdrToneMapRenderable || generatePixelToneMap) &&
+        val profileGainToneMapActive = (embeddedDngHdrToneMapRenderable || generateProfileGainToneMap) &&
             actualMetadata.profileGainTableMap?.isValid == true
         val oppoMasterToneMapActive = oppoMasterToneMapRequested
         val embeddedProfileToneCurveDisabled = (
@@ -1532,19 +1559,21 @@ class RawDemosaicProcessor {
                 resolvedDcpRenderPlan,
                 reason = when {
                     embeddedDngHdrToneMapDisabledByOppo -> "OPPO master tone map requested"
-                    else -> "Pixel-style tone map disabled for this photo"
+                    else -> "profile tone map disabled for this photo"
                 }
             )
         } else {
             resolvedDcpRenderPlan
         }
         val activeDcpRenderPlan = when {
-            googlePixelToneMapActive -> {
-                googlePixelToneMapRenderPlan(
+            profileGainToneMapActive -> {
+                profileGainToneMapRenderPlan(
                     basePlan = profileBaseDcpRenderPlan,
                     metadata = actualMetadata,
                     workingColorSpace = profileWorkingColorSpace,
-                    preferredToneCurveLut = embeddedGoogleToneCurveLut.takeIf { embeddedDngHdrToneMapRenderable }
+                    mode = requestedProfileToneMapMode.takeIf { generateProfileGainToneMap }
+                        ?: embeddedProfileToneMapMode,
+                    preferredToneCurveLut = embeddedProfileToneCurveLut.takeIf { embeddedDngHdrToneMapRenderable }
                 )
             }
             oppoMasterToneMapActive -> {
@@ -1557,11 +1586,11 @@ class RawDemosaicProcessor {
             else -> profileBaseDcpRenderPlan
         }
         val profilePlanSource = when {
-            googlePixelToneMapActive -> when {
-                dcpRenderPlan != null -> "provided+google-pixel-tone-map"
-                rawDcpId != null -> "$rawDcpId+google-pixel-tone-map"
-                !hasDcpSelection && embeddedDngRenderPlan != null -> "embedded-dng+google-pixel-tone-map"
-                else -> "google-pixel-tone-map"
+            profileGainToneMapActive -> when {
+                dcpRenderPlan != null -> "provided+${requestedProfileToneMapMode.name.lowercase()}-tone-map"
+                rawDcpId != null -> "$rawDcpId+${requestedProfileToneMapMode.name.lowercase()}-tone-map"
+                !hasDcpSelection && embeddedDngRenderPlan != null -> "embedded-dng+${requestedProfileToneMapMode.name.lowercase()}-tone-map"
+                else -> "${requestedProfileToneMapMode.name.lowercase()}-tone-map"
             }
             oppoMasterToneMapActive -> when {
                 dcpRenderPlan != null -> "provided+oppo-master-tone-map"
@@ -6951,16 +6980,23 @@ class RawDemosaicProcessor {
         }
     }
 
-    private fun googlePixelToneMapRenderPlan(
+    private fun profileGainToneMapRenderPlan(
         basePlan: DcpRenderPlan?,
         metadata: RawMetadata,
         workingColorSpace: ColorSpace,
+        mode: RawProfileToneMapMode,
         preferredToneCurveLut: FloatArray? = null,
     ): DcpRenderPlan {
-        val googleToneCurve = preferredToneCurveLut?.copyOf() ?: DngProfileToneCurve.googleHdrToneCurveLut()
+        val toneCurve = preferredToneCurveLut?.copyOf() ?: when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurveLut()
+            else -> DngProfileToneCurve.googleHdrToneCurveLut()
+        }
+        val modeName = when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            else -> "Google Pixel Tone Map"
+        }
         return DcpRenderPlan(
-            profileName = basePlan?.profileName?.let { "$it + Google Pixel Tone Map" }
-                ?: "Google Pixel Tone Map",
+            profileName = basePlan?.profileName?.let { "$it + $modeName" } ?: modeName,
             workingColorSpace = basePlan?.workingColorSpace ?: workingColorSpace,
             baselineExposureOffset = basePlan?.baselineExposureOffset ?: 0f,
             defaultBlackRender = DcpDefaultBlackRender.None,
@@ -6968,7 +7004,7 @@ class RawDemosaicProcessor {
             cameraWhite = basePlan?.cameraWhite ?: metadata.cameraWhite,
             hueSatMap = basePlan?.hueSatMap,
             lookTable = basePlan?.lookTable,
-            toneCurveLut = googleToneCurve
+            toneCurveLut = toneCurve
         )
     }
 

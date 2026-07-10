@@ -9,6 +9,7 @@ import androidx.core.graphics.createBitmap
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
+import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 
@@ -20,6 +21,7 @@ data class RawStackResult(
     val blackLevel: FloatArray = floatArrayOf(0f, 0f, 0f, 0f),
     val fusedBayerUsesNativeAllocator: Boolean = false,
     val profileGainTableMap: DngProfileGainTableMap? = null,
+    val profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Default,
     val diagnostics: RawStackDiagnostics? = null,
 )
 
@@ -233,6 +235,7 @@ object MultiFrameStacker {
         applyLensShadingCorrection: Boolean = true,
         colorCorrectionMatrix: FloatArray? = null,
         pgtmStatsBounds: Rect? = null,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     ): RawStackResult? {
         if (normalFrames.isEmpty()) {
             shortFrame.image.close()
@@ -271,6 +274,7 @@ object MultiFrameStacker {
             lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
             colorCorrectionMatrix = colorCorrectionMatrix,
             pgtmStatsBounds = pgtmStatsBounds,
+            profileToneMapMode = profileToneMapMode,
             tuning = tuning,
             debugConfig = RawStackRuntimeDebug.debugConfig,
         ).processHdr(

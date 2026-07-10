@@ -15,26 +15,30 @@ internal object DngPgtmDebugRewriter {
 
     private const val TIFF_CLASSIC_MAGIC = 42
     private const val TYPE_BYTE = 1
+    private const val TYPE_ASCII = 2
     private const val TYPE_FLOAT = 11
     private const val TYPE_UNDEFINED = 7
 
     private const val TAG_DNG_VERSION = 50706
+    private const val TAG_PROFILE_NAME = 50936
     private const val TAG_PROFILE_TONE_CURVE = 50940
     private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
 
     fun rewriteGeneratedPgtmOnRawRefreshIfEnabled(
         dngFile: File?,
         profileGainTableMap: DngProfileGainTableMap?,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     ): Boolean {
         if (!BuildConfig.DEBUG || !REWRITE_GENERATED_PGTM_ON_RAW_REFRESH) return false
         val file = dngFile ?: return false
         val map = profileGainTableMap?.takeIf { it.isValid } ?: return false
-        return rewriteProfileGainTableMap2(file, map)
+        return rewriteProfileGainTableMap2(file, map, profileToneMapMode)
     }
 
     fun rewriteProfileGainTableMap2(
         dngFile: File,
         profileGainTableMap: DngProfileGainTableMap,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
     ): Boolean {
         if (!BuildConfig.DEBUG) return false
         if (!profileGainTableMap.isValid || !dngFile.exists() || dngFile.length() < 16L) {
@@ -50,7 +54,9 @@ internal object DngPgtmDebugRewriter {
                 }
                 val ifd0Offset = raf.readUnsignedInt(byteOrder)
                 val ifd0 = readIfd(raf, ifd0Offset, byteOrder) ?: return@use false
-                val toneCurvePoints = DngProfileToneCurve.googleHdrToneCurvePoints()
+                val profileName = profileNameForToneMapMode(profileToneMapMode)
+                val profileNameBytes = asciiBytes(profileName)
+                val toneCurvePoints = profileToneCurveForToneMapMode(profileToneMapMode)
                 val pgtmPayload = profileGainTableMap.encodeProfileGainTableMap2(byteOrder)
                 val replacements = listOf(
                     TiffValue(
@@ -58,6 +64,12 @@ internal object DngPgtmDebugRewriter {
                         type = TYPE_BYTE,
                         count = 4,
                         bytes = byteArrayOf(1, 7, 0, 0)
+                    ),
+                    TiffValue(
+                        tag = TAG_PROFILE_NAME,
+                        type = TYPE_ASCII,
+                        count = profileNameBytes.size.toLong(),
+                        bytes = profileNameBytes
                     ),
                     TiffValue(
                         tag = TAG_PROFILE_TONE_CURVE,
@@ -85,6 +97,7 @@ internal object DngPgtmDebugRewriter {
                 raf.writeUInt(newIfdOffset, byteOrder)
                 logInfo(
                     "Rewrote debug DNG PGTM: file=${dngFile.name} " +
+                        "profile=$profileName " +
                         "grid=${profileGainTableMap.mapPointsH}x${profileGainTableMap.mapPointsV}x" +
                         "${profileGainTableMap.mapPointsN} ifd0=$ifd0Offset->$newIfdOffset"
                 )
@@ -107,6 +120,24 @@ internal object DngPgtmDebugRewriter {
                 PLog.w(TAG, message)
             }
         }
+    }
+
+    private fun profileNameForToneMapMode(mode: RawProfileToneMapMode): String {
+        return when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            else -> DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME
+        }
+    }
+
+    private fun profileToneCurveForToneMapMode(mode: RawProfileToneMapMode): FloatArray {
+        return when (mode) {
+            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurvePoints()
+            else -> DngProfileToneCurve.googleHdrToneCurvePoints()
+        }
+    }
+
+    private fun asciiBytes(value: String): ByteArray {
+        return (value + "\u0000").toByteArray(Charsets.US_ASCII)
     }
 
     private fun appendIfd0WithReplacements(
