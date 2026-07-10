@@ -4909,7 +4909,8 @@ class GlesRawStacker(
                     weight *= mix(1.0, max(uDenoiseNonReferenceWeightBoost, 1.0), denoiseBoost);
                     weight = max(
                         weight,
-                        precisionWeight * max(uDenoiseNonReferenceWeightFloor, 0.0) * denoiseBoost
+                        precisionWeight * uFrameWeight * robust *
+                            max(uDenoiseNonReferenceWeightFloor, 0.0) * denoiseBoost
                     );
                 } else if (uHdrMode == 0) {
                     weight *= mix(1.0, clamp(uDenoiseReferenceDarkWeightScale, 0.05, 1.0), denoiseAmount);
