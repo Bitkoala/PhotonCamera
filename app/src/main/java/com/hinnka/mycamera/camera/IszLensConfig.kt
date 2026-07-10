@@ -1,5 +1,7 @@
 package com.hinnka.mycamera.camera
 
+import com.hinnka.mycamera.raw.RawCfaCorrection
+import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -152,3 +154,17 @@ data class RawBlackBorderCrop(
     val hasCrop: Boolean
         get() = leftPx > 0 || topPx > 0 || rightPx > 0 || bottomPx > 0
 }
+
+/**
+ * RAW DNG 元数据校正参数，会以 ISZ 虚拟镜头 ID 为键持久化。
+ *
+ * ISZ 镜头和其基础物理镜头共用同一枚传感器，但其输出的 RAW 元数据可能不同，
+ * 因此不能复用基础镜头的校正值。
+ */
+data class IszRawDngMetadataCorrections(
+    val blackLevelMode: String = RawCfaCorrection.MODE_DEFAULT,
+    val customBlackLevel: Float = 0f,
+    val whiteLevelMode: String = RawWhiteLevelCorrection.MODE_DEFAULT,
+    val customWhiteLevel: Float = 0f,
+    val cfaCorrectionMode: String = RawCfaCorrection.MODE_DEFAULT
+)

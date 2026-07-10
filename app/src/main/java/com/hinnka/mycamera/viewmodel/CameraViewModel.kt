@@ -4393,6 +4393,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         iszZoomRatio: Float,
         isMacro: Boolean,
         rawBlackBorderCrop: RawBlackBorderCrop,
+        rawDngMetadataCorrections: IszRawDngMetadataCorrections,
         settings: VendorCaptureSettings
     ) {
         viewModelScope.launch {
@@ -4412,6 +4413,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 .distinctBy { it.virtualCameraId }
             userPreferencesRepository.saveIszLensConfigs(updatedConfigs)
             userPreferencesRepository.saveVendorCaptureSettingsForLens(config.virtualCameraId, settings)
+            userPreferencesRepository.saveRawDngMetadataCorrections(
+                config.virtualCameraId,
+                rawDngMetadataCorrections
+            )
             cameraController.refreshCameraList()
         }
     }
@@ -4426,6 +4431,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 config.virtualCameraId,
                 VendorCaptureSettings.Empty
             )
+            userPreferencesRepository.clearRawDngMetadataCorrections(config.virtualCameraId)
             cameraController.refreshCameraList()
         }
     }

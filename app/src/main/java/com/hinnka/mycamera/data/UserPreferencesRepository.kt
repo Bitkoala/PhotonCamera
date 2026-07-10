@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.IszLensConfig
+import com.hinnka.mycamera.camera.IszRawDngMetadataCorrections
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.MeteringMode
 import com.hinnka.mycamera.camera.VendorCaptureSettings
@@ -1063,6 +1064,62 @@ class UserPreferencesRepository(private val context: Context) {
             val updated = current.toMutableMap()
             updated[cameraId] = mode
             preferences[RAW_BLACK_LEVEL_MODES_KEY] = serializeMapString(updated)
+        }
+    }
+
+    /**
+     * Stores the DNG metadata corrections selected while creating an ISZ lens.
+     * All values are committed together so they are always associated with the same
+     * virtual camera ID.
+     */
+    suspend fun saveRawDngMetadataCorrections(
+        cameraId: String,
+        corrections: IszRawDngMetadataCorrections
+    ) {
+        if (cameraId.isBlank()) return
+
+        context.dataStore.edit { preferences ->
+            val blackLevelModes = parseMapString(preferences[RAW_BLACK_LEVEL_MODES_KEY]).toMutableMap()
+            val customBlackLevels = parseMapFloat(preferences[RAW_CUSTOM_BLACK_LEVELS_KEY]).toMutableMap()
+            val whiteLevelModes = parseMapString(preferences[RAW_WHITE_LEVEL_MODES_KEY]).toMutableMap()
+            val customWhiteLevels = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY]).toMutableMap()
+            val cfaCorrectionModes = parseMapString(preferences[RAW_CFA_CORRECTION_MODES_KEY]).toMutableMap()
+
+            blackLevelModes[cameraId] = corrections.blackLevelMode
+            customBlackLevels[cameraId] = corrections.customBlackLevel
+            whiteLevelModes[cameraId] = corrections.whiteLevelMode
+            customWhiteLevels[cameraId] = corrections.customWhiteLevel
+            cfaCorrectionModes[cameraId] = corrections.cfaCorrectionMode
+
+            preferences[RAW_BLACK_LEVEL_MODES_KEY] = serializeMapString(blackLevelModes)
+            preferences[RAW_CUSTOM_BLACK_LEVELS_KEY] = serializeMapFloat(customBlackLevels)
+            preferences[RAW_WHITE_LEVEL_MODES_KEY] = serializeMapString(whiteLevelModes)
+            preferences[RAW_CUSTOM_WHITE_LEVELS_KEY] = serializeMapFloat(customWhiteLevels)
+            preferences[RAW_CFA_CORRECTION_MODES_KEY] = serializeMapString(cfaCorrectionModes)
+        }
+    }
+
+    suspend fun clearRawDngMetadataCorrections(cameraId: String) {
+        if (cameraId.isBlank()) return
+
+        context.dataStore.edit { preferences ->
+            val blackLevelModes = parseMapString(preferences[RAW_BLACK_LEVEL_MODES_KEY]).toMutableMap()
+            val customBlackLevels = parseMapFloat(preferences[RAW_CUSTOM_BLACK_LEVELS_KEY]).toMutableMap()
+            val whiteLevelModes = parseMapString(preferences[RAW_WHITE_LEVEL_MODES_KEY]).toMutableMap()
+            val customWhiteLevels = parseMapFloat(preferences[RAW_CUSTOM_WHITE_LEVELS_KEY]).toMutableMap()
+            val cfaCorrectionModes = parseMapString(preferences[RAW_CFA_CORRECTION_MODES_KEY]).toMutableMap()
+
+            blackLevelModes.remove(cameraId)
+            customBlackLevels.remove(cameraId)
+            whiteLevelModes.remove(cameraId)
+            customWhiteLevels.remove(cameraId)
+            cfaCorrectionModes.remove(cameraId)
+
+            preferences[RAW_BLACK_LEVEL_MODES_KEY] = serializeMapString(blackLevelModes)
+            preferences[RAW_CUSTOM_BLACK_LEVELS_KEY] = serializeMapFloat(customBlackLevels)
+            preferences[RAW_WHITE_LEVEL_MODES_KEY] = serializeMapString(whiteLevelModes)
+            preferences[RAW_CUSTOM_WHITE_LEVELS_KEY] = serializeMapFloat(customWhiteLevels)
+            preferences[RAW_CFA_CORRECTION_MODES_KEY] = serializeMapString(cfaCorrectionModes)
         }
     }
 

@@ -252,69 +252,17 @@ fun RawEditPanel(
                 onValueChangeFinished = onAdjustmentEnd
             )
             if (showDngMetadataControls) {
-                RawChoiceSetting(
-                    title = stringResource(R.string.settings_raw_black_level_correction),
-                    description = stringResource(R.string.settings_raw_black_level_correction_description),
-                    levels = listOf(
-                        RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_black_level_default),
-                        "0" to "0",
-                        "16" to "16",
-                        "64" to "64",
-                        "256" to "256",
-                        "512" to "512",
-                        "Custom" to stringResource(R.string.settings_black_level_custom)
-                    ),
-                    currentLevel = rawBlackLevelMode,
-                    onLevelSelected = onRawBlackLevelModeChange
-                )
-                if (rawBlackLevelMode == "Custom") {
-                    RawNumberInputSetting(
-                        title = stringResource(R.string.settings_black_level_custom),
-                        value = rawCustomBlackLevel,
-                        onValueChange = onRawCustomBlackLevelChange
-                    )
-                }
-                RawChoiceSetting(
-                    title = stringResource(R.string.settings_raw_white_level_correction),
-                    description = stringResource(R.string.settings_raw_white_level_correction_description),
-                    levels = listOf(
-                        RawWhiteLevelCorrection.MODE_DEFAULT to stringResource(R.string.settings_white_level_default),
-                        RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
-                        RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
-                        RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
-                        RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor),
-                        RawWhiteLevelCorrection.MODE_CUSTOM to stringResource(R.string.settings_white_level_custom)
-                    ),
-                    currentLevel = rawWhiteLevelMode,
-                    onLevelSelected = onRawWhiteLevelModeChange
-                )
-                if (rawWhiteLevelMode == RawWhiteLevelCorrection.MODE_CUSTOM) {
-                    RawNumberInputSetting(
-                        title = stringResource(R.string.settings_white_level_custom),
-                        value = rawCustomWhiteLevel,
-                        onValueChange = onRawCustomWhiteLevelChange
-                    )
-                }
-                RawChoiceSetting(
-                    title = stringResource(R.string.settings_raw_cfa_correction),
-                    description = stringResource(R.string.settings_raw_cfa_correction_description),
-                    levels = listOf(
-                        RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_cfa_correction_default),
-                        RawCfaCorrection.MODE_2X2_RGGB to stringResource(R.string.settings_cfa_correction_2x2_rggb),
-                        RawCfaCorrection.MODE_2X2_GRBG to stringResource(R.string.settings_cfa_correction_2x2_grbg),
-                        RawCfaCorrection.MODE_2X2_GBRG to stringResource(R.string.settings_cfa_correction_2x2_gbrg),
-                        RawCfaCorrection.MODE_2X2_BGGR to stringResource(R.string.settings_cfa_correction_2x2_bggr),
-                        RawCfaCorrection.MODE_4X4_RGGB to stringResource(R.string.settings_cfa_correction_4x4_rggb),
-                        RawCfaCorrection.MODE_4X4_GRBG to stringResource(R.string.settings_cfa_correction_4x4_grbg),
-                        RawCfaCorrection.MODE_4X4_GBRG to stringResource(R.string.settings_cfa_correction_4x4_gbrg),
-                        RawCfaCorrection.MODE_4X4_BGGR to stringResource(R.string.settings_cfa_correction_4x4_bggr),
-                        RawCfaCorrection.MODE_8X8_RGGB to stringResource(R.string.settings_cfa_correction_8x8_rggb),
-                        RawCfaCorrection.MODE_8X8_GRBG to stringResource(R.string.settings_cfa_correction_8x8_grbg),
-                        RawCfaCorrection.MODE_8X8_GBRG to stringResource(R.string.settings_cfa_correction_8x8_gbrg),
-                        RawCfaCorrection.MODE_8X8_BGGR to stringResource(R.string.settings_cfa_correction_8x8_bggr)
-                    ),
-                    currentLevel = rawCfaCorrectionMode,
-                    onLevelSelected = onRawCfaCorrectionModeChange
+                RawDngMetadataCorrectionSettings(
+                    rawBlackLevelMode = rawBlackLevelMode,
+                    rawCustomBlackLevel = rawCustomBlackLevel,
+                    rawWhiteLevelMode = rawWhiteLevelMode,
+                    rawCustomWhiteLevel = rawCustomWhiteLevel,
+                    rawCfaCorrectionMode = rawCfaCorrectionMode,
+                    onRawBlackLevelModeChange = onRawBlackLevelModeChange,
+                    onRawCustomBlackLevelChange = onRawCustomBlackLevelChange,
+                    onRawWhiteLevelModeChange = onRawWhiteLevelModeChange,
+                    onRawCustomWhiteLevelChange = onRawCustomWhiteLevelChange,
+                    onRawCfaCorrectionModeChange = onRawCfaCorrectionModeChange
                 )
             }
         }
@@ -328,6 +276,89 @@ fun RawEditPanel(
             onOpenSheet = onOpenBaselineLutSheet
         )
         Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+/** Shared RAW DNG metadata correction controls for a lens-specific configuration. */
+@Composable
+fun RawDngMetadataCorrectionSettings(
+    rawBlackLevelMode: String,
+    rawCustomBlackLevel: Float,
+    rawWhiteLevelMode: String,
+    rawCustomWhiteLevel: Float,
+    rawCfaCorrectionMode: String,
+    onRawBlackLevelModeChange: (String) -> Unit,
+    onRawCustomBlackLevelChange: (Float) -> Unit,
+    onRawWhiteLevelModeChange: (String) -> Unit,
+    onRawCustomWhiteLevelChange: (Float) -> Unit,
+    onRawCfaCorrectionModeChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        RawChoiceSetting(
+            title = stringResource(R.string.settings_raw_black_level_correction),
+            description = stringResource(R.string.settings_raw_black_level_correction_description),
+            levels = listOf(
+                RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_black_level_default),
+                "0" to "0",
+                "16" to "16",
+                "64" to "64",
+                "256" to "256",
+                "512" to "512",
+                "Custom" to stringResource(R.string.settings_black_level_custom)
+            ),
+            currentLevel = rawBlackLevelMode,
+            onLevelSelected = onRawBlackLevelModeChange
+        )
+        if (rawBlackLevelMode == "Custom") {
+            RawNumberInputSetting(
+                title = stringResource(R.string.settings_black_level_custom),
+                value = rawCustomBlackLevel,
+                onValueChange = onRawCustomBlackLevelChange
+            )
+        }
+        RawChoiceSetting(
+            title = stringResource(R.string.settings_raw_white_level_correction),
+            description = stringResource(R.string.settings_raw_white_level_correction_description),
+            levels = listOf(
+                RawWhiteLevelCorrection.MODE_DEFAULT to stringResource(R.string.settings_white_level_default),
+                RawWhiteLevelCorrection.MODE_RAW10 to stringResource(R.string.settings_white_level_raw10),
+                RawWhiteLevelCorrection.MODE_RAW12 to stringResource(R.string.settings_white_level_raw12),
+                RawWhiteLevelCorrection.MODE_RAW14 to stringResource(R.string.settings_white_level_raw14),
+                RawWhiteLevelCorrection.MODE_RAW_SENSOR to stringResource(R.string.settings_white_level_raw_sensor),
+                RawWhiteLevelCorrection.MODE_CUSTOM to stringResource(R.string.settings_white_level_custom)
+            ),
+            currentLevel = rawWhiteLevelMode,
+            onLevelSelected = onRawWhiteLevelModeChange
+        )
+        if (rawWhiteLevelMode == RawWhiteLevelCorrection.MODE_CUSTOM) {
+            RawNumberInputSetting(
+                title = stringResource(R.string.settings_white_level_custom),
+                value = rawCustomWhiteLevel,
+                onValueChange = onRawCustomWhiteLevelChange
+            )
+        }
+        RawChoiceSetting(
+            title = stringResource(R.string.settings_raw_cfa_correction),
+            description = stringResource(R.string.settings_raw_cfa_correction_description),
+            levels = listOf(
+                RawCfaCorrection.MODE_DEFAULT to stringResource(R.string.settings_cfa_correction_default),
+                RawCfaCorrection.MODE_2X2_RGGB to stringResource(R.string.settings_cfa_correction_2x2_rggb),
+                RawCfaCorrection.MODE_2X2_GRBG to stringResource(R.string.settings_cfa_correction_2x2_grbg),
+                RawCfaCorrection.MODE_2X2_GBRG to stringResource(R.string.settings_cfa_correction_2x2_gbrg),
+                RawCfaCorrection.MODE_2X2_BGGR to stringResource(R.string.settings_cfa_correction_2x2_bggr),
+                RawCfaCorrection.MODE_4X4_RGGB to stringResource(R.string.settings_cfa_correction_4x4_rggb),
+                RawCfaCorrection.MODE_4X4_GRBG to stringResource(R.string.settings_cfa_correction_4x4_grbg),
+                RawCfaCorrection.MODE_4X4_GBRG to stringResource(R.string.settings_cfa_correction_4x4_gbrg),
+                RawCfaCorrection.MODE_4X4_BGGR to stringResource(R.string.settings_cfa_correction_4x4_bggr),
+                RawCfaCorrection.MODE_8X8_RGGB to stringResource(R.string.settings_cfa_correction_8x8_rggb),
+                RawCfaCorrection.MODE_8X8_GRBG to stringResource(R.string.settings_cfa_correction_8x8_grbg),
+                RawCfaCorrection.MODE_8X8_GBRG to stringResource(R.string.settings_cfa_correction_8x8_gbrg),
+                RawCfaCorrection.MODE_8X8_BGGR to stringResource(R.string.settings_cfa_correction_8x8_bggr)
+            ),
+            currentLevel = rawCfaCorrectionMode,
+            onLevelSelected = onRawCfaCorrectionModeChange
+        )
     }
 }
 

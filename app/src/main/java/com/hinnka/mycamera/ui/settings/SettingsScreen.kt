@@ -100,6 +100,7 @@ import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.CameraInfo
 import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.IszLensConfig
+import com.hinnka.mycamera.camera.IszRawDngMetadataCorrections
 import com.hinnka.mycamera.camera.LensType
 import com.hinnka.mycamera.camera.MultiFrameConfig
 import com.hinnka.mycamera.camera.RawBlackBorderCrop
@@ -127,6 +128,7 @@ import com.hinnka.mycamera.ui.components.SliderSettingItem
 import com.hinnka.mycamera.ui.components.LutSelector
 import com.hinnka.mycamera.ui.components.RawEditPanel
 import com.hinnka.mycamera.ui.components.RawEditPanelContentMode
+import com.hinnka.mycamera.ui.components.RawDngMetadataCorrectionSettings
 import com.hinnka.mycamera.ui.components.rawDcpLensOptions
 import com.hinnka.mycamera.ui.components.rememberBackgroundPainter
 import com.hinnka.mycamera.update.AppUpdateManager
@@ -2391,12 +2393,13 @@ fun SettingsScreen(
             availableCameras = state.availableCameras,
             iszLensConfigs = iszLensConfigs,
             vendorCaptureSettingsByLens = vendorCaptureSettingsByLens,
-            onAddLens = { baseCameraId, iszZoomRatio, isMacro, rawBlackBorderCrop, settings ->
+            onAddLens = { baseCameraId, iszZoomRatio, isMacro, rawBlackBorderCrop, rawDngMetadataCorrections, settings ->
                 viewModel.addIszLensConfig(
                     baseCameraId,
                     iszZoomRatio,
                     isMacro,
                     rawBlackBorderCrop,
+                    rawDngMetadataCorrections,
                     settings
                 )
                 showAddIszLensDialog = false
@@ -3499,7 +3502,7 @@ private fun AddIszLensDialog(
     availableCameras: List<CameraInfo>,
     iszLensConfigs: List<IszLensConfig>,
     vendorCaptureSettingsByLens: VendorCaptureSettingsByLens,
-    onAddLens: (String, Float, Boolean, RawBlackBorderCrop, VendorCaptureSettings) -> Unit,
+    onAddLens: (String, Float, Boolean, RawBlackBorderCrop, IszRawDngMetadataCorrections, VendorCaptureSettings) -> Unit,
     onRemoveLens: (IszLensConfig) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -3517,6 +3520,11 @@ private fun AddIszLensDialog(
     var rawBlackBorderCropTopText by remember { mutableStateOf("0") }
     var rawBlackBorderCropRightText by remember { mutableStateOf("0") }
     var rawBlackBorderCropBottomText by remember { mutableStateOf("0") }
+    var rawBlackLevelMode by remember { mutableStateOf(RawCfaCorrection.MODE_DEFAULT) }
+    var rawCustomBlackLevel by remember { mutableStateOf(0f) }
+    var rawWhiteLevelMode by remember { mutableStateOf(RawWhiteLevelCorrection.MODE_DEFAULT) }
+    var rawCustomWhiteLevel by remember { mutableStateOf(0f) }
+    var rawCfaCorrectionMode by remember { mutableStateOf(RawCfaCorrection.MODE_DEFAULT) }
     var settings by remember {
         mutableStateOf(
             VendorCaptureSettings(emptyMap())
@@ -3552,6 +3560,13 @@ private fun AddIszLensDialog(
             rightPx = rawBlackBorderCropRightText.toIntOrNull() ?: 0,
             bottomPx = rawBlackBorderCropBottomText.toIntOrNull() ?: 0
         )
+    )
+    val rawDngMetadataCorrections = IszRawDngMetadataCorrections(
+        blackLevelMode = rawBlackLevelMode,
+        customBlackLevel = rawCustomBlackLevel,
+        whiteLevelMode = rawWhiteLevelMode,
+        customWhiteLevel = rawCustomWhiteLevel,
+        cfaCorrectionMode = rawCfaCorrectionMode
     )
 
     AlertDialog(
@@ -3669,6 +3684,24 @@ private fun AddIszLensDialog(
                         modifier = Modifier.padding(vertical = 12.dp)
                     )
 
+                    RawDngMetadataCorrectionSettings(
+                        rawBlackLevelMode = rawBlackLevelMode,
+                        rawCustomBlackLevel = rawCustomBlackLevel,
+                        rawWhiteLevelMode = rawWhiteLevelMode,
+                        rawCustomWhiteLevel = rawCustomWhiteLevel,
+                        rawCfaCorrectionMode = rawCfaCorrectionMode,
+                        onRawBlackLevelModeChange = { rawBlackLevelMode = it },
+                        onRawCustomBlackLevelChange = { rawCustomBlackLevel = it },
+                        onRawWhiteLevelModeChange = { rawWhiteLevelMode = it },
+                        onRawCustomWhiteLevelChange = { rawCustomWhiteLevel = it },
+                        onRawCfaCorrectionModeChange = { rawCfaCorrectionMode = it }
+                    )
+
+                    HorizontalDivider(
+                        color = Color.White.copy(alpha = 0.1f),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
                     VendorCaptureSettingsPanel(
                         currentLensId = virtualLensId,
                         currentLensName = virtualLensName,
@@ -3740,6 +3773,7 @@ private fun AddIszLensDialog(
                         selectedIszZoomRatio,
                         isMacroLens,
                         rawBlackBorderCrop,
+                        rawDngMetadataCorrections,
                         settings
                     )
                 },
