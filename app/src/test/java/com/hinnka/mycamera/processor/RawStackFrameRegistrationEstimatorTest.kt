@@ -7,6 +7,51 @@ import org.junit.Test
 
 class RawStackFrameRegistrationEstimatorTest {
     @Test
+    fun refinesGlobalTranslationFromTwoDimensionalScoreSurface() {
+        val setup = RawStackRegistrationResolver.resolve(4096, 3072)
+        val centerX = 8f
+        val centerY = -4f
+        val expectedOffsetX = 0.30f
+        val expectedOffsetY = -0.25f
+        val candidates = buildList {
+            for (gridY in -1..1) {
+                for (gridX in -1..1) {
+                    val x = gridX - expectedOffsetX
+                    val y = gridY - expectedOffsetY
+                    val score = 0.010f + 0.030f * (x * x + 1.2f * y * y + 0.2f * x * y)
+                    add(
+                        RawStackGlobalRegistrationCandidate(
+                            dxRaw = centerX + gridX * 2f,
+                            dyRaw = centerY + gridY * 2f,
+                            score = score,
+                            coverage = 0.92f,
+                        )
+                    )
+                }
+            }
+            add(
+                RawStackGlobalRegistrationCandidate(
+                    dxRaw = centerX + 6f,
+                    dyRaw = centerY,
+                    score = 0.040f,
+                    coverage = 0.92f,
+                )
+            )
+        }
+
+        val estimate = RawStackFrameRegistrationEstimator.estimateGlobalTranslation(setup, candidates)
+        val matrix = estimate.candidateTransform.matrixAt(0)
+
+        assertTrue(estimate.globalSubpixelRefined)
+        assertEquals(centerX + expectedOffsetX * 2f, matrix[2], 0.001f)
+        assertEquals(centerY + expectedOffsetY * 2f, matrix[5], 0.001f)
+        assertEquals(centerX, estimate.globalDiscreteDxRaw, 0.001f)
+        assertEquals(centerY, estimate.globalDiscreteDyRaw, 0.001f)
+        assertEquals(0.040f, estimate.globalSecondScore, 0.001f)
+        assertTrue(estimate.globalScoreMargin > 1f)
+    }
+
+    @Test
     fun estimatesGlobalImageTranslationInRawCoordinates() {
         val setup = RawStackRegistrationResolver.resolve(4096, 3072)
         val estimate = RawStackFrameRegistrationEstimator.estimateGlobalTranslation(

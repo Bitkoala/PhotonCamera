@@ -5076,6 +5076,12 @@ class Camera2Controller(private val context: Context) {
                         set(CaptureRequest.CONTROL_AWB_LOCK, true)
                     }
                     copyStillFocusSettingsFromPreview(this)
+                    applyMultiFrameCaptureConsistency(
+                        builder = this,
+                        state = currentState,
+                        baseResult = baseExposureResult,
+                        lockExposure = false,
+                    )
                     PLog.d(TAG, "HDR bracket request[$index]: ev=$evOffset, manual=${manualBaseExposure != null}")
                 }.build()
             }
@@ -5301,6 +5307,76 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    private fun applyMultiFrameCaptureConsistency(
+        builder: CaptureRequest.Builder,
+        state: CameraState,
+        baseResult: CaptureResult?,
+        lockExposure: Boolean,
+    ) {
+        if (!state.useMFNR && !state.useMFSR) return
+
+        if (lockExposure) {
+            builder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
+            val requestUsesManualExposure =
+                builder.get(CaptureRequest.CONTROL_AE_MODE) == CaptureRequest.CONTROL_AE_MODE_OFF
+            val requestIso = builder.get(CaptureRequest.SENSOR_SENSITIVITY)
+                .takeIf { requestUsesManualExposure }
+            val requestExposure = builder.get(CaptureRequest.SENSOR_EXPOSURE_TIME)
+                .takeIf { requestUsesManualExposure }
+            val lockedIso = requestIso ?: baseResult?.get(CaptureResult.SENSOR_SENSITIVITY)
+            val lockedExposure = requestExposure ?: baseResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            val canUseManualExposure = isManualSensorSupported &&
+                    availableAeModes.contains(CaptureRequest.CONTROL_AE_MODE_OFF) &&
+                    lockedIso != null && lockedIso > 0 &&
+                    lockedExposure != null && lockedExposure > 0L
+            if (canUseManualExposure) {
+                builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                builder.set(CaptureRequest.SENSOR_SENSITIVITY, lockedIso)
+                builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, lockedExposure)
+            } else {
+                val aeLockAvailable = getActiveOpenCameraCharacteristics()
+                    ?.get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true
+                if (availableAeModes.contains(CaptureRequest.CONTROL_AE_MODE_ON)) {
+                    builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                }
+                if (aeLockAvailable) {
+                    builder.set(CaptureRequest.CONTROL_AE_LOCK, true)
+                }
+            }
+        }
+
+        val awbLockAvailable = getActiveOpenCameraCharacteristics()
+            ?.get(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE) == true
+        if (state.awbMode != CameraMetadata.CONTROL_AWB_MODE_OFF && awbLockAvailable) {
+            builder.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+        }
+
+        val lockedFocusDistance = baseResult?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+            ?: builder.get(CaptureRequest.LENS_FOCUS_DISTANCE)
+        when {
+            availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_OFF) && lockedFocusDistance != null -> {
+                builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+                builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, lockedFocusDistance)
+            }
+
+            availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO) -> {
+                builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+                builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            }
+        }
+
+        PLog.d(
+            TAG,
+            "Multi-frame capture locked exposure=$lockExposure " +
+                    "ae=${builder.get(CaptureRequest.CONTROL_AE_MODE)} " +
+                    "iso=${builder.get(CaptureRequest.SENSOR_SENSITIVITY)} " +
+                    "shutter=${builder.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} " +
+                    "af=${builder.get(CaptureRequest.CONTROL_AF_MODE)} " +
+                    "focus=${builder.get(CaptureRequest.LENS_FOCUS_DISTANCE)}"
+        )
+    }
+
     private fun shouldUseDefaultHdrBracketCapture(state: CameraState, isRawCapture: Boolean): Boolean {
         return state.captureMode == CaptureMode.PHOTO &&
                 state.useHdrComposition &&
@@ -5400,6 +5476,13 @@ class Camera2Controller(private val context: Context) {
                         set(CaptureRequest.CONTROL_AE_REGIONS, it)
                     }
                 }
+
+                applyMultiFrameCaptureConsistency(
+                    builder = this,
+                    state = currentState,
+                    baseResult = baseExposureResult,
+                    lockExposure = true,
+                )
 
                 PLog.d(
                     TAG,

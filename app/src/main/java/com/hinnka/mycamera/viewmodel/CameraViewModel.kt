@@ -1369,6 +1369,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var hasAppliedDefaultFocalLength = false
 
     private val stackingImages = mutableListOf<SafeImage>()
+    private val stackingCaptureResults = mutableListOf<CaptureResult?>()
     private var multipleExposureMetadata: MediaMetadata? = null
     var multipleExposureState by mutableStateOf(MultipleExposureSessionState())
         private set
@@ -1417,11 +1418,30 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 val count = state.value.multiFrameCount
                 PLog.d(TAG, "Burst frame received: ${stackingImages.size + 1}/$count")
                 stackingImages.add(image)
+                stackingCaptureResults.add(captureResult)
                 if (stackingImages.size >= count) {
-                    val imagesToProcess = stackingImages.toList()
+                    val orderedFrames = stackingImages.indices
+                        .map { index -> stackingImages[index] to stackingCaptureResults.getOrNull(index) }
+                        .sortedBy { (frameImage, _) -> frameImage.timestamp }
+                    val imagesToProcess = orderedFrames.map { it.first }
+                    val exposureProducts = orderedFrames.map { (_, result) ->
+                        result?.let(::captureExposureProduct)
+                    }
+                    val focusDistances = orderedFrames.map { (_, result) ->
+                        result?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+                    }
+                    val referenceCaptureResult = orderedFrames.firstOrNull()?.second ?: captureResult
                     stackingImages.clear()
+                    stackingCaptureResults.clear()
                     viewModelScope.launch {
-                        processStacking(imagesToProcess, captureInfo, characteristics, captureResult)
+                        processStacking(
+                            images = imagesToProcess,
+                            captureInfo = captureInfo,
+                            characteristics = characteristics,
+                            captureResult = referenceCaptureResult,
+                            frameExposureProducts = exposureProducts,
+                            frameFocusDistances = focusDistances,
+                        )
                     }
                 }
             } else {
@@ -1457,6 +1477,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 it.close()
             }
             stackingImages.clear()
+            stackingCaptureResults.clear()
             burstImages.forEach {
                 it.close()
             }
@@ -2523,6 +2544,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             generateThumbnail()
             stackingImages.clear()
+            stackingCaptureResults.clear()
 
             if (useLivePhoto.value) {
                 cameraController.setCapturingLivePhoto(true)
@@ -4995,7 +5017,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         images: List<SafeImage>,
         captureInfo: CaptureInfo,
         characteristics: CameraCharacteristics?,
-        captureResult: CaptureResult?
+        captureResult: CaptureResult?,
+        frameExposureProducts: List<Double?>,
+        frameFocusDistances: List<Float?>,
     ) {
         try {
             PLog.d(TAG, "processStacking started - image size ${images.size}")
@@ -5179,7 +5203,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     useGpuAcceleration = useGpuAcceleration.value,
                     exposureBias = state.value.exposureBias,
                     exportDngWithRawExport = exportDngWithRawExport.value,
-                    capturePreviewThumbnail = previewThumbnail
+                    capturePreviewThumbnail = previewThumbnail,
+                    frameExposureProducts = frameExposureProducts,
+                    frameFocusDistances = frameFocusDistances,
                 )
             }
             PLog.d(TAG, "Image saved: $photoId, LUT: $lutIdToSave, Frame: $frameIdToSave")
@@ -5825,6 +5851,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             it.close()
         }
         stackingImages.clear()
+        stackingCaptureResults.clear()
         burstImages.forEach {
             it.close()
         }

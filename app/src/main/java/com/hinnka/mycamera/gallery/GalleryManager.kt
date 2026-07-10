@@ -2618,7 +2618,9 @@ object GalleryManager {
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         exportDngWithRawExport: Boolean = false,
-        capturePreviewThumbnail: Bitmap? = null
+        capturePreviewThumbnail: Bitmap? = null,
+        frameExposureProducts: List<Double?> = emptyList(),
+        frameFocusDistances: List<Float?> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -2690,6 +2692,8 @@ object GalleryManager {
                 lensShadingWidth = rawMetadata.lensShadingMapWidth,
                 lensShadingHeight = rawMetadata.lensShadingMapHeight,
                 applyLensShadingCorrection = applyRawLensShading,
+                frameExposureProducts = frameExposureProducts,
+                frameFocusDistances = frameFocusDistances,
             )
 
             val finalStackResult = rawStackResult ?: return@withContext
@@ -2889,7 +2893,7 @@ object GalleryManager {
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         exportDngWithRawExport: Boolean = false,
-        capturePreviewThumbnail: Bitmap? = null
+        capturePreviewThumbnail: Bitmap? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         var rawHdrStackResult: RawStackResult? = null
         val imagesToClose = images.toMutableSet()
@@ -3464,7 +3468,9 @@ object GalleryManager {
         useGpuAcceleration: Boolean = true,
         exposureBias: Float? = null,
         exportDngWithRawExport: Boolean = false,
-        capturePreviewThumbnail: Bitmap? = null
+        capturePreviewThumbnail: Bitmap? = null,
+        frameExposureProducts: List<Double?> = emptyList(),
+        frameFocusDistances: List<Float?> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         when (val format = images[0].format) {
             ImageFormat.YUV_420_888, ImageFormat.YCBCR_P010, ImageFormat.NV21 -> {
@@ -3506,7 +3512,9 @@ object GalleryManager {
                     useGpuAcceleration,
                     exposureBias,
                     exportDngWithRawExport,
-                    capturePreviewThumbnail
+                    capturePreviewThumbnail,
+                    frameExposureProducts,
+                    frameFocusDistances,
                 )
             }
 

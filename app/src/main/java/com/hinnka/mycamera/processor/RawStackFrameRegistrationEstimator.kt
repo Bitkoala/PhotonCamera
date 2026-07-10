@@ -49,6 +49,9 @@ data class RawStackRegistrationEstimate(
     val globalSecondScore: Float = Float.NaN,
     val globalScoreMargin: Float = Float.NaN,
     val globalCoverage: Float = Float.NaN,
+    val globalDiscreteDxRaw: Float = Float.NaN,
+    val globalDiscreteDyRaw: Float = Float.NaN,
+    val globalSubpixelRefined: Boolean = false,
 ) {
     val confidence: Int
         get() = transform.confidence
@@ -58,6 +61,12 @@ data class RawStackRegistrationEstimate(
 }
 
 object RawStackFrameRegistrationEstimator {
+    private data class RefinedGlobalTranslation(
+        val dxRaw: Float,
+        val dyRaw: Float,
+        val refined: Boolean,
+    )
+
     fun estimateGlobalTranslation(
         setup: RawStackRegistrationSetup,
         candidates: List<RawStackGlobalRegistrationCandidate>,
@@ -82,7 +91,7 @@ object RawStackFrameRegistrationEstimator {
         }
 
         val best = sortedCandidates.first()
-        val second = sortedCandidates.drop(1).firstOrNull()
+        val second = secondDistinctGlobalBasin(best, sortedCandidates)
         val secondScore = second?.score ?: Float.NaN
         val margin = if (secondScore.isFinite()) {
             ((secondScore - best.score) / max(best.score, GLOBAL_SCORE_EPSILON)).coerceAtLeast(0f)
@@ -95,6 +104,7 @@ object RawStackFrameRegistrationEstimator {
             scoreMargin = margin,
             coverage = best.coverage,
         )
+        val refinedTranslation = refineGlobalTranslation(best, sortedCandidates)
         val fittedTransform = RawStackPerspectiveTransform.fromSingleMatrix(
             stage = stage,
             transformDefinedOnWidth = setup.sourceWidth,
@@ -102,8 +112,8 @@ object RawStackFrameRegistrationEstimator {
             geometryColumns = setup.cvpPerspectiveGeometryColumns,
             geometryRows = setup.cvpPerspectiveGeometryRows,
             rowMajorMatrix = floatArrayOf(
-                1f, 0f, best.dxRaw,
-                0f, 1f, best.dyRaw,
+                1f, 0f, refinedTranslation.dxRaw,
+                0f, 1f, refinedTranslation.dyRaw,
                 0f, 0f, 1f,
             ),
             rawConfidence = rawConfidence,
@@ -136,7 +146,107 @@ object RawStackFrameRegistrationEstimator {
             globalSecondScore = secondScore,
             globalScoreMargin = margin,
             globalCoverage = best.coverage,
+            globalDiscreteDxRaw = best.dxRaw,
+            globalDiscreteDyRaw = best.dyRaw,
+            globalSubpixelRefined = refinedTranslation.refined,
         )
+    }
+
+    /**
+     * Refines the discrete minimum with the gradient and Hessian of the local
+     * 3x3 score surface. The full 2D fit retains the xy term, which matters for
+     * diagonal structure and avoids independently biasing the two axes.
+     */
+    private fun refineGlobalTranslation(
+        best: RawStackGlobalRegistrationCandidate,
+        candidates: List<RawStackGlobalRegistrationCandidate>,
+    ): RefinedGlobalTranslation {
+        val stepX = minimumPositiveStep(candidates.map { it.dxRaw })
+            ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val stepY = minimumPositiveStep(candidates.map { it.dyRaw })
+            ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val toleranceX = max(stepX * 0.05f, GLOBAL_COORDINATE_EPSILON)
+        val toleranceY = max(stepY * 0.05f, GLOBAL_COORDINATE_EPSILON)
+
+        fun scoreAt(x: Int, y: Int): Float? {
+            val targetX = best.dxRaw + x * stepX
+            val targetY = best.dyRaw + y * stepY
+            return candidates.firstOrNull {
+                kotlin.math.abs(it.dxRaw - targetX) <= toleranceX &&
+                    kotlin.math.abs(it.dyRaw - targetY) <= toleranceY
+            }?.score
+        }
+
+        val left = scoreAt(-1, 0) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val right = scoreAt(1, 0) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val up = scoreAt(0, -1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val down = scoreAt(0, 1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val upLeft = scoreAt(-1, -1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val upRight = scoreAt(1, -1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val downLeft = scoreAt(-1, 1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        val downRight = scoreAt(1, 1) ?: return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+
+        val gradientX = 0.5f * (right - left)
+        val gradientY = 0.5f * (down - up)
+        val hessianXX = left - 2f * best.score + right
+        val hessianYY = up - 2f * best.score + down
+        val hessianXY = 0.25f * (downRight - downLeft - upRight + upLeft)
+        val determinant = hessianXX * hessianYY - hessianXY * hessianXY
+        if (!determinant.isFinite() ||
+            hessianXX <= GLOBAL_CURVATURE_EPSILON ||
+            hessianYY <= GLOBAL_CURVATURE_EPSILON ||
+            determinant <= GLOBAL_CURVATURE_EPSILON
+        ) {
+            return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        }
+
+        val offsetX = (-hessianYY * gradientX + hessianXY * gradientY) / determinant
+        val offsetY = (hessianXY * gradientX - hessianXX * gradientY) / determinant
+        if (!offsetX.isFinite() || !offsetY.isFinite() ||
+            kotlin.math.abs(offsetX) > GLOBAL_SUBPIXEL_OFFSET_LIMIT ||
+            kotlin.math.abs(offsetY) > GLOBAL_SUBPIXEL_OFFSET_LIMIT
+        ) {
+            return RefinedGlobalTranslation(best.dxRaw, best.dyRaw, false)
+        }
+        return RefinedGlobalTranslation(
+            dxRaw = best.dxRaw + offsetX * stepX,
+            dyRaw = best.dyRaw + offsetY * stepY,
+            refined = true,
+        )
+    }
+
+    /**
+     * Adjacent scores belong to the same quadratic peak and naturally become
+     * nearly equal when the true minimum lies between grid points. Ambiguity
+     * must therefore be measured against the next basin, not the next sample
+     * in the same 3x3 neighborhood.
+     */
+    private fun secondDistinctGlobalBasin(
+        best: RawStackGlobalRegistrationCandidate,
+        candidates: List<RawStackGlobalRegistrationCandidate>,
+    ): RawStackGlobalRegistrationCandidate? {
+        val stepX = minimumPositiveStep(candidates.map { it.dxRaw })
+            ?: return candidates.firstOrNull { it !== best }
+        val stepY = minimumPositiveStep(candidates.map { it.dyRaw })
+            ?: return candidates.firstOrNull { it !== best }
+        val localRadiusX = stepX * GLOBAL_LOCAL_BASIN_RADIUS
+        val localRadiusY = stepY * GLOBAL_LOCAL_BASIN_RADIUS
+        return candidates.firstOrNull { candidate ->
+            candidate !== best && (
+                kotlin.math.abs(candidate.dxRaw - best.dxRaw) > localRadiusX ||
+                    kotlin.math.abs(candidate.dyRaw - best.dyRaw) > localRadiusY
+                )
+        }
+    }
+
+    private fun minimumPositiveStep(values: List<Float>): Float? {
+        val sorted = values.filter { it.isFinite() }.distinct().sorted()
+        var minimum = Float.POSITIVE_INFINITY
+        for (index in 1 until sorted.size) {
+            val delta = sorted[index] - sorted[index - 1]
+            if (delta > GLOBAL_COORDINATE_EPSILON) minimum = minOf(minimum, delta)
+        }
+        return minimum.takeIf { it.isFinite() }
     }
 
     fun estimate(
@@ -415,4 +525,8 @@ object RawStackFrameRegistrationEstimator {
     private const val GLOBAL_SCORE_QUALITY_SCALE = 0.035f
     private const val GLOBAL_MARGIN_FULL_CONFIDENCE = 0.05f
     private const val GLOBAL_MARGIN_FLOOR = 0.70f
+    private const val GLOBAL_COORDINATE_EPSILON = 1e-4f
+    private const val GLOBAL_CURVATURE_EPSILON = 1e-7f
+    private const val GLOBAL_SUBPIXEL_OFFSET_LIMIT = 0.75f
+    private const val GLOBAL_LOCAL_BASIN_RADIUS = 1.05f
 }

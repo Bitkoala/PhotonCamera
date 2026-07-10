@@ -30,6 +30,12 @@ data class RawHdrStackFrame(
     val exposureProduct: Double,
 )
 
+data class RawStackFrame(
+    val image: SafeImage,
+    val exposureProduct: Double = 1.0,
+    val focusDistanceDiopters: Float = Float.NaN,
+)
+
 enum class YuvHdrStackFrameRole {
     ZERO_EV,
     HIGH_EV,
@@ -299,6 +305,8 @@ object MultiFrameStacker {
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
         applyLensShadingCorrection: Boolean = true,
+        frameExposureProducts: List<Double?> = emptyList(),
+        frameFocusDistances: List<Float?> = emptyList(),
     ): RawStackResult? {
         val width = images[0].width
         val height = images[0].height
@@ -325,6 +333,22 @@ object MultiFrameStacker {
                 frameCount = images.size,
                 superResolutionScale = outputScale,
             )
+            val fallbackExposureProduct = frameExposureProducts
+                .firstOrNull { it != null && it.isFinite() && it > 0.0 }
+                ?: 1.0
+            val frames = images.mapIndexed { index, image ->
+                RawStackFrame(
+                    image = image,
+                    exposureProduct = frameExposureProducts
+                        .getOrNull(index)
+                        ?.takeIf { it.isFinite() && it > 0.0 }
+                        ?: fallbackExposureProduct,
+                    focusDistanceDiopters = frameFocusDistances
+                        .getOrNull(index)
+                        ?.takeIf { it.isFinite() }
+                        ?: Float.NaN,
+                )
+            }
             return GlesRawStacker(
                 width = width,
                 height = height,
@@ -338,7 +362,7 @@ object MultiFrameStacker {
                 lensShadingHeight = if (stackLensShading != null) lensShadingHeight else 0,
                 tuning = tuning,
                 debugConfig = RawStackRuntimeDebug.debugConfig,
-            ).process(images)
+            ).processFrames(frames)
         }
 
         RawStackRuntimeDebug.i(TAG) { "Using CPU RAW stacker" }

@@ -38,6 +38,9 @@ data class RawStackDiagnostics(
     val superResolutionFallbackReason: String? = null,
     val superResolutionDetailFrameCount: Int = 0,
     val superResolutionDetailWeightSum: Float = Float.NaN,
+    val superResolutionPhaseBinCount: Int = 0,
+    val superResolutionPhaseBinTotal: Int = 0,
+    val superResolutionPhaseBinSamples: List<Int> = emptyList(),
     val flowMagnitudePx: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val alignmentResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val noiseNormalizedResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
@@ -45,6 +48,7 @@ data class RawStackDiagnostics(
     val robustness: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val tileMask: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val accumulatorWeight: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
+    val superResolutionSupport: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val postfilterResidual: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val postfilterSmooth: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
     val postfilterEffectiveSmooth: RawStackMetricDistribution = RawStackMetricDistribution.Empty,
@@ -65,7 +69,9 @@ data class RawStackDiagnostics(
         val registrationQualitySummary = registrationQuality?.compactSummary()?.let { "$it " }.orEmpty()
         val superResolutionSummary = superResolutionOutputMode?.let { mode ->
             "srOut=$mode srReason=${superResolutionFallbackReason ?: "ok"} " +
-                "srFrames=$superResolutionDetailFrameCount srWeight=${superResolutionDetailWeightSum.fmt()} "
+                "srFrames=$superResolutionDetailFrameCount srWeight=${superResolutionDetailWeightSum.fmt()} " +
+                "srPhase=$superResolutionPhaseBinCount/$superResolutionPhaseBinTotal " +
+                "srPhaseDist=${superResolutionPhaseBinSamples.joinToString(prefix = "[", postfix = "]")} "
         }.orEmpty()
         return "HWMF diag mode=$mode frames=$frameCount aligned=$alignedFrameCount " +
             "size=${width}x$height step=$sampleStep " +
@@ -81,6 +87,9 @@ data class RawStackDiagnostics(
             "hiConf=${highConfidenceTileRatio.percent()} srAlign=${srAlignmentReadyRatio.percent()} " +
             "srDetail=${srDetailReadyRatio.percent()} " +
             "weightMean=${accumulatorWeight.mean.fmt()} weightP10=${accumulatorWeight.p10.fmt()} " +
+            "srSupportP10=${superResolutionSupport.p10.fmt()} " +
+            "srSupportP50=${superResolutionSupport.p50.fmt()} " +
+            "srSupportP90=${superResolutionSupport.p90.fmt()} " +
             "postResP50=${postfilterResidual.p50.fmt()} postResP90=${postfilterResidual.p90.fmt()} " +
             "postSmoothMean=${postfilterSmooth.mean.fmt()} postSmoothP90=${postfilterSmooth.p90.fmt()} " +
             "postEffMean=${postfilterEffectiveSmooth.mean.fmt()} postEffP90=${postfilterEffectiveSmooth.p90.fmt()} " +
