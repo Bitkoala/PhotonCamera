@@ -214,7 +214,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             super.onChange(selfChange, uri)
             uri ?: return
             if (selfChange) return
-
             val projection = arrayOf(
                 OpenableColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.DATA,
@@ -600,11 +599,10 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 uri,
                 lutId,
                 computationalAperture,
-                existingPhotoId,
-                deferRawPreview = isRawSource
+                existingPhotoId
             ) ?: run {
                 return@withContext
-        }
+            }
         val phantomBaselineLutId = preferences?.phantomBaselineLutId
         val baselineTarget = if (phantomBaselineLutId != null) BaselineColorCorrectionTarget.PHANTOM else null
         val baselineLutId = phantomBaselineLutId
@@ -621,7 +619,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
         val metadataCreativeColorRecipeParams = effectiveCreativeColorRecipeParams
             .takeUnless { it.isDefault() }
 
-        val updatedMetadata = GalleryManager.updateMetadata(context, photoId) { current ->
+        var updatedMetadata = GalleryManager.updateMetadata(context, photoId) { current ->
             if (baselineTarget != null) {
                 current.copy(
                     lutId = lutId,
@@ -672,14 +670,23 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             // 读取照片
             val processedBitmap = photoProcessor.process(
                 context, photoId, updatedMetadata,
-                0f, 0f, 0f
+                0f, 0f, 0f,
+                onRawAutoAdjustments = { adjustments ->
+                    updatedMetadata = updatedMetadata.copy(
+                        rawExposureCompensation = adjustments.exposureCompensation,
+                        rawHighlightsAdjustment = adjustments.highlights,
+                        rawShadowsAdjustment = adjustments.shadows
+                    )
+                },
+                onRawMetadata = { raw ->
+                    updatedMetadata = updatedMetadata.merge(raw)
+                }
             ) ?: return@withContext
             if (!isActive) return@withContext
 
             val videoFile = GalleryManager.getVideoFile(context, photoId)
             val photoFile = GalleryManager.getPhotoFile(context, photoId)
-            val saveRawAsNew = shouldSaveRawPhantomExportAsNew(photoId, updatedMetadata.mimeType, name)
-            val shouldSaveAsNew = saveAsNew || saveRawAsNew
+            val shouldSaveAsNew = saveAsNew || isRawSource
 
             val exportedWidth = processedBitmap.width
             val exportedHeight = processedBitmap.height
@@ -700,7 +707,7 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             var newSize = 0L
             var newName = name
 
-            val writeUri = if (shouldSaveAsNew) {
+            if (shouldSaveAsNew) {
                 val lutName =
                     updatedMetadata.lutId?.let { ContentRepository.getInstance(context).lutManager.getLutInfo(it)?.getName() }
                 newName = buildPhantomExportName(name, lutName)
@@ -709,7 +716,9 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                     newName = newName,
                     newSize = newSize
                 )
+            }
 
+            val writeUri = if (shouldSaveAsNew) {
                 createPhantomExportUri(uri, relativePath, newName) ?: return@withContext
             } else {
                 uri
@@ -789,7 +798,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
                 }
             }
 
-            // Save exported URI to metadata
             GalleryManager.updateMetadata(context, photoId) { current ->
                 current.copy(
                     exportedUris = current.exportedUris + writeUri.toString()
@@ -817,17 +825,6 @@ class PhantomService(val context: Context) : LifecycleOwner, SavedStateRegistryO
             GalleryManager.notifyPhotoLibraryChanged()
         }
         delay(200L)
-    }
-
-    private fun shouldSaveRawPhantomExportAsNew(
-        photoId: String,
-        mimeType: String?,
-        sourceName: String
-    ): Boolean {
-        val dngFile = GalleryManager.getDngFile(context, photoId)
-        return (dngFile.exists() && dngFile.length() > 0L) ||
-            isRawMimeType(mimeType) ||
-            isRawFileName(sourceName)
     }
 
     private fun isRawMimeType(mimeType: String?): Boolean {

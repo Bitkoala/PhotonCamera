@@ -1271,6 +1271,7 @@ class RawDemosaicProcessor {
         var actualMetadata = metadata
         var actualRotation = rotation
         var dngRawDataCleanup: DngRawData? = null
+        var embeddedDngJpegPreview: Bitmap? = null
         val requestedColorEngine = rawRenderingEngine
         val hasDcpSelection = dcpRenderPlan != null || rawDcpId != null
         val profileWorkingColorSpace = ColorSpace.ProPhoto
@@ -1309,6 +1310,7 @@ class RawDemosaicProcessor {
                 }
             }
             dngRawDataCleanup = dngRawData
+            embeddedDngJpegPreview = dngRawData.embeddedPreview
             actualRawData = dngRawData.rawData
             actualWidth = dngRawData.width
             actualHeight = dngRawData.height
@@ -1414,10 +1416,14 @@ class RawDemosaicProcessor {
             metadataDefaultCrop = effectiveDefaultCrop
         )
         val rawOutputBounds = outputSourceBounds.toOutputBounds(actualRotation)
+        val autoExposurePreview = capturePreviewThumbnail ?: embeddedDngJpegPreview
+        if (capturePreviewThumbnail == null && embeddedDngJpegPreview != null) {
+            PLog.d(TAG, "Using embedded DNG JPEG preview for RAW auto exposure")
+        }
         val rawAeContentBounds = resolveRawAeContentBounds(
             rawSourceBounds = outputSourceBounds,
             outputRotation = actualRotation,
-            thumbnail = capturePreviewThumbnail
+            thumbnail = autoExposurePreview
         )
         val embeddedDngProfileName = embeddedDngRenderPlan?.profileName
         val embeddedProfileToneCurveLut = embeddedDngRenderPlan?.toneCurveLut
@@ -1656,11 +1662,11 @@ class RawDemosaicProcessor {
             !rawAutoExposure -> null
             else -> {
                 analyzeSrgbThumbnailForMetering(
-                    capturePreviewThumbnail,
+                    autoExposurePreview,
                     rawAeContentBounds?.thumbnailBounds
                 ).also { image ->
                     if (image == null) {
-                        PLog.d(TAG, "RAW auto exposure disabled: capture preview thumbnail unavailable")
+                        PLog.d(TAG, "RAW auto exposure disabled: no capture or embedded DNG JPEG preview")
                     }
                 }
             }
@@ -2332,6 +2338,7 @@ class RawDemosaicProcessor {
                 )
             }
         } finally {
+            embeddedDngJpegPreview?.takeIf { !it.isRecycled }?.recycle()
             dngRawDataCleanup?.close()
         }
     }

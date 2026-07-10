@@ -3186,7 +3186,7 @@ object GalleryManager {
         val photoDir = getPhotoDir(context, photoId, true)
         val photoFile = File(photoDir, PHOTO_FILE)
         val tempFile = File(photoDir, "temp.jpg")
-        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapDefaults(dngFile)
+        var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngToneMapDefaults(dngFile)
         val rawSharpening = updatedMetadata.sharpening ?: RawSharpeningDefaults.forCapture(sharpeningValue)
         val rawNoiseReduction = resolveNoiseReduction(updatedMetadata, noiseReductionValue)
         val rawChromaNoiseReduction = resolveChromaNoiseReduction(updatedMetadata, chromaNoiseReductionValue)
@@ -4251,9 +4251,25 @@ object GalleryManager {
         return hasBitmapGainmap(loadBitmap(context, Uri.fromFile(photoFile), maxEdge = 512, preserveHdr = true))
     }
 
-    private fun MediaMetadata.withEmbeddedDngGooglePixelToneMapDefaults(
+    /**
+     * Applies an embedded DNG profile only when no profile tone map was selected for the photo.
+     *
+     * Capture metadata snapshots the global RAW setting.  Imported DNGs do the same below before
+     * reaching this point.  An embedded PGTM/ProfileToneCurve is therefore a useful default, not
+     * an override of the user's selected rendering intent.
+     */
+    private fun MediaMetadata.withEmbeddedDngToneMapDefaults(
         dngFile: File
     ): MediaMetadata {
+        val selectedProfileToneMapMode = rawToneMappingParameters.normalized().profileToneMapMode
+        if (selectedProfileToneMapMode != RawProfileToneMapMode.Default) {
+            PLog.d(
+                TAG,
+                "Keeping selected $selectedProfileToneMapMode profile tone map; " +
+                    "embedded DNG PGTM/ProfileToneCurve remains a fallback"
+            )
+            return this
+        }
         val hasProfileGainTableMap = DngProfileGainTableMap.readFrom(dngFile)?.isValid == true
         if (!hasProfileGainTableMap) return this
         val toneMappingParameters = when {
@@ -4277,6 +4293,26 @@ object GalleryManager {
             rawToneMappingParameters = toneMappingParameters,
             manualHdrEffectEnabled = true
         )
+    }
+
+    private suspend fun MediaMetadata.withImportedRawToneMapPreference(
+        context: Context
+    ): MediaMetadata {
+        val globalToneMappingParameters = ContentRepository.getInstance(context)
+            .userPreferencesRepository
+            .userPreferences
+            .firstOrNull()
+            ?.rawToneMappingParameters
+            ?.normalized()
+            ?: return this
+        if (globalToneMappingParameters.profileToneMapMode == RawProfileToneMapMode.Default) {
+            return this
+        }
+        PLog.d(
+            TAG,
+            "Applying global ${globalToneMappingParameters.profileToneMapMode} profile tone map to imported RAW"
+        )
+        return copy(rawToneMappingParameters = globalToneMappingParameters)
     }
 
 
@@ -4385,7 +4421,9 @@ object GalleryManager {
                         }
                     }
 
-                    var updatedMetadata: MediaMetadata = metadata.withEmbeddedDngGooglePixelToneMapDefaults(dngFile)
+                    var updatedMetadata: MediaMetadata = metadata
+                        .withImportedRawToneMapPreference(context)
+                        .withEmbeddedDngToneMapDefaults(dngFile)
                     if (deferRawPreview) {
                         val metadataSaved = saveMetadata(context, photoId, updatedMetadata)
                         if (!metadataSaved) {

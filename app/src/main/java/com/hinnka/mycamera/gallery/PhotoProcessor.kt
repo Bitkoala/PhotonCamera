@@ -24,6 +24,7 @@ import com.hinnka.mycamera.lut.LutManager
 import com.hinnka.mycamera.processor.DepthBokehProcessor
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawHdrRenderResult
+import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.PLog
@@ -424,7 +425,9 @@ class PhotoProcessor(
         context: Context, photoId: String, metadata: MediaMetadata,
         sharpening: Float = 0f,
         noiseReduction: Float = 0f,
-        chromaNoiseReduction: Float = 0f
+        chromaNoiseReduction: Float = 0f,
+        onRawAutoAdjustments: ((RawDemosaicProcessor.RawAutoAdjustments) -> Unit)? = null,
+        onRawMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? {
         val dngFile = GalleryManager.getDngFile(context, photoId)
 
@@ -454,7 +457,9 @@ class PhotoProcessor(
                 metadata,
                 sharpening,
                 noiseReduction,
-                chromaNoiseReduction
+                chromaNoiseReduction,
+                onRawAutoAdjustments,
+                onRawMetadata
             )
         } else if (GalleryManager.getOriginalImageFile(context, photoId) != null) {
             val bitmap = GalleryManager.loadOriginalBitmap(context, photoId) ?: return null
@@ -546,7 +551,9 @@ class PhotoProcessor(
         metadata: MediaMetadata,
         sharpening: Float = 0f,
         noiseReduction: Float = 0f,
-        chromaNoiseReduction: Float = 0f
+        chromaNoiseReduction: Float = 0f,
+        onRawAutoAdjustments: ((RawDemosaicProcessor.RawAutoAdjustments) -> Unit)? = null,
+        onRawMetadata: ((RawMetadata) -> Unit)? = null
     ): Bitmap? = withContext(Dispatchers.IO) {
         var result: Bitmap?
 
@@ -596,7 +603,9 @@ class PhotoProcessor(
                 cDensityGain = metadata.spectralFilmCDensityGain,
                 mDensityGain = metadata.spectralFilmMDensityGain,
                 yDensityGain = metadata.spectralFilmYDensityGain
-            )
+            ),
+            onRawAutoAdjustments = onRawAutoAdjustments,
+            onMetadata = onRawMetadata
         )
 
         result = bitmap?.let {

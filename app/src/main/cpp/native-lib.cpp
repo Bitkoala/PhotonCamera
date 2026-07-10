@@ -174,17 +174,44 @@ static jobject decodeJpegPreviewToBitmap(JNIEnv *env, const unsigned char *jpegD
     return nullptr;
   }
 
-  std::vector<unsigned char> rgba(static_cast<size_t>(width) * height * 4);
-  if (tjDecompress2(handle, mutableJpegData, jpegSize, rgba.data(), width, width * 4,
-                    height, TJPF_RGBA, TJFLAG_FASTUPSAMPLE |
-                                            TJFLAG_FASTDCT) != 0) {
+  constexpr int kPreviewMaxEdge = 512;
+  int scaledWidth = width;
+  int scaledHeight = height;
+  const tjscalingfactor *scalingFactors = nullptr;
+  int scalingFactorCount = 0;
+  if (std::max(width, height) > kPreviewMaxEdge) {
+    scalingFactors = tjGetScalingFactors(&scalingFactorCount);
+    if (scalingFactors && scalingFactorCount > 0) {
+      bool foundWithinLimit = false;
+      for (int i = 0; i < scalingFactorCount; ++i) {
+        const int candidateWidth = TJSCALED(width, scalingFactors[i]);
+        const int candidateHeight = TJSCALED(height, scalingFactors[i]);
+        const bool fitsLimit = std::max(candidateWidth, candidateHeight) <= kPreviewMaxEdge;
+        if (fitsLimit && (!foundWithinLimit ||
+            candidateWidth * candidateHeight > scaledWidth * scaledHeight)) {
+          scaledWidth = candidateWidth;
+          scaledHeight = candidateHeight;
+          foundWithinLimit = true;
+        } else if (!foundWithinLimit &&
+                   candidateWidth * candidateHeight < scaledWidth * scaledHeight) {
+          scaledWidth = candidateWidth;
+          scaledHeight = candidateHeight;
+        }
+      }
+    }
+  }
+
+  std::vector<unsigned char> rgba(static_cast<size_t>(scaledWidth) * scaledHeight * 4);
+  if (tjDecompress2(handle, mutableJpegData, jpegSize, rgba.data(), scaledWidth,
+                    scaledWidth * 4, scaledHeight, TJPF_RGBA,
+                    TJFLAG_FASTUPSAMPLE | TJFLAG_FASTDCT) != 0) {
     LOGE("decodeJpegPreviewToBitmap: jpeg decode failed: %s", tjGetErrorStr());
     tjDestroy(handle);
     return nullptr;
   }
 
   tjDestroy(handle);
-  return createBitmapFromRgba(env, width, height, rgba.data(), width * 4);
+  return createBitmapFromRgba(env, scaledWidth, scaledHeight, rgba.data(), scaledWidth * 4);
 }
 
 static jobject convertBitmapThumbnailToBitmap(JNIEnv *env,
@@ -2958,7 +2985,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   }
 
   jobject embeddedPreviewBitmap = nullptr;
-  /*ret = RawProcessor.unpack_thumb();
+  ret = RawProcessor.unpack_thumb();
   if (ret == LIBRAW_SUCCESS) {
     libraw_processed_image_t *thumb = RawProcessor.dcraw_make_mem_thumb(&ret);
     if (thumb && ret == LIBRAW_SUCCESS) {
@@ -2968,17 +2995,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
             decodeJpegPreviewToBitmap(env, thumb->data, thumb->data_size);
         LOGI("processDngNative: extracted embedded JPEG preview (%d bytes)",
              (int)thumb->data_size);
-      } else if (thumb->type == LIBRAW_IMAGE_BITMAP) {
-        embeddedPreviewBitmap = convertBitmapThumbnailToBitmap(env, thumb);
-        if (embeddedPreviewBitmap) {
-          LOGI("processDngNative: converted embedded bitmap preview %dx%d c=%d b=%d",
-               thumb->width, thumb->height, thumb->colors, thumb->bits);
-        } else {
-          LOGI("processDngNative: failed to convert embedded bitmap preview %dx%d c=%d b=%d",
-               thumb->width, thumb->height, thumb->colors, thumb->bits);
-        }
       } else {
-        LOGI("processDngNative: embedded preview present but unsupported type=%d",
+        LOGI("processDngNative: embedded preview ignored because it is not JPEG type=%d",
              thumb->type);
       }
       LibRaw::dcraw_clear_mem(thumb);
@@ -2988,7 +3006,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   } else {
     LOGI("processDngNative: unpack_thumb failed ret=%d err=%s", ret,
          libraw_strerror(ret));
-  }*/
+  }
 
   const bool hasBayerRaw = RawProcessor.imgdata.rawdata.raw_image != nullptr;
   const bool hasLinearRawColor3 = RawProcessor.imgdata.rawdata.color3_image != nullptr;
