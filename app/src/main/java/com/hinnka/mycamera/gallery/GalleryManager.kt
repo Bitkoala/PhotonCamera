@@ -3393,6 +3393,10 @@ object GalleryManager {
                     compression = compression,
                     inputRowStepSamples = inputRowStepSamples,
                     inputColStepSamples = inputColStepSamples,
+                    // The fused buffer producer defines its entire returned
+                    // grid as valid. Any future fusion-stage crop must be
+                    // carried here explicitly instead of inferred by the writer.
+                    defaultCrop = Rect(0, 0, width, height),
                 )
             }
         } catch (e: Throwable) {
