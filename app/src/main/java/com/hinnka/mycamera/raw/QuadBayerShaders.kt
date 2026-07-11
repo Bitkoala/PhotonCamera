@@ -76,6 +76,7 @@ object QuadBayerShaders {
         uniform int uCfaPattern;
         uniform vec4 uBlackLevel;
         uniform float uWhiteLevel;
+        // Calculation-only relative WB gains; WRITE_OUTPUT removes them again.
         uniform vec4 uWhiteBalanceGains;
         uniform float uHighlightClipThreshold;
         uniform float uHighlightCeiling;
@@ -123,22 +124,15 @@ object QuadBayerShaders {
             return max(float(rawVal) - bl, 0.0) / max(wl - bl, 1.0);
         }
 
-        float cameraSampleAt(ivec2 coord, int channelIndex) {
+        float calculationSampleAt(ivec2 coord, int channelIndex) {
             ivec2 sampleCoord = clampCoord(coord, uImageSize);
             float sensor = readSensorNormalized(sampleCoord, channelIndex);
-            float linear = sensor * getLensShadingGain(sampleCoord);
+            float linear = sensor * getLensShadingGain(sampleCoord) *
+                max(uWhiteBalanceGains[channelIndex], 1e-6);
             return min(max(linear, 0.0), uHighlightCeiling);
         }
 
-        float reconstructionWbGain(int channelIndex) {
-            return max(uWhiteBalanceGains[channelIndex], 1e-6);
-        }
-
-        float balancedSampleAt(ivec2 coord, int channelIndex) {
-            return cameraSampleAt(coord, channelIndex) * reconstructionWbGain(channelIndex);
-        }
-
-        float estimateOpposedCameraLinear(ivec2 coord, int color, int targetChannelIndex, float fallback) {
+        float estimateOpposedLinear(ivec2 coord, int color, float fallback) {
             float sumRed = 0.0;
             float sumGreen = 0.0;
             float sumBlue = 0.0;
@@ -154,7 +148,7 @@ object QuadBayerShaders {
                     ivec2 sampleCoord = clampCoord(coord + ivec2(dx, dy), uImageSize);
                     int sampleChannel = getQuadChannelIndex(uCfaPattern, sampleCoord.x, sampleCoord.y);
                     int sampleColor = colorFromChannelIndex(sampleChannel);
-                    float balanced = balancedSampleAt(sampleCoord, sampleChannel);
+                    float balanced = calculationSampleAt(sampleCoord, sampleChannel);
 
                     if (sampleColor == RED) {
                         sumRed += balanced;
@@ -183,8 +177,7 @@ object QuadBayerShaders {
                 opposedRoot = 0.5 * (rootRed + rootGreen);
             }
 
-            float reconstructed = pow(max(opposedRoot, 0.0), power) /
-                reconstructionWbGain(targetChannelIndex);
+            float reconstructed = pow(max(opposedRoot, 0.0), power);
             return max(reconstructed, fallback);
         }
 
@@ -198,7 +191,7 @@ object QuadBayerShaders {
                 return min(max(linear, 0.0), uHighlightCeiling);
             }
 
-            float reconstructed = estimateOpposedCameraLinear(coord, color, channelIndex, linear);
+            float reconstructed = estimateOpposedLinear(coord, color, linear);
             return min(mix(linear, reconstructed, clipMask), uHighlightCeiling);
         }
 
@@ -210,7 +203,7 @@ object QuadBayerShaders {
             int channelIndex = getQuadChannelIndex(uCfaPattern, coord.x, coord.y);
             int color = colorFromChannelIndex(channelIndex);
             float sensor = readSensorNormalized(coord, channelIndex);
-            float linear = cameraSampleAt(coord, channelIndex);
+            float linear = calculationSampleAt(coord, channelIndex);
             float val = reconstructHighlightSample(coord, channelIndex, color, sensor, linear);
 
             cfa[idx] = val;
@@ -448,18 +441,19 @@ object QuadBayerShaders {
         layout (rgba16f, binding = 0) writeonly uniform highp image2D uOutputImage;
 
         uniform ivec2 uImageSize;
+        uniform vec3 uCalculationGains;
 
         void main() {
             ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
             if (coord.x >= uImageSize.x || coord.y >= uImageSize.y) return;
 
             int idx = coord.y * uImageSize.x + coord.x;
-            vec4 color = vec4(
+            vec3 cameraRgb = vec3(
                 max(0.0, tmpR[idx]),
                 max(0.0, rgb1[idx]),
-                max(0.0, tmpB[idx]),
-                1.0
-            );
+                max(0.0, tmpB[idx])
+            ) / max(uCalculationGains, vec3(1e-6));
+            vec4 color = vec4(cameraRgb, 1.0);
             imageStore(uOutputImage, coord, color);
         }
     """.trimIndent()

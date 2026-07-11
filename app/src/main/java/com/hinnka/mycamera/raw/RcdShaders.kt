@@ -30,7 +30,9 @@ object RcdShaders {
         uniform int uCfaPattern;
         uniform vec4 uBlackLevel; // R, Gr, Gb, B 或 [0,1,2,3] 四通道黑电平
         uniform float uWhiteLevel;
-        uniform vec4 uWhiteBalanceGains; // R, Gr, Gb, B 高光重建用相对白平衡增益，输出仍保持 camera RGB
+        // R, G, G, B relative gains used only to condition RCD calculations.
+        // WRITE_OUTPUT removes them again, so the externally visible result remains camera RGB.
+        uniform vec4 uWhiteBalanceGains;
         uniform float uHighlightClipThreshold;
         uniform float uHighlightCeiling;
         uniform bool uHighlightReconstructionEnabled;
@@ -118,23 +120,17 @@ object RcdShaders {
             return max(float(rawVal) - bl, 0.0) / max(wl - bl, 1.0);
         }
 
-        float cameraSampleAt(ivec2 coord, int channelIndex) {
+        float calculationSampleAt(ivec2 coord, int channelIndex) {
             ivec2 sampleCoord = clampCoord(coord);
             float sensor = readSensorNormalized(sampleCoord, channelIndex);
-            float linear = sensor * getLensShadingGain(channelIndex, sampleCoord);
+            float linear = sensor * getLensShadingGain(channelIndex, sampleCoord) *
+                max(uWhiteBalanceGains[channelIndex], 1e-6);
             return min(max(linear, 0.0), uHighlightCeiling);
         }
 
-        float reconstructionWbGain(int channelIndex) {
-            return max(uWhiteBalanceGains[channelIndex], 1e-6);
-        }
-
-        float balancedSampleAt(ivec2 coord, int channelIndex) {
-            return cameraSampleAt(coord, channelIndex) * reconstructionWbGain(channelIndex);
-        }
-
-        // Estimate clipped photosites in a white-balanced domain, then convert back to camera RGB.
-        float estimateOpposedCameraLinear(ivec2 coord, int color, int targetChannelIndex, float fallback) {
+        // Both ordinary interpolation and clipped-site estimation stay in the same
+        // white-balanced calculation domain. Output conversion is deliberately deferred.
+        float estimateOpposedLinear(ivec2 coord, int color, float fallback) {
             float sumRed = 0.0;
             float sumGreen = 0.0;
             float sumBlue = 0.0;
@@ -147,7 +143,7 @@ object RcdShaders {
                     ivec2 sampleCoord = clampCoord(coord + ivec2(dx, dy));
                     int sampleColor = getBayerColor(uCfaPattern, sampleCoord.x, sampleCoord.y);
                     int channelIndex = getBlackLevelIndex(uCfaPattern, sampleCoord.x, sampleCoord.y);
-                    float balanced = balancedSampleAt(sampleCoord, channelIndex);
+                    float balanced = calculationSampleAt(sampleCoord, channelIndex);
 
                     if (sampleColor == RED) {
                         sumRed += balanced;
@@ -176,8 +172,7 @@ object RcdShaders {
                 opposedRoot = 0.5 * (rootRed + rootGreen);
             }
 
-            float reconstructed = pow(max(opposedRoot, 0.0), power) /
-                reconstructionWbGain(targetChannelIndex);
+            float reconstructed = pow(max(opposedRoot, 0.0), power);
             return max(reconstructed, fallback);
         }
 
@@ -191,7 +186,7 @@ object RcdShaders {
                 return min(max(linear, 0.0), uHighlightCeiling);
             }
 
-            float reconstructed = estimateOpposedCameraLinear(coord, color, channelIndex, linear);
+            float reconstructed = estimateOpposedLinear(coord, color, linear);
             return min(mix(linear, reconstructed, clipMask), uHighlightCeiling);
         }
 
@@ -204,7 +199,7 @@ object RcdShaders {
             int blIdx = getBlackLevelIndex(uCfaPattern, coord.x, coord.y);
             int color = getBayerColor(uCfaPattern, coord.x, coord.y);
             float sensor = readSensorNormalized(coord, blIdx);
-            float linear = cameraSampleAt(coord, blIdx);
+            float linear = calculationSampleAt(coord, blIdx);
             float val = reconstructHighlightSample(coord, blIdx, color, sensor, linear);
 
             cfa[idx] = val;
@@ -732,6 +727,7 @@ object RcdShaders {
         uniform ivec2 uImageSize;
         uniform int uCfaPattern;
         uniform int uBorder;
+        uniform vec3 uCalculationGains;
 
         #define RED 0
         #define GREEN 1
@@ -953,6 +949,9 @@ object RcdShaders {
                 color = ppgColorAt(coord);
             }
 
+            // Undo the calculation-only white balance. Downstream color conversion
+            // therefore receives the same camera RGB domain as before this RCD pass.
+            color /= max(uCalculationGains, vec3(1e-6));
             imageStore(uOutputImage, coord, vec4(color, 1.0));
         }
     """.trimIndent()

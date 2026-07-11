@@ -542,7 +542,7 @@ class RawDemosaicProcessor {
         )
     }
 
-    private fun highlightReconstructionWbGains(metadata: RawMetadata): FloatArray {
+    private fun demosaicCalculationWbGains(metadata: RawMetadata): FloatArray {
         val gains = metadata.whiteBalanceGains
         fun safeGain(index: Int, fallback: Float): Float {
             val value = gains.getOrElse(index) { fallback }
@@ -569,8 +569,8 @@ class RawDemosaicProcessor {
 
         return floatArrayOf(
             normalized(safeGain(0, greenBase)),
-            normalized(greenEven),
-            normalized(greenOdd),
+            1f,
+            1f,
             normalized(safeGain(3, greenBase))
         )
     }
@@ -1832,13 +1832,13 @@ class RawDemosaicProcessor {
                 if (rawDomainHighlightReconstructionEnabled) 1 else 0
             )
             val metadataWbGains = actualMetadata.whiteBalanceGains
-            val highlightWbGains = highlightReconstructionWbGains(actualMetadata)
+            val calculationWbGains = demosaicCalculationWbGains(actualMetadata)
             val lscSize = lensShadingLogString(actualMetadata)
             PLog.d(
                 TAG,
                 "RCD populate: cfa=${actualMetadata.cfaPattern} black=${blackLevel4.contentToString()} " +
                         "white=${actualMetadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
-                        "highlightWb=${highlightWbGains.contentToString()} " +
+                        "calculationWb=${calculationWbGains.contentToString()} " +
                         "lsc=$lscSize " +
                         "highlightReconstruction=$rawDomainHighlightReconstructionEnabled " +
                         "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
@@ -1850,7 +1850,7 @@ class RawDemosaicProcessor {
                 GLES31.glGetUniformLocation(
                     rcdPopulateProgram,
                     "uWhiteBalanceGains"
-                ), 1, highlightWbGains, 0
+                ), 1, calculationWbGains, 0
             )
             GLES31.glDispatchCompute((actualWidth + 15) / 16, (actualHeight + 15) / 16, 1)
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
@@ -1978,6 +1978,12 @@ class RawDemosaicProcessor {
             GLES31.glUniform1i(
                 GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"),
                 RCD_OUTPUT_MARGIN
+            )
+            GLES31.glUniform3f(
+                GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uCalculationGains"),
+                calculationWbGains[0],
+                1f,
+                calculationWbGains[3]
             )
             GLES31.glBindImageTexture(
                 RCD_OUTPUT_IMAGE_UNIT,
@@ -4831,7 +4837,7 @@ class RawDemosaicProcessor {
             }.coerceAtLeast(0f)
         }
         val metadataWbGains = metadata.whiteBalanceGains
-        val highlightWbGains = highlightReconstructionWbGains(metadata)
+        val calculationWbGains = demosaicCalculationWbGains(metadata)
         val lscSize = lensShadingLogString(metadata)
 
         try {
@@ -4862,14 +4868,14 @@ class RawDemosaicProcessor {
             GLES31.glUniform4fv(
                 GLES31.glGetUniformLocation(rcdPopulateProgram, "uWhiteBalanceGains"),
                 1,
-                highlightWbGains,
+                calculationWbGains,
                 0
             )
             PLog.d(
                 TAG,
                 "Linear RCD populate: cfa=${metadata.cfaPattern} black=${blackLevel4.contentToString()} " +
                     "white=${metadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
-                    "highlightWb=${highlightWbGains.contentToString()} lsc=$lscSize"
+                    "calculationWb=${calculationWbGains.contentToString()} lsc=$lscSize"
             )
             GLES31.glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1)
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
@@ -4929,6 +4935,12 @@ class RawDemosaicProcessor {
             GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uImageSize"), width, height)
             GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uCfaPattern"), metadata.cfaPattern)
             GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uBorder"), RCD_OUTPUT_MARGIN)
+            GLES31.glUniform3f(
+                GLES31.glGetUniformLocation(rcdWriteOutputProgram, "uCalculationGains"),
+                calculationWbGains[0],
+                1f,
+                calculationWbGains[3]
+            )
             GLES31.glBindImageTexture(
                 RCD_OUTPUT_IMAGE_UNIT,
                 demosaicTextureId,
@@ -4987,7 +4999,7 @@ class RawDemosaicProcessor {
             }.coerceAtLeast(0f)
         }
         val metadataWbGains = metadata.whiteBalanceGains
-        val highlightWbGains = highlightReconstructionWbGains(metadata)
+        val calculationWbGains = demosaicCalculationWbGains(metadata)
         val lscSize = lensShadingLogString(metadata)
         val expandedBlockSize = RawCfaCorrection.expandedBayerBlockSize(metadata.cfaPattern)
 
@@ -5033,7 +5045,7 @@ class RawDemosaicProcessor {
         GLES31.glUniform4fv(
             GLES31.glGetUniformLocation(quadPopulateProgram, "uWhiteBalanceGains"),
             1,
-            highlightWbGains,
+            calculationWbGains,
             0
         )
         PLog.d(
@@ -5041,7 +5053,7 @@ class RawDemosaicProcessor {
             "Expanded Bayer populate: cfa=${metadata.cfaPattern} block=${expandedBlockSize}x$expandedBlockSize " +
                     "black=${blackLevel4.contentToString()} " +
                     "white=${metadata.whiteLevel} metadataWb=${metadataWbGains.contentToString()} " +
-                    "highlightWb=${highlightWbGains.contentToString()} lsc=$lscSize " +
+                    "calculationWb=${calculationWbGains.contentToString()} lsc=$lscSize " +
                     "highlightReconstruction=$highlightReconstructionEnabled " +
                     "highlightThreshold=$RCD_HIGHLIGHT_RECONSTRUCTION_THRESHOLD " +
                     "highlightCeiling=$RCD_HIGHLIGHT_RECONSTRUCTION_CEILING"
@@ -5085,6 +5097,12 @@ class RawDemosaicProcessor {
             GLES31.glGetUniformLocation(quadWriteOutputProgram, "uImageSize"),
             width,
             height
+        )
+        GLES31.glUniform3f(
+            GLES31.glGetUniformLocation(quadWriteOutputProgram, "uCalculationGains"),
+            calculationWbGains[0],
+            1f,
+            calculationWbGains[3]
         )
         GLES31.glBindImageTexture(
             RCD_OUTPUT_IMAGE_UNIT,
