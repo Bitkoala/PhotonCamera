@@ -6,7 +6,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.ceil
 import kotlin.math.max
-import kotlin.math.min
 
 internal object RawProfileGainTableMapBuilder {
     private const val TAG = "RawProfileGainTableMapBuilder"
@@ -21,7 +20,7 @@ internal object RawProfileGainTableMapBuilder {
         metadata: RawMetadata,
         samplesPerPixel: Int = 1,
         statsBounds: Rect? = null,
-        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
     ): DngProfileGainTableMap? {
         val stats = buildPackedCellStats(
             rawData = rawData,
@@ -43,7 +42,7 @@ internal object RawProfileGainTableMapBuilder {
                 diagnosticBand = diagnosticBand
             )
 
-            RawProfileToneMapMode.PhotonPgtm -> DngPhotonProfileGainTableGenerator.forCellStats(
+            RawProfileToneMapMode.Photon -> DngPhotonProfileGainTableGenerator.forCellStats(
                 width = width,
                 height = height,
                 baselineExposureEv = baselineExposureEv,

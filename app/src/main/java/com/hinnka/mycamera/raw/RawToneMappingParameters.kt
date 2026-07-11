@@ -14,7 +14,7 @@ data class RawToneMappingParameters(
     val profileToneMapMode: RawProfileToneMapMode
         get() = when {
             useOppoMasterToneMap -> RawProfileToneMapMode.OppoMaster
-            usePhotonPgtmToneMap -> RawProfileToneMapMode.PhotonPgtm
+            usePhotonPgtmToneMap -> RawProfileToneMapMode.Photon
             useGooglePixelToneMap -> RawProfileToneMapMode.GooglePixel
             else -> RawProfileToneMapMode.Default
         }
@@ -80,7 +80,7 @@ data class RawToneMappingParameters(
         return copy(
             useGooglePixelToneMap = mode == RawProfileToneMapMode.GooglePixel,
             useOppoMasterToneMap = mode == RawProfileToneMapMode.OppoMaster,
-            usePhotonPgtmToneMap = mode == RawProfileToneMapMode.PhotonPgtm
+            usePhotonPgtmToneMap = mode == RawProfileToneMapMode.Photon
         ).normalized()
     }
 
@@ -113,7 +113,7 @@ data class RawToneMappingParameters(
 
 enum class RawProfileToneMapMode {
     Default,
+    Photon,
     OppoMaster,
     GooglePixel,
-    PhotonPgtm,
 }

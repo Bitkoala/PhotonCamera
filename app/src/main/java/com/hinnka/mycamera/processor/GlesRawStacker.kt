@@ -38,7 +38,7 @@ class GlesRawStacker(
     private val lensShadingHeight: Int,
     colorCorrectionMatrix: FloatArray? = null,
     pgtmStatsBounds: Rect? = null,
-    private val profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+    private val profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
     private val tuning: RawStackTuningProfile = RawStackTuningResolver.resolve(RawStackMode.MFNR),
     debugConfig: RawStackDebugConfig = RawStackDebugConfig.Disabled,
 ) {
@@ -1125,7 +1125,7 @@ class GlesRawStacker(
             return null
         }
         if (profileToneMapMode != RawProfileToneMapMode.GooglePixel &&
-            profileToneMapMode != RawProfileToneMapMode.PhotonPgtm
+            profileToneMapMode != RawProfileToneMapMode.Photon
         ) {
             return null
         }
@@ -1201,7 +1201,7 @@ class GlesRawStacker(
             }
             val diagnosticBand = DngPgtmDiagnostic.activeBandForSource("$TAG GPU stacker")
             when (profileToneMapMode) {
-                RawProfileToneMapMode.PhotonPgtm -> DngPhotonProfileGainTableGenerator.forCellStats(
+                RawProfileToneMapMode.Photon -> DngPhotonProfileGainTableGenerator.forCellStats(
                     width = width,
                     height = height,
                     baselineExposureEv = baselineExposureEv,

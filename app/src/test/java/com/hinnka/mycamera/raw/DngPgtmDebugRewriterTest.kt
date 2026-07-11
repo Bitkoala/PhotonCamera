@@ -36,7 +36,7 @@ class DngPgtmDebugRewriterTest {
             assertEquals(map.mapPointsN, decoded?.mapPointsN)
             assertEquals(map.gains[0], decoded?.gains?.get(0) ?: 0f, 0f)
             assertEquals(map.gains[1], decoded?.gains?.get(1) ?: 0f, 0f)
-            assertTrue(DngEmbeddedProfile.hasGoogleHdrToneCurve(file))
+            assertTrue(DngEmbeddedProfile.hasPhotonPgtmProfile(file))
         } finally {
             file.delete()
         }

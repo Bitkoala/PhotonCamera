@@ -444,13 +444,13 @@ fun PresetEditorScreen(
 
                         val toneMapLabels = mapOf(
                             RawProfileToneMapMode.Default to stringResource(R.string.settings_raw_profile_tone_map_default),
-                            RawProfileToneMapMode.PhotonPgtm to stringResource(R.string.settings_raw_profile_tone_map_photon_pgtm),
+                            RawProfileToneMapMode.Photon to stringResource(R.string.settings_raw_profile_tone_map_photon_pgtm),
                             RawProfileToneMapMode.OppoMaster to stringResource(R.string.settings_raw_profile_tone_map_oppo_master),
                             RawProfileToneMapMode.GooglePixel to stringResource(R.string.settings_raw_profile_tone_map_google_pixel),
                         )
                         val selectedToneMapMode = when {
                             rawOppoMasterToneMap -> RawProfileToneMapMode.OppoMaster
-                            rawPhotonPgtmToneMap -> RawProfileToneMapMode.PhotonPgtm
+                            rawPhotonPgtmToneMap -> RawProfileToneMapMode.Photon
                             rawGooglePixelToneMap -> RawProfileToneMapMode.GooglePixel
                             else -> RawProfileToneMapMode.Default
                         }
@@ -468,7 +468,7 @@ fun PresetEditorScreen(
                                     ?: RawProfileToneMapMode.Default
                                 rawGooglePixelToneMap = selectedMode == RawProfileToneMapMode.GooglePixel
                                 rawOppoMasterToneMap = selectedMode == RawProfileToneMapMode.OppoMaster
-                                rawPhotonPgtmToneMap = selectedMode == RawProfileToneMapMode.PhotonPgtm
+                                rawPhotonPgtmToneMap = selectedMode == RawProfileToneMapMode.Photon
                             }
                         )
 

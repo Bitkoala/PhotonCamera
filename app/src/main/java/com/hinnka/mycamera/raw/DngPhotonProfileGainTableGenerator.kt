@@ -22,6 +22,7 @@ internal object DngPhotonProfileGainTableGenerator {
     private const val MID_GRAY_INPUT = 0.18f
     private const val DEFAULT_MID_GRAY_LIFT_EV = 1.10f
     private const val MAX_LOCAL_MICRO_CONTRAST = 0.045f
+    private const val MAX_ADAPTIVE_SHADOW_LIFT_EV = 1.05f
 
     private val BASE_INPUT_WEIGHTS = floatArrayOf(
         DngHdrProfileGainTableGenerator.BASE_INPUT_WEIGHT_RED,
@@ -38,6 +39,7 @@ internal object DngPhotonProfileGainTableGenerator {
         packedCellStats: FloatArray,
         tablePointCount: Int = DEFAULT_TABLE_POINTS,
         diagnosticBand: DngHdrProfileGainTableGenerator.DiagnosticBand? = null,
+        emitDiagnostics: Boolean = true,
     ): DngProfileGainTableMap? {
         if (width <= 0 || height <= 0 || !baselineExposureEv.isFinite() || baselineExposureEv < MIN_BASELINE_EV) {
             return null
@@ -97,12 +99,14 @@ internal object DngPhotonProfileGainTableGenerator {
             gains = gains,
             sourceTag = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
         )
-        PLog.d(
-            TAG,
-            "Built Photon PGTM: grid=${gridWidth}x${gridHeight}x$safePointCount " +
-                "baselineEv=$safeBaselineEv sceneMax=$sceneMax inputScale=$inputScale " +
-                "p98=${global.p98} tail99=${global.tailP99} max=${global.maxInput}"
-        )
+        if (emitDiagnostics) {
+            PLog.d(
+                TAG,
+                "Built Photon PGTM: grid=${gridWidth}x${gridHeight}x$safePointCount " +
+                    "baselineEv=$safeBaselineEv sceneMax=$sceneMax inputScale=$inputScale " +
+                    "p98=${global.p98} tail99=${global.tailP99} max=${global.maxInput}"
+            )
+        }
         return DngHdrProfileGainTableGenerator.withDiagnosticBand(map, diagnosticBand)
     }
 
@@ -215,16 +219,21 @@ internal object DngPhotonProfileGainTableGenerator {
         val sparseOutlier = smoothStep(0.45f, 1.25f, outlierGapEv) *
             (1f - smoothStep(0.16f, 0.32f, highlightDensity))
         val denseHighlight = smoothStep(0.12f, 0.30f, highlightDensity)
+        // The upper percentile is not the desired white point. Leaving roughly half
+        // a stop above it is important in HDR scenes: otherwise most of the curve is
+        // spent compressing ordinary highlights and the shoulder becomes needlessly flat.
+        val percentileHeadroom = lerp(1.62f, 1.38f, denseHighlight)
         val percentileTarget = max(
             1f,
-            lerp(tailP95 * 1.03f, tailP99 * 0.96f, 0.45f + 0.35f * denseHighlight)
+            lerp(tailP95, tailP99, 0.68f + 0.20f * denseHighlight) * percentileHeadroom
         )
         val outlierTarget = lerp(
             percentileTarget,
             min(maxInput, max(percentileTarget, tailP99 * 1.24f)),
             sparseOutlier * 0.42f
         )
-        return lerp(MIN_SCENE_MAX, outlierTarget, hdrStrength)
+        val headroomStrength = smoothStep(0.15f, 0.65f, hdrStrength)
+        return lerp(MIN_SCENE_MAX, outlierTarget, headroomStrength)
             .coerceIn(MIN_SCENE_MAX, MAX_SCENE_MAX)
     }
 
@@ -348,10 +357,12 @@ internal object DngPhotonProfileGainTableGenerator {
     ): Float {
         val x = sceneLinear.coerceIn(0f, MID_GRAY_INPUT)
         if (x <= 0f || x >= MID_GRAY_INPUT) return baseOutput
-        val shadowWindow = smoothStep(0.010f, 0.036f, x) *
-            (1f - smoothStep(0.135f, MID_GRAY_INPUT, x))
-        val adaptiveLift = photonAdaptiveShadowLiftStrength(sceneMax, global, local)
-        return baseOutput * (1f + adaptiveLift * shadowWindow)
+        // Keep a finite toe gain all the way to black. A lower smooth-step here used
+        // to turn the lift off for the darkest (and most numerous) samples. Fade the
+        // extra exposure into the mid-gray slope instead of adding a small gain bump.
+        val shadowWindow = 1f - smoothStep(0.045f, MID_GRAY_INPUT, x)
+        val adaptiveLiftEv = photonAdaptiveShadowLiftEv(sceneMax, global, local)
+        return baseOutput * 2.0f.pow(adaptiveLiftEv * shadowWindow)
     }
 
     private fun photonLocalMicroContrastOutput(
@@ -376,15 +387,21 @@ internal object DngPhotonProfileGainTableGenerator {
         return adjusted.coerceIn(0f, 1f)
     }
 
-    private fun photonAdaptiveShadowLiftStrength(
+    private fun photonAdaptiveShadowLiftEv(
         sceneMax: Float,
         global: PhotonPgtmCellStats,
         local: PhotonPgtmCellStats,
     ): Float {
         val globalRangeEv = log2((global.p98 + 0.008f) / (global.p10 + 0.008f))
             .coerceIn(0f, 10f)
-        val highDynamicRange = smoothStep(3.2f, 5.8f, globalRangeEv) *
-            smoothStep(1.10f, 1.80f, sceneMax)
+        // p98 is histogram-clamped and can substantially under-report a sparse HDR
+        // tail. Include the unclamped tail percentile used to choose sceneMax.
+        val tailRangeEv = log2((global.tailP99 + 0.04f) / (global.p50 + 0.04f))
+            .coerceIn(0f, 8f)
+        val highDynamicRange = max(
+            smoothStep(2.5f, 5.2f, globalRangeEv),
+            smoothStep(1.8f, 3.8f, tailRangeEv)
+        ) * smoothStep(1.15f, 2.10f, sceneMax)
         val globalDarkArea = max(
             1f - smoothStep(0.075f, 0.165f, global.p50),
             0.75f * (1f - smoothStep(0.24f, 0.50f, global.p90))
@@ -393,10 +410,10 @@ internal object DngPhotonProfileGainTableGenerator {
             1f - smoothStep(0.060f, 0.150f, local.p50),
             0.60f * (1f - smoothStep(0.20f, 0.45f, local.p90))
         )
-        val darkSceneLift = highDynamicRange * globalDarkArea.coerceIn(0f, 1f)
-        val darkCellLift = darkSceneLift * localDarkArea.coerceIn(0f, 1f)
-        return (0.068f * darkSceneLift + 0.022f * darkCellLift)
-            .coerceIn(0f, 0.090f)
+        val globalDarkness = globalDarkArea.coerceIn(0f, 1f)
+        val localDarkness = localDarkArea.coerceIn(0f, 1f)
+        return (highDynamicRange * (0.62f + 0.28f * globalDarkness + 0.18f * localDarkness))
+            .coerceIn(0f, MAX_ADAPTIVE_SHADOW_LIFT_EV)
     }
 
     private fun photonPgtmInputWeights(inputScale: Float): FloatArray {

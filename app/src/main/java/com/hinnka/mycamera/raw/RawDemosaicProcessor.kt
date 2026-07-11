@@ -914,6 +914,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        useEmbeddedPreviewForAutoExposure: Boolean = true,
         rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
@@ -955,6 +956,7 @@ class RawDemosaicProcessor {
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
                 capturePreviewThumbnail = capturePreviewThumbnail,
+                useEmbeddedPreviewForAutoExposure = useEmbeddedPreviewForAutoExposure,
                 rawBlackBorderCrop = rawBlackBorderCrop,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
@@ -1167,6 +1169,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        useEmbeddedPreviewForAutoExposure: Boolean = true,
         rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
@@ -1208,6 +1211,7 @@ class RawDemosaicProcessor {
                 rawToneMappingParameters = rawToneMappingParameters,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
                 capturePreviewThumbnail = capturePreviewThumbnail,
+                useEmbeddedPreviewForAutoExposure = useEmbeddedPreviewForAutoExposure,
                 rawBlackBorderCrop = rawBlackBorderCrop,
                 dngFile = dngFile,
                 onRawAutoAdjustments = onRawAutoAdjustments,
@@ -1258,6 +1262,7 @@ class RawDemosaicProcessor {
         rawToneMappingParameters: RawToneMappingParameters = RawToneMappingParameters.DEFAULT,
         rawCfaCorrectionMode: String? = null,
         capturePreviewThumbnail: Bitmap? = null,
+        useEmbeddedPreviewForAutoExposure: Boolean = true,
         rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         dngFile: File? = null,
         onRawAutoAdjustments: ((RawAutoAdjustments) -> Unit)? = null,
@@ -1419,8 +1424,9 @@ class RawDemosaicProcessor {
             metadataDefaultCrop = effectiveDefaultCrop
         )
         val rawOutputBounds = outputSourceBounds.toOutputBounds(actualRotation)
-        val autoExposurePreview = capturePreviewThumbnail ?: embeddedDngJpegPreview
-        if (capturePreviewThumbnail == null && embeddedDngJpegPreview != null) {
+        val autoExposurePreview = capturePreviewThumbnail
+            ?: embeddedDngJpegPreview.takeIf { useEmbeddedPreviewForAutoExposure }
+        if (capturePreviewThumbnail == null && autoExposurePreview != null) {
             PLog.d(TAG, "Using embedded DNG JPEG preview for RAW auto exposure")
         }
         val rawAeContentBounds = resolveRawAeContentBounds(
@@ -1440,7 +1446,7 @@ class RawDemosaicProcessor {
             embeddedProfileToneCurveLut != null &&
                 DngProfileToneCurve.isPhotonPgtmToneCurveLut(embeddedProfileToneCurveLut) &&
                 DngEmbeddedProfile.isPhotonPgtmProfileName(embeddedDngProfileName) -> {
-                RawProfileToneMapMode.PhotonPgtm
+                RawProfileToneMapMode.Photon
             }
 
             else -> RawProfileToneMapMode.Default
@@ -1459,11 +1465,11 @@ class RawDemosaicProcessor {
             normalizedToneMappingParameters.useOppoMasterToneMap
         val requestedProfileToneMapMode = when {
             googlePixelToneMapRequested -> RawProfileToneMapMode.GooglePixel
-            photonPgtmToneMapRequested -> RawProfileToneMapMode.PhotonPgtm
+            photonPgtmToneMapRequested -> RawProfileToneMapMode.Photon
             else -> RawProfileToneMapMode.Default
         }
         val profileGainToneMapRequested = requestedProfileToneMapMode == RawProfileToneMapMode.GooglePixel ||
-            requestedProfileToneMapMode == RawProfileToneMapMode.PhotonPgtm
+            requestedProfileToneMapMode == RawProfileToneMapMode.Photon
         val embeddedDngHdrToneMapDisabledByUser = embeddedDngHdrToneMapAvailable &&
             useAdobeProfilePipeline &&
             !oppoMasterToneMapRequested &&
@@ -7209,18 +7215,18 @@ class RawDemosaicProcessor {
         preferredToneCurveLut: FloatArray? = null,
     ): DcpRenderPlan {
         val toneCurve = preferredToneCurveLut?.copyOf() ?: when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurveLut()
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.photonPgtmToneCurveLut()
             else -> DngProfileToneCurve.googleHdrToneCurveLut()
         }
         val modeName = when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
             else -> "Google Pixel Tone Map"
         }
         return DcpRenderPlan(
             profileName = basePlan?.profileName?.let { "$it + $modeName" } ?: modeName,
             workingColorSpace = basePlan?.workingColorSpace ?: workingColorSpace,
             baselineExposureOffset = basePlan?.baselineExposureOffset ?: 0f,
-            defaultBlackRender = DcpDefaultBlackRender.None,
+            defaultBlackRender = DcpDefaultBlackRender.Auto,
             colorCorrectionMatrix = basePlan?.colorCorrectionMatrix ?: metadata.colorCorrectionMatrix,
             cameraWhite = basePlan?.cameraWhite ?: metadata.cameraWhite,
             hueSatMap = basePlan?.hueSatMap,

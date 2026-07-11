@@ -410,7 +410,9 @@ object SuperResolutionDngWriter {
                 calibrationMatrix2?.let { add(sRationalArray(TAG_CAMERA_CALIBRATION_2, colorTransformToExactDngMatrix(it))) }
             }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
-            if (!isCfa) {
+            if (profileGainTableMap != null) {
+                add(long(TAG_DEFAULT_BLACK_RENDER, 0))
+            } else if (!isCfa) {
                 add(long(TAG_DEFAULT_BLACK_RENDER, 1))
             }
             add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(resolvedBaselineExposureEv.toDouble())))

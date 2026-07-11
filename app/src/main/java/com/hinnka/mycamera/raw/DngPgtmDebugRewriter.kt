@@ -16,18 +16,20 @@ internal object DngPgtmDebugRewriter {
     private const val TIFF_CLASSIC_MAGIC = 42
     private const val TYPE_BYTE = 1
     private const val TYPE_ASCII = 2
+    private const val TYPE_LONG = 4
     private const val TYPE_FLOAT = 11
     private const val TYPE_UNDEFINED = 7
 
     private const val TAG_DNG_VERSION = 50706
     private const val TAG_PROFILE_NAME = 50936
     private const val TAG_PROFILE_TONE_CURVE = 50940
+    private const val TAG_DEFAULT_BLACK_RENDER = 51110
     private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
 
     fun rewriteGeneratedPgtmOnRawRefreshIfEnabled(
         dngFile: File?,
         profileGainTableMap: DngProfileGainTableMap?,
-        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
     ): Boolean {
         if (!BuildConfig.DEBUG || !REWRITE_GENERATED_PGTM_ON_RAW_REFRESH) return false
         val file = dngFile ?: return false
@@ -38,7 +40,7 @@ internal object DngPgtmDebugRewriter {
     fun rewriteProfileGainTableMap2(
         dngFile: File,
         profileGainTableMap: DngProfileGainTableMap,
-        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
     ): Boolean {
         if (!BuildConfig.DEBUG) return false
         if (!profileGainTableMap.isValid || !dngFile.exists() || dngFile.length() < 16L) {
@@ -79,6 +81,12 @@ internal object DngPgtmDebugRewriter {
                             values = toneCurvePoints,
                             byteOrder = byteOrder
                         )
+                    ),
+                    TiffValue(
+                        tag = TAG_DEFAULT_BLACK_RENDER,
+                        type = TYPE_LONG,
+                        count = 1,
+                        bytes = uintBytes(0, byteOrder)
                     ),
                     TiffValue(
                         tag = TAG_PROFILE_GAIN_TABLE_MAP_2,
@@ -124,14 +132,14 @@ internal object DngPgtmDebugRewriter {
 
     private fun profileNameForToneMapMode(mode: RawProfileToneMapMode): String {
         return when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
             else -> DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME
         }
     }
 
     private fun profileToneCurveForToneMapMode(mode: RawProfileToneMapMode): FloatArray {
         return when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurvePoints()
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.photonPgtmToneCurvePoints()
             else -> DngProfileToneCurve.googleHdrToneCurvePoints()
         }
     }

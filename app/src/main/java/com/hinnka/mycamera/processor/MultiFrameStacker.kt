@@ -235,7 +235,7 @@ object MultiFrameStacker {
         applyLensShadingCorrection: Boolean = true,
         colorCorrectionMatrix: FloatArray? = null,
         pgtmStatsBounds: Rect? = null,
-        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
     ): RawStackResult? {
         if (normalFrames.isEmpty()) {
             shortFrame.image.close()

@@ -98,7 +98,7 @@ internal object DngEmbeddedProfile {
     fun hasPhotonPgtmProfile(file: File): Boolean {
         val profile = readFrom(file) ?: return false
         return isPhotonPgtmProfileName(profile.profileName) &&
-            DngProfileToneCurve.isLinearToneCurve(profile.toneCurve)
+            DngProfileToneCurve.isPhotonPgtmToneCurve(profile.toneCurve)
     }
 
     fun hasGoogleHdrToneCurve(file: File): Boolean {
@@ -111,8 +111,14 @@ internal object DngEmbeddedProfile {
     }
 
     fun isPhotonPgtmProfileName(profileName: String?): Boolean {
-        return profileName?.contains("photon", ignoreCase = true) == true &&
-            profileName.contains("pgtm", ignoreCase = true)
+        val normalizedName = profileName?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        return normalizedName.equals(
+            DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME,
+            ignoreCase = true
+        ) || (
+            normalizedName.contains("photon", ignoreCase = true) &&
+                normalizedName.contains("pgtm", ignoreCase = true)
+            )
     }
 
     private fun decodeProfile(

@@ -15,7 +15,6 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.graphics.createBitmap
 import androidx.exifinterface.media.ExifInterface
-import com.hinnka.mycamera.BuildConfig
 import com.hinnka.mycamera.camera.AspectRatio
 import com.hinnka.mycamera.camera.HdrBracketConfig
 import com.hinnka.mycamera.data.ContentRepository
@@ -3355,7 +3354,7 @@ object GalleryManager {
         exportDngWithRawExport: Boolean,
         baselineExposureEv: Float? = null,
         profileGainTableMap: DngProfileGainTableMap? = null,
-        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
+        profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.Photon,
         imageLayout: SuperResolutionDngWriter.ImageLayout = SuperResolutionDngWriter.ImageLayout.CFA,
         compression: SuperResolutionDngWriter.Compression = SuperResolutionDngWriter.Compression.UNCOMPRESSED,
         inputRowStepSamples: Int? = null,
@@ -3550,22 +3549,19 @@ object GalleryManager {
     }
 
     private fun rawHdrPgtmModeForMetadata(metadata: MediaMetadata): RawProfileToneMapMode {
-        return when (metadata.rawToneMappingParameters.normalized().profileToneMapMode) {
-            RawProfileToneMapMode.PhotonPgtm -> RawProfileToneMapMode.PhotonPgtm
-            else -> RawProfileToneMapMode.GooglePixel
-        }
+        return RawProfileToneMapMode.Photon
     }
 
     private fun profileNameForPgtmMode(mode: RawProfileToneMapMode): String {
         return when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.PHOTON_PGTM_PROFILE_NAME
             else -> DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME
         }
     }
 
     private fun profileToneCurveForPgtmMode(mode: RawProfileToneMapMode): FloatArray {
         return when (mode) {
-            RawProfileToneMapMode.PhotonPgtm -> DngProfileToneCurve.photonPgtmToneCurvePoints()
+            RawProfileToneMapMode.Photon -> DngProfileToneCurve.photonPgtmToneCurvePoints()
             else -> DngProfileToneCurve.googleHdrToneCurvePoints()
         }
     }
@@ -4641,6 +4637,7 @@ object GalleryManager {
                     rawRenderingEngine = updatedMetadata?.rawRenderingEngine ?: MediaMetadata().rawRenderingEngine,
                     rawToneMappingParameters = updatedMetadata?.rawToneMappingParameters ?: MediaMetadata().rawToneMappingParameters,
                     rawCfaCorrectionMode = updatedMetadata?.rawCfaCorrectionMode,
+                    useEmbeddedPreviewForAutoExposure = false,
                     rawBlackBorderCrop = rawMetadata.rawBlackBorderCrop,
                     spectralFilmStock = updatedMetadata?.spectralFilmStock,
                     spectralFilmPrint = updatedMetadata?.spectralFilmPrint,
