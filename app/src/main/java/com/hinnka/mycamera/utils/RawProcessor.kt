@@ -169,8 +169,25 @@ object RawProcessor {
             customBlackLevel = customBlackLevel,
             whiteLevelMode = whiteLevelMode,
             customWhiteLevel = customWhiteLevel,
-            cfaCorrectionMode = cfaCorrectionMode
+            cfaCorrectionMode = cfaCorrectionMode,
+            defaultCrop = resolveCameraRawDefaultCrop(image.width, image.height, characteristics),
         )
+    }
+
+    private fun resolveCameraRawDefaultCrop(
+        width: Int,
+        height: Int,
+        characteristics: CameraCharacteristics,
+    ): Rect {
+        val pixelArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val preCorrection = characteristics.get(
+            CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE
+        )
+        return if (pixelArray?.width == width && pixelArray.height == height && preCorrection != null) {
+            Rect(0, 0, preCorrection.width(), preCorrection.height())
+        } else {
+            Rect(0, 0, width, height)
+        }
     }
 
     private fun saveRawImageToDngWithCustomWriter(
@@ -185,6 +202,7 @@ object RawProcessor {
         whiteLevelMode: String?,
         customWhiteLevel: Float?,
         cfaCorrectionMode: String?,
+        defaultCrop: Rect,
     ): Boolean {
         if (image.format != ImageFormat.RAW_SENSOR) {
             PLog.w(TAG, "Custom DNG writer requires RAW_SENSOR input, got format=${image.format}")
@@ -218,7 +236,8 @@ object RawProcessor {
             customBlackLevel = customBlackLevel,
             whiteLevelMode = whiteLevelMode,
             customWhiteLevel = customWhiteLevel,
-            cfaCorrectionMode = cfaCorrectionMode
+            cfaCorrectionMode = cfaCorrectionMode,
+            defaultCrop = defaultCrop,
         )
     }
 
@@ -279,6 +298,7 @@ object RawProcessor {
         compression: SuperResolutionDngWriter.Compression = SuperResolutionDngWriter.Compression.UNCOMPRESSED,
         inputRowStepSamples: Int? = null,
         inputColStepSamples: Int? = null,
+        defaultCrop: Rect,
     ): Boolean {
         val resolvedCfaPattern = resolveCfaPatternForMode(cfaPattern, cfaCorrectionMode)
         val resolvedWhiteLevel = resolveWhiteLevelForMode(whiteLevel.toFloat(), whiteLevelMode, customWhiteLevel).toInt()
@@ -325,6 +345,7 @@ object RawProcessor {
                 compression = compression,
                 inputRowStepSamples = inputRowStepSamples,
                 inputColStepSamples = inputColStepSamples,
+                defaultCrop = defaultCrop,
             )
         }
 

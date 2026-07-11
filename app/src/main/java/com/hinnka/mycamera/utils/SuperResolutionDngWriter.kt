@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.utils
 
+import android.graphics.Rect
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureResult
@@ -148,6 +149,7 @@ object SuperResolutionDngWriter {
         compression: Compression = Compression.UNCOMPRESSED,
         inputRowStepSamples: Int? = null,
         inputColStepSamples: Int? = null,
+        defaultCrop: Rect,
     ): Boolean {
         if (width <= 0 || height <= 0) return false
 
@@ -243,6 +245,7 @@ object SuperResolutionDngWriter {
                 imageLayout = imageLayout,
                 compression = compression,
                 valueDomain = valueDomain,
+                defaultCrop = defaultCrop,
             )
             val header = buildHeader(entries)
             outputStream.write(header)
@@ -284,6 +287,7 @@ object SuperResolutionDngWriter {
         imageLayout: ImageLayout,
         compression: Compression,
         valueDomain: RawProcessor.RawBufferValueDomain,
+        defaultCrop: Rect,
     ): List<TiffEntry> {
         // The custom writer is used when the fused RAW dimensions no longer
         // match the camera sensor. The fused buffer already lives in its final
@@ -293,7 +297,7 @@ object SuperResolutionDngWriter {
         val defaultScaleX = 1.0
         val defaultScaleY = 1.0
         val cameraModel = buildCameraModel(characteristics)
-        val geometry = resolveDngGeometry(width, height, characteristics)
+        val geometry = resolveDngGeometry(width, height, characteristics, defaultCrop)
         val illuminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 21
         val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
         val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
@@ -884,6 +888,7 @@ object SuperResolutionDngWriter {
         width: Int,
         height: Int,
         characteristics: CameraCharacteristics,
+        defaultCrop: Rect,
     ): DngGeometry {
         val pre = characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
         val pixel = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
@@ -898,10 +903,10 @@ object SuperResolutionDngWriter {
         } else {
             longArrayOf(0L, 0L, height.toLong(), width.toLong())
         }
-        val marginX = (8.0 * scaleX).coerceAtMost((activeArea[3] - activeArea[1]).toDouble() / 2.0)
-        val marginY = (8.0 * scaleY).coerceAtMost((activeArea[2] - activeArea[0]).toDouble() / 2.0)
-        val cropWidth = ((activeArea[3] - activeArea[1]).toDouble() - marginX * 2.0).coerceAtLeast(1.0)
-        val cropHeight = ((activeArea[2] - activeArea[0]).toDouble() - marginY * 2.0).coerceAtLeast(1.0)
+        require(defaultCrop.left >= 0 && defaultCrop.top >= 0 &&
+            defaultCrop.right <= width && defaultCrop.bottom <= height &&
+            !defaultCrop.isEmpty
+        ) { "DefaultCrop must be contained in the DNG buffer" }
         if (!matchesPixelArray && !matchesPreCorrection) {
             PLog.d(TAG, "Mapping derived DNG ${width}x${height} from pre-correction ${preWidth}x${preHeight}")
         }
@@ -909,10 +914,10 @@ object SuperResolutionDngWriter {
             width = width,
             height = height,
             activeArea = activeArea,
-            defaultCropLeft = marginX,
-            defaultCropTop = marginY,
-            defaultCropWidth = cropWidth,
-            defaultCropHeight = cropHeight,
+            defaultCropLeft = defaultCrop.left.toDouble(),
+            defaultCropTop = defaultCrop.top.toDouble(),
+            defaultCropWidth = defaultCrop.width().toDouble(),
+            defaultCropHeight = defaultCrop.height().toDouble(),
             sourceOriginX = pre?.left ?: 0,
             sourceOriginY = pre?.top ?: 0,
             sourceWidth = preWidth,
