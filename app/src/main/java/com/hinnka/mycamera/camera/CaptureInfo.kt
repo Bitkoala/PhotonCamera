@@ -21,7 +21,7 @@ data class CaptureInfo(
     
     // 设备信息
     val make: String = Build.MANUFACTURER,
-    val model: String = DeviceUtil.model,
+    val model: String = Build.MODEL,
     val software: String = "PhotonCamera",
     
     // 拍摄参数

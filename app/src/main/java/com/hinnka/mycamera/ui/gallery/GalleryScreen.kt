@@ -1298,7 +1298,12 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
         videoDuration.text = photo.getFormattedDuration()
         motionIcon.visibility = if (photo.isMotionPhoto) VISIBLE else GONE
         burstIcon.visibility = if (photo.isBurstPhoto) VISIBLE else GONE
-        rawBadge.visibility = if (photo.isImage && viewModel.isRawInGallery(photo.id)) VISIBLE else GONE
+        val isRawPhoto = when (viewModel.selectedTab) {
+            GalleryTab.PHOTON -> viewModel.isRawInGallery(photo.id)
+            GalleryTab.SYSTEM -> photo.isSystemRawImage()
+        }
+        rawBadge.visibility = if (photo.isImage && isRawPhoto) VISIBLE else GONE
+        rawBadge.text = context.getString(R.string.gallery_raw_badge)
         importedBadge.visibility =
             if (viewModel.selectedTab == GalleryTab.PHOTON && photo.sourceUri != null) VISIBLE else GONE
         importedBadge.text = context.getString(R.string.imported)
@@ -1391,6 +1396,23 @@ private fun Bitmap.galleryBitmapAspectRatio(): Float {
     } else {
         resolvedWidth.toFloat() / resolvedHeight.toFloat()
     }
+}
+
+private fun MediaData.isSystemRawImage(): Boolean {
+    if (!isImage) return false
+    if (mimeType?.let { type ->
+            type.contains("raw", ignoreCase = true) ||
+                    type.contains("dng", ignoreCase = true)
+        } == true
+    ) {
+        return true
+    }
+
+    return displayName.substringAfterLast('.', missingDelimiterValue = "")
+        .lowercase()
+        .let { extension ->
+            extension in setOf("dng", "arw", "cr2", "cr3", "nef", "nrw", "orf", "pef", "raf", "rw2", "srw")
+        }
 }
 
 private fun MediaData.galleryAspectRatio(isLandscape: Boolean): Float {
