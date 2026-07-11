@@ -42,7 +42,9 @@ data class RawStackDebugConfig(
         )
 
         fun forCurrentBuild(): RawStackDebugConfig {
-            return if (BuildConfig.DEBUG) CompactSummary else Disabled
+            // Diagnostic shaders and SSBO readback are opt-in. A normal debug photo must exercise
+            // the same production pass graph instead of paying for metrics that do not affect output.
+            return Disabled
         }
     }
 }

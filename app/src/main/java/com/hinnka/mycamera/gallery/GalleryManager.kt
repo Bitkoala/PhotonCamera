@@ -34,6 +34,7 @@ import com.hinnka.mycamera.processor.MultiFrameStacker
 import com.hinnka.mycamera.processor.RawHdrStackFrame
 import com.hinnka.mycamera.processor.RawNoiseModel
 import com.hinnka.mycamera.processor.RawStackResult
+import com.hinnka.mycamera.processor.RawStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
@@ -2621,6 +2622,7 @@ object GalleryManager {
         capturePreviewThumbnail: Bitmap? = null,
         frameExposureProducts: List<Double?> = emptyList(),
         frameFocusDistances: List<Float?> = emptyList(),
+        rawStackFrames: List<RawStackFrame> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         try {
             val photoDir = getPhotoDir(context, photoId, true)
@@ -2678,11 +2680,29 @@ object GalleryManager {
 
             var currentUseSuperResolution = useSuperResolution
             val applyRawLensShading = resolveRawLensShadingCorrectionEnabled(context, metadata)
+            val effectiveRawStackFrames = if (rawStackFrames.size == images.size &&
+                rawStackFrames.indices.all { rawStackFrames[it].image === images[it] }
+            ) {
+                rawStackFrames
+            } else {
+                images.mapIndexed { index, image ->
+                    RawStackFrame(
+                        image = image,
+                        exposureProduct = frameExposureProducts.getOrNull(index)
+                            ?.takeIf { it.isFinite() && it > 0.0 }
+                            ?: 1.0,
+                        focusDistanceDiopters = frameFocusDistances.getOrNull(index)
+                            ?.takeIf { it.isFinite() }
+                            ?: Float.NaN,
+                    )
+                }
+            }
             var rawStackResult = MultiFrameStacker.processBurstRaw(
-                images, stackCfaPattern,
-                currentUseSuperResolution,
-                superResolutionScale,
-                useGpuAcceleration,
+                frames = effectiveRawStackFrames,
+                cfaPattern = stackCfaPattern,
+                enableSuperResolution = currentUseSuperResolution,
+                superResolutionScale = superResolutionScale,
+                useGpuAcceleration = useGpuAcceleration,
                 masterBlackLevel = stackBlackLevel,
                 whiteLevel = stackWhiteLevel,
                 whiteBalanceGains = rawMetadata.whiteBalanceGains,
@@ -2692,8 +2712,6 @@ object GalleryManager {
                 lensShadingWidth = rawMetadata.lensShadingMapWidth,
                 lensShadingHeight = rawMetadata.lensShadingMapHeight,
                 applyLensShadingCorrection = applyRawLensShading,
-                frameExposureProducts = frameExposureProducts,
-                frameFocusDistances = frameFocusDistances,
             )
 
             val finalStackResult = rawStackResult ?: return@withContext
@@ -3471,6 +3489,7 @@ object GalleryManager {
         capturePreviewThumbnail: Bitmap? = null,
         frameExposureProducts: List<Double?> = emptyList(),
         frameFocusDistances: List<Float?> = emptyList(),
+        rawStackFrames: List<RawStackFrame> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         when (val format = images[0].format) {
             ImageFormat.YUV_420_888, ImageFormat.YCBCR_P010, ImageFormat.NV21 -> {
@@ -3515,6 +3534,7 @@ object GalleryManager {
                     capturePreviewThumbnail,
                     frameExposureProducts,
                     frameFocusDistances,
+                    rawStackFrames,
                 )
             }
 

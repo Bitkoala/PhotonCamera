@@ -13,7 +13,6 @@ data class RawStackTuningProfile(
     val prefilter: RawStackPrefilterTuning = RawStackPrefilterTuning(),
     val blend: RawStackBlendTuning = RawStackBlendTuning(),
     val postfilter: RawStackPostfilterTuning = RawStackPostfilterTuning(),
-    val hdr: RawStackHdrTuning = RawStackHdrTuning(),
     val superResolution: RawStackSuperResolutionTuning = RawStackSuperResolutionTuning(),
 )
 
@@ -26,6 +25,13 @@ data class RawStackPrefilterTuning(
     val alignSampleStep: Int = 2,
     val alignCoveragePenalty: Float = 0.08f,
     val alignShiftPenalty: Float = 0.0006f,
+    val temporalGraphTileSpacing: Int = 64,
+    val temporalGraphMinimumSeedConfidence: Float = 0.02f,
+    val temporalGraphRefineSearchRadiusLevel: Int = 2,
+    val temporalGraphFrameMinCoverage: Float = 0.08f,
+    val temporalGraphFrameMinMeanConfidence: Float = 0.03f,
+    val temporalGraphFrameMinQuadrants: Int = 2,
+    val temporalGraphFrameMaxResidualP90PlanePx: Float = 1.5f,
     val structureFlatnessSnrLow: Float = 0.35f,
     val structureFlatnessSnrHigh: Float = 4.0f,
     val structureKernelDetail: Float = 0.26f,
@@ -51,6 +57,11 @@ data class RawStackBlendTuning(
     val flowPenaltyDecay: Float = 0.1f,
     val flowRangePenaltyStartPx: Float = 8.0f,
     val flowRangePenaltyDecay: Float = 0.1f,
+    val patchScoreFullConfidence: Float = 0.035f,
+    val patchScoreReject: Float = 0.18f,
+    val patchPeakConfidenceStart: Float = 0.005f,
+    val patchPeakConfidenceFull: Float = 0.08f,
+    val patchConfidenceFloor: Float = 0.05f,
     val robustMinMixFlat: Float = 0.35f,
     val robustMinMixEdge: Float = 0.15f,
     val robustCenterMixFlat: Float = 0.35f,
@@ -134,29 +145,18 @@ data class RawStackPostfilterTuning(
     val residualNoiseHighScale: Float = 6.0f,
     val residualSmoothBoost: Float = 1.10f,
     val maxSmoothStrength: Float = 0.92f,
-    val hdrRecoverySmoothSuppression: Float = 0.65f,
-)
-
-data class RawStackHdrTuning(
-    val shortGlobalSearchRadiusLevel: Int = 8,
-    val shortGlobalSampleStep: Int = 6,
-    val shortGlobalSampleBorder: Int = 8,
-    val shortGlobalCoveragePenalty: Float = 0.12f,
-    val shortGlobalShiftPenalty: Float = 0.0008f,
 )
 
 data class RawStackSuperResolutionTuning(
     val internalScale: Float = 2.0f,
     val outputScale: Float = 1.5f,
-    val greenFootprintSigmaRawPx: Float = 0.65f,
+    val cfaFootprintSigmaRawPx: Float = 0.65f,
     val phaseNoveltyStartPx: Float = 0.10f,
     val phaseNoveltyFullPx: Float = 0.45f,
     val accumulationMinPhaseWeight: Float = 0.10f,
     val minEffectiveWeight: Float = 0.35f,
     val detailConfidenceStartScale: Float = 0.25f,
     val detailConfidenceFullScale: Float = 1.50f,
-    val localFlowResidualStrength: Float = 0.65f,
-    val localFlowResidualMaxPx: Float = 0.75f,
     val fallbackMinAlignedFrames: Int = 3,
     val fallbackMinDetailFrames: Int = 3,
     val fallbackMinDetailWeightSum: Float = 2.25f,
@@ -176,6 +176,6 @@ data class RawStackSuperResolutionTuning(
     val registrationSeedDistanceEndPx: Float = 1.50f,
     val registrationConsistencyDistanceStartPx: Float = 1.25f,
     val registrationConsistencyDistanceEndPx: Float = 2.50f,
-    val greenReconstructionLowLightSuppression: Float = 0.45f,
-    val greenReconstructionLscSuppression: Float = 0.35f,
+    val reconstructionLowLightSuppression: Float = 0.45f,
+    val reconstructionLscSuppression: Float = 0.35f,
 )

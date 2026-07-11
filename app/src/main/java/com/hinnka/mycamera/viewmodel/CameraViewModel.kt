@@ -44,6 +44,10 @@ import com.hinnka.mycamera.model.ColorRecipeParams
 import com.hinnka.mycamera.model.LutSelectorMode
 import com.hinnka.mycamera.model.SafeImage
 import com.hinnka.mycamera.phantom.PhantomWidgetProvider
+import com.hinnka.mycamera.processor.RawAlignmentProxyConfig
+import com.hinnka.mycamera.processor.RawBurstGyroSelector
+import com.hinnka.mycamera.processor.RawBurstReferencePlanner
+import com.hinnka.mycamera.processor.RawStackFrame
 import com.hinnka.mycamera.raw.ColorSpace
 import com.hinnka.mycamera.raw.DcpProfileParser
 import com.hinnka.mycamera.raw.DcpInfo
@@ -86,6 +90,11 @@ import kotlin.math.abs
 data class MultipleExposureFrame(
     val index: Int,
     val file: File
+)
+
+private data class PendingRawStackFrame(
+    val frame: RawStackFrame,
+    val captureResult: CaptureResult?,
 )
 
 data class MultipleExposureSessionState(
@@ -1368,8 +1377,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var hasAppliedDefaultFocalLength = false
 
-    private val stackingImages = mutableListOf<SafeImage>()
-    private val stackingCaptureResults = mutableListOf<CaptureResult?>()
+    private val pendingRawStackFrames = mutableListOf<PendingRawStackFrame>()
     private var multipleExposureMetadata: MediaMetadata? = null
     var multipleExposureState by mutableStateOf(MultipleExposureSessionState())
         private set
@@ -1402,7 +1410,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
-        cameraController.onImageCaptured = { image, captureInfo, characteristics, captureResult ->
+        cameraController.onImageCaptured = { image, captureInfo, characteristics, captureResult, frameMetadata ->
             if (hdrBracketImages.isNotEmpty() || state.value.hdrBracketCapturing) {
                 handleHdrBracketFrameCaptured(image, captureInfo, characteristics, captureResult)
             } else if (state.value.burstCapturing) {
@@ -1416,31 +1424,70 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } else if (state.value.useMFNR || state.value.useMFSR) {
                 val count = state.value.multiFrameCount
-                PLog.d(TAG, "Burst frame received: ${stackingImages.size + 1}/$count")
-                stackingImages.add(image)
-                stackingCaptureResults.add(captureResult)
-                if (stackingImages.size >= count) {
-                    val orderedFrames = stackingImages.indices
-                        .map { index -> stackingImages[index] to stackingCaptureResults.getOrNull(index) }
-                        .sortedBy { (frameImage, _) -> frameImage.timestamp }
-                    val imagesToProcess = orderedFrames.map { it.first }
-                    val exposureProducts = orderedFrames.map { (_, result) ->
-                        result?.let(::captureExposureProduct)
-                    }
-                    val focusDistances = orderedFrames.map { (_, result) ->
-                        result?.get(CaptureResult.LENS_FOCUS_DISTANCE)
-                    }
-                    val referenceCaptureResult = orderedFrames.firstOrNull()?.second ?: captureResult
-                    stackingImages.clear()
-                    stackingCaptureResults.clear()
+                PLog.d(TAG, "Burst frame received: ${pendingRawStackFrames.size + 1}/$count")
+                pendingRawStackFrames.add(
+                    PendingRawStackFrame(
+                        frame = rawStackFrame(image, captureResult, frameMetadata),
+                        captureResult = captureResult,
+                    )
+                )
+                if (pendingRawStackFrames.size >= count) {
+                    val chronologicalFrames = pendingRawStackFrames
+                        .sortedBy { it.frame.sensorTimestampNs }
+                    pendingRawStackFrames.clear()
                     viewModelScope.launch {
+                        val gyroSelection = withContext(Dispatchers.Default) {
+                            RawBurstGyroSelector.select(chronologicalFrames.map { it.frame })
+                        }
+                        gyroSelection.rejectedIndices.forEach { rejectedIndex ->
+                            chronologicalFrames[rejectedIndex].frame.image.close()
+                        }
+                        val gyroOrderedFrames = gyroSelection.orderedAcceptedIndices.map { index ->
+                            chronologicalFrames[index]
+                        }
+                        val proxyConfig = rawAlignmentProxyConfig(
+                            characteristics = characteristics,
+                            captureResult = gyroOrderedFrames.firstOrNull()?.captureResult ?: captureResult,
+                        )
+                        val referencePlan = if (proxyConfig != null && gyroOrderedFrames.size >= 2) {
+                            runCatching {
+                                withContext(Dispatchers.Default) {
+                                    RawBurstReferencePlanner.plan(
+                                        frames = gyroOrderedFrames.map { it.frame },
+                                        proxyConfig = proxyConfig,
+                                    )
+                                }
+                            }.onFailure { error ->
+                                PLog.w(TAG, "RAW reference planning failed; keeping Gyro order", error)
+                            }.getOrNull()
+                        } else {
+                            null
+                        }
+                        val orderedFrames = referencePlan?.orderedIndices?.map { index ->
+                            val pending = gyroOrderedFrames[index]
+                            pending.copy(
+                                frame = pending.frame.copy(
+                                    preAlignmentToReference = referencePlan.preAlignmentsToReference[index],
+                                ),
+                            )
+                        } ?: gyroOrderedFrames
+                        if (gyroSelection.rejectedIndices.isNotEmpty() || referencePlan != null) {
+                            PLog.i(
+                                TAG,
+                                "RAW burst plan: gyroReference=${gyroSelection.referenceOriginalIndex}, " +
+                                    "reference=${referencePlan?.referenceOriginalIndex ?: 0}, " +
+                                    "accepted=${orderedFrames.size}, " +
+                                    "rejected=${gyroSelection.rejectedIndices.joinToString()}, " +
+                                    "cost=${referencePlan?.referenceCost}",
+                            )
+                        }
+                        val framesToProcess = orderedFrames.map { it.frame }
+                        val referenceCaptureResult = orderedFrames.firstOrNull()?.captureResult ?: captureResult
                         processStacking(
-                            images = imagesToProcess,
+                            frames = framesToProcess,
                             captureInfo = captureInfo,
                             characteristics = characteristics,
                             captureResult = referenceCaptureResult,
-                            frameExposureProducts = exposureProducts,
-                            frameFocusDistances = focusDistances,
                         )
                     }
                 }
@@ -1473,11 +1520,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             cameraOpenInFlight = false
             scheduleCameraListRefreshAfterError(code)
             resetExposureCompensationForCameraRestart()
-            stackingImages.forEach {
-                it.close()
-            }
-            stackingImages.clear()
-            stackingCaptureResults.clear()
+            pendingRawStackFrames.forEach { it.frame.image.close() }
+            pendingRawStackFrames.clear()
             burstImages.forEach {
                 it.close()
             }
@@ -2543,8 +2587,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         } else {
             generateThumbnail()
-            stackingImages.clear()
-            stackingCaptureResults.clear()
+            pendingRawStackFrames.forEach { it.frame.image.close() }
+            pendingRawStackFrames.clear()
 
             if (useLivePhoto.value) {
                 cameraController.setCapturingLivePhoto(true)
@@ -5019,15 +5063,99 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun rawStackFrame(
+        image: SafeImage,
+        captureResult: CaptureResult?,
+        metadata: CapturedFrameMetadata?,
+    ): RawStackFrame {
+        return RawStackFrame(
+            image = image,
+            sensorTimestampNs = metadata?.sensorTimestampNs ?: image.timestamp,
+            frameNumber = metadata?.frameNumber ?: -1L,
+            exposureTimeNs = metadata?.exposureTimeNs
+                ?: captureResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                ?: 0L,
+            sensitivityIso = metadata?.sensitivityIso
+                ?: captureResult?.get(CaptureResult.SENSOR_SENSITIVITY)
+                ?: 0,
+            exposureProduct = metadata?.exposureProduct
+                ?: captureResult?.let(::captureExposureProduct)
+                ?: 1.0,
+            focusDistanceDiopters = metadata?.focusDistanceDiopters
+                ?: captureResult?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+                ?: Float.NaN,
+            lensState = metadata?.lensState ?: captureResult?.get(CaptureResult.LENS_STATE),
+            rollingShutterSkewNs = metadata?.rollingShutterSkewNs
+                ?: captureResult?.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW),
+            gyroWindow = metadata?.gyroWindow,
+        )
+    }
+
+    private fun rawAlignmentProxyConfig(
+        characteristics: CameraCharacteristics?,
+        captureResult: CaptureResult?,
+    ): RawAlignmentProxyConfig? {
+        characteristics ?: return null
+        var cfa = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
+            ?: CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB
+        val activeArray = characteristics.get(
+            CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE
+        )
+        if (((activeArray?.left ?: 0) and 1) != 0) {
+            cfa = when (cfa) {
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG
+                else -> cfa
+            }
+        }
+        if (((activeArray?.top ?: 0) and 1) != 0) {
+            cfa = when (cfa) {
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GBRG ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_RGGB
+                CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_BGGR ->
+                    CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT_GRBG
+                else -> cfa
+            }
+        }
+        val dynamicBlack = captureResult?.get(CaptureResult.SENSOR_DYNAMIC_BLACK_LEVEL)
+        val staticBlack = characteristics.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+        val blackByPosition = when {
+            dynamicBlack != null && dynamicBlack.size >= 4 -> dynamicBlack.copyOf(4)
+            staticBlack != null -> floatArrayOf(
+                staticBlack.getOffsetForIndex(0, 0).toFloat(),
+                staticBlack.getOffsetForIndex(1, 0).toFloat(),
+                staticBlack.getOffsetForIndex(0, 1).toFloat(),
+                staticBlack.getOffsetForIndex(1, 1).toFloat(),
+            )
+            else -> FloatArray(4)
+        }
+        return RawAlignmentProxyConfig(
+            cfaArrangement = cfa,
+            blackLevelByPosition = blackByPosition,
+            whiteLevel = characteristics.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL)
+                ?.toFloat()
+                ?: 1023f,
+        )
+    }
+
     private suspend fun processStacking(
-        images: List<SafeImage>,
+        frames: List<RawStackFrame>,
         captureInfo: CaptureInfo,
         characteristics: CameraCharacteristics?,
         captureResult: CaptureResult?,
-        frameExposureProducts: List<Double?>,
-        frameFocusDistances: List<Float?>,
     ) {
         try {
+            val images = frames.map { it.image }
             PLog.d(TAG, "processStacking started - image size ${images.size}")
             val context = getApplication<Application>()
 
@@ -5210,8 +5338,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     exposureBias = state.value.exposureBias,
                     exportDngWithRawExport = exportDngWithRawExport.value,
                     capturePreviewThumbnail = previewThumbnail,
-                    frameExposureProducts = frameExposureProducts,
-                    frameFocusDistances = frameFocusDistances,
+                    rawStackFrames = frames,
                 )
             }
             PLog.d(TAG, "Image saved: $photoId, LUT: $lutIdToSave, Frame: $frameIdToSave")
@@ -5853,11 +5980,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         videoAudioInputManager.release()
 
         // 清理未处理的连拍图片
-        stackingImages.forEach {
-            it.close()
-        }
-        stackingImages.clear()
-        stackingCaptureResults.clear()
+        pendingRawStackFrames.forEach { it.frame.image.close() }
+        pendingRawStackFrames.clear()
         burstImages.forEach {
             it.close()
         }

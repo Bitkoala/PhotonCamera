@@ -2,7 +2,7 @@ package com.hinnka.mycamera.raw
 
 internal object DngProfileToneCurve {
     const val GOOGLE_HDR_PROFILE_NAME = "Google Pixel HDR Tone Map"
-    const val PHOTON_PGTM_PROFILE_NAME = "Photon PGTM"
+    const val PHOTON_PGTM_PROFILE_NAME = "Photon HDR"
 
     private const val POINT_TOLERANCE = 2e-4f
     private const val LUT_TOLERANCE = 2e-3f

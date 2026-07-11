@@ -30,12 +30,6 @@ data class RawHdrStackFrame(
     val exposureProduct: Double,
 )
 
-data class RawStackFrame(
-    val image: SafeImage,
-    val exposureProduct: Double = 1.0,
-    val focusDistanceDiopters: Float = Float.NaN,
-)
-
 enum class YuvHdrStackFrameRole {
     ZERO_EV,
     HIGH_EV,
@@ -291,7 +285,7 @@ object MultiFrameStacker {
 
     @Synchronized
     fun processBurstRaw(
-        images: List<SafeImage>,
+        frames: List<RawStackFrame>,
         cfaPattern: Int,
         enableSuperResolution: Boolean = false,
         superResolutionScale: Float = 1.5f,
@@ -305,9 +299,9 @@ object MultiFrameStacker {
         lensShadingWidth: Int = 0,
         lensShadingHeight: Int = 0,
         applyLensShadingCorrection: Boolean = true,
-        frameExposureProducts: List<Double?> = emptyList(),
-        frameFocusDistances: List<Float?> = emptyList(),
     ): RawStackResult? {
+        if (frames.isEmpty()) return null
+        val images = frames.map { it.image }
         val width = images[0].width
         val height = images[0].height
 
@@ -333,22 +327,6 @@ object MultiFrameStacker {
                 frameCount = images.size,
                 superResolutionScale = outputScale,
             )
-            val fallbackExposureProduct = frameExposureProducts
-                .firstOrNull { it != null && it.isFinite() && it > 0.0 }
-                ?: 1.0
-            val frames = images.mapIndexed { index, image ->
-                RawStackFrame(
-                    image = image,
-                    exposureProduct = frameExposureProducts
-                        .getOrNull(index)
-                        ?.takeIf { it.isFinite() && it > 0.0 }
-                        ?: fallbackExposureProduct,
-                    focusDistanceDiopters = frameFocusDistances
-                        .getOrNull(index)
-                        ?.takeIf { it.isFinite() }
-                        ?: Float.NaN,
-                )
-            }
             return GlesRawStacker(
                 width = width,
                 height = height,

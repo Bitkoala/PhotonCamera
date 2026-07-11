@@ -200,6 +200,7 @@ class Camera2Controller(private val context: Context) {
 
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
+    private val burstGyroRecorder = BurstGyroRecorder(context)
 
     private val cameraCharacteristicsCache = ConcurrentHashMap<String, CameraCharacteristics>()
     private var cachedCharacteristics: CameraCharacteristics? = null
@@ -278,6 +279,7 @@ class Camera2Controller(private val context: Context) {
     // 缓存 CaptureResult 和 Image 用于配对 (timestamp -> Data)
     private val pendingResults = ConcurrentHashMap<Long, TotalCaptureResult>()
     private val pendingImages = ConcurrentHashMap<Long, SafeImage>()
+    private val pendingFrameMetadata = ConcurrentHashMap<Long, CapturedFrameMetadata>()
     private val pendingCaptureStartedTimestamps = ConcurrentHashMap<Long, Long>()
     private val pendingCloseReaders = mutableListOf<ImageReader>()
     private val openImagesCount = AtomicInteger(0)
@@ -314,7 +316,7 @@ class Camera2Controller(private val context: Context) {
     private var lastSentHighlightPointY: Float = -1f
 
     // 图片拍摄回调（携带 CaptureInfo, CameraCharacteristics 和 CaptureResult 用于 RAW 处理）
-    var onImageCaptured: ((SafeImage, CaptureInfo, CameraCharacteristics?, CaptureResult?) -> Unit)? = null
+    var onImageCaptured: ((SafeImage, CaptureInfo, CameraCharacteristics?, CaptureResult?, CapturedFrameMetadata?) -> Unit)? = null
     var onHdrBracketCaptureFailed: (() -> Unit)? = null
 
     private fun trackImage(image: Image?): SafeImage? {
@@ -351,6 +353,7 @@ class Camera2Controller(private val context: Context) {
             PLog.w(TAG, "Capture result missing timestamp, frame=${result.frameNumber}")
             return
         }
+        captureFrameMetadata(result, timestamp)?.let { pendingFrameMetadata[timestamp] = it }
 
         val pendingImage = pendingImages.remove(timestamp)
         if (pendingImage != null) {
@@ -371,6 +374,31 @@ class Camera2Controller(private val context: Context) {
         if (pendingResults.size <= maxSize) return
         val oldestKey = pendingResults.keys.minOrNull() ?: return
         pendingResults.remove(oldestKey)
+        pendingFrameMetadata.remove(oldestKey)
+    }
+
+    private fun captureFrameMetadata(
+        result: TotalCaptureResult,
+        sensorTimestampNs: Long,
+    ): CapturedFrameMetadata? {
+        val exposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return null
+        val sensitivityIso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: return null
+        val postRawBoost = result
+            .get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST)
+            ?.coerceAtLeast(1)
+            ?: 100
+        return CapturedFrameMetadata(
+            sensorTimestampNs = sensorTimestampNs,
+            frameNumber = result.frameNumber,
+            exposureTimeNs = exposureTimeNs,
+            sensitivityIso = sensitivityIso,
+            exposureProduct = exposureTimeNs.toDouble() * sensitivityIso.toDouble() *
+                (postRawBoost.toDouble() / 100.0),
+            focusDistanceDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: Float.NaN,
+            lensState = result.get(CaptureResult.LENS_STATE),
+            rollingShutterSkewNs = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW),
+            gyroWindow = burstGyroRecorder.exposureWindow(sensorTimestampNs, exposureTimeNs),
+        )
     }
 
     // 快门音效播放回调
@@ -4972,6 +5000,9 @@ class Camera2Controller(private val context: Context) {
             // 只有在【自动曝光 + 单次闪光】时才使用预闪流程
             // 手动曝光模式下，AE_PRECAPTURE_TRIGGER 不生效（因为 AE_MODE=OFF），直接拍照
             val currentState = _state.value
+            if (currentState.useMFNR || currentState.useMFSR) {
+                burstGyroRecorder.start(cameraHandler)
+            }
             val needsPrecapture = currentState.flashMode == CameraMetadata.FLASH_MODE_SINGLE
                     && currentState.isIsoAuto
                     && currentState.isShutterSpeedAuto
@@ -4994,6 +5025,7 @@ class Camera2Controller(private val context: Context) {
             PLog.e(TAG, "Failed to capture", e)
             PLog.e(TAG, "拍照失败", e)
             _state.value = _state.value.copy(isCapturing = false)
+            burstGyroRecorder.stop()
         }
     }
 
@@ -5018,6 +5050,9 @@ class Camera2Controller(private val context: Context) {
         }
         val baseExposureResult = lastCaptureResult
         lastCaptureResult = null
+        if (_state.value.useMFNR || _state.value.useMFSR) {
+            burstGyroRecorder.start(cameraHandler)
+        }
         performHdrBracketCapture(
             device = device,
             reader = reader,
@@ -5114,6 +5149,14 @@ class Camera2Controller(private val context: Context) {
                 ) {
                     super.onCaptureSequenceCompleted(session, sequenceId, frameNumber)
                     PLog.d(TAG, "HDR bracket sequence completed")
+                    burstGyroRecorder.stop()
+                    resetPreviewAfterCapture()
+                }
+
+                override fun onCaptureSequenceAborted(session: CameraCaptureSession, sequenceId: Int) {
+                    burstGyroRecorder.stop()
+                    PLog.w(TAG, "HDR bracket sequence aborted")
+                    onHdrBracketCaptureFailed?.invoke()
                     resetPreviewAfterCapture()
                 }
 
@@ -5128,6 +5171,7 @@ class Camera2Controller(private val context: Context) {
                         hdrBracketCapturing = false,
                         hdrBracketFrameCount = 0
                     )
+                    burstGyroRecorder.stop()
                     onHdrBracketCaptureFailed?.invoke()
                     resetPreviewAfterCapture()
                 }
@@ -5139,6 +5183,7 @@ class Camera2Controller(private val context: Context) {
                 hdrBracketCapturing = false,
                 hdrBracketFrameCount = 0
             )
+            burstGyroRecorder.stop()
             onHdrBracketCaptureFailed?.invoke()
             resetPreviewAfterCapture()
         }
@@ -5516,15 +5561,9 @@ class Camera2Controller(private val context: Context) {
                         request: CaptureRequest,
                         result: TotalCaptureResult
                     ) {
-                        val timestamp = getCaptureTimestamp(result)
-                        if (timestamp != null && isRawCapture) {
-                            val pendingImage = pendingImages.remove(timestamp)
-                            if (pendingImage != null) {
-                                processAndTriggerCapture(pendingImage, result)
-                            } else {
-                                pendingResults[timestamp] = result
-                            }
-                        }
+                        val timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+                            ?: pendingCaptureStartedTimestamps[result.frameNumber]
+                        if (isRawCapture) processOrBufferCaptureResult(result)
                         lastCaptureResult = result
                         PLog.d(
                             TAG,
@@ -5539,6 +5578,13 @@ class Camera2Controller(private val context: Context) {
                     ) {
                         super.onCaptureSequenceCompleted(session, sequenceId, frameNumber)
                         PLog.d(TAG, "Burst sequence completed")
+                        burstGyroRecorder.stop()
+                        resetPreviewAfterCapture()
+                    }
+
+                    override fun onCaptureSequenceAborted(session: CameraCaptureSession, sequenceId: Int) {
+                        burstGyroRecorder.stop()
+                        PLog.w(TAG, "Burst capture sequence aborted")
                         resetPreviewAfterCapture()
                     }
 
@@ -5549,6 +5595,7 @@ class Camera2Controller(private val context: Context) {
                     ) {
                         PLog.e(TAG, "Burst Capture failed: ${failure.reason}")
                         _state.value = _state.value.copy(isCapturing = false)
+                        burstGyroRecorder.stop()
                         resetPreviewAfterCapture()
                     }
                 }, cameraHandler)
@@ -5805,6 +5852,8 @@ class Camera2Controller(private val context: Context) {
             return
         }
         try {
+            burstGyroRecorder.stop()
+            pendingFrameMetadata.clear()
             cameraOpenGeneration++
             val keepVideoRecording = preserveVideoRecording && _state.value.videoRecordingState.isRecording
             if (keepVideoRecording) {
@@ -5930,11 +5979,39 @@ class Camera2Controller(private val context: Context) {
                 longitude = _state.value.longitude,
                 effectiveCharacteristics = effectiveCharacteristics
             )
+            val frameResult = effectiveResult ?: result
+            val sensorTimestampNs = frameResult?.get(CaptureResult.SENSOR_TIMESTAMP) ?: image.timestamp
+            val exposureTimeNs = frameResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
+            val sensitivityIso = frameResult?.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
+            val postRawBoost = frameResult
+                ?.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST)
+                ?.coerceAtLeast(1)
+                ?: 100
+            val frozenMetadata = pendingFrameMetadata.remove(image.timestamp)
+            val frameMetadata = if (image.format == ImageFormat.RAW_SENSOR && frameResult != null) {
+                CapturedFrameMetadata(
+                    sensorTimestampNs = sensorTimestampNs,
+                    frameNumber = frozenMetadata?.frameNumber ?: result?.frameNumber ?: -1L,
+                    exposureTimeNs = exposureTimeNs,
+                    sensitivityIso = sensitivityIso,
+                    exposureProduct = exposureTimeNs.toDouble() * sensitivityIso.toDouble() *
+                        (postRawBoost.toDouble() / 100.0),
+                    focusDistanceDiopters = frameResult
+                        .get(CaptureResult.LENS_FOCUS_DISTANCE)
+                        ?: Float.NaN,
+                    lensState = frameResult.get(CaptureResult.LENS_STATE),
+                    rollingShutterSkewNs = frameResult.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW),
+                    gyroWindow = frozenMetadata?.gyroWindow
+                        ?: burstGyroRecorder.exposureWindow(sensorTimestampNs, exposureTimeNs),
+                )
+            } else {
+                null
+            }
 
             // 传递完整的 Image 对象、CaptureInfo、CameraCharacteristics 和 CaptureResult
             val callback = onImageCaptured
             if (callback != null) {
-                callback.invoke(image, captureInfo, effectiveCharacteristics, effectiveResult ?: result)
+                callback.invoke(image, captureInfo, effectiveCharacteristics, frameResult, frameMetadata)
             } else {
                 image.close()
             }
@@ -5968,6 +6045,7 @@ class Camera2Controller(private val context: Context) {
         }
         previewDepthProcessor.release()
         previewAiFocusProcessor.release()
+        burstGyroRecorder.release()
         videoRecorder.release()
         stopBackgroundThread()
         cameraDiscovery.clearCache()
