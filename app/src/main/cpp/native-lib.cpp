@@ -582,6 +582,8 @@ struct DngRawTagInfo {
   std::vector<double> blackLevel;
   std::vector<double> blackDeltaH;
   std::vector<double> blackDeltaV;
+  bool hasFixBadPixelsList = false;
+  std::vector<float> warpRectilinear;
 };
 
 static int bayerBlackLevelIndexForPattern(int cfaPattern, int col, int row) {
@@ -1580,18 +1582,6 @@ static bool dngSdkCameraToPcsForWhite(const DngSdkPreparedColor &prepared,
   const DngSdkMatrixForWhite matrices =
       dngSdkFindXyzToCamera(prepared, whiteXy);
 
-  std::array<float, 3> whiteXyz;
-  if (!xyToXyz(whiteXy, whiteXyz)) {
-    return false;
-  }
-  std::array<float, 3> cameraWhite =
-      multiplyMatrixVector(matrices.colorMatrix, whiteXyz);
-  const float whiteScale =
-      1.0f / std::max(maxVectorEntry(cameraWhite), 1e-6f);
-  for (float &value : cameraWhite) {
-    value = std::clamp(value * whiteScale, 0.001f, 1.0f);
-  }
-
   Matrix3x3 pcsToCamera =
       matrices.colorMatrix.multiply(dngMapWhiteMatrix(d50Xy, whiteXy));
   const std::array<float, 3> pcsWhite =
@@ -1601,28 +1591,9 @@ static bool dngSdkCameraToPcsForWhite(const DngSdkPreparedColor &prepared,
     value *= pcsScale;
   }
 
-  if (matrices.hasForwardMatrix) {
-    const Matrix3x3 individualToReference =
-        diagonalMatrix3x3(prepared.analogBalance)
-            .multiply(matrices.cameraCalibration)
-            .invert();
-    const std::array<float, 3> referenceCameraWhite =
-        multiplyMatrixVector(individualToReference, cameraWhite);
-    if (referenceCameraWhite[0] <= 1e-6f ||
-        referenceCameraWhite[1] <= 1e-6f ||
-        referenceCameraWhite[2] <= 1e-6f) {
-      return false;
-    }
-    const Matrix3x3 inverseWhite = diagonalMatrix3x3({
-        1.0f / referenceCameraWhite[0],
-        1.0f / referenceCameraWhite[1],
-        1.0f / referenceCameraWhite[2],
-    });
-    cameraToPcs =
-        matrices.forwardMatrix.multiply(inverseWhite).multiply(individualToReference);
-    return true;
-  }
-
+  // PhotonCamera deliberately renders from the interpolated ColorMatrix path.
+  // ForwardMatrix remains preserved in DNG metadata for external renderers, but
+  // must not override the app's established ColorMatrix rendering behavior.
   cameraToPcs = pcsToCamera.invert();
   return true;
 }
@@ -2596,6 +2567,76 @@ static bool parseDngCfaInfo(const char *path, DngCfaInfo &info) {
   return info.repeatRows > 0 && info.repeatCols > 0 && info.patternLen > 0;
 }
 
+static uint32_t dngOpcodeReadU32(const unsigned char *p) {
+  return (static_cast<uint32_t>(p[0]) << 24) |
+         (static_cast<uint32_t>(p[1]) << 16) |
+         (static_cast<uint32_t>(p[2]) << 8) |
+         static_cast<uint32_t>(p[3]);
+}
+
+static double dngOpcodeReadDouble(const unsigned char *p) {
+  const uint64_t bits = (static_cast<uint64_t>(p[0]) << 56) |
+                        (static_cast<uint64_t>(p[1]) << 48) |
+                        (static_cast<uint64_t>(p[2]) << 40) |
+                        (static_cast<uint64_t>(p[3]) << 32) |
+                        (static_cast<uint64_t>(p[4]) << 24) |
+                        (static_cast<uint64_t>(p[5]) << 16) |
+                        (static_cast<uint64_t>(p[6]) << 8) |
+                        static_cast<uint64_t>(p[7]);
+  double value;
+  memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+static void parseDngOpcodeList(const std::vector<unsigned char> &data,
+                               DngRawTagInfo &info, int opcodeStage) {
+  if (data.size() < 4)
+    return;
+  const uint32_t count = std::min<uint32_t>(dngOpcodeReadU32(data.data()), 1024);
+  size_t offset = 4;
+  for (uint32_t index = 0; index < count; ++index) {
+    if (offset + 16 > data.size())
+      return;
+    const uint32_t id = dngOpcodeReadU32(data.data() + offset);
+    const uint32_t payloadSize = dngOpcodeReadU32(data.data() + offset + 12);
+    offset += 16;
+    if (payloadSize > data.size() - offset)
+      return;
+    if (opcodeStage == 2 && id == 5 && payloadSize >= 12) {
+      const unsigned char *payload = data.data() + offset;
+      const uint32_t bayerPhase = dngOpcodeReadU32(payload);
+      const uint32_t pointCount = dngOpcodeReadU32(payload + 4);
+      const uint32_t rectCount = dngOpcodeReadU32(payload + 8);
+      const uint64_t expectedSize = 12ull + 8ull * pointCount + 16ull * rectCount;
+      if (bayerPhase <= 3 && expectedSize == payloadSize &&
+          (pointCount > 0 || rectCount > 0)) {
+        info.hasFixBadPixelsList = true;
+        LOGI("DNG FixBadPixelsList: phase=%u points=%u rects=%u",
+             bayerPhase, pointCount, rectCount);
+      } else {
+        LOGW("Ignoring malformed DNG FixBadPixelsList: phase=%u points=%u rects=%u payload=%u expected=%llu",
+             bayerPhase, pointCount, rectCount, payloadSize,
+             static_cast<unsigned long long>(expectedSize));
+      }
+    } else if (opcodeStage == 3 && id == 1 && payloadSize >= 68) {
+      const unsigned char *payload = data.data() + offset;
+      const uint32_t planes = dngOpcodeReadU32(payload);
+      if (planes == 1 && payloadSize == 68) {
+        std::vector<float> warp(8);
+        bool valid = true;
+        for (int i = 0; i < 8; ++i) {
+          const double value = dngOpcodeReadDouble(payload + 4 + i * 8);
+          valid = valid && std::isfinite(value);
+          warp[i] = static_cast<float>(value);
+        }
+        if (valid)
+          info.warpRectilinear.insert(info.warpRectilinear.end(), warp.begin(), warp.end());
+      }
+    }
+    offset += payloadSize;
+  }
+}
+
 static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
                               uint32_t ifdOffset, DngRawTagInfo &info, int depth) {
   if (ifdOffset == 0 || depth > 8)
@@ -2621,7 +2662,10 @@ static void parseDngRawTagIfd(std::ifstream &file, bool littleEndian,
     const uint32_t count = tiffReadU32(entry + 4, littleEndian);
     std::vector<unsigned char> data;
 
-    if (tag == 0xc68d && count >= 4 &&
+    if ((tag == 0xc741 || tag == 0xc74e) && count > 0 &&
+        tiffEntryData(file, entry, littleEndian, type, count, data)) {
+      parseDngOpcodeList(data, info, tag == 0xc741 ? 2 : 3);
+    } else if (tag == 0xc68d && count >= 4 &&
         tiffEntryData(file, entry, littleEndian, type, count, data)) {
       info.hasActiveArea = true;
       for (int i = 0; i < 4; ++i) {
@@ -2967,7 +3011,15 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
 
   LibRaw RawProcessor;
   ExifData ed;
-  RawProcessor.imgdata.rawparams.use_dngsdk = 0;
+  DngRawTagInfo dngRawTagInfo;
+  parseDngRawTagInfo(path, dngRawTagInfo);
+  if (dngRawTagInfo.hasFixBadPixelsList) {
+    RawProcessor.imgdata.rawparams.use_dngsdk = LIBRAW_DNG_ALL;
+    RawProcessor.imgdata.rawparams.options |= LIBRAW_RAWOPTIONS_DNG_STAGE2_IFPRESENT;
+    LOGI("processDngNative: enabling DNG SDK Stage2 for FixBadPixelsList");
+  } else {
+    RawProcessor.imgdata.rawparams.use_dngsdk = 0;
+  }
   RawProcessor.set_exifparser_handler(exif_callback, &ed);
 
   int ret = RawProcessor.open_file(path);
@@ -2983,6 +3035,8 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     env->ReleaseStringUTFChars(filePath, path);
     return nullptr;
   }
+  const bool dngStage2Applied =
+      (RawProcessor.imgdata.process_warnings & LIBRAW_WARN_DNG_STAGE2_APPLIED) != 0;
 
   jobject embeddedPreviewBitmap = nullptr;
   ret = RawProcessor.unpack_thumb();
@@ -3035,8 +3089,6 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   const jint samplesPerPixel = useLinearRawRgb ? 3 : 1;
   const bool isDngInput = RawProcessor.imgdata.idata.dng_version != 0;
 
-  DngRawTagInfo dngRawTagInfo;
-  parseDngRawTagInfo(path, dngRawTagInfo);
   jint cfaPattern = 0;
 
   // 判定 CFA 模式。LibRaw COLOR()/FC() folds DNG CFAPattern into the dcraw
@@ -3126,14 +3178,15 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        static_cast<int>(levels.dng_cblack[5]));
 
   const bool blackDeltaApplied =
-      useLinearRawRgb ? false : applyDngBlackLevelDeltas(RawProcessor, dngRawTagInfo);
+      useLinearRawRgb || dngStage2Applied ? false
+                                         : applyDngBlackLevelDeltas(RawProcessor, dngRawTagInfo);
 
   // Read the TOTAL effective black level per LibRaw channel.
   // LibRaw stores it as: color.black + cblack[channel] + repeat_pattern[position].
   float librawBlackLevels[4] = {};
   float activeBlackLevels[4] = {};
   float exportedBlackLevels[4] = {};
-  if (!useLinearRawRgb) {
+  if (!useLinearRawRgb && !dngStage2Applied) {
     computeEffectiveBlackLevels(RawProcessor, cfaPattern, left, top, librawBlackLevels);
     mapLibRawBlackLevelsForGpu(RawProcessor, cfaPattern, left, top,
                                librawBlackLevels, activeBlackLevels,
@@ -3184,7 +3237,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       0.0f, 0.0f, 1.0f, 1.0f,
       0.0f, 0.0f, static_cast<float>(std::max(1, width)), static_cast<float>(std::max(1, height))};
   jfloatArray exportedLscArray = nullptr;
-  if (!useLinearRawRgb) {
+  if (!useLinearRawRgb && !dngStage2Applied) {
     exportedLscArray = buildDngLensShadingArray(
         env, RawProcessor, cfaPattern, left, top, exportedLscWidth,
         exportedLscHeight, exportedLscGrid);
@@ -3194,8 +3247,9 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     exportedLscGridArray = env->NewFloatArray(8);
     env->SetFloatArrayRegion(exportedLscGridArray, 0, 8, exportedLscGrid);
   }
-  LOGI("dng gain map: opcode2_len=%u native_apply=0 exported=%d",
+  LOGI("dng gain map: opcode2_len=%u stage2Applied=%d exported=%d",
        RawProcessor.imgdata.color.dng_levels.rawopcodes[1].len,
+       dngStage2Applied ? 1 : 0,
        exportedLscArray ? 1 : 0);
 
   RawProcessor.imgdata.params.output_bps = 16;
@@ -3344,7 +3398,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
   jclass dngDataClass = env->FindClass("com/hinnka/mycamera/raw/DngRawData");
   jmethodID constructor =
       env->GetMethodID(dngDataClass, "<init>",
-                       "(Ljava/nio/ByteBuffer;IIIIF[F[F[F[FIIFF[FII[FFIJF[I[I[FLandroid/graphics/Bitmap;)V");
+                       "(Ljava/nio/ByteBuffer;IIIIF[F[F[F[FIIFF[FII[FFIJF[I[I[F[FLandroid/graphics/Bitmap;)V");
 
   jfloatArray blackLevelArray = env->NewFloatArray(4);
   for (int i = 0; i < 4; i++) {
@@ -3549,8 +3603,9 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
        finalCCM.m[5], finalCCM.m[6], finalCCM.m[7], finalCCM.m[8]);
 
   // 其它
-  jfloat whiteLevel =
-      (jfloat)RawProcessor.imgdata.color.dng_levels.dng_whitelevel[0];
+  jfloat whiteLevel = dngStage2Applied
+                          ? 65535.0f
+                          : (jfloat)RawProcessor.imgdata.color.dng_levels.dng_whitelevel[0];
   if (whiteLevel <= 0 && useLinearRawRgb)
     whiteLevel = 65535.0f;
   else if (whiteLevel <= 0)
@@ -3613,6 +3668,14 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
     noiseProfileArray = env->NewFloatArray(8);
     env->SetFloatArrayRegion(noiseProfileArray, 0, 8, ed.noiseProfile);
   }
+  jfloatArray warpRectilinearArray = nullptr;
+  if (!dngRawTagInfo.warpRectilinear.empty() &&
+      dngRawTagInfo.warpRectilinear.size() % 8 == 0) {
+    warpRectilinearArray = env->NewFloatArray(dngRawTagInfo.warpRectilinear.size());
+    env->SetFloatArrayRegion(warpRectilinearArray, 0,
+                             dngRawTagInfo.warpRectilinear.size(),
+                             dngRawTagInfo.warpRectilinear.data());
+  }
 
   jobject dngData = env->NewObject(
       dngDataClass, constructor, rawDataBuffer, width, height, rowStride,
@@ -3620,6 +3683,7 @@ Java_com_hinnka_mycamera_raw_RawDemosaicProcessor_processDngNative(
       cfaPattern, ed.rotation, baselineExposure, shadowScale, exportedLscArray, exportedLscWidth, exportedLscHeight,
       exportedLscGridArray, exposureBias, iso,
       shutterSpeedLong, aperture, activeArray, defaultCropArray, noiseProfileArray,
+      warpRectilinearArray,
       embeddedPreviewBitmap);
 
   // 释放资源

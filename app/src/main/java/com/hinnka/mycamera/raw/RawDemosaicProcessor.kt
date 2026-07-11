@@ -265,6 +265,7 @@ class RawDemosaicProcessor {
     private var quadRefineProgram = 0
     private var quadWriteOutputProgram = 0
     private var linearRcdProgram = 0
+    private var warpRectilinearProgram = 0
     private var linearRawRgbProgram = 0
     private var rawHdrLinearAccumulateProgram = 0
     private var rawHdrLinearNormalizeProgram = 0
@@ -1272,6 +1273,7 @@ class RawDemosaicProcessor {
         var actualRotation = rotation
         var dngRawDataCleanup: DngRawData? = null
         var embeddedDngJpegPreview: Bitmap? = null
+        var dngWarpRectilinear: FloatArray? = null
         val requestedColorEngine = rawRenderingEngine
         val hasDcpSelection = dcpRenderPlan != null || rawDcpId != null
         val profileWorkingColorSpace = ColorSpace.ProPhoto
@@ -1311,6 +1313,7 @@ class RawDemosaicProcessor {
             }
             dngRawDataCleanup = dngRawData
             embeddedDngJpegPreview = dngRawData.embeddedPreview
+            dngWarpRectilinear = dngRawData.warpRectilinear
             actualRawData = dngRawData.rawData
             actualWidth = dngRawData.width
             actualHeight = dngRawData.height
@@ -2002,6 +2005,43 @@ class RawDemosaicProcessor {
                 GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, 0)
             }
             }
+            }
+
+            dngWarpRectilinear?.takeIf { it.isNotEmpty() && it.size % 8 == 0 }?.let { warps ->
+                var appliedWarpCount = 0
+                for (offset in warps.indices step 8) {
+                    val parameters = warps.copyOfRange(offset, offset + 8)
+                    // dng_opcode_BaseWarpRectilinear::IsNOP skips an identity radial
+                    // transform with zero tangential terms. Preserve that Stage 3 behavior.
+                    if (isNoOpWarpRectilinear(parameters)) {
+                        PLog.d(TAG, "Skipping no-op DNG WarpRectilinear")
+                        continue
+                    }
+                    if (!isSafeWarpRectilinear(parameters, actualWidth, actualHeight)) {
+                        PLog.w(
+                            TAG,
+                            "Skipping unsafe optional DNG WarpRectilinear: ${parameters.contentToString()}"
+                        )
+                        continue
+                    }
+                    PLog.d(TAG, "Applying DNG WarpRectilinear: ${parameters.contentToString()}")
+                    val warped = renderWarpRectilinearPass(
+                        sourceTextureId = demosaicTextureId,
+                        targetFramebufferId = linearOutputFramebufferId,
+                        width = actualWidth,
+                        height = actualHeight,
+                        parameters = parameters,
+                    )
+                    if (!warped) break
+                    val tempTex = demosaicTextureId
+                    demosaicTextureId = linearOutputTextureId
+                    linearOutputTextureId = tempTex
+                    val tempFbo = demosaicFramebufferId
+                    demosaicFramebufferId = linearOutputFramebufferId
+                    linearOutputFramebufferId = tempFbo
+                    appliedWarpCount++
+                }
+                PLog.d(TAG, "Applied $appliedWarpCount/${warps.size / 8} DNG WarpRectilinear opcode(s) before color conversion")
             }
 
             // RAW AE 使用低分辨率实际渲染结果测光，使高光压缩和最终输出保持一致。
@@ -3162,6 +3202,69 @@ class RawDemosaicProcessor {
         }
     """.trimIndent()
 
+    private val WARP_RECTILINEAR_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+
+        in vec2 vTexCoord;
+        out vec4 fragColor;
+
+        uniform sampler2D uSourceTexture;
+        uniform vec2 uImageSize;
+        uniform vec4 uRadial;
+        uniform vec2 uTangential;
+        uniform vec2 uCenter;
+
+        float bicubicWeight(float x) {
+            const float A = -0.75;
+            x = abs(x);
+            if (x >= 2.0) return 0.0;
+            if (x >= 1.0) return ((A * x - 5.0 * A) * x + 8.0 * A) * x - 4.0 * A;
+            return ((A + 2.0) * x - (A + 3.0)) * x * x + 1.0;
+        }
+
+        vec4 sampleDngBicubic(vec2 sourcePixel) {
+            ivec2 imageMax = ivec2(uImageSize) - ivec2(1);
+            sourcePixel = clamp(sourcePixel, vec2(0.0), uImageSize - vec2(1.0));
+            vec2 base = floor(sourcePixel);
+            // dng_filter_warp uses a 32-entry fractional weight table.
+            vec2 fraction = floor((sourcePixel - base) * 32.0) * (1.0 / 32.0);
+            vec4 total = vec4(0.0);
+            float totalWeight = 0.0;
+            for (int y = -1; y <= 2; ++y) {
+                float wy = bicubicWeight(float(y) - fraction.y);
+                for (int x = -1; x <= 2; ++x) {
+                    float weight = bicubicWeight(float(x) - fraction.x) * wy;
+                    ivec2 pixel = clamp(ivec2(base) + ivec2(x, y), ivec2(0), imageMax);
+                    total += texelFetch(uSourceTexture, pixel, 0) * weight;
+                    totalWeight += weight;
+                }
+            }
+            return total / max(totalWeight, 1e-8);
+        }
+
+        void main() {
+            vec2 centerPx = uCenter * uImageSize;
+            // DNG pixel centers are integer coordinates; fragment centers are n + 0.5.
+            vec2 dstPx = gl_FragCoord.xy - vec2(0.5);
+            vec2 diff = dstPx - centerPx;
+            vec2 farthest = max(centerPx, uImageSize - centerPx);
+            float normRadius = max(length(farthest), 1.0);
+            vec2 normalized = diff / normRadius;
+            float r2 = min(dot(normalized, normalized), 1.0);
+            float ratio = uRadial.x + uRadial.y * r2 +
+                uRadial.z * r2 * r2 + uRadial.w * r2 * r2 * r2;
+            float dh = normalized.x;
+            float dv = normalized.y;
+            vec2 tangent = vec2(
+                uTangential.y * (r2 + 2.0 * dh * dh) + 2.0 * uTangential.x * dh * dv,
+                uTangential.x * (r2 + 2.0 * dv * dv) + 2.0 * uTangential.y * dh * dv
+            );
+            vec2 srcPx = centerPx + normRadius * (normalized * ratio + tangent);
+            fragColor = sampleDngBicubic(srcPx);
+        }
+    """.trimIndent()
+
     private fun initRcdPrograms(vShader: Int) {
         rcdPopulateProgram = compileComputeProgram(RcdShaders.POPULATE, "POPULATE")
         rcdStep1Program = compileComputeProgram(RcdShaders.STEP_1, "STEP_1")
@@ -3213,6 +3316,11 @@ class RawDemosaicProcessor {
             vShader,
             RAW_HDR_LINEAR_PREVIEW_FRAGMENT_SHADER,
             "rawHdrLinearPreview"
+        )
+        warpRectilinearProgram = linkFragmentProgram(
+            vShader,
+            WARP_RECTILINEAR_FRAGMENT_SHADER,
+            "warpRectilinear"
         )
     }
 
@@ -3921,6 +4029,102 @@ class RawDemosaicProcessor {
         drawQuad(passthroughProgram)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         checkGlError("DenoiseProfile passthrough")
+    }
+
+    private fun renderWarpRectilinearPass(
+        sourceTextureId: Int,
+        targetFramebufferId: Int,
+        width: Int,
+        height: Int,
+        parameters: FloatArray,
+    ): Boolean {
+        if (warpRectilinearProgram == 0 || parameters.size != 8) return false
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, targetFramebufferId)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glUseProgram(warpRectilinearProgram)
+        val textureMatrix = FloatArray(16)
+        GlMatrix.setIdentityM(textureMatrix, 0)
+        GLES30.glUniformMatrix4fv(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uTexMatrix"),
+            1,
+            false,
+            textureMatrix,
+            0,
+        )
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sourceTextureId)
+        GLES30.glUniform1i(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uSourceTexture"),
+            0
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uImageSize"),
+            width.toFloat(),
+            height.toFloat()
+        )
+        GLES30.glUniform4f(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uRadial"),
+            parameters[0], parameters[1], parameters[2], parameters[3]
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uTangential"),
+            parameters[4], parameters[5]
+        )
+        GLES30.glUniform2f(
+            GLES30.glGetUniformLocation(warpRectilinearProgram, "uCenter"),
+            parameters[6], parameters[7]
+        )
+        drawQuad(warpRectilinearProgram)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        checkGlError("WarpRectilinearPass")
+        return true
+    }
+
+    private fun isNoOpWarpRectilinear(parameters: FloatArray): Boolean {
+        if (parameters.size != 8) return false
+        return parameters[0] == 1f && (1..5).all { index -> parameters[index] == 0f }
+    }
+
+    private fun isSafeWarpRectilinear(
+        parameters: FloatArray,
+        width: Int,
+        height: Int,
+    ): Boolean {
+        if (parameters.size != 8 || parameters.any { !it.isFinite() }) return false
+        val centerX = parameters[6]
+        val centerY = parameters[7]
+        if (centerX !in 0f..1f || centerY !in 0f..1f || width <= 1 || height <= 1) return false
+        val centerPxX = centerX * width
+        val centerPxY = centerY * height
+        val farX = maxOf(centerPxX, width - centerPxX)
+        val farY = maxOf(centerPxY, height - centerPxY)
+        val normRadius = kotlin.math.sqrt(farX * farX + farY * farY).coerceAtLeast(1f)
+        for (gridY in 0..16) {
+            for (gridX in 0..16) {
+                val dstX = width * gridX / 16f
+                val dstY = height * gridY / 16f
+                val dx = (dstX - centerPxX) / normRadius
+                val dy = (dstY - centerPxY) / normRadius
+                val r2 = (dx * dx + dy * dy).coerceAtMost(1f)
+                val ratio = parameters[0] + parameters[1] * r2 +
+                    parameters[2] * r2 * r2 + parameters[3] * r2 * r2 * r2
+                if (!ratio.isFinite() || ratio !in 0.5f..2f) return false
+                val tangentX = parameters[5] * (r2 + 2f * dx * dx) +
+                    2f * parameters[4] * dx * dy
+                val tangentY = parameters[4] * (r2 + 2f * dy * dy) +
+                    2f * parameters[5] * dx * dy
+                val srcX = centerPxX + normRadius * (dx * ratio + tangentX)
+                val srcY = centerPxY + normRadius * (dy * ratio + tangentY)
+                if (!srcX.isFinite() || !srcY.isFinite()) return false
+                val toleranceX = width * 0.02f
+                val toleranceY = height * 0.02f
+                if (srcX !in -toleranceX..(width + toleranceX) ||
+                    srcY !in -toleranceY..(height + toleranceY)
+                ) return false
+            }
+        }
+        return true
     }
 
     private fun roundUp(value: Int, multiple: Int): Int {
@@ -8325,6 +8529,7 @@ class RawDemosaicProcessor {
         if (quadRefineProgram != 0) GLES31.glDeleteProgram(quadRefineProgram)
         if (quadWriteOutputProgram != 0) GLES31.glDeleteProgram(quadWriteOutputProgram)
         if (linearRcdProgram != 0) GLES31.glDeleteProgram(linearRcdProgram)
+        if (warpRectilinearProgram != 0) GLES31.glDeleteProgram(warpRectilinearProgram)
         if (linearRawRgbProgram != 0) GLES31.glDeleteProgram(linearRawRgbProgram)
         if (rawHdrLinearAccumulateProgram != 0) GLES31.glDeleteProgram(rawHdrLinearAccumulateProgram)
         if (rawHdrLinearNormalizeProgram != 0) GLES31.glDeleteProgram(rawHdrLinearNormalizeProgram)

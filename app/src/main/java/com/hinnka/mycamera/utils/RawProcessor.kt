@@ -271,7 +271,7 @@ object RawProcessor {
         whiteLevelMode: String? = null,
         customWhiteLevel: Float? = null,
         cfaCorrectionMode: String? = null,
-        baselineExposureEv: Float = 0f,
+        baselineExposureEv: Float? = null,
         profileGainTableMap: DngProfileGainTableMap? = null,
         profileName: String? = null,
         profileToneCurve: FloatArray? = null,

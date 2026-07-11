@@ -6,9 +6,11 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.LensShadingMap
 import android.os.Build
+import android.os.SystemClock
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.DngProfileToneCurve
 import com.hinnka.mycamera.raw.RawCfaCorrection
+import com.hinnka.mycamera.raw.RawMetadata
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
@@ -93,6 +95,8 @@ object SuperResolutionDngWriter {
     private const val TAG_DEFAULT_CROP_SIZE = 50720
     private const val TAG_COLOR_MATRIX_1 = 50721
     private const val TAG_COLOR_MATRIX_2 = 50722
+    private const val TAG_CAMERA_CALIBRATION_1 = 50723
+    private const val TAG_CAMERA_CALIBRATION_2 = 50724
     private const val TAG_PROFILE_NAME = 50936
     private const val TAG_PROFILE_TONE_CURVE = 50940
     private const val TAG_AS_SHOT_NEUTRAL = 50728
@@ -101,6 +105,7 @@ object SuperResolutionDngWriter {
     private const val TAG_CALIBRATION_ILLUMINANT_2 = 50779
     private const val TAG_ACTIVE_AREA = 50829
     private const val TAG_OPCODE_LIST_2 = 51009
+    private const val TAG_OPCODE_LIST_3 = 51022
     private const val TAG_NOISE_PROFILE = 51041
     private const val TAG_DEFAULT_BLACK_RENDER = 51110
     private const val TAG_PROFILE_GAIN_TABLE_MAP_2 = DngProfileGainTableMap.TAG_PROFILE_GAIN_TABLE_MAP2
@@ -135,7 +140,7 @@ object SuperResolutionDngWriter {
         customBlackLevel: Float? = null,
         whiteLevelMode: String? = null,
         customWhiteLevel: Float? = null,
-        baselineExposureEv: Float = 0f,
+        baselineExposureEv: Float? = null,
         profileGainTableMap: DngProfileGainTableMap? = null,
         profileName: String? = null,
         profileToneCurve: FloatArray? = null,
@@ -272,7 +277,7 @@ object SuperResolutionDngWriter {
         blackLevel: FloatArray,
         whiteLevel: Int,
         imageByteCount: Long,
-        baselineExposureEv: Float,
+        baselineExposureEv: Float?,
         profileGainTableMap: DngProfileGainTableMap?,
         profileName: String?,
         profileToneCurve: FloatArray?,
@@ -288,21 +293,25 @@ object SuperResolutionDngWriter {
         val defaultScaleX = 1.0
         val defaultScaleY = 1.0
         val cameraModel = buildCameraModel(characteristics)
+        val geometry = resolveDngGeometry(width, height, characteristics)
         val illuminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 21
         val illuminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()
         val colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
         val colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
+        val calibrationMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_CALIBRATION_TRANSFORM1)
+        val calibrationMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_CALIBRATION_TRANSFORM2)
         val noiseProfile = buildNoiseProfile(captureResult)
-        val dateTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
+        val dateTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(
+            captureResult.get(CaptureResult.SENSOR_TIMESTAMP)?.let { timestampNs ->
+                Date(System.currentTimeMillis() - SystemClock.elapsedRealtime() + timestampNs / 1_000_000L)
+            } ?: Date()
+        )
         val exposureTimeSeconds = captureResult.get(CaptureResult.SENSOR_EXPOSURE_TIME)
             ?.takeIf { it > 0L }
             ?.let { it.toDouble() / 1_000_000_000.0 }
         val iso = captureResult.get(CaptureResult.SENSOR_SENSITIVITY)?.takeIf { it > 0 }
         val aperture = captureResult.get(CaptureResult.LENS_APERTURE)?.takeIf { it > 0f }
         val focalLength = captureResult.get(CaptureResult.LENS_FOCAL_LENGTH)?.takeIf { it > 0f }
-            ?: characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                ?.firstOrNull()
-                ?.takeIf { it > 0f }
         val focalLength35mm = calculate35mmEquivalent(characteristics, focalLength)
         val exifWhiteBalance = captureResult.get(CaptureResult.CONTROL_AWB_MODE)?.let { awbMode ->
             if (awbMode == CameraMetadata.CONTROL_AWB_MODE_AUTO) 0 else 1
@@ -313,12 +322,17 @@ object SuperResolutionDngWriter {
             buildOpcodeList2(
                 captureResult = captureResult,
                 cfaPattern = cfaPattern,
-                width = width,
-                height = height
+                geometry = geometry,
             )
         } else {
             null
         }
+        val opcodeList3 = if (isCfa) buildOpcodeList3(captureResult, geometry) else null
+        val resolvedBaselineExposureEv = baselineExposureEv ?: captureResult
+            .get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST)
+            ?.takeIf { it > 0 }
+            ?.let { kotlin.math.log2(it / 100.0).toFloat() }
+            ?: 0f
         val blackLevelRepeatDim = RawCfaCorrection.repeatPatternDim(cfaPattern)
         val encodedBlackLevels = if (isCfa) {
             blackLevelByCfaPosition(cfaPattern, blackLevel)
@@ -383,15 +397,19 @@ object SuperResolutionDngWriter {
                 add(longArray(TAG_WHITE_LEVEL, LongArray(samplesPerPixel) { whiteLevel.coerceAtLeast(1).toLong() }))
             }
             add(rationalArray(TAG_DEFAULT_SCALE, listOf(defaultScaleX, defaultScaleY)))
-            add(rationalArray(TAG_DEFAULT_CROP_ORIGIN, listOf(0.0, 0.0)))
-            add(rationalArray(TAG_DEFAULT_CROP_SIZE, listOf(width.toDouble(), height.toDouble())))
+            add(rationalArray(TAG_DEFAULT_CROP_ORIGIN, listOf(geometry.defaultCropLeft, geometry.defaultCropTop)))
+            add(rationalArray(TAG_DEFAULT_CROP_SIZE, listOf(geometry.defaultCropWidth, geometry.defaultCropHeight)))
             colorMatrix1?.let { add(sRationalArray(TAG_COLOR_MATRIX_1, colorTransformToDngMatrix(it))) }
             colorMatrix2?.let { add(sRationalArray(TAG_COLOR_MATRIX_2, colorTransformToDngMatrix(it))) }
+            calibrationMatrix1?.let { add(sRationalArray(TAG_CAMERA_CALIBRATION_1, colorTransformToExactDngMatrix(it))) }
+            if (illuminant2 != null) {
+                calibrationMatrix2?.let { add(sRationalArray(TAG_CAMERA_CALIBRATION_2, colorTransformToExactDngMatrix(it))) }
+            }
             add(rationalArray(TAG_AS_SHOT_NEUTRAL, asShotNeutral(captureResult)))
             if (!isCfa) {
                 add(long(TAG_DEFAULT_BLACK_RENDER, 1))
             }
-            add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(baselineExposureEv.toDouble())))
+            add(sRationalArray(TAG_BASELINE_EXPOSURE, listOf(resolvedBaselineExposureEv.toDouble())))
             if (profileGainTableMap != null) {
                 add(ascii(TAG_PROFILE_NAME, profileName?.takeIf { it.isNotBlank() }
                     ?: DngProfileToneCurve.GOOGLE_HDR_PROFILE_NAME))
@@ -402,8 +420,9 @@ object SuperResolutionDngWriter {
             if (illuminant2 != null && colorMatrix2 != null) {
                 add(short(TAG_CALIBRATION_ILLUMINANT_2, illuminant2))
             }
-            add(longArray(TAG_ACTIVE_AREA, longArrayOf(0, 0, height.toLong(), width.toLong())))
+            add(longArray(TAG_ACTIVE_AREA, geometry.activeArea))
             opcodeList2?.let { add(undefined(TAG_OPCODE_LIST_2, it)) }
+            opcodeList3?.let { add(undefined(TAG_OPCODE_LIST_3, it)) }
             noiseProfile?.let { add(doubleArray(TAG_NOISE_PROFILE, it)) }
             profileGainTableMap?.let {
                 add(undefined(TAG_PROFILE_GAIN_TABLE_MAP_2, it.encodeProfileGainTableMap2(ByteOrder.LITTLE_ENDIAN)))
@@ -530,24 +549,72 @@ object SuperResolutionDngWriter {
     private fun buildOpcodeList2(
         captureResult: CaptureResult,
         cfaPattern: Int,
-        width: Int,
-        height: Int,
+        geometry: DngGeometry,
     ): ByteArray? {
         val lensShadingMap = captureResult.get(CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP)
-            ?: return null
-        if (lensShadingMap.columnCount <= 0 || lensShadingMap.rowCount <= 0) return null
-
         val dim = RawCfaCorrection.repeatPatternDim(cfaPattern)
-        val opcodeCount = dim[0] * dim[1]
-        val opcodes = ByteArrayOutputStream()
-        opcodes.write(beUInt(opcodeCount.toLong()))
-        for (top in 0 until dim[0]) {
-            for (left in 0 until dim[1]) {
-                val channel = RawCfaCorrection.camera2LensShadingChannelIndexForPixel(cfaPattern, left, top)
-                opcodes.write(buildGainMapOpcode(lensShadingMap, channel, top, left, dim[0], dim[1], width, height))
+        val encodedOpcodes = mutableListOf<ByteArray>()
+        if (lensShadingMap != null && lensShadingMap.columnCount > 0 && lensShadingMap.rowCount > 0) {
+            for (top in 0 until dim[0]) {
+                for (left in 0 until dim[1]) {
+                    val channel = RawCfaCorrection.camera2LensShadingChannelIndexForPixel(cfaPattern, left, top)
+                    encodedOpcodes += buildGainMapOpcode(
+                        lensShadingMap, channel, top, left, dim[0], dim[1], geometry.width, geometry.height
+                    )
+                }
             }
         }
+        buildBadPixelOpcode(captureResult, cfaPattern, geometry)?.let(encodedOpcodes::add)
+        if (encodedOpcodes.isEmpty()) return null
+        val opcodes = ByteArrayOutputStream()
+        opcodes.write(beUInt(encodedOpcodes.size.toLong()))
+        encodedOpcodes.forEach(opcodes::write)
         return opcodes.toByteArray()
+    }
+
+    private fun buildBadPixelOpcode(
+        captureResult: CaptureResult,
+        cfaPattern: Int,
+        geometry: DngGeometry,
+    ): ByteArray? {
+        if (cfaPattern !in RawMetadata.CFA_RGGB..RawMetadata.CFA_BGGR) return null
+        // A Camera2 hot-pixel map addresses physical sensor samples. It cannot be
+        // represented as isolated CFA points after spatial resampling.
+        if (geometry.scaleX != 1.0 || geometry.scaleY != 1.0) {
+            PLog.d(TAG, "Skipping FixBadPixelsList for resampled DNG geometry")
+            return null
+        }
+        val points = captureResult.get(CaptureResult.STATISTICS_HOT_PIXEL_MAP)
+            ?.mapNotNull { point ->
+                val x = ((point.x - geometry.sourceOriginX) * geometry.scaleX).roundToInt()
+                val y = ((point.y - geometry.sourceOriginY) * geometry.scaleY).roundToInt()
+                if (x in 0 until geometry.width && y in 0 until geometry.height) x to y else null
+            }
+            ?.distinct()
+            .orEmpty()
+        if (points.isEmpty()) return null
+        val payload = ByteArrayOutputStream()
+        payload.write(beUInt(dngSdkBayerPhase(cfaPattern).toLong()))
+        payload.write(beUInt(points.size.toLong()))
+        payload.write(beUInt(0))
+        points.forEach { (x, y) ->
+            payload.write(beUInt(y.toLong()))
+            payload.write(beUInt(x.toLong()))
+        }
+        PLog.d(
+            TAG,
+            "Writing DNG FixBadPixelsList: phase=${dngSdkBayerPhase(cfaPattern)} points=${points.size}"
+        )
+        return buildOpcode(id = 5, flags = 1, payload = payload.toByteArray())
+    }
+
+    /** DNG SDK Bayer phase order is GRBG=0, RGGB=1, BGGR=2, GBRG=3. */
+    private fun dngSdkBayerPhase(cfaPattern: Int): Int = when (cfaPattern) {
+        RawMetadata.CFA_GRBG -> 0
+        RawMetadata.CFA_RGGB -> 1
+        RawMetadata.CFA_BGGR -> 2
+        RawMetadata.CFA_GBRG -> 3
+        else -> error("Unsupported Bayer CFA pattern: $cfaPattern")
     }
 
     private fun buildGainMapOpcode(
@@ -592,13 +659,268 @@ object SuperResolutionDngWriter {
         return opcode.toByteArray()
     }
 
+    private fun buildOpcodeList3(captureResult: CaptureResult, geometry: DngGeometry): ByteArray? {
+        if (kotlin.math.abs(geometry.scaleX - geometry.scaleY) > 1e-9) {
+            PLog.w(TAG, "Skipping WarpRectilinear for non-uniformly scaled DNG geometry")
+            return null
+        }
+        val intrinsics = captureResult.get(CaptureResult.LENS_INTRINSIC_CALIBRATION)
+            ?.takeIf { it.size == 5 }
+            ?: return null
+        val distortion = captureResult.get(CaptureResult.LENS_DISTORTION)
+            ?.takeIf { it.size == 5 }
+            ?: return null
+        val focal = intrinsics[0].takeIf { it.isFinite() && it > 0f } ?: return null
+        // Camera2 intrinsic coordinates are relative to the pre-correction active array.
+        val cx = intrinsics[2]
+        val cy = intrinsics[3]
+        val normalizedDistortion = doubleArrayOf(
+            1.0,
+            distortion[0].toDouble(),
+            distortion[1].toDouble(),
+            distortion[2].toDouble(),
+            distortion[3].toDouble(),
+            distortion[4].toDouble(),
+        )
+        val normalizeCx = if (geometry.bufferIncludesPixelArray) cx + geometry.sourceOriginX else cx
+        val normalizeCy = if (geometry.bufferIncludesPixelArray) cy + geometry.sourceOriginY else cy
+        val xMin = if (geometry.bufferIncludesPixelArray) geometry.sourceOriginX else 0
+        val yMin = if (geometry.bufferIncludesPixelArray) geometry.sourceOriginY else 0
+        normalizeLensDistortion(
+            normalizedDistortion,
+            normalizeCx.toDouble(),
+            normalizeCy.toDouble(),
+            focal.toDouble(),
+            geometry.sourceWidth,
+            geometry.sourceHeight,
+            xMin,
+            yMin,
+        )
+
+        val maxX = maxOf(geometry.sourceWidth - cx, cx).toDouble()
+        val maxY = maxOf(geometry.sourceHeight - cy, cy).toDouble()
+        val maxRadius = sqrt(maxX * maxX + maxY * maxY)
+        val focalSquared = focal.toDouble() * focal.toDouble()
+        if (!maxRadius.isFinite() || maxRadius <= 0.0 || focalSquared <= 0.0) return null
+        val radiusSquared = maxRadius * maxRadius
+        val coefficients = doubleArrayOf(
+            1.0,
+            normalizedDistortion[1] * radiusSquared / focalSquared,
+            normalizedDistortion[2] * radiusSquared * radiusSquared / (focalSquared * focalSquared),
+            normalizedDistortion[3] * radiusSquared * radiusSquared * radiusSquared /
+                (focalSquared * focalSquared * focalSquared),
+            normalizedDistortion[4] * maxRadius / focal,
+            normalizedDistortion[5] * maxRadius / focal,
+        )
+        if (coefficients.any { !it.isFinite() }) return null
+        val payload = ByteArrayOutputStream()
+        payload.write(beUInt(1))
+        coefficients.forEach { payload.write(beDouble(it)) }
+        payload.write(beDouble((cx / geometry.sourceWidth).toDouble().coerceIn(0.0, 1.0)))
+        payload.write(beDouble((cy / geometry.sourceHeight).toDouble().coerceIn(0.0, 1.0)))
+        val opcode = buildOpcode(id = 1, flags = 1, payload = payload.toByteArray())
+        return ByteArrayOutputStream().apply {
+            write(beUInt(1))
+            write(opcode)
+        }.toByteArray()
+    }
+
+    /** Mirrors AOSP DngCreator normalizeLensDistortion exactly. */
+    private fun normalizeLensDistortion(
+        distortion: DoubleArray,
+        cx: Double,
+        cy: Double,
+        focal: Double,
+        preCorrectionWidth: Int,
+        preCorrectionHeight: Int,
+        xMin: Int,
+        yMin: Int,
+    ) {
+        val scale = findPostCorrectionScale(
+            distortion,
+            cx,
+            cy,
+            focal,
+            preCorrectionWidth,
+            preCorrectionHeight,
+            xMin,
+            yMin,
+        ) ?: return
+        val scalePowers = intArrayOf(1, 3, 5, 7, 2, 2)
+        distortion.indices.forEach { index ->
+            distortion[index] *= Math.pow(scale, scalePowers[index].toDouble())
+        }
+        PLog.d(TAG, "DNG WarpRectilinear post-correction scale=$scale")
+    }
+
+    private fun findPostCorrectionScale(
+        distortion: DoubleArray,
+        cx: Double,
+        cy: Double,
+        focal: Double,
+        width: Int,
+        height: Int,
+        xMin: Int,
+        yMin: Int,
+    ): Double? {
+        var scale = 1.0
+        while (scale > 0.5) {
+            if (scaledBoxWithinPreCorrectionArray(
+                    scale, distortion, cx, cy, focal, width, height, xMin, yMin
+                )
+            ) return scale
+            scale -= 0.002
+        }
+        PLog.w(TAG, "Unable to find DngCreator-compatible post-correction scale; retaining original distortion")
+        return null
+    }
+
+    private fun scaledBoxWithinPreCorrectionArray(
+        scale: Double,
+        distortion: DoubleArray,
+        cx: Double,
+        cy: Double,
+        focal: Double,
+        width: Int,
+        height: Int,
+        xMin: Int,
+        yMin: Int,
+    ): Boolean {
+        val left = cx * (1.0 - scale)
+        val right = (width - 1) * scale + cx * (1.0 - scale)
+        val top = cy * (1.0 - scale)
+        val bottom = (height - 1) * scale + cy * (1.0 - scale)
+        val points = arrayOf(
+            left to top, cx to top, right to top,
+            left to cy, right to cy,
+            left to bottom, cx to bottom, right to bottom,
+        )
+        return points.all { (x, y) ->
+            undistortedPointWithinPreCorrectionArray(
+                x, y, distortion, cx, cy, focal, width, height, xMin, yMin
+            )
+        }
+    }
+
+    private fun undistortedPointWithinPreCorrectionArray(
+        x: Double,
+        y: Double,
+        distortion: DoubleArray,
+        cx: Double,
+        cy: Double,
+        focal: Double,
+        width: Int,
+        height: Int,
+        xMin: Int,
+        yMin: Int,
+    ): Boolean {
+        val xp = (x - cx) / focal
+        val yp = (y - cy) / focal
+        val x2 = xp * xp
+        val y2 = yp * yp
+        val r2 = x2 + y2
+        val twiceXy = 2.0 * xp * yp
+        val radial = distortion[0] +
+            ((distortion[3] * r2 + distortion[2]) * r2 + distortion[1]) * r2
+        val mappedX = (xp * radial + distortion[4] * twiceXy +
+            distortion[5] * (r2 + 2.0 * x2)) * focal + cx
+        val mappedY = (yp * radial + distortion[4] * (r2 + 2.0 * y2) +
+            distortion[5] * twiceXy) * focal + cy
+        return mappedX >= xMin && mappedY >= yMin &&
+            mappedX < xMin + width && mappedY < yMin + height
+    }
+
+    private fun buildOpcode(id: Int, flags: Int, payload: ByteArray): ByteArray =
+        ByteArrayOutputStream().apply {
+            write(beUInt(id.toLong()))
+            write(beUInt(0x01030000L))
+            write(beUInt(flags.toLong()))
+            write(beUInt(payload.size.toLong()))
+            write(payload)
+        }.toByteArray()
+
     private fun asShotNeutral(captureResult: CaptureResult): List<Double> {
+        val neutralColorPoint = captureResult.get(CaptureResult.SENSOR_NEUTRAL_COLOR_POINT)
+        if (neutralColorPoint != null && neutralColorPoint.size >= 3) {
+            val neutral = neutralColorPoint.take(3).map { value ->
+                value.numerator.toDouble() / value.denominator.toDouble()
+            }
+            if (neutral.all { it.isFinite() && it > 0.0 }) {
+                return neutral
+            }
+            PLog.w(TAG, "Ignoring invalid SENSOR_NEUTRAL_COLOR_POINT: ${neutral.joinToString()}")
+        }
+
         val gains = captureResult.get(CaptureResult.COLOR_CORRECTION_GAINS)
-            ?: return listOf(1.0, 1.0, 1.0)
+        if (gains == null) {
+            PLog.w(TAG, "Missing SENSOR_NEUTRAL_COLOR_POINT and COLOR_CORRECTION_GAINS; using unity AsShotNeutral")
+            return listOf(1.0, 1.0, 1.0)
+        }
         val green = ((gains.greenEven + gains.greenOdd) * 0.5f).takeIf { it > 0f } ?: 1f
         val r = gains.red.takeIf { it > 0f } ?: green
         val b = gains.blue.takeIf { it > 0f } ?: green
+        PLog.w(TAG, "Missing SENSOR_NEUTRAL_COLOR_POINT; deriving AsShotNeutral from COLOR_CORRECTION_GAINS")
         return listOf((green / r).toDouble(), 1.0, (green / b).toDouble())
+    }
+
+    private data class DngGeometry(
+        val width: Int,
+        val height: Int,
+        val activeArea: LongArray,
+        val defaultCropLeft: Double,
+        val defaultCropTop: Double,
+        val defaultCropWidth: Double,
+        val defaultCropHeight: Double,
+        val sourceOriginX: Int,
+        val sourceOriginY: Int,
+        val sourceWidth: Int,
+        val sourceHeight: Int,
+        val bufferIncludesPixelArray: Boolean,
+        val scaleX: Double,
+        val scaleY: Double,
+    )
+
+    private fun resolveDngGeometry(
+        width: Int,
+        height: Int,
+        characteristics: CameraCharacteristics,
+    ): DngGeometry {
+        val pre = characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+        val pixel = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val preWidth = pre?.width()?.takeIf { it > 0 } ?: width
+        val preHeight = pre?.height()?.takeIf { it > 0 } ?: height
+        val matchesPixelArray = pixel != null && pixel.width == width && pixel.height == height
+        val matchesPreCorrection = preWidth == width && preHeight == height
+        val scaleX = if (matchesPixelArray) 1.0 else width.toDouble() / preWidth.toDouble()
+        val scaleY = if (matchesPixelArray) 1.0 else height.toDouble() / preHeight.toDouble()
+        val activeArea = if (matchesPixelArray && pre != null) {
+            longArrayOf(pre.top.toLong(), pre.left.toLong(), pre.bottom.toLong(), pre.right.toLong())
+        } else {
+            longArrayOf(0L, 0L, height.toLong(), width.toLong())
+        }
+        val marginX = (8.0 * scaleX).coerceAtMost((activeArea[3] - activeArea[1]).toDouble() / 2.0)
+        val marginY = (8.0 * scaleY).coerceAtMost((activeArea[2] - activeArea[0]).toDouble() / 2.0)
+        val cropWidth = ((activeArea[3] - activeArea[1]).toDouble() - marginX * 2.0).coerceAtLeast(1.0)
+        val cropHeight = ((activeArea[2] - activeArea[0]).toDouble() - marginY * 2.0).coerceAtLeast(1.0)
+        if (!matchesPixelArray && !matchesPreCorrection) {
+            PLog.d(TAG, "Mapping derived DNG ${width}x${height} from pre-correction ${preWidth}x${preHeight}")
+        }
+        return DngGeometry(
+            width = width,
+            height = height,
+            activeArea = activeArea,
+            defaultCropLeft = marginX,
+            defaultCropTop = marginY,
+            defaultCropWidth = cropWidth,
+            defaultCropHeight = cropHeight,
+            sourceOriginX = pre?.left ?: 0,
+            sourceOriginY = pre?.top ?: 0,
+            sourceWidth = preWidth,
+            sourceHeight = preHeight,
+            bufferIncludesPixelArray = matchesPixelArray,
+            scaleX = scaleX,
+            scaleY = scaleY,
+        )
     }
 
     private fun buildNoiseProfile(captureResult: CaptureResult): List<Double>? {
@@ -641,6 +963,13 @@ object SuperResolutionDngWriter {
         }
         return normalizeDngColorMatrix(values)
     }
+
+    private fun colorTransformToExactDngMatrix(transform: ColorSpaceTransform): List<Double> =
+        buildList(9) {
+            for (row in 0 until 3) {
+                for (col in 0 until 3) add(transform.getElement(col, row).toDouble())
+            }
+        }
 
     private fun normalizeDngColorMatrix(values: List<Double>): List<Double> {
         if (values.size != 9) return values

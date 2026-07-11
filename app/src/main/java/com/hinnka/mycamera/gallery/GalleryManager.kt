@@ -3335,7 +3335,7 @@ object GalleryManager {
         metadata: MediaMetadata,
         shouldAutoSave: Boolean,
         exportDngWithRawExport: Boolean,
-        baselineExposureEv: Float = 0f,
+        baselineExposureEv: Float? = null,
         profileGainTableMap: DngProfileGainTableMap? = null,
         profileToneMapMode: RawProfileToneMapMode = RawProfileToneMapMode.GooglePixel,
         imageLayout: SuperResolutionDngWriter.ImageLayout = SuperResolutionDngWriter.ImageLayout.CFA,
