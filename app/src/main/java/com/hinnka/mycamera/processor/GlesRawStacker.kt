@@ -31,6 +31,7 @@ class GlesRawStacker(
     private val cfaPattern: Int,
     blackLevel: FloatArray,
     whiteLevel: Int,
+    whiteBalanceGains: FloatArray = floatArrayOf(1f, 1f, 1f, 1f),
     noiseModel: FloatArray,
     private val rawNoiseModel: RawNoiseModel = RawNoiseModel.fromLegacyNoiseModel(noiseModel),
     private val lensShading: FloatArray?,
@@ -145,6 +146,25 @@ class GlesRawStacker(
         blackLevel.getOrElse(index) { blackLevel.firstOrNull() ?: 0f }
     }
     private val normalizedWhiteLevel = whiteLevel.coerceAtLeast(1).toFloat()
+    private val demosaicCalculationWbGains = run {
+        fun safeGain(index: Int, fallback: Float): Float {
+            val value = whiteBalanceGains.getOrElse(index) { fallback }
+            return if (value.isFinite() && value > 0f) value else fallback
+        }
+        val greenEven = safeGain(1, 1f)
+        val greenOdd = safeGain(2, greenEven)
+        val greenBase = ((greenEven + greenOdd) * 0.5f)
+            .takeIf { it.isFinite() && it > 0f }
+            ?: 1f
+        fun relative(value: Float): Float =
+            (value / greenBase.coerceAtLeast(1e-6f)).coerceIn(1e-3f, 64f)
+        floatArrayOf(
+            relative(safeGain(0, greenBase)),
+            1f,
+            1f,
+            relative(safeGain(3, greenBase)),
+        )
+    }
     private val normalizedNoiseAlphaByChannel = rawNoiseModel.normalizedShotNoiseForShader()
     private val normalizedNoiseBetaByChannel = rawNoiseModel.normalizedReadNoiseForShader()
     private val noiseAlpha = rawNoiseModel.greenShotNoise.coerceAtLeast(0f) / 65535.0f
@@ -1070,6 +1090,12 @@ class GlesRawStacker(
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(rcdStripePopulateProgram, "uWhiteLevel"),
             normalizedWhiteLevel,
+        )
+        GLES31.glUniform4fv(
+            GLES31.glGetUniformLocation(rcdStripePopulateProgram, "uCalculationWbGains"),
+            1,
+            demosaicCalculationWbGains,
+            0,
         )
         GLES31.glDispatchCompute(groupCount(width), groupCount(rowCount), 1)
         GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
@@ -3133,6 +3159,12 @@ class GlesRawStacker(
             GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uSourceSize"),
             width,
             sourceRowCount,
+        )
+        GLES31.glUniform3f(
+            GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uCalculationGains"),
+            demosaicCalculationWbGains[0],
+            1f,
+            demosaicCalculationWbGains[3],
         )
         GLES31.glUniform1f(
             GLES31.glGetUniformLocation(accumulateSuperResolutionProgram, "uOutputScale"),
@@ -6556,6 +6588,7 @@ class GlesRawStacker(
             uniform ivec2 uGridSize;
             uniform ivec2 uSourceSize;
             uniform int uSourceRowOffset;
+            uniform vec3 uCalculationGains;
             uniform int uTileSize;
             uniform int uIsReference;
             uniform float uFrameWeight;
@@ -6604,7 +6637,8 @@ class GlesRawStacker(
             vec3 rcdRgbAt(ivec2 p) {
                 p = clamp(p, ivec2(0), uSourceSize - ivec2(1));
                 int i = p.y * uSourceSize.x + p.x;
-                return vec3(rcdRgb0[i], rcdRgb1[i], rcdRgb2[i]);
+                return vec3(rcdRgb0[i], rcdRgb1[i], rcdRgb2[i]) /
+                    max(uCalculationGains, vec3(1e-6));
             }
             vec3 sampleRcdRgb(vec2 globalRawPos) {
                 vec2 pos = globalRawPos - vec2(0.0, float(uSourceRowOffset));
@@ -7136,6 +7170,7 @@ class GlesRawStacker(
             uniform int uCfaPattern;
             uniform vec4 uBlackLevel;
             uniform float uWhiteLevel;
+            uniform vec4 uCalculationWbGains;
             layout(std430, binding = 0) buffer CFA_Buf { float cfa[]; };
             layout(std430, binding = 1) buffer RGB0_Buf { float rgb0[]; };
             layout(std430, binding = 2) buffer RGB1_Buf { float rgb1[]; };
@@ -7151,7 +7186,12 @@ class GlesRawStacker(
                 vec2 uv = (vec2(global) + vec2(0.5)) / vec2(uFullImageSize);
                 vec4 gains = texture(uLensShadingMap, clamp(uv, vec2(0.0), vec2(1.0)));
                 int lscChannel = lensShadingChannelAt(uCfaPattern, global);
-                float value = clamp(max(raw - uBlackLevel[channel], 0.0) * gains[lscChannel] / range, 0.0, 1.0);
+                float value = clamp(
+                    max(raw - uBlackLevel[channel], 0.0) * gains[lscChannel] /
+                        range * max(uCalculationWbGains[channel], 1e-6),
+                    0.0,
+                    8.0
+                );
                 int index = local.y * uStripeSize.x + local.x;
                 cfa[index] = value;
                 rgb0[index] = channel == 0 ? value : 0.0;

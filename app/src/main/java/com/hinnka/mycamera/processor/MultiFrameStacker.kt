@@ -333,6 +333,7 @@ object MultiFrameStacker {
                 cfaPattern = cfaPattern,
                 blackLevel = masterBlackLevel,
                 whiteLevel = whiteLevel,
+                whiteBalanceGains = whiteBalanceGains,
                 noiseModel = noiseModel,
                 rawNoiseModel = rawNoiseModel,
                 lensShading = stackLensShading,
