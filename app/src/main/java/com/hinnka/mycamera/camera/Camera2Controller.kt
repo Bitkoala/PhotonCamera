@@ -162,6 +162,13 @@ class Camera2Controller(private val context: Context) {
         UNAVAILABLE
     }
 
+    private enum class CameraOutputType {
+        PREVIEW,
+        STILL_CAPTURE,
+        RAW_CAPTURE,
+        VIDEO_RECORD
+    }
+
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     }
@@ -235,6 +242,8 @@ class Camera2Controller(private val context: Context) {
     private var isRawSupported = false
     private var isP010Supported = false
     private var isHlg10Supported = false
+    private var isStreamUseCaseSupported = false
+    private var availableStreamUseCases: LongArray = longArrayOf()
     private var isZslControlSupported: Boolean? = null
     private var availableCaptureRequestKeyNames: Set<String>? = null
     private var availableAeModes: IntArray = intArrayOf()
@@ -916,6 +925,8 @@ class Camera2Controller(private val context: Context) {
         isRawSupported = false
         isP010Supported = false
         isHlg10Supported = false
+        isStreamUseCaseSupported = false
+        availableStreamUseCases = longArrayOf()
         lastAfState = null
         isZslControlSupported = null
         availableCaptureRequestKeyNames = null
@@ -1229,6 +1240,17 @@ class Camera2Controller(private val context: Context) {
                 // 更新硬件能力缓存
                 val capabilities =
                     openCharacteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    isStreamUseCaseSupported = capabilities.contains(
+                        CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_STREAM_USE_CASE
+                    )
+                    availableStreamUseCases = openCharacteristics.get(
+                        CameraCharacteristics.SCALER_AVAILABLE_STREAM_USE_CASES
+                    ) ?: longArrayOf()
+                } else {
+                    isStreamUseCaseSupported = false
+                    availableStreamUseCases = longArrayOf()
+                }
                 var capabilityCameraId = outputPhysicalCameraId ?: openCameraId
                 val capabilityCharacteristics = if (capabilityCameraId == openCameraId) {
                     openCharacteristics
@@ -1331,6 +1353,8 @@ class Camera2Controller(private val context: Context) {
                             "capability=$capabilityCameraId, Level: $hardwareLevelName, " +
                             "ManualSensor: $isManualSensorSupported, ManualPost: $isManualPostProcessingSupported, " +
                             "RAW: $isRawSupported, P010: $isP010Supported, " +
+                            "StreamUseCase: $isStreamUseCaseSupported " +
+                            "[${availableStreamUseCases.joinToString()}], " +
                             "MaxRegions(AF/AE/AWB): $maxAfRegions/$maxAeRegions/$maxAwbRegions, " +
                             "AF modes: ${availableAfModes.joinToString()}, " +
                             "AWB modes: ${availableAwbModes.joinToString()}, " +
@@ -1746,7 +1770,11 @@ class Camera2Controller(private val context: Context) {
                 val sessionConfig = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
                     surfaces.map { outputSurface ->
-                        createOutputConfiguration(outputSurface, useHlgCapture)
+                        createOutputConfiguration(
+                            surface = outputSurface,
+                            useHlgCapture = useHlgCapture,
+                            outputType = CameraOutputType.VIDEO_RECORD
+                        )
                     },
                     Executors.newSingleThreadExecutor(),
                     object : CameraCaptureSession.StateCallback() {
@@ -1816,8 +1844,27 @@ class Camera2Controller(private val context: Context) {
                         "useHlgCapture=$useHlgCapture, readerFormat=${imageFormatToString(readerFormat)}, " +
                         "isP010Supported=$isP010Supported, isHlg10Supported=$isHlg10Supported, "
             )
-            val outputConfigs = surfaces.map { outputSurface ->
-                createOutputConfiguration(outputSurface, useHlgCapture)
+            val outputConfigs = buildList {
+                add(
+                    createOutputConfiguration(
+                        surface = surface,
+                        useHlgCapture = useHlgCapture,
+                        outputType = CameraOutputType.PREVIEW
+                    )
+                )
+                reader?.surface?.let { captureSurface ->
+                    add(
+                        createOutputConfiguration(
+                            surface = captureSurface,
+                            useHlgCapture = useHlgCapture,
+                            outputType = if (readerFormat == ImageFormat.RAW_SENSOR) {
+                                CameraOutputType.RAW_CAPTURE
+                            } else {
+                                CameraOutputType.STILL_CAPTURE
+                            }
+                        )
+                    )
+                }
             }
             val sessionConfig = SessionConfiguration(
                 SessionConfiguration.SESSION_REGULAR,
@@ -1950,7 +1997,8 @@ class Camera2Controller(private val context: Context) {
 
     private fun createOutputConfiguration(
         surface: Surface,
-        useHlgCapture: Boolean
+        useHlgCapture: Boolean,
+        outputType: CameraOutputType
     ): OutputConfiguration {
         return OutputConfiguration(surface).apply {
             activeOutputPhysicalCameraId?.let { physicalCameraId ->
@@ -1967,6 +2015,32 @@ class Camera2Controller(private val context: Context) {
                     DynamicRangeProfiles.HLG10
                 } else {
                     DynamicRangeProfiles.STANDARD
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val streamUseCase = when (outputType) {
+                    CameraOutputType.PREVIEW ->
+                        CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_PREVIEW.toLong()
+                    CameraOutputType.STILL_CAPTURE ->
+                        CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE.toLong()
+                    CameraOutputType.RAW_CAPTURE -> null
+                    CameraOutputType.VIDEO_RECORD ->
+                        CameraMetadata.SCALER_AVAILABLE_STREAM_USE_CASES_VIDEO_RECORD.toLong()
+                }
+
+                if (streamUseCase == null) {
+                    PLog.i(TAG, "OutputConfiguration streamUseCase=DEFAULT for ${outputType.name}")
+                } else if (
+                    isStreamUseCaseSupported && availableStreamUseCases.contains(streamUseCase)
+                ) {
+                    setStreamUseCase(streamUseCase)
+                    PLog.i(TAG, "OutputConfiguration streamUseCase=${outputType.name}")
+                } else {
+                    PLog.d(
+                        TAG,
+                        "OutputConfiguration streamUseCase=${outputType.name} unsupported; using DEFAULT"
+                    )
                 }
             }
         }
